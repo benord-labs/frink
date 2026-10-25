@@ -121,6 +121,7 @@ async function resolveChatRefs(ctx: {
   return subChat ? { chatId, subChatId: subChat.id } : null;
 }
 
+/** Renders a chat reply's text, or its HTML artifact within the artifact's byte and title limits. */
 function renderChatReply(
   config: ChatReplyConfig,
   variables: ReturnType<typeof buildVariables>,

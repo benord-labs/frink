@@ -180,7 +180,7 @@ type AgentWorktreeConfig =
     }
   | { startInWorktree: false };
 
-/** Fail closed rather than hand the agent a sliced prompt (sc-3166). */
+/** Over the agent prompt cap the node fails, naming the field and the limit, before any task starts. */
 function agentProseError(config: AgentConfig): { type: 'error'; message: string } | undefined {
   const overflow = findAgentProseOverflow(config);
   return overflow

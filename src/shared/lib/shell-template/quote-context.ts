@@ -76,79 +76,72 @@ function findCommandSubstitutionEnd(command: string, start: number): number | nu
   return null;
 }
 
+/** Blanks every closed `$( … )` outside single quotes, in one left-to-right pass. */
 function maskCommandSubstitutions(command: string): string {
-  let masked = command;
+  const scanner = new QuoteScanner(command);
   let searchFrom = 0;
-  while (searchFrom < masked.length) {
-    const start = masked.indexOf('$(', searchFrom);
+  while (searchFrom < command.length) {
+    const start = command.indexOf('$(', searchFrom);
     if (start === -1) break;
-    const context = quoteContextAt(masked, start);
-    if (context === 'single') {
+    if (scanner.contextAt(start) === 'single') {
       searchFrom = start + 2;
       continue;
     }
-    const end = findCommandSubstitutionEnd(masked, start + 2);
+    const end = findCommandSubstitutionEnd(command, start + 2);
     if (end === null) {
       searchFrom = start + 2;
       continue;
     }
-    masked = `${masked.slice(0, start)}${' '.repeat(end - start)}${masked.slice(end)}`;
+    scanner.blank(start, end);
     searchFrom = end;
   }
-  return masked;
+  return scanner.masked();
 }
 
+/** Blanks every closed backtick substitution outside single quotes, in one left-to-right pass. */
 function maskBacktickSubstitutions(command: string): string {
-  let masked = command;
+  const scanner = new QuoteScanner(command);
   let searchFrom = 0;
-  while (searchFrom < masked.length) {
-    const start = masked.indexOf('`', searchFrom);
+  while (searchFrom < command.length) {
+    const start = command.indexOf('`', searchFrom);
     if (start === -1) break;
-    if (quoteContextAt(masked, start) === 'single') {
+    if (scanner.contextAt(start) === 'single') {
       searchFrom = start + 1;
       continue;
     }
-    const end = masked.indexOf('`', start + 1);
+    const end = command.indexOf('`', start + 1);
     if (end === -1) break;
-    masked = `${masked.slice(0, start)}${' '.repeat(end + 1 - start)}${masked.slice(end + 1)}`;
+    scanner.blank(start, end + 1);
     searchFrom = end + 1;
   }
-  return masked;
+  return scanner.masked();
 }
 
+/** Blanks every closed `$'…'` ANSI-C string outside quotes and comments, in one left-to-right pass. */
 function maskAnsiCStrings(command: string): string {
-  let masked = command;
+  const scanner = new QuoteScanner(command);
   let searchFrom = 0;
-  while (searchFrom < masked.length) {
-    const start = masked.indexOf("$'", searchFrom);
+  while (searchFrom < command.length) {
+    const start = command.indexOf("$'", searchFrom);
     if (start === -1) break;
-    if (quoteContextAt(masked, start) !== null) {
+    if (scanner.contextAt(start) !== null) {
       searchFrom = start + 2;
       continue;
     }
     let end = start + 2;
-    while (end < masked.length && masked[end] !== "'") {
-      if (masked[end] === '\\') end++;
+    while (end < command.length && command[end] !== "'") {
+      if (command[end] === '\\') end++;
       end++;
     }
-    if (end >= masked.length) break;
-    masked = `${masked.slice(0, start)}${' '.repeat(end + 1 - start)}${masked.slice(end + 1)}`;
+    if (end >= command.length) break;
+    scanner.blank(start, end + 1);
     searchFrom = end + 1;
   }
-  return masked;
+  return scanner.masked();
 }
 
-/** Callers classify each placeholder of one command in turn; masking it once keeps that linear. */
-let lastMasked: { command: string; masked: string } | undefined;
-
+/** The command with opaque segments blanked, cut at the first construct the classifier cannot follow. */
 function maskOpaqueShellSegments(command: string): string {
-  if (lastMasked?.command !== command) {
-    lastMasked = { command, masked: computeOpaqueShellMask(command) };
-  }
-  return lastMasked.masked;
-}
-
-function computeOpaqueShellMask(command: string): string {
   const withoutAnsiStrings = maskAnsiCStrings(command);
   const withoutBackticks = maskBacktickSubstitutions(withoutAnsiStrings);
   const masked = maskCommandSubstitutions(withoutBackticks);
@@ -160,6 +153,41 @@ function computeOpaqueShellMask(command: string): string {
     uncertainOffsets.push(heredocOffset);
   }
   return uncertainOffsets.length === 0 ? masked : masked.slice(0, Math.min(...uncertainOffsets));
+}
+
+const QUOTES = [null, 'single', 'double'] as const;
+
+/** What classifying any placeholder of one command needs; arrays cover `analyzable`, not the command. */
+type CommandAnalysis = {
+  command: string;
+  analyzable: string;
+  /** Index into QUOTES of the quote context at each offset of `analyzable`. */
+  quoteAt: Uint8Array;
+  lastSingleQuote: number;
+  /** 1 when an unescaped `"` occurs at or after the offset, scanning escapes from that offset. */
+  doubleQuoteFrom: Uint8Array;
+};
+
+/** Callers classify every placeholder of one command in turn, so one analysis serves them all. */
+let lastAnalysis: CommandAnalysis | undefined;
+
+/** Analyses a command once, in time linear in its length. */
+function analyzeCommand(command: string): CommandAnalysis {
+  if (lastAnalysis?.command === command) return lastAnalysis;
+  const analyzable = maskOpaqueShellSegments(command);
+  const scanner = new QuoteScanner(analyzable);
+  const quoteAt = new Uint8Array(analyzable.length + 1);
+  for (let offset = 0; offset <= analyzable.length; offset++) {
+    quoteAt[offset] = QUOTES.indexOf(scanner.contextAt(offset));
+  }
+  const doubleQuoteFrom = new Uint8Array(analyzable.length + 2);
+  for (let i = analyzable.length - 1; i >= 0; i--) {
+    if (analyzable[i] === '\\') doubleQuoteFrom[i] = doubleQuoteFrom[i + 2];
+    else doubleQuoteFrom[i] = analyzable[i] === '"' ? 1 : doubleQuoteFrom[i + 1];
+  }
+  const lastSingleQuote = analyzable.lastIndexOf("'");
+  lastAnalysis = { command, analyzable, quoteAt, lastSingleQuote, doubleQuoteFrom };
+  return lastAnalysis;
 }
 
 /**
@@ -174,23 +202,13 @@ export function shellInterpolationContextAt(
   offset: number,
   matchLength: number,
 ): ShellInterpolationContext {
-  const analyzableCommand = maskOpaqueShellSegments(command);
-  if (
-    analyzableCommand.length < command.length &&
-    offset + matchLength > analyzableCommand.length
-  ) {
-    return 'uncertain';
-  }
-  if (
-    analyzableCommand.slice(offset, offset + matchLength) !==
-    command.slice(offset, offset + matchLength)
-  ) {
-    return 'uncertain';
-  }
-  const quote = quoteContextAt(analyzableCommand, offset);
-  if (quote && !hasClosingQuote(analyzableCommand, offset + matchLength, quote)) {
-    return 'uncertain';
-  }
+  const { analyzable, quoteAt, lastSingleQuote, doubleQuoteFrom } = analyzeCommand(command);
+  const end = offset + matchLength;
+  if (analyzable.length < command.length && end > analyzable.length) return 'uncertain';
+  if (analyzable.slice(offset, end) !== command.slice(offset, end)) return 'uncertain';
+  const quote = QUOTES[quoteAt[offset]];
+  if (quote === 'single' && lastSingleQuote < end) return 'uncertain';
+  if (quote === 'double' && doubleQuoteFrom[end] === 0) return 'uncertain';
   return quote ?? 'bare';
 }
 
@@ -212,35 +230,61 @@ function toggleQuote(quote: ShellQuoteContext | null, char: string): ShellQuoteC
   return quote;
 }
 
+/** The quote context before `end`, as a shell reading `command` from its start would see it. */
 function quoteContextAt(command: string, end: number): ShellQuoteContext | null {
-  let quote: ShellQuoteContext | null = null;
-  let inComment = false;
-  for (let i = 0; i < end; i++) {
-    const char = command[i];
-    if (inComment) {
-      inComment = char !== '\n';
-      continue;
-    }
-    if (quote === null && char === '#' && isCommentStart(command, i)) {
-      inComment = true;
-      continue;
-    }
-    if (quote !== 'single' && char === '\\') {
-      i++;
-      continue;
-    }
-    quote = toggleQuote(quote, char);
-  }
-  return inComment ? null : quote;
+  return new QuoteScanner(command).contextAt(end);
 }
 
-function hasClosingQuote(command: string, start: number, quote: ShellQuoteContext): boolean {
-  for (let i = start; i < command.length; i++) {
-    if (quote === 'double' && command[i] === '\\') {
-      i++;
-      continue;
-    }
-    if (command[i] === (quote === 'single' ? "'" : '"')) return true;
+/** Shell quote and comment state, read left to right; `contextAt` ends must never decrease. */
+class QuoteScanner {
+  private index = 0;
+  private quote: ShellQuoteContext | null = null;
+  private inComment = false;
+  private blankEnd = -1;
+  private kept = 0;
+  private readonly chunks: string[] = [];
+
+  constructor(private readonly text: string) {}
+
+  /** The quote context before `end`: null when unquoted or inside a comment. */
+  contextAt(end: number): ShellQuoteContext | null {
+    while (this.index < end) this.step();
+    return this.inComment ? null : this.quote;
   }
-  return false;
+
+  /** Replaces [start, end) with spaces, which never change quote or comment state, and skips it. */
+  blank(start: number, end: number): void {
+    this.chunks.push(this.text.slice(this.kept, start), ' '.repeat(end - start));
+    this.kept = end;
+    this.index = end;
+    this.blankEnd = end;
+  }
+
+  /** The text with every blanked range replaced by spaces. */
+  masked(): string {
+    return this.chunks.join('') + this.text.slice(this.kept);
+  }
+
+  private step(): void {
+    const i = this.index++;
+    const char = this.text[i];
+    if (this.inComment) {
+      this.inComment = char !== '\n';
+      return;
+    }
+    // Right after a blanked range the previous character is a space, which starts a comment.
+    if (
+      this.quote === null &&
+      char === '#' &&
+      (i === this.blankEnd || isCommentStart(this.text, i))
+    ) {
+      this.inComment = true;
+      return;
+    }
+    if (this.quote !== 'single' && char === '\\') {
+      this.index++;
+      return;
+    }
+    this.quote = toggleQuote(this.quote, char);
+  }
 }

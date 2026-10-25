@@ -27,6 +27,7 @@ export const NON_EMPTY_TEXT = z
   .transform((v) => v.trim())
   .pipe(z.string().min(1));
 
+/** The node's projectId rendered as a template, else the flow default, else undefined; see above. */
 export function resolveNodeOrFlowProjectId(
   config: Record<string, unknown> | undefined,
   settings: ParsedFlowGraph['settings'],

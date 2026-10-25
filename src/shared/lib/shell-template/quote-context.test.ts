@@ -122,23 +122,6 @@ describe('shellInterpolationContextAt', () => {
     );
   });
 
-  it('masks a long substitution-heavy command once, not once per placeholder', () => {
-    const command = (name: string) =>
-      `${'x=$(date)\n'.repeat(300)}${`y={{trigger.${name}}}\n`.repeat(800)}`;
-    const classify = (text: string, limit: number) => {
-      const started = performance.now();
-      for (const match of [...text.matchAll(/\{\{[^{}]+\}\}/g)].slice(0, limit)) {
-        expect(shellInterpolationContextAt(text, match.index, match[0].length)).toBe('bare');
-      }
-      return performance.now() - started;
-    };
-    classify('x=$(date) y={{trigger.warm}}', 1);
-    const one = classify(command('a'), 1);
-    const all = classify(command('b'), Infinity);
-    // Masked once, all 800 cost ~2x one (each still scans its own prefix); re-masking costs ~800x.
-    expect(all).toBeLessThan(one * 50);
-  }, 30_000);
-
   it('keeps an unclosed command substitution inside double quotes uncertain', () => {
     const command = `echo "$(whoami {{trigger.summary}} unfinished"`;
     const offset = command.indexOf('{{');
@@ -146,4 +129,86 @@ describe('shellInterpolationContextAt', () => {
       'uncertain',
     );
   });
+});
+
+describe('shellInterpolationContextAt — masked ranges and boundaries', () => {
+  it.each([
+    ['a # right after a masked backtick range', "`x`#'`y` {{a}}'", 'bare'],
+    ['a # right after a masked ANSI-C string', "$'x'#'$'y' {{a}}'", 'bare'],
+    ['a # right after two abutting masked ranges', "````#$'`` {{a}}", 'bare'],
+    ['an escaped $( outside quotes', '\\$(x) {{a}}', 'bare'],
+    ['an escaped $( inside double quotes', '"\\$(x) {{a}}"', 'double'],
+    ['a placeholder ending the command inside an unclosed "', '"{{a}}', 'uncertain'],
+    ['a trailing backslash after a placeholder inside "', '"{{a}}\\', 'uncertain'],
+    ['a placeholder after an unquoted heredoc', 'cat <<EOF {{a}}', 'uncertain'],
+    ['a placeholder ending where the heredoc cut starts', 'echo {{a}}<<X', 'bare'],
+  ])('classifies %s', (_name, command, expected) => {
+    expect(shellInterpolationContextAt(command, command.indexOf('{{a}}'), '{{a}}'.length)).toBe(
+      expected,
+    );
+  });
+
+  it('gives the same answer when commands are classified in turn', () => {
+    const quoted = "echo '{{a}}'";
+    const bare = 'echo {{a}}';
+    const classify = (command: string) =>
+      shellInterpolationContextAt(command, command.indexOf('{{a}}'), '{{a}}'.length);
+    expect([classify(quoted), classify(bare), classify(quoted), classify(quoted)]).toEqual([
+      'single',
+      'bare',
+      'single',
+      'single',
+    ]);
+  });
+});
+
+/** Fastest of three timings, each on a fresh command so no run reuses another's analysis. */
+function fastestMs(run: (trial: number) => void): number {
+  return Math.min(
+    ...[0, 1, 2].map((trial) => {
+      const started = performance.now();
+      run(trial);
+      return performance.now() - started;
+    }),
+  );
+}
+
+/** Classifies the first `limit` placeholders of `command`. */
+function classifyPlaceholders(command: string, limit: number): void {
+  for (const match of [...command.matchAll(/\{\{[^{}]+\}\}/g)].slice(0, limit)) {
+    shellInterpolationContextAt(command, match.index, match[0].length);
+  }
+}
+
+describe('shellInterpolationContextAt — cost stays linear in command length', () => {
+  it.each([
+    ['bare placeholders', (name: string) => `x {{t.${name}}}\n`.repeat(6_000)],
+    [
+      'placeholders in one unclosed double quote',
+      (name: string) => `echo "${`x {{t.${name}}}\n`.repeat(6_000)}`,
+    ],
+    [
+      'a substitution and a placeholder per line',
+      (name: string) => `x=$(date) y={{t.${name}}}\n`.repeat(2_400),
+    ],
+  ])(
+    'classifies every one of thousands of %s about as fast as the first',
+    (_name, command) => {
+      classifyPlaceholders(command('warm').slice(0, 2_000), Infinity);
+      const one = fastestMs((trial) => classifyPlaceholders(command(`one${trial}`), 1));
+      const all = fastestMs((trial) => classifyPlaceholders(command(`all${trial}`), Infinity));
+      expect(all).toBeLessThan(one * 20);
+    },
+    30_000,
+  );
+
+  it('masks thousands of closed substitutions about as fast as plain text of the same length', () => {
+    const command = (body: string, name: string) => `${body.repeat(6_000)}echo {{t.${name}}}`;
+    classifyPlaceholders(command('x=$(date)\n', 'warm').slice(-2_000), Infinity);
+    const plain = fastestMs((trial) => classifyPlaceholders(command('x=_date_\n', `p${trial}`), 1));
+    const heavy = fastestMs((trial) =>
+      classifyPlaceholders(command('x=$(date)\n', `h${trial}`), 1),
+    );
+    expect(heavy).toBeLessThan(plain * 20);
+  }, 30_000);
 });

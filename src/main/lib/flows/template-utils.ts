@@ -109,6 +109,7 @@ function renderedText(obj: TemplateScope, path: string): string | typeof UNRENDE
   return resolvePath(obj, path) ?? '';
 }
 
+/** The text a value splices in as, or UNRENDERABLE when it is too large or cannot become text. */
 function textForm(current: PathValue): ResolvedValue {
   if (current === null || current === undefined) return '';
   if (typeof current === 'string') {
@@ -424,7 +425,7 @@ export function renderTemplateForShell(
     return true;
   };
 
-  // Refuse before classifying: shell-context classification grows with length × placeholders.
+  // Refuse up front: a command over the cap fails anyway, so classifying it would be wasted work.
   if (template.length > MAX_SHELL_RENDERED_OUTPUT) {
     warnCap();
     return SHELL_RENDER_LIMIT_COMMAND;
