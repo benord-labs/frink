@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRIGGER_FIELD_ALIASES } from '../../../../shared/integrations/trigger-field-aliases';
 import { TRIGGER_SAMPLES } from '../../../../shared/integrations/trigger-samples';
+import { describeTriggerField, TRIGGER_SCHEMAS } from '../../../../shared/lib/output-schemas';
 import type { JsonValue } from '../../../../shared/types/permissions';
 
 type DetailSuggestion = { value: string; label: string };
@@ -12,12 +13,9 @@ const MAX_PATH_SEGMENTS = 5;
 const MAX_SUGGESTIONS = 40;
 const SAMPLE_LEAF = z.union([z.string(), z.number(), z.boolean()]);
 
-/** The details a post-task run saves (post-task-trigger.ts); its other schema fields are never stored. */
-const POST_TASK_DETAILS: DetailSuggestion[] = [
-  { value: 'trigger.taskTitle', label: 'Task title' },
-  { value: 'trigger.taskStatus', label: 'Task status' },
-  { value: 'trigger.projectId', label: 'Project ID' },
-];
+const POST_TASK_DETAILS: DetailSuggestion[] = (TRIGGER_SCHEMAS.post_task_trigger ?? []).map(
+  (field) => ({ value: `trigger.${field.key}`, label: describeTriggerField(field) }),
+);
 
 /** Every text, number or true/false value in a sample body, labelled with its sample value. */
 function sampleLeaves(value: JsonValue, path: string, out: DetailSuggestion[]): void {
