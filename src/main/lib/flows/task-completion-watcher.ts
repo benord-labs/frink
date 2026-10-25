@@ -11,13 +11,13 @@
  * Replaces the cloud queue's `flow/advance` job for single-machine local mode.
  */
 
-import { and, sql as drizzleSql, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, sql as drizzleSql, eq, getTableColumns, inArray, isNotNull } from 'drizzle-orm';
 import log from 'electron-log';
 import { z } from 'zod';
 import { getDatabase } from '../db';
 import { getTaskById, parseResultRecord } from '../db/repos/tasks';
 import type { Task } from '../db/schema';
-import { tasks } from '../db/schema';
+import { nodeRuns, tasks } from '../db/schema';
 import { captureMainException } from '../sentry/init';
 import { resolveTaskSignalTransition } from '../trpc/routers/frink-task-signal';
 import { advanceFlowRun } from './advance';
@@ -206,14 +206,17 @@ async function broadcastQuietParkUpdate(task: Task, status: string): Promise<voi
 export async function tick(): Promise<void> {
   const db = getDatabase();
   await sweepQuietIdleTasks(db);
+  // Only a task whose node is still active can advance (advanceFlowRun's CAS), so each tick reads
+  // the few in-flight rows instead of every finished task's JSON.
   const rows: Task[] = await db
-    .select()
+    .select(getTableColumns(tasks))
     .from(tasks)
+    .innerJoin(nodeRuns, eq(nodeRuns.id, tasks.nodeRunId))
     .where(
       and(
         isNotNull(tasks.flowRunId),
-        isNotNull(tasks.nodeRunId),
         inArray(tasks.status, TERMINAL_STATUSES),
+        inArray(nodeRuns.status, [...ACTIVE_NODE_RUN_STATUSES]),
       ),
     );
 

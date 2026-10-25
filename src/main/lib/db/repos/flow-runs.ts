@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, not, or, sql } from 'drizzle-orm';
-import { union } from 'drizzle-orm/sqlite-core';
+import { union, unionAll } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../shared/types/flow';
 import { fanOutItemChatRunIds, isPastFanOutLane } from '../../flows/fan-out/sql';
 import type { getDatabase } from '../index';
@@ -273,13 +273,14 @@ export async function getActiveFlowRunForSubChat(
 /** A group is keyed by its batch, or by the run itself when it is not batched. */
 const GROUP_KEY = { groupId: sql<string>`coalesce(${flowRuns.batchId}, ${flowRuns.id})` };
 
-/** Runs the sidebar folds into one group: batch members, and Fan Out runs that opened item chats. */
+/** Runs the sidebar folds into one group: batch members, and Fan Out runs that opened item chats.
+ * UNION ALL + a Set: SQLite plans a UNION as a sorted merge that scans every node_run. */
 async function listGroupedRunIds(db: Db): Promise<string[]> {
-  const rows = await union(
+  const rows = await unionAll(
     db.select({ id: flowRuns.id }).from(flowRuns).where(isNotNull(flowRuns.batchId)),
     db.select({ id: sql<string>`flow_run_id` }).from(sql`(${fanOutItemChatRunIds})`),
   );
-  return rows.map((row) => row.id);
+  return [...new Set(rows.map((row) => row.id))];
 }
 
 /** chatId → sidebar group key (`batchId`, or the id of a Fan Out run that opened item chats). A chat
