@@ -8,12 +8,17 @@ type FlowActivity = {
 
 type FlowAdmissionLifecycleHooks = {
   reconcile: (flowRunId: string, cleanupError?: unknown) => Promise<void>;
+  reconcileTicket: (flowRunId: string, ticket: number) => Promise<void>;
   requestRelease: (flowRunId: string) => Promise<void>;
 };
 
 export type FlowResourceActivityRelease = (cleanupError?: unknown) => void;
 
 const activeFlowResources = new Map<string, FlowActivity>();
+const scheduledReconciles = new Map<string, NodeJS.Timeout>();
+// Timers stop while the machine sleeps, so a long wait re-reads the clock at least this often.
+const MAX_SCHEDULE_STEP_MS = 60_000;
+const SCHEDULE_MARGIN_MS = 1_000;
 let lifecycleHooks: FlowAdmissionLifecycleHooks | null = null;
 export function captureFlowAdmissionException(error: unknown, stage: string): void {
   captureMainException(error, { surface: 'flow-admission', stage });
@@ -85,4 +90,23 @@ export async function withFlowResourceCleanup<T>(
 
 export function hasFlowResourceActivity(flowRunId: string): boolean {
   return (activeFlowResources.get(flowRunId)?.count ?? 0) > 0;
+}
+
+/** Re-checks the run's slot for `ticket` once the clock passes `at`; a later call for the run
+ * replaces this one. Boot recovery reconciles every held slot, so a restart re-arms it. */
+export function scheduleFlowReconcile(flowRunId: string, ticket: number, at: number): void {
+  clearTimeout(scheduledReconciles.get(flowRunId));
+  const timer = setTimeout(
+    () => {
+      if (Date.now() < at) return scheduleFlowReconcile(flowRunId, ticket, at);
+      scheduledReconciles.delete(flowRunId);
+      void lifecycleHooks?.reconcileTicket(flowRunId, ticket).catch((error) => {
+        log.error('[Flow Admission] Scheduled reconciliation failed', { flowRunId, error });
+        captureFlowAdmissionException(error, 'scheduled-reconcile');
+      });
+    },
+    Math.min(Math.max(0, at - Date.now()) + SCHEDULE_MARGIN_MS, MAX_SCHEDULE_STEP_MS),
+  );
+  timer.unref();
+  scheduledReconciles.set(flowRunId, timer);
 }

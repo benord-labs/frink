@@ -9,6 +9,8 @@ export type TurnUsage = { contextTokens: number | null; compactions: number | nu
 export const storedTurnUsageSchema = z.object({
   contextTokens: z.number().optional(),
   compactionsByMessage: z.record(z.string(), z.number()).optional(),
+  /** When the newest turn's prompt cache goes cold (epoch ms); a stamped null removes a stale one. */
+  promptCacheExpiresAt: z.number().nullable().optional(),
 });
 export type StoredTurnUsage = z.infer<typeof storedTurnUsageSchema>;
 

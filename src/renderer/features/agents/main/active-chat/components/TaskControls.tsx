@@ -15,6 +15,7 @@ import { SIDE_EFFECTS_CONFIRM } from '../../../../../components/SideEffectsConfi
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
 import { useConfirm } from '../../../../../components/ui/use-confirm';
 import { trpc } from '../../../../../lib/trpc';
+import { useRecoverTaskMutation } from '../../../../../lib/work-queue/recovery/use-recover-task-mutation';
 import { RunStatusRow } from '../../../RunStatusRow';
 import { ContinueAfterUsageLimit, isLoginRemoved } from '../../../ui/account-indicator';
 import { invalidateTaskQueries } from '../utils';
@@ -63,7 +64,7 @@ export const TaskControls = memo(function TaskControls({
       : null;
   const chatId = typeof resultRecord?.chatId === 'string' ? resultRecord.chatId : null;
 
-  const recoverMutation = trpc.tasks.recover.useMutation({
+  const recoverMutation = useRecoverTaskMutation({
     onSuccess: () => invalidateTaskQueries(utils),
     // The toast is load-bearing: there is no global mutationCache.onError. Refetching on error
     // matters too — the server refuses a kind that no longer holds, and the fresh read relabels.

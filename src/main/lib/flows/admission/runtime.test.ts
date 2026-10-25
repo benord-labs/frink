@@ -14,9 +14,19 @@ vi.mock('../event-emit', () => ({
 }));
 vi.mock('../../sentry/init', () => ({ captureMainException: mocks.capture }));
 
-import { flowRunAdmissions, flowRuns, flows, flowVersions, nodeRuns, tasks } from '../../db/schema';
+import {
+  chats,
+  flowRunAdmissions,
+  flowRuns,
+  flows,
+  flowVersions,
+  nodeRuns,
+  subChatMessages,
+  subChats,
+  tasks,
+} from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
-import { beginFlowResourceActivity } from './activity';
+import { beginFlowResourceActivity, scheduleFlowReconcile } from './activity';
 import { FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS } from './drain';
 import { beginTerminalRelease } from './recovery-store';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
@@ -78,6 +88,65 @@ function persistWait(flowRunId: string, taskStatus?: string): void {
   }
   db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, flowRunId)).run();
 }
+
+/** An agent step parked on a `needs_attention` task the watcher applied, its session answered. */
+function persistHumanWait(flowRunId: string, cacheExpiresAt?: number): void {
+  const nodeRunId = `${flowRunId}-step`;
+  const taskId = `${flowRunId}-task`;
+  db.insert(chats)
+    .values({ id: `${flowRunId}-chat` })
+    .onConflictDoNothing()
+    .run();
+  db.insert(subChats)
+    .values({ id: `${flowRunId}-sub`, chatId: `${flowRunId}-chat`, sessionId: 'session-1' })
+    .run();
+  db.insert(nodeRuns)
+    .values({
+      id: nodeRunId,
+      flowRunId,
+      nodeId: 'step',
+      blockType: 'agent',
+      status: 'blocked',
+      completedAt: new Date('2026-10-20T10:00:02Z'),
+    })
+    .run();
+  db.insert(tasks)
+    .values({
+      id: taskId,
+      description: 'Flow step',
+      source: 'flow',
+      flowRunId,
+      nodeRunId,
+      sourceId: nodeRunId,
+      status: 'needs_attention',
+      completedAt: new Date('2026-10-20T10:00:00Z'),
+      result: {
+        subChatId: `${flowRunId}-sub`,
+        turnUsage: { promptCacheExpiresAt: cacheExpiresAt },
+      },
+    })
+    .run();
+  const prompt = {
+    id: `${taskId}-u`,
+    role: 'user',
+    parts: [],
+    metadata: { dispatchTaskId: taskId },
+  };
+  db.insert(subChatMessages)
+    .values([
+      { subChatId: `${flowRunId}-sub`, seq: 0, message: JSON.stringify(prompt) },
+      {
+        subChatId: `${flowRunId}-sub`,
+        seq: 1,
+        message: JSON.stringify({ id: `${taskId}-a`, role: 'assistant', parts: [] }),
+      },
+    ])
+    .run();
+  db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, flowRunId)).run();
+}
+
+const admissionOf = (flowRunId: string) =>
+  db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.flowRunId, flowRunId)).get();
 
 let db: TestDb;
 let controller: FlowAdmissionController;
@@ -193,6 +262,7 @@ describe('Flow admission runtime recovery', () => {
       concurrency_limit_enabled: true,
       max_concurrent_runs: 2,
       occupied_runs: 2,
+      held_by_waiting_runs: 0,
       queued_runs: 0,
       draining: false,
     });
@@ -493,6 +563,106 @@ describe('Flow admission runtime recovery', () => {
       startedAt: null,
     });
     expect(mocks.dispatcher).toHaveBeenCalledOnce();
+  });
+  it('gives the slot of a run waiting only for a person to the queued start', async () => {
+    mocks.dispatcher.mockImplementationOnce(async (flowRunId) => persistHumanWait(flowRunId));
+    const first = await requestFlowStart(startInput('human-wait'));
+    const second = await requestFlowStart(startInput('after-human-wait'));
+
+    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledTimes(2));
+    expect(mocks.dispatcher).toHaveBeenLastCalledWith(second.run.id, expect.any(Number));
+    expect(admissionOf(first.run.id)).toMatchObject({ state: 'released' });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, first.run.id)).get()?.status).toBe(
+      'paused',
+    );
+  });
+  // A live owner (a wake hold, a click's own token) keeps the slot; the release lands when it ends.
+  it('frees a human wait slot only once its last live activity ends', async () => {
+    let releaseActivity!: () => void;
+    mocks.dispatcher.mockImplementationOnce(async (flowRunId) => {
+      persistHumanWait(flowRunId);
+      releaseActivity = beginFlowResourceActivity(flowRunId);
+    });
+    const first = await requestFlowStart(startInput('held-human-wait'));
+    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledOnce());
+    const second = await requestFlowStart(startInput('behind-held-human-wait'));
+    expect(admissionOf(first.run.id)).toMatchObject({ state: 'active' });
+
+    releaseActivity();
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenLastCalledWith(second.run.id, expect.any(Number)),
+    );
+    expect(admissionOf(first.run.id)).toMatchObject({ state: 'released' });
+  });
+  describe('a human wait whose prompt cache is still warm', () => {
+    const SETTLED = Date.parse('2026-10-20T10:00:00Z');
+    const COLD_AT = SETTLED + 15 * 60_000;
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(SETTLED + 60_000);
+    });
+    afterEach(() => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    });
+
+    async function parkWarmAheadOfAStart() {
+      mocks.dispatcher.mockImplementationOnce(async (id) => persistHumanWait(id, COLD_AT));
+      const warm = await requestFlowStart(startInput('warm-human-wait'));
+      const next = await requestFlowStart(startInput('behind-warm-human-wait'));
+      await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledOnce());
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+      return { warm, next };
+    }
+
+    it('keeps its slot until the cache is cold, then gives it to the queued start', async () => {
+      const { warm, next } = await parkWarmAheadOfAStart();
+      await vi.advanceTimersByTimeAsync(COLD_AT - Date.now() - 1_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() =>
+        expect(mocks.dispatcher).toHaveBeenLastCalledWith(next.run.id, expect.any(Number)),
+      );
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+
+    // Timers stop while the machine sleeps: the wall clock is re-read within a minute of waking.
+    it('releases within a minute when the machine wakes past the cold time', async () => {
+      const { warm } = await parkWarmAheadOfAStart();
+      vi.setSystemTime(COLD_AT + 30 * 60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+
+    it('keeps one check per run: a later schedule replaces the earlier one', async () => {
+      const { warm } = await parkWarmAheadOfAStart();
+      const ticket = admissionOf(warm.run.id)!.ticket;
+      scheduleFlowReconcile(warm.run.id, ticket, COLD_AT + 10 * 60_000);
+      await vi.advanceTimersByTimeAsync(COLD_AT - Date.now() + 5 * 60_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+  });
+  it('releases a human wait still holding its slot at boot, and gives a dead release its slot back', async () => {
+    const held = await requestFlowStart(startInput('held-at-boot'));
+    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledOnce());
+    persistHumanWait(held.run.id);
+    expect(admissionOf(held.run.id)).toMatchObject({ state: 'active' });
+    const queued = await requestFlowStart(startInput('queued-at-boot'));
+
+    await recoverFlowAdmissions();
+    expect(admissionOf(held.run.id)).toMatchObject({ state: 'released' });
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenLastCalledWith(queued.run.id, expect.any(Number)),
+    );
+
+    persistHumanWait(queued.run.id);
+    const live = await controller.getLiveForRun(queued.run.id);
+    await controller.beginRelease(live!.ticket);
+    await recoverFlowAdmissions();
+    expect(admissionOf(queued.run.id)).toMatchObject({ state: 'active' });
   });
   it('keeps an agent hand-off active while its Flow task is pending', async () => {
     mocks.dispatcher.mockImplementationOnce(async (flowRunId) => persistWait(flowRunId, 'pending'));

@@ -1,13 +1,19 @@
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import log from 'electron-log';
+import { z } from 'zod';
 import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
-import { flowRunAdmissions, flowRuns } from '../../db/schema';
-import { captureFlowAdmissionException } from './activity';
+import { flowRunAdmissions, flowRuns, nodeRuns, tasks } from '../../db/schema';
+import { stepRecoveryKind } from '../rerun/recovery-kind';
+import { captureFlowAdmissionException, hasFlowResourceActivity } from './activity';
 import type { FlowAdmissionController } from './controller';
 import { admissionByTicket, type FlowRunAdmission, transitionAdmission } from './store';
-import { isTerminalResumeStatus } from './terminal-resume/resume-store';
+import {
+  isParkedNodeStatus,
+  isTerminalResumeStatus,
+  PARKED_NODE_STATUSES,
+} from './terminal-resume/resume-store';
 
 type Db = ReturnType<typeof getDatabase>;
 const DEFAULT_PAGE_SIZE = 100;
@@ -19,6 +25,15 @@ const LIVE_ADMISSION_STATES = new Set<FlowAdmissionState>([
   'active',
   'releasing',
 ]);
+const LIVE_NODE_STATUSES = ['pending', 'running'];
+const SETTLED_ADMISSION_STATES = new Set<FlowAdmissionState>(['released', 'failed', 'cancelled']);
+const LIVE_TASK_STATUSES = ['pending', 'running', 'plan_ready'];
+// A prompt cache lives at most an hour past its last call, so a parked step is cold an hour after it
+// settled at the latest; a provider that records no expiry is held that long.
+const MAX_PROMPT_CACHE_TTL_MS = 60 * 60_000;
+const recordedCacheExpirySchema = z.object({
+  turnUsage: z.object({ promptCacheExpiresAt: z.number() }),
+});
 const STRANDED_RESUME_ERROR =
   'Resume claim was interrupted by a restart before dispatch; retry it manually';
 
@@ -71,14 +86,14 @@ export function recoveryAdmissions(
   };
 }
 
-/** A resume claim whose run is still terminal provably never promoted: promotion and claimed→active
- * commit in one transaction. Settle it so the slot frees, but never replay it — manual Retry owns it. */
+/** A resume claim whose run is still terminal or paused provably never promoted: promotion and
+ * claimed→active commit in one transaction. Settle it so the slot frees, but never replay it. */
 function dropStrandedResumeClaim(
   db: Db,
   row: FlowRunAdmission,
   runStatus: string | null,
 ): FlowRunAdmission {
-  if (!runStatus || !isTerminalResumeStatus(runStatus)) return row;
+  if (!runStatus || (!isTerminalResumeStatus(runStatus) && runStatus !== 'paused')) return row;
   const dropped = transitionAdmission(db, row.ticket, ['claimed'], {
     state: 'failed',
     error: STRANDED_RESUME_ERROR,
@@ -123,6 +138,98 @@ export function beginTerminalRelease(
       ? transitionAdmission(db, ticket, ['active'], { state: 'releasing', error: null })
       : admission;
   return releasing?.state === 'releasing' ? { releasing, outcome } : null;
+}
+
+/** When the prompt cache of a run waiting only on a reply to one agent step goes cold (epoch ms);
+ * null for any other run. Synchronous, so the release re-reads it in its transaction. */
+export function humanWaitColdAt(db: Db, flowRunId: string): number | null {
+  const run = db
+    .select({ status: flowRuns.status, batchId: flowRuns.batchId })
+    .from(flowRuns)
+    .where(eq(flowRuns.id, flowRunId))
+    .get();
+  if (run?.status !== 'paused' || run.batchId !== null) return null;
+  const liveTask = db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, LIVE_TASK_STATUSES)))
+    .get();
+  if (liveTask) return null;
+  const unfinished = db
+    .select({ id: nodeRuns.id, status: nodeRuns.status, completedAt: nodeRuns.completedAt })
+    .from(nodeRuns)
+    .where(
+      and(
+        eq(nodeRuns.flowRunId, flowRunId),
+        inArray(nodeRuns.status, [...PARKED_NODE_STATUSES, ...LIVE_NODE_STATUSES]),
+      ),
+    )
+    .all();
+  const [parked] = unfinished;
+  if (unfinished.length !== 1 || !isParkedNodeStatus(parked.status)) return null;
+  const task = db
+    .select({ status: tasks.status, result: tasks.result, completedAt: tasks.completedAt })
+    .from(tasks)
+    .where(eq(tasks.nodeRunId, parked.id))
+    .orderBy(desc(tasks.createdAt))
+    .get();
+  if (task?.status !== 'needs_attention' || !task.completedAt) return null;
+  // The watcher applies a park after the task settles: until then the node still holds the hand-off.
+  const applied = parked.completedAt !== null && parked.completedAt >= task.completedAt;
+  if (!applied || stepRecoveryKind(db, parked.id) !== 'continue') return null;
+  const recorded = recordedCacheExpirySchema.safeParse(task.result).data;
+  const latest = task.completedAt.getTime() + MAX_PROMPT_CACHE_TTL_MS;
+  return Math.min(recorded?.turnUsage.promptCacheExpiresAt ?? latest, latest);
+}
+
+/** Still paused on this step with no slot: none was ever held for it (newest admission settled), or
+ * a resume is waiting to take one back (`queued`). Null while the run still holds its slot. */
+export function slotlessPark(
+  db: Db,
+  flowRunId: string,
+  nodeRunId: string,
+): 'settled' | 'queued' | null {
+  const run = db
+    .select({ status: flowRuns.status })
+    .from(flowRuns)
+    .where(eq(flowRuns.id, flowRunId))
+    .get();
+  const node = db
+    .select({ status: nodeRuns.status })
+    .from(nodeRuns)
+    .where(and(eq(nodeRuns.id, nodeRunId), eq(nodeRuns.flowRunId, flowRunId)))
+    .get();
+  if (run?.status !== 'paused' || !node || !isParkedNodeStatus(node.status)) return null;
+  const latest = db
+    .select({ state: flowRunAdmissions.state })
+    .from(flowRunAdmissions)
+    .where(eq(flowRunAdmissions.flowRunId, flowRunId))
+    .orderBy(desc(flowRunAdmissions.ticket))
+    .get();
+  if (!latest) return null;
+  if (SETTLED_ADMISSION_STATES.has(latest.state)) return 'settled';
+  return latest.state === 'queued' || latest.state === 'claimed' ? 'queued' : null;
+}
+
+export type ParkedSlotRelease = { kind: 'released' } | { kind: 'warm'; coldAt: number };
+
+/** Frees a human wait's slot once its prompt cache is cold, reading the wait and live activity in
+ * this same transaction (no release window); while warm, a reply continues in place. */
+export function releaseParkedSlot(
+  db: Db,
+  ticket: number,
+  now = Date.now(),
+): ParkedSlotRelease | null {
+  const admission = admissionByTicket(db, ticket);
+  if (admission?.state !== 'active' || hasFlowResourceActivity(admission.flowRunId)) return null;
+  const coldAt = humanWaitColdAt(db, admission.flowRunId);
+  if (coldAt === null) return null;
+  if (coldAt > now) return { kind: 'warm', coldAt };
+  const released = transitionAdmission(db, ticket, ['active'], {
+    state: 'released',
+    settledAt: new Date(now),
+  });
+  return released ? { kind: 'released' } : null;
 }
 
 /** A `releasing` row at boot: its cleanup owner is dead and held only in-memory resources, so a paused

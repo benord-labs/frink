@@ -33,6 +33,7 @@ const completedOutput: NodeOutput = {
 beforeEach(() => {
   setFlowAdmissionLifecycleHooks({
     reconcile: vi.fn(async () => {}),
+    reconcileTicket: vi.fn(async () => {}),
     requestRelease: vi.fn(async () => {}),
   });
 });

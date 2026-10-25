@@ -42,6 +42,12 @@ export type RunRecovery = { nodeRunId: string; kind: RecoveryKind; confirmSideEf
  * already queued for the same step. */
 export type RecoverOutcome = 'resumed' | 'queued' | 'already-queued';
 
+/** A resume ticket's outcome: merged into a live resume, waiting behind the cap, or running. */
+export function recoverOutcomeFor({ state, created }: { state: string; created: boolean }) {
+  if (!created) return 'already-queued' satisfies RecoverOutcome;
+  return state === 'queued' ? 'queued' : ('resumed' satisfies RecoverOutcome);
+}
+
 /** One run's result in a bulk recovery. `needs-confirmation`: a started non-agent step that is
  * never re-run without its own confirm; `refused` carries why. */
 export type BulkRecoverOutcome = RecoverOutcome | 'refused' | 'needs-confirmation';

@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import {
   type FlowAdmissionIntentV1,
+  type FlowResumeTicketAction,
   isFlowAdmissionIntentV1,
 } from '../../../../../shared/lib/flow-admission';
 import type { FlowRunStatus } from '../../../../../shared/types/flow';
@@ -20,8 +21,13 @@ import { RESUME_CHAT_DELETED_MESSAGE, resumeChatDeleted } from './chat-gate';
 type Db = ReturnType<typeof getDatabase>;
 type FlowRunAdmission = typeof flowRunAdmissions.$inferSelect;
 type TerminalResumeStatus = Extract<FlowRunStatus, 'completed' | 'failed' | 'cancelled'>;
+/** A paused run re-enters too, once its wait for a person gave its slot up. */
+type ResumeFromStatus = TerminalResumeStatus | 'paused';
 
 const TERMINAL_RESUME_STATUSES = new Set<FlowRunStatus>(['completed', 'failed', 'cancelled']);
+export const PARKED_NODE_STATUSES = ['awaiting_input', 'blocked'];
+export const isParkedNodeStatus = (status: string): boolean =>
+  PARKED_NODE_STATUSES.includes(status);
 
 export type TerminalFlowResumeIntent = FlowAdmissionIntentV1 & {
   action: 'resume';
@@ -33,6 +39,8 @@ export type EnqueueTerminalFlowResumeInput = {
   nodeRunId: string;
   /** The recovery the user clicked, re-checked when the ticket is claimed. */
   kind?: RecoveryKind;
+  /** A paused run only: the Runs-panel action its claim replays in place. */
+  action?: FlowResumeTicketAction;
   /** Runs inside the enqueue transaction; false declines it (e.g. the run was cancelled meanwhile). */
   admit?: (db: Db) => boolean;
   requestedAt?: Date;
@@ -86,7 +94,7 @@ type AdmissionOps = {
 export type TerminalResumeValidation =
   | {
       ok: true;
-      previousStatus: TerminalResumeStatus;
+      previousStatus: ResumeFromStatus;
       /** Set for a batch member: the stage slot its promotion re-enters. */
       batchMember: BatchMemberResumeTarget | null;
     }
@@ -115,7 +123,8 @@ function isSameResumeTarget(row: FlowRunAdmission, intent: TerminalFlowResumeInt
     existing?.flow_run_id === intent.flow_run_id &&
     existing.node_run_id === intent.node_run_id &&
     // A ticket of the other kind is refused at claim, so it must not absorb this request.
-    existing.recovery_kind === intent.recovery_kind
+    existing.recovery_kind === intent.recovery_kind &&
+    existing.resume_action === intent.resume_action
   );
 }
 
@@ -127,6 +136,7 @@ function terminalResumeTarget(db: Db, flowRunId: string, nodeRunId: string) {
         batchId: flowRuns.batchId,
         flowVersionId: flowRuns.flowVersionId,
         nodeFlowRunId: nodeRuns.flowRunId,
+        nodeStatus: nodeRuns.status,
         blockType: nodeRuns.blockType,
         batchStageRunId: batchStageRuns.id,
         stageId: batchStageRuns.stageId,
@@ -158,7 +168,8 @@ function resumeEligibility(db: Db, flowRunId: string, nodeRunId: string): Termin
   if (!target || target.nodeFlowRunId !== flowRunId) {
     return { ok: false, error: `Node run ${nodeRunId} does not belong to Flow run ${flowRunId}` };
   }
-  if (!isTerminalResumeStatus(target.runStatus)) {
+  const previousStatus = resumeFromStatus(target);
+  if (!previousStatus) {
     return {
       ok: false,
       error: `Flow run ${flowRunId} is not eligible for terminal resume admission`,
@@ -178,7 +189,17 @@ function resumeEligibility(db: Db, flowRunId: string, nodeRunId: string): Termin
   const refused =
     target.batchId == null ? null : batchMemberResumeError(db, flowRunId, batchMember);
   if (refused) return { ok: false, error: refused };
-  return { ok: true, previousStatus: target.runStatus, batchMember };
+  return { ok: true, previousStatus, batchMember };
+}
+
+/** A terminal run, or a paused one parked on this step; a paused batch member keeps its slot while
+ * it waits, so it never queues to take one back. */
+function resumeFromStatus(
+  target: NonNullable<ReturnType<typeof terminalResumeTarget>>,
+): ResumeFromStatus | null {
+  if (isTerminalResumeStatus(target.runStatus)) return target.runStatus;
+  const parked = target.batchId == null && isParkedNodeStatus(target.nodeStatus);
+  return target.runStatus === 'paused' && parked ? 'paused' : null;
 }
 
 export function enqueueTerminalFlowResume(
@@ -192,6 +213,7 @@ export function enqueueTerminalFlowResume(
     flow_run_id: input.flowRunId,
     node_run_id: input.nodeRunId,
     recovery_kind: input.kind,
+    resume_action: input.action,
   };
   // Before coalescing too: a request joining a live ticket must still respect a Cancel since.
   if (input.admit && !input.admit(db)) {
@@ -226,13 +248,15 @@ export function validateTerminalResumeAdmission(
 }
 
 /** Run terminal→running, and a batch member back into its stage, in the caller's transaction (eligibility was
- * read in that same transaction). A later dispatch failure settles the stage via the batchId on run_failed. */
+ * read in that same transaction). A later dispatch failure settles the stage via the batchId on run_failed.
+ * A paused run stays paused: its step un-parks it in place once the slot is active. */
 export function promoteTerminalResumeRun(
   db: Db,
   row: FlowRunAdmission,
-  previousStatus: TerminalResumeStatus,
+  previousStatus: ResumeFromStatus,
   batchMember: BatchMemberResumeTarget | null,
 ): string | null {
+  if (previousStatus === 'paused') return null;
   const promoted = db
     .update(flowRuns)
     .set({ status: 'running' })

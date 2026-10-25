@@ -147,6 +147,7 @@ describe('resumeFlowRun — approve keeps the parked output (sc-3255)', () => {
     vi.mocked(advanceFlowRun).mockReset();
     setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
   });
@@ -257,6 +258,7 @@ describe('resumeFlowRun — admission lease', () => {
     (advanceFlowRun as Mock).mockReset();
     setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
   });
@@ -287,7 +289,8 @@ describe('resumeFlowRun — admission lease', () => {
     expect(advanceFlowRun).not.toHaveBeenCalled();
   });
 
-  it('rejects a legacy paused run before mutating it when no active slot exists', async () => {
+  // The queued action would replay past the snapshot the phone checked, so it is not queued.
+  it('refuses a snapshot-checked action on a paused run with no slot, queueing nothing', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
     const nodeRun = await createNodeRun(db, {
@@ -296,11 +299,40 @@ describe('resumeFlowRun — admission lease', () => {
       blockType: 'agent',
       status: 'awaiting_input',
     });
+    const snapshot: FlowResumeSnapshot = {
+      status: 'awaiting_input',
+      nodeOutput: null,
+      startedAt: null,
+      completedAt: null,
+      attemptIds: [nodeRun.id],
+    };
+    await expect(resumeFlowRun(flowRunId, 'skip', nodeRun.id, snapshot)).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('on your computer'),
+    });
+    expect(holder.requestTerminalFlowResume).not.toHaveBeenCalled();
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+  });
 
-    await expect(resumeFlowRun(flowRunId, 'approve', nodeRun.id)).rejects.toThrow(
-      /lost its place in the run queue/,
+  it('queues a paused run with no active slot to take one back, before mutating it', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const nodeRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    holder.requestTerminalFlowResume.mockResolvedValueOnce({
+      admission: { state: 'queued' },
+      created: true,
+    });
+
+    await expect(resumeFlowRun(flowRunId, 'approve', nodeRun.id)).resolves.toBe('queued');
+
+    expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith(
+      expect.objectContaining({ flowRunId, nodeRunId: nodeRun.id, action: 'approve' }),
     );
-
     expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
     expect(advanceFlowRun).not.toHaveBeenCalled();
   });
