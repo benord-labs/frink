@@ -137,8 +137,7 @@ export function useEditorHandlers({
       }
 
       // Otherwise, handle as file drop
-      const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-      onAddAttachments(files);
+      onAddAttachments(Array.from(e.dataTransfer.files));
     },
     [onAddAttachments, onAddTaskContext],
   );

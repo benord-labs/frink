@@ -96,7 +96,7 @@ function placeCaretAtEndUnlessInside(editableElement: Element): void {
  * For smaller text, pastes as plain text only (prevents HTML).
  *
  * @param e - The clipboard event
- * @param handleAddAttachments - Callback to handle image attachments
+ * @param handleAddAttachments - Callback to handle pasted files (images and others)
  * @param addPastedText - Optional callback to save large text as a file
  */
 export function handlePasteEvent(
@@ -105,7 +105,7 @@ export function handlePasteEvent(
   addPastedText?: AddPastedTextFn,
 ): void {
   const files = Array.from(e.clipboardData.items)
-    .filter((item) => item.type.startsWith('image/'))
+    .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter(Boolean) as File[];
 

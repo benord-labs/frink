@@ -50,7 +50,6 @@ import {
 import { AgentsFileMention, AgentsMentionsEditor, type FileMentionOption } from '../mentions';
 import { AgentContextIndicator, messageTokenDataEqual } from '../ui/agent-context-indicator';
 import { AgentDiffTextContextItem } from '../ui/agent-diff-text-context-item';
-import { AgentFileItem } from '../ui/agent-file-item';
 import { AgentImageItem } from '../ui/agent-image-item';
 import { AgentPastedTextItem } from '../ui/agent-pasted-text-item';
 import { AgentTextContextItem } from '../ui/agent-text-context-item';
@@ -117,7 +116,6 @@ const IDENTITY_COMPARED_PROPS = [
   'onCompact',
   'onAddAttachments',
   'onRemoveImage',
-  'onRemoveFile',
   'onRemoveTextContext',
   'onAddPastedText',
   'onRemovePastedText',
@@ -173,19 +171,6 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
   }
   for (let i = 0; i < prevProps.images.length; i++) {
     if (prevProps.images[i]?.id !== nextProps.images[i]?.id) {
-      return false;
-    }
-  }
-
-  // Compare files array - by length and ids
-  if (!prevProps.files || !nextProps.files) {
-    return prevProps.files === nextProps.files;
-  }
-  if (prevProps.files.length !== nextProps.files.length) {
-    return false;
-  }
-  for (let i = 0; i < prevProps.files.length; i++) {
-    if (prevProps.files[i]?.id !== nextProps.files[i]?.id) {
       return false;
     }
   }
@@ -247,10 +232,8 @@ export const ChatInputArea = memo(function ChatInputArea({
   isStreaming,
   isCompacting,
   images,
-  files,
   onAddAttachments,
   onRemoveImage,
-  onRemoveFile,
   isUploading,
   textContexts,
   onRemoveTextContext,
@@ -417,20 +400,22 @@ export const ChatInputArea = memo(function ChatInputArea({
     subChatIdRef: currentSubChatIdRef,
     draftTextRef: currentDraftTextRef,
     images,
-    files,
+    pastedTexts,
     textContexts,
     extraContextCount: diffTextContexts?.length ?? 0,
     onContentChange: handleContentChange,
   });
 
-  const handleEditorBlur = useCallback(async () => {
+  const handleEditorBlur = useCallback(() => {
     setIsFocused(false);
-    await saveDraftWithAttachments();
+    saveDraftWithAttachments();
   }, [saveDraftWithAttachments]);
 
   // Editor submit handler - handles Enter key with queue logic
   // If input is empty and queue has items, stop stream and send first from queue
   const handleEditorSubmit = useCallback(async () => {
+    // Enter must wait like the send button does, or a file still copying misses the message.
+    if (isUploading) return;
     // Prepend attached task message if present and get task reference
     const taskToLink = taskAttachment.prependTaskMessage();
 
@@ -438,7 +423,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     const hasText = inputValue.trim().length > 0;
     const hasAttachments =
       images.length > 0 ||
-      files.length > 0 ||
+      pastedTexts.length > 0 ||
       textContexts.length > 0 ||
       (diffTextContexts?.length ?? 0) > 0;
 
@@ -457,11 +442,12 @@ export const ChatInputArea = memo(function ChatInputArea({
       }
     }
   }, [
+    isUploading,
     taskAttachment,
     parentChatId,
     editorRef,
     images,
-    files,
+    pastedTexts,
     textContexts,
     diffTextContexts,
     queueLength,
@@ -648,7 +634,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                 taskAttachment.attachedTask ||
                 hasEditorContext ||
                 images.length > 0 ||
-                files.length > 0 ||
                 textContexts.length > 0 ||
                 (diffTextContexts?.length ?? 0) > 0 ||
                 pastedTexts.length > 0 ? (
@@ -661,7 +646,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                     )}
                     {(hasEditorContext ||
                       images.length > 0 ||
-                      files.length > 0 ||
                       textContexts.length > 0 ||
                       (diffTextContexts?.length ?? 0) > 0 ||
                       pastedTexts.length > 0) && (
@@ -692,15 +676,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                             />
                           ));
                         })()}
-                        {files.map((f) => (
-                          <AgentFileItem
-                            key={f.id}
-                            filename={f.filename}
-                            size={f.size}
-                            isLoading={f.isLoading}
-                            onRemove={() => onRemoveFile(f.id)}
-                          />
-                        ))}
                         {textContexts.map((tc) => (
                           <AgentTextContextItem
                             key={tc.id}
@@ -836,7 +811,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                   <ComposerAttachButton
                     label="Attach files"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={images.length >= 5 && files.length >= 10}
+                    disabled={false}
                   />
 
                   {/* Send/Stop button */}
@@ -848,7 +823,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       disabled={
                         (!hasContent &&
                           images.length === 0 &&
-                          files.length === 0 &&
+                          pastedTexts.length === 0 &&
                           textContexts.length === 0 &&
                           (diffTextContexts?.length ?? 0) === 0 &&
                           queueLength === 0) ||
@@ -857,7 +832,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                       hasContent={
                         hasContent ||
                         images.length > 0 ||
-                        files.length > 0 ||
+                        pastedTexts.length > 0 ||
                         textContexts.length > 0 ||
                         (diffTextContexts?.length ?? 0) > 0
                       }
@@ -866,7 +841,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         if (
                           !hasContent &&
                           images.length === 0 &&
-                          files.length === 0 &&
+                          pastedTexts.length === 0 &&
                           queueLength > 0 &&
                           onSendFromQueue &&
                           firstQueueItemId
