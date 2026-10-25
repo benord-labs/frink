@@ -13,6 +13,7 @@ import {
   parseStructuredStdout,
   resolveNodeCredentialEnvVars,
   runCustomNodeProcess,
+  summarizeStderr,
 } from './custom-nodes';
 import { getDatabase } from './db';
 import { getProjectById as getLocalProjectById } from './db/repos/projects';
@@ -34,29 +35,6 @@ type ParsedStepOutput = {
   outputs: Record<string, unknown>;
   error?: string;
 };
-
-// `KeyError: 'x'`, `Error [ERR_X]: …`, `fatal: …`, `error[E0425]: …`: the keyword followed by a colon.
-const CAUSE_LINE = /(error|exception|fatal)\b(\s*\[[^\]]*\])?:/i;
-const PYTHON_TRACEBACK_HEADER = 'Traceback (most recent call last):';
-const BARE_PYTHON_EXCEPTION = /^[\w.]*(Error|Exception)$/; // `raise ValueError` prints just `ValueError`
-
-/** One-line stderr summary, cause first: the last error-message line, else a traceback's last line or the first line. */
-function summarizeStderr(stderr: string): string {
-  const lines = stderr
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length <= 1) return lines[0] ?? '';
-
-  const [first] = lines;
-  const isTraceback = lines.includes(PYTHON_TRACEBACK_HEADER);
-  const isCause = (line: string) =>
-    CAUSE_LINE.test(line) || (isTraceback && BARE_PYTHON_EXCEPTION.test(line));
-  const cause =
-    [...lines].reverse().find(isCause) ?? (isTraceback ? lines[lines.length - 1] : first);
-  if (cause === first || first === PYTHON_TRACEBACK_HEADER) return cause;
-  return `${cause} — ${first}`;
-}
 
 /**
  * Derive a short error message for a step's `error` field.

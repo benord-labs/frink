@@ -1263,6 +1263,45 @@ describe('flow-step-executor', () => {
       expect(await errorFor(stderr)).toBe('Boom: kaput');
     });
 
+    it('ignores traceback source lines that mention an error', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "job.py", line 9, in check',
+        '    if self.error:',
+        'Boom: kaput',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('Boom: kaput');
+    });
+
+    it('names the exception of a traceback indented as a whole', async () => {
+      const stderr =
+        '  Traceback (most recent call last):\n    File "x.py", line 1\n  ValueError\n';
+      expect(await errorFor(stderr)).toBe('ValueError');
+    });
+
+    it('names the cause of an exception group nested inside a traceback', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  + Exception Group Traceback (most recent call last):',
+        '  | ExceptionGroup: g (1 sub-exception)',
+        '    | ValueError: x',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('| ValueError: x');
+    });
+
+    it('keeps the first line when a traceback is cut off before its exception', async () => {
+      const stderr = 'Loading...\nTraceback (most recent call last):\n  File "x.py", line 1\n';
+      expect(await errorFor(stderr)).toBe('Loading...');
+      const withSource =
+        'Traceback (most recent call last):\n  File "job.py", line 9\n    if self.error:\n';
+      expect(await errorFor(withSource)).toBe('Traceback (most recent call last):');
+    });
+
+    it('ignores a stack frame whose path contains `error:`', async () => {
+      const stderr = 'Error: boom\n    at run (/app/error:handler.js:3:1)\n';
+      expect(await errorFor(stderr)).toBe('Error: boom');
+    });
+
     it('reports a leading blank line as the line after it', async () => {
       expect(await errorFor('\nfatal: not a git repository\n', 128)).toBe(
         'fatal: not a git repository',
