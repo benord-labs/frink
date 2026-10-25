@@ -6,9 +6,6 @@
  * git/worktree.ts (removeWorktree / pruneWorktrees / listWorktrees).
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import * as fs from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
 import { eq, isNotNull } from 'drizzle-orm';
 import log from 'electron-log';
 import type { getDatabase } from '../../../db';
@@ -40,7 +37,7 @@ export type ChatWorktreeRef = {
 /**
  * Remove the worktree a chat owns, unless a forked sibling still shares it. Safe to call from any
  * chat-removal path. The sibling check is tri-state: we remove ONLY on a confirmed zero-siblings
- * result — if the query throws (DB busy), we treat it as indeterminate and SKIP (the boot sweep
+ * result — if the query throws (DB busy), we treat it as indeterminate and SKIP (boot recovery
  * reclaims later), rather than assuming "no siblings" and force-deleting a live fork's worktree.
  *
  * Returns true only when the worktree was actually removed (callers that keep the chat row — e.g.
@@ -55,7 +52,7 @@ export async function tearDownChatWorktree(db: Db, chat: ChatWorktreeRef): Promi
     hasSiblings = await hasOtherChatsSharingWorktree(db, chatId, worktreePath);
   } catch (error) {
     log.warn(
-      '[tearDownChatWorktree] sibling check failed — skipping removal, boot sweep will reclaim',
+      '[tearDownChatWorktree] sibling check failed — skipping removal, boot recovery will reclaim',
       {
         chatId,
         worktreePath,
@@ -75,16 +72,19 @@ export async function tearDownChatWorktree(db: Db, chat: ChatWorktreeRef): Promi
 
   const res = await removeWorktree(project.path, worktreePath, { branch });
   if (!res.success) {
-    log.warn('[tearDownChatWorktree] removeWorktree failed — boot sweep will reclaim', {
-      worktreePath,
-      error: res.error,
-    });
+    log.warn(
+      '[tearDownChatWorktree] removeWorktree failed — left on disk; boot recovery reclaims it only while git lists it',
+      {
+        worktreePath,
+        error: res.error,
+      },
+    );
   }
   return res.success;
 }
 
 /** After a project's cascade: kill its chats' terminals and remove each distinct worktree no
- *  surviving chat still holds. Background; the boot sweep backstops any failures. */
+ *  surviving chat still holds. Background; boot recovery backstops failures git still lists. */
 export async function removeProjectWorktrees(
   db: Db,
   mainRepoPath: string,
@@ -108,117 +108,26 @@ async function isWorktreeStillHeld(db: Db, chatId: string, worktreePath: string)
   try {
     return await hasOtherChatsSharingWorktree(db, chatId, worktreePath);
   } catch (error) {
-    log.warn(
-      '[removeProjectWorktrees] sibling check failed — skipping removal, boot sweep will reclaim',
-      {
-        worktreePath,
-        error,
-      },
-    );
+    log.warn('[worktree teardown] sibling check failed — skipping removal', {
+      worktreePath,
+      error,
+    });
     return true;
   }
 }
 
-/**
- * Does `dir` still have a working git-worktree linkage? A functional worktree always has a `.git`
- * file pointing at a live admin dir (`gitdir: …`); a nested repo has a `.git` directory. A broken
- * stub git has forgotten (e.g. `territorial-solstice` — only a leftover `.husky/`, no `.git`) has
- * neither, or a `.git` file whose gitdir target is gone. This is the load-bearing guard for the
- * filesystem sweep below: it spares anything git can still operate on (so we never destroy a real
- * worktree of an unrelated repo that happens to live under the base) and condemns only dead stubs.
- */
-const WORKTREE_GITDIR_RE = /^gitdir:\s*(.+)$/m;
-
-export function hasLiveGitLinkage(dir: string): boolean {
-  const gitPath = join(dir, '.git');
-  let stat: ReturnType<typeof statSync>;
-  try {
-    stat = statSync(gitPath);
-  } catch {
-    return false; // no `.git` entry → dead stub
-  }
-  if (stat.isDirectory()) return true; // embedded/nested repo → keep
-  const gitdir = readFileSync(gitPath, 'utf-8').match(WORKTREE_GITDIR_RE)?.[1]?.trim();
-  if (!gitdir) return false;
-  return existsSync(isAbsolute(gitdir) ? gitdir : join(dir, gitdir));
-}
-
-/**
- * Reclaim one candidate `<slug>/<folder>` dir iff it's a git-forgotten orphan. Removed only when no
- * chat references it, git no longer lists it, and it has no live `.git` linkage. We skip the
- * uncommitted/unpushed checks the git loop runs — a stub with no live linkage cannot hold
- * recoverable git work, and `hasLiveGitLinkage` already spares anything that could. A locked/
- * unreadable orphan (EBUSY/EACCES — the class removeWorktree retries) is left for the next boot,
- * never aborting the sweep. Returns true only when the dir was removed.
- */
-async function reclaimIfOrphan(
-  worktreeDir: string,
-  knownGitPaths: Set<string>,
-  referenced: Set<string>,
-): Promise<boolean> {
-  if (referenced.has(worktreeDir)) return false; // a chat (active or archived) owns it
-  if (knownGitPaths.has(worktreeDir)) return false; // git still lists it
-  if (hasLiveGitLinkage(worktreeDir)) return false; // functional worktree → never destroy
-  try {
-    await fs.rm(worktreeDir, { recursive: true, force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Reclaim orphans within one project slug dir, then rmdir it if it ends up empty (ENOTEMPTY → in use). */
-async function sweepSlugDir(
-  slugDir: string,
-  knownGitPaths: Set<string>,
-  referenced: Set<string>,
-): Promise<number> {
-  const folders = await fs.readdir(slugDir, { withFileTypes: true }).catch(() => []);
-  let orphaned = 0;
-  for (const folder of folders) {
-    if (!folder.isDirectory()) continue;
-    if (await reclaimIfOrphan(join(slugDir, folder.name), knownGitPaths, referenced)) orphaned += 1;
-  }
-  await fs.rmdir(slugDir).catch(() => {});
-  return orphaned;
-}
-
-/**
- * Reclaim leftover worktree directories under the managed base that git has forgotten entirely —
- * the failure class `git worktree remove` reports as `… is not a working tree` and `git worktree
- * prune` cannot delete (prune only clears admin entries, never the on-disk dir). Scans the canonical
- * `<base>/<slug>/<folder>` shape: `config.json` is a depth-1 file, so descending only into depth-2
- * dirs skips it inherently.
- */
-export async function sweepOrphanWorktreeDirs(
-  baseDir: string,
-  knownGitPaths: Set<string>,
-  referenced: Set<string>,
-): Promise<number> {
-  if (!baseDir) return 0; // never scan an unresolved root
-  const slugs = await fs.readdir(baseDir, { withFileTypes: true }).catch(() => []);
-  let orphaned = 0;
-  for (const slug of slugs) {
-    if (slug.isDirectory()) {
-      orphaned += await sweepSlugDir(join(baseDir, slug.name), knownGitPaths, referenced);
-    }
-  }
-  return orphaned;
-}
-
-/** Boot backstop: prune, remove unreferenced Frink-marked clean worktrees, sweep git-forgotten dirs.
+/** Boot backstop: prune, then remove unreferenced Frink-marked clean worktrees git still lists.
  * Keep-set, dirty/ownership guards and scope: docs/decisions/worktree-orphan-reclamation.md. */
 export async function recoverOrphanedWorktrees(
   db: Db,
-  worktreeBaseDir: string,
-): Promise<{ pruned: number; removed: number; skipped: number; orphaned: number }> {
+): Promise<{ pruned: number; removed: number; skipped: number }> {
   // QA launches Frink with an isolated userData/DB, but Git's worktree registry is shared by every
   // app instance that opens the same repository. A QA boot therefore cannot distinguish its own
   // unreferenced worktrees from a clean worktree that the owner's live app is still using (stashing
   // makes that exact state possible). Keep the opt-out at the destructive boundary, not only in the
   // startup caller, so a future recovery entry point cannot bypass it accidentally.
   if (process.env.FRINK_DISABLE_WORKTREE_RECOVERY === '1') {
-    return { pruned: 0, removed: 0, skipped: 0, orphaned: 0 };
+    return { pruned: 0, removed: 0, skipped: 0 };
   }
 
   // Archived rows count too: archive is undoable and teardown defers to archived holders (sc-3292).
@@ -235,7 +144,6 @@ export async function recoverOrphanedWorktrees(
   let pruned = 0;
   let removed = 0;
   let skipped = 0;
-  const knownGitPaths = new Set<string>();
 
   for (const project of allProjects) {
     if (!project.path) continue;
@@ -243,7 +151,6 @@ export async function recoverOrphanedWorktrees(
     const before = await listWorktrees(project.path).catch(() => []);
     if (before.length === 0) continue; // not a git repo / unreadable — skip
 
-    for (const w of before) knownGitPaths.add(w.path); // keep-set for the fs sweep
     pruned += before.filter((w) => w.prunable).length;
     await pruneWorktrees(project.path);
 
@@ -283,12 +190,15 @@ export async function recoverOrphanedWorktrees(
         skipped += 1;
         continue;
       }
+      // The referenced set is a snapshot: a chat may have taken this worktree since it was read.
+      if (await isWorktreeStillHeld(db, '', wt.path)) {
+        skipped += 1;
+        continue;
+      }
       const res = await removeWorktree(project.path, wt.path, { branch: wt.branch });
       if (res.success) removed += 1;
     }
   }
 
-  const orphaned = await sweepOrphanWorktreeDirs(worktreeBaseDir, knownGitPaths, referenced);
-
-  return { pruned, removed, skipped, orphaned };
+  return { pruned, removed, skipped };
 }
