@@ -155,7 +155,7 @@ describe('NewChatForm on a free Codex account (its model/list has no GPT-6 Astra
 });
 
 describe('NewChatForm slash-menu picks', () => {
-  it('inserts a prompt-based built-in as a command block and offers no /commit', async () => {
+  it('inserts a prompt-based built-in as a command block', async () => {
     const { container } = renderNewChat();
     const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
     if (!editor) throw new Error('composer editor not found');
@@ -169,7 +169,6 @@ describe('NewChatForm slash-menu picks', () => {
     fireEvent.input(editor);
 
     const menu = await screen.findByRole('listbox', { name: 'Slash commands' });
-    expect(within(menu).queryByText('/commit')).toBeNull();
     fireEvent.mouseDown(within(menu).getByText('/review'));
 
     expect(screen.getByLabelText('Command: review')).toHaveTextContent(

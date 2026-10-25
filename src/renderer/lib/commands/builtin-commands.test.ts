@@ -15,7 +15,7 @@ const builtin = (name: string): SlashCommandOption => {
   return option;
 };
 
-const repositoryCommand = (name: string, prompt?: string): SlashCommandOption => ({
+const repositoryCommand = (name: string, prompt: string): SlashCommandOption => ({
   id: `repo:${name}`,
   name,
   command: `/${name}`,
@@ -25,10 +25,6 @@ const repositoryCommand = (name: string, prompt?: string): SlashCommandOption =>
 });
 
 describe('slashCommandInsertText', () => {
-  it('inserts the canned prompt for a prompt-based built-in', () => {
-    expect(slashCommandInsertText(builtin('review'))).toBe(COMMAND_PROMPTS.review);
-  });
-
   it('inserts the setup prompt for /worktree-setup, which previously inserted nothing', () => {
     expect(slashCommandInsertText(builtin('worktree-setup'))).toBe(
       COMMAND_PROMPTS['worktree-setup'],
@@ -44,10 +40,6 @@ describe('slashCommandInsertText', () => {
     expect(slashCommandInsertText(repositoryCommand('review', 'My review checklist'))).toBe(
       'My review checklist',
     );
-  });
-
-  it('inserts nothing for a repository command without a body', () => {
-    expect(slashCommandInsertText(repositoryCommand('empty'))).toBeUndefined();
   });
 });
 

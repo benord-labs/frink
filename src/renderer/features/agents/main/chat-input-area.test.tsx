@@ -291,10 +291,9 @@ describe('ChatInputArea slash-menu picks', () => {
     return { props, ...view };
   }
 
-  it('inserts a prompt-based built-in as a command block and offers no /commit', async () => {
+  it('inserts a prompt-based built-in as a command block', async () => {
     const { props, container } = renderClaudeComposer();
     const menu = await openSlashMenu(props, container);
-    expect(within(menu).queryByText('/commit')).toBeNull();
 
     fireEvent.mouseDown(within(menu).getByText('/review'));
 

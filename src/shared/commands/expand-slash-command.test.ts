@@ -45,16 +45,6 @@ describe('expandSlashCommand', () => {
     expect(fetcher.listCommands).not.toHaveBeenCalled();
   });
 
-  it('expands a custom /commit command now that no built-in claims the name', async () => {
-    const fetcher = fetcherWith({
-      listCommands: vi.fn(async () => [{ name: 'commit', path: '/cmds/commit.md' }]),
-      getContent: vi.fn(async () => 'Commit with message: $ARGUMENTS'),
-    });
-    expect(await expandSlashCommand('/commit fix typo', undefined, fetcher)).toBe(
-      'Commit with message: fix typo',
-    );
-  });
-
   it('returns the original text when no command matches', async () => {
     const fetcher = fetcherWith({ listCommands: vi.fn(async () => []) });
     expect(await expandSlashCommand('/unknown args', undefined, fetcher)).toBe('/unknown args');

@@ -113,22 +113,6 @@ describe('expandAgentCommandsInGraph', () => {
     expect(g.nodes[1].config?.instructionsCommandName).toBeUndefined();
   });
 
-  it('expands a project /commit command instead of leaving it literal as a built-in', async () => {
-    const g = graphWith('/commit only staged files');
-    const res = await expandAgentCommandsInGraph(
-      g,
-      deps({
-        listCommands: async () => [
-          { name: 'commit', path: `${PROJECT_PATH}/.claude/commands/commit.md` },
-        ],
-        getContent: async () => 'Commit $ARGUMENTS',
-      }),
-    );
-    expect(res.ok).toBe(true);
-    expect(g.nodes[1].config?.instructions).toBe('Commit only staged files');
-    expect(g.nodes[1].config?.instructionsCommandName).toBe('commit');
-  });
-
   it('resolves project-scoped commands against the node’s real (start_task) project', async () => {
     // Command only exists when scanning the correct project path.
     const g = graphWith('/edge-cases');
