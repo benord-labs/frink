@@ -107,9 +107,7 @@ describe('resolveNodeOrFlowProjectId', () => {
     ).toBe('{{trigger.project}}');
   });
 
-  it('rejects a projectId long enough for rendering to clamp it', () => {
-    // renderTemplate caps templates at 10k; without an input bound, an over-long value passes the
-    // unresolved-path check on its full text and is then truncated into a different routing key.
+  it('rejects an over-long projectId as an authoring error instead of routing on it', () => {
     const overlong = 'a'.repeat(10_000) + '{{trigger.project}}';
     expect(
       resolveNodeOrFlowProjectId({ projectId: overlong }, undefined, {
