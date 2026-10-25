@@ -26,7 +26,7 @@ import { buildSafeEnv } from './terminal/env';
 
 // Output minimization: parse stdout here and carry only structured data onward.
 // parseStructuredStdout and its constants live in custom-nodes/parse-node-output.ts.
-const MAX_ERROR_MESSAGE_LENGTH = 500; // derived error field (stderr first line + optional spawn detail)
+const MAX_ERROR_MESSAGE_LENGTH = 500; // derived error field (stderr cause line + optional spawn detail)
 const MAX_OUTPUTS_SERIALIZED_BYTES = 1_048_576; // 1MB cap on total outputs object
 
 type ParsedStepOutput = {
@@ -35,9 +35,32 @@ type ParsedStepOutput = {
   error?: string;
 };
 
+// `KeyError: 'x'`, `Error [ERR_X]: …`, `fatal: …`, `error[E0425]: …`: the keyword followed by a colon.
+const CAUSE_LINE = /(error|exception|fatal)\b(\s*\[[^\]]*\])?:/i;
+const PYTHON_TRACEBACK_HEADER = 'Traceback (most recent call last):';
+const BARE_PYTHON_EXCEPTION = /^[\w.]*(Error|Exception)$/; // `raise ValueError` prints just `ValueError`
+
+/** One-line stderr summary, cause first: the last error-message line, else a traceback's last line or the first line. */
+function summarizeStderr(stderr: string): string {
+  const lines = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length <= 1) return lines[0] ?? '';
+
+  const [first] = lines;
+  const isTraceback = lines.includes(PYTHON_TRACEBACK_HEADER);
+  const isCause = (line: string) =>
+    CAUSE_LINE.test(line) || (isTraceback && BARE_PYTHON_EXCEPTION.test(line));
+  const cause =
+    [...lines].reverse().find(isCause) ?? (isTraceback ? lines[lines.length - 1] : first);
+  if (cause === first || first === PYTHON_TRACEBACK_HEADER) return cause;
+  return `${cause} — ${first}`;
+}
+
 /**
  * Derive a short error message for a step's `error` field.
- * Prefer the first line of stderr; when empty or when spawn/exec detail adds information,
+ * Prefer the stderr summary; when empty or when spawn/exec detail adds information,
  * include `spawnMessage` (from runShellCommand). Capped at MAX_ERROR_MESSAGE_LENGTH.
  */
 function deriveErrorMessage(
@@ -46,13 +69,13 @@ function deriveErrorMessage(
   spawnMessage?: string,
 ): string {
   const sm = spawnMessage?.trim() ?? '';
-  const firstLine = stderr.split('\n')[0]?.trim() ?? '';
+  const summary = summarizeStderr(stderr);
 
   const parts: string[] = [];
-  if (firstLine) {
-    parts.push(firstLine);
+  if (summary) {
+    parts.push(summary);
   }
-  if (sm && (!firstLine || (sm !== firstLine && !firstLine.includes(sm)))) {
+  if (sm && (!summary || (sm !== summary && !summary.includes(sm)))) {
     parts.push(sm);
   }
 
