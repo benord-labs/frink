@@ -3,7 +3,7 @@ import { buildOutputSchemasSection } from './schema-tables';
 export function getBlocksActionsGuideline(): string {
   return `# Action contracts
 
-Config below is inside \`node.config\`; \`?\` means optional. Output tables are generated from the runtime schema. Outputs replace predecessor data; put Start Task before producing data another block needs.
+Config below is inside \`node.config\`; \`?\` means optional. Outputs replace predecessor data; put Start Task before producing data another block needs.
 
 ## start_task
 
@@ -27,8 +27,8 @@ Inherits the upstream Start Task; another Agent follows up in the same task.
   mode?: "agent"|"plan"|"debug", autoApprove?: boolean, agentInstructions?: string }
 \`\`\`
 
-\`model\`/\`mode\` override inherited settings for this node only. Plan mode pauses for approval unless \`autoApprove: true\`; debug is local-only and pauses for human reproduction. \`agentInstructions\` supplies a templated role above the task instructions; the briefing arrives separately in the session system prompt. \`instructions\` and \`agentInstructions\` are each limited to 50,000 characters (trimmed): a patch over the limit is rejected, and one at 40,000 or more returns a warning.
-A leading \`/command\` in instructions expands at save time. Discover names with \`frink_flows_list_catalog({kind:"commands"})\`; unknown commands reject the patch, built-ins such as \`/plan\` stay literal. Expansion sets \`instructionsCommandName\` automatically; do not set it manually.
+\`model\`/\`mode\` override inherited settings for this node only. Plan mode pauses for approval unless \`autoApprove: true\`; debug is local-only and pauses for human reproduction. \`agentInstructions\` supplies a templated role above the task instructions; the briefing arrives separately in the session system prompt. \`instructions\` and \`agentInstructions\` each allow 50,000 characters (trimmed): more is rejected, 40,000+ warns.
+A leading \`/command\` in instructions expands at save time. Discover names with \`frink_flows_list_catalog({kind:"commands"})\`; unknown commands reject the patch, built-ins such as \`/plan\` stay literal. Expansion sets \`instructionsCommandName\`; never set it yourself.
 
 ${buildOutputSchemasSection('agent')}
 
@@ -74,7 +74,7 @@ ${buildOutputSchemasSection('chat_reply')}
 
 ## Connected integration steps
 
-Discover rather than guess: \`frink_flows_list_catalog({kind:"nodes"})\` returns installed steps/config; add \`pluginId\` for live tools. If it returns a vocabulary, add \`search\`; exact tool-name search returns its argument schema. Unknown step names may save then fail at run time. These steps are machine-owned; do not register them yourself.
+\`frink_flows_list_catalog({kind:"nodes"})\` returns installed steps/config; add \`pluginId\` for live tools. If it returns a vocabulary, add \`search\`; exact tool-name search returns its argument schema. Unknown step names may save then fail at run time. These steps are machine-owned; do not register them yourself.
 Use the returned step name as \`blockType\`, inputs as \`config\`, and optional \`connectionId\` to pin an account. Prefer a named step; a \`callTool: true\` / \`<integration>_call_tool\` step takes \`{tool, arguments?}\` for that server's actual tools. Outputs are \`text\`, \`result\`, and optional \`structured\`; other steps declare their own. Refused calls fail the step. Vendor \`readOnly\`/\`destructive\` labels are descriptions, not permissions.
 `;
 }
