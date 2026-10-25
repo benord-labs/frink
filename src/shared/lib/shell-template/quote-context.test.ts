@@ -45,14 +45,23 @@ describe('run_command quoted template warnings', () => {
   });
 
   it('skips Bash ANSI-C strings without leaking their quote state', () => {
-    expect(warningsFor(String.raw`echo $'a\'b' {{trigger.summary}}`)).toEqual([]);
+    expect(warningsFor(String.raw`echo $'a\nb' {{trigger.summary}}`)).toEqual([]);
+    // bash continues the string past \' but dash ends it there, so what follows is uncertain.
+    expect(warningsFor(String.raw`echo $'a\'b' {{trigger.summary}}`)[0]?.shellQuoteContext).toBe(
+      'uncertain',
+    );
     expect(warningsFor(`echo "price $'5" '{{trigger.summary}}'`)[0]?.shellQuoteContext).toBe(
       'single',
     );
   });
 
-  it('ignores comments and resumes analysis on the next line', () => {
-    expect(warningsFor('# "{{trigger.summary}}"\necho {{trigger.summary}}')).toEqual([]);
+  it('warns that a placeholder in a comment stays literal, and resumes on the next line', () => {
+    expect(warningsFor('# "{{trigger.summary}}"\necho {{trigger.summary}}')).toEqual([
+      expect.objectContaining({
+        placeholder: '{{trigger.summary}}',
+        shellQuoteContext: 'uncertain',
+      }),
+    ]);
     expect(warningsFor('echo "value#{{trigger.summary}}"')).toHaveLength(1);
   });
 
@@ -133,9 +142,42 @@ describe('shellInterpolationContextAt', () => {
 
 describe('shellInterpolationContextAt — masked ranges and boundaries', () => {
   it.each([
-    ['a # right after a masked backtick range', "`x`#'`y` {{a}}'", 'bare'],
-    ['a # right after a masked ANSI-C string', "$'x'#'$'y' {{a}}'", 'bare'],
-    ['a # right after two abutting masked ranges', "````#$'`` {{a}}", 'bare'],
+    ['a # continuing the word after a backtick substitution', "`x`#'`y` {{a}}'", 'single'],
+    ['a # continuing the word after an ANSI-C string', "$'x'#'$'y' {{a}}'", 'single'],
+    ['a # continuing the word after a $( ) substitution', "echo $(echo a)#'{{a}}'", 'single'],
+    ["a # after two abutting backtick ranges and an unclosed $'", "````#$'`` {{a}}", 'uncertain'],
+    ['a placeholder inside a comment', '# {{a}}', 'uncertain'],
+    ['a comment inside $( ) that holds a )', 'x="$(\n# 1) step\necho {{a}}\n)"', 'uncertain'],
+    [
+      'a backtick in a comment beside a quoted later line',
+      "# x `\necho 'q `; echo {{a}}'",
+      'single',
+    ],
+    ['a heredoc marker inside a comment', '# use <<EOF\necho {{a}}', 'bare'],
+    ['a placeholder after an unpaired backtick', 'echo ` {{a}}', 'uncertain'],
+    ['a placeholder escaped by a backslash', 'echo \\{{a}}', 'uncertain'],
+    ['a placeholder escaped by a backslash inside "', 'echo "\\{{a}}"', 'uncertain'],
+    ["a backslash before a placeholder inside '", "echo '\\{{a}}'", 'single'],
+    ['a placeholder right after $', 'echo ${{a}}', 'uncertain'],
+    ['a placeholder joined to $ by a line continuation', '\\`$\\\n{{a}}', 'uncertain'],
+    ['a # joined to a $( ) word by a line continuation', "echo $(x)\\\n#'{{a}}'", 'single'],
+    [
+      'a quoted placeholder in a continued command',
+      "curl -X POST \\\n  -d '{{a}}' \\\n  https://x",
+      'single',
+    ],
+    ['a # after a comment that ends in a backslash', '#`\\\n#{{a}}', 'uncertain'],
+    ["a $' string that opens inside a backtick substitution", "`$';<<x(`; $'`# {{a}}", 'uncertain'],
+    ['a placeholder in a comment after a leading ( ) group', '(echo)#{{a}}', 'uncertain'],
+    ['a # after an escaped ;', "echo x\\;#'{{a}}'", 'single'],
+    ['a placeholder after an escaped backtick', "echo x ;\\`echo '`( {{a}}", 'uncertain'],
+    ['an ANSI-C string after a # that continues a $( ) word', "$()#$'{{a}}'", 'uncertain'],
+    ['a quoted placeholder after an escaped $(', "echo \\$(x) '{{a}}'", 'single'],
+    [
+      'a quoted placeholder after an escaped backtick inside backticks',
+      "echo `a\\`b` '{{a}}'",
+      'single',
+    ],
     ['an escaped $( outside quotes', '\\$(x) {{a}}', 'bare'],
     ['an escaped $( inside double quotes', '"\\$(x) {{a}}"', 'double'],
     ['a placeholder ending the command inside an unclosed "', '"{{a}}', 'uncertain'],
