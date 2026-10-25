@@ -377,7 +377,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
       });
       burst = {
         startIndex: chunks.length,
-        transform: createTransformer(),
+        transform: createTransformer(() => session.stopHook?.defersGoalCheck === true),
         deniedToolIdsWithMessages: wakeTurn.deniedToolIdsWithMessages,
       };
       session.currentTurn = wakeTurn;

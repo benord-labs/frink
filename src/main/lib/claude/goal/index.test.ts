@@ -103,3 +103,25 @@ describe('createGoalMapper', () => {
     expect(run([frame])).toEqual([]);
   });
 });
+
+describe('createGoalMapper stops', () => {
+  const result: GoalFrame = { type: 'result' };
+
+  it("marks every result with whether that stop's background work deferred the check", () => {
+    let defers = true;
+    const map = createGoalMapper(() => defers);
+    const first = map(result);
+    defers = false;
+    // A harness result (task notification) and Frink's own result can share one transformer.
+    const second = map(result);
+    expect(first).toMatchObject([
+      { type: 'data-goal', data: { state: 'stopped', deferred: true } },
+    ]);
+    expect(second).toMatchObject([{ data: { state: 'stopped', deferred: false } }]);
+    expect('id' in first[0] && first[0].id).not.toBe('id' in second[0] && second[0].id);
+  });
+
+  it('marks a result as evaluated when no Stop hook reported background work', () => {
+    expect(run([result])).toMatchObject([{ data: { state: 'stopped', deferred: false } }]);
+  });
+});

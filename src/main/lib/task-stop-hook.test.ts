@@ -1,3 +1,4 @@
+import type { BackgroundTaskSummary } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { createTaskStopHook, forgetPendingTask } from './task-stop-hook';
 
@@ -616,5 +617,54 @@ describe('forgetPendingTask', () => {
 
   it('reads as nothing pending once the last item is gone, like a Stop would', () => {
     expect(forgetPendingTask({ backgroundTasks: [shell('a')], sessionCrons: [] }, 'a')).toBeNull();
+  });
+});
+
+describe('createTaskStopHook defersGoalCheck', () => {
+  const task = (type: string): BackgroundTaskSummary => ({
+    id: `${type}-1`,
+    type,
+    status: 'running',
+    description: '',
+  });
+  const defersFor = async (tasks: BackgroundTaskSummary[]) => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: tasks }));
+    return hook.defersGoalCheck;
+  };
+
+  // Labels from Claude Code 2.1.289's Stop-input table. Idle teammates and long-running cloud
+  // sessions do not defer in the CLI, but the Stop input cannot tell them apart, so they count.
+  it.each(['shell', 'subagent', 'workflow', 'teammate', 'cloud session'])(
+    'defers the goal check for a running %s',
+    async (type) => expect(await defersFor([task(type)])).toBe(true),
+  );
+
+  it.each(['monitor', 'MCP task', 'dream'])('evaluates the goal beside a %s', async (type) =>
+    expect(await defersFor([task(type)])).toBe(false),
+  );
+
+  it('evaluates the goal when only a scheduled wake is pending', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [], session_crons: [{ id: 'c1' }] }));
+    expect(hook.defersGoalCheck).toBe(false);
+  });
+
+  it('counts a finished follower the wait drops, since the CLI still runs it', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    const tasksDir = `/tmp/claude-501/-Users-x-repo/${SESSION}/tasks`;
+    const follower = { ...task('shell'), command: `tail -f ${tasksDir}/ship9.output` };
+    await hook(stopInput({ background_tasks: [follower] }));
+    expect(hook.lastPendingWork).toBeNull();
+    expect(hook.defersGoalCheck).toBe(true);
+  });
+
+  it('records the stop before its first await, and forgets it on reset', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    const stopping = hook(stopInput({ background_tasks: [task('workflow')] }));
+    expect(hook.defersGoalCheck).toBe(true);
+    await stopping;
+    hook.reset();
+    expect(hook.defersGoalCheck).toBe(false);
   });
 });

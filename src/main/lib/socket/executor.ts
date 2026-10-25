@@ -1163,7 +1163,7 @@ export async function handleRemoteExecute(
       claimed = false,
     ): Promise<void> => {
       // Create transformer for SDK messages -> UI chunks
-      const transform = createTransformer();
+      const transform = createTransformer(() => session.stopHook?.defersGoalCheck === true);
 
       // Stream messages as they come
       const toolNameByCallId = new Map<string, string>();
