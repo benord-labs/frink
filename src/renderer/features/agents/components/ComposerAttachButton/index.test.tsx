@@ -10,9 +10,10 @@ afterEach(cleanup);
 describe('ComposerAttachButton', () => {
   it('is a named icon button that opens the picker', () => {
     const onClick = vi.fn();
-    render(<ComposerAttachButton label="Attach files" onClick={onClick} disabled={false} />);
+    render(<ComposerAttachButton label="Attach files" onClick={onClick} />);
     const button = screen.getByRole('button', { name: 'Attach files' });
     expect(button).toHaveAttribute('title', 'Attach files');
+    expect(button).toBeEnabled();
     fireEvent.click(button);
     expect(onClick).toHaveBeenCalledOnce();
   });
