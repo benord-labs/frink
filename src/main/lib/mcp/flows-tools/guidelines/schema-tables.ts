@@ -7,6 +7,7 @@
 
 import { TRIGGER_FIELD_ALIASES } from '../../../../../shared/integrations/trigger-field-aliases';
 import {
+  describeTriggerField,
   LOOP_CONTEXT_SCHEMA,
   OUTPUT_SCHEMAS,
   TRIGGER_SCHEMAS,
@@ -50,7 +51,7 @@ export function buildTriggerSchemasSection(triggerType: string): string {
     '| trigger field | type | description |',
     '|---|---|---|',
     ...(TRIGGER_SCHEMAS[triggerType] ?? []).map(
-      (f) => `| \`${f.key}\` | ${f.type} | ${f.description} |`,
+      (f) => `| \`${f.key}\` | ${f.type} | ${describeTriggerField(f)} |`,
     ),
     '',
   ].join('\n');

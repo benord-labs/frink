@@ -1,6 +1,6 @@
 {
-  "generatedAt": "content-6570882755c5",
-  "version": "content-6570882755c5",
+  "generatedAt": "content-f2c7c3d3b963",
+  "version": "content-f2c7c3d3b963",
   "files": {
     "SKILL.md": {
       "sha256": "862a86c23fd6e128e3bcfef81f8b602bbb9ebed65d10640162efecbd5f83153b",
@@ -11,16 +11,16 @@
       "bytes": 6150
     },
     "references/blocks-actions.md": {
-      "sha256": "10cc5b7a5411ce3c4430017a53242b69e73df986afb88470a8d355b17087f3a2",
-      "bytes": 8295
+      "sha256": "28e03d861d16a96ad310f1d37619e9cc26b50bbc1ed10904e09160a8e2f3a88a",
+      "bytes": 8387
     },
     "references/blocks-logic.md": {
       "sha256": "66b00338d70d72e2ac60558ba3dd2bdeb586e011eacd0cabfa7798e007ccff33",
       "bytes": 6757
     },
     "references/blocks-triggers.md": {
-      "sha256": "8c61408379cbe48fa240cd549fdb33ed9e818548bd92b21b2b73ee91a8e947a2",
-      "bytes": 4712
+      "sha256": "1eab7b8084130deec22486c9d871e705ca573da20d563f0935c7a4f975d1f1b2",
+      "bytes": 4995
     },
     "references/custom-nodes.md": {
       "sha256": "c2d4e976b84e26d2bc7bc56d6fae97909739274f4e29bc9f8045d1fcbc9f8c6f",

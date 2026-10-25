@@ -150,6 +150,29 @@ describe('chat_reply upstream chat resolution', () => {
     expect(outputs.subChatId).toBe(trigger.subChatId);
   });
 
+  // Catches a post-task trigger's chat taking a reply away from the Flow's own Start Task chat.
+  it('puts an upstream start_task chat ahead of a post-task trigger chat', async () => {
+    const upstream = await makeChat();
+    await seedStartTask({ chatId: upstream.chatId, subChatId: upstream.subChatId });
+    const finished = await makeChat();
+
+    const res = await dispatchChatReply(
+      crCtx({ triggerContext: { _frinkTrigger: 'post_task_trigger', ...finished } }),
+    );
+
+    expect(res).toMatchObject({ type: 'completed', output: { outputs: upstream } });
+  });
+
+  it('replies into the post-task trigger chat when no start_task precedes it', async () => {
+    const finished = await makeChat();
+
+    const res = await dispatchChatReply(
+      crCtx({ triggerContext: { _frinkTrigger: 'post_task_trigger', ...finished } }),
+    );
+
+    expect(res).toMatchObject({ type: 'completed', output: { outputs: finished } });
+  });
+
   it('falls back to the newest sub-chat when only chatId resolves (EC7)', async () => {
     const { chatId, subChatId } = await makeChat();
     // start_task surfaced chatId but no subChatId; no trigger / no predecessor sub.

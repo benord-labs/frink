@@ -137,7 +137,7 @@ projects fails the step with a message naming the value. Custom nodes are unchan
 
 A **Chat Reply** block posts a templated message into an existing Frink chat. At run time the engine needs a **`chatId`**. The graph validator enforces one of:
 
-1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`), or  
+1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`) when that task ran in a chat of the same project. A Start Task on the path takes precedence, and a task with no chat needs one, or  
 2. **Upstream Start Task** on the same path — Start Task creates the flow chat before any Chat Reply on that branch.
 
 So **`manual_trigger → run_command → chat_reply`** is invalid unless you insert **Start Task** before the reply (or use a post-task flow). Use **End** or **HTTP Request** if you only need to stop or call an external URL without a chat.
@@ -253,14 +253,16 @@ What's available depends on the trigger type:
 | `trigger.taskId` | UUID of the completed task |
 | `trigger.taskTitle` | Title of the completed task |
 | `trigger.taskStatus` | Final status |
-| `trigger.result` | Result summary |
-| `trigger.branch` | Git branch the task ran on |
-| `trigger.baseBranch` | Base branch the task branched from |
-| `trigger.worktreePath` | Absolute path to the task worktree |
-| `trigger.projectId` | UUID of the project |
-| `trigger.chatId` | Chat session ID |
-| `trigger.projectPath` | Main project directory path |
 | `trigger.source` | How the task was created |
+| `trigger.projectId` | UUID of the project |
+| `trigger.taskCompletedAt` | ISO time the task finished |
+| `trigger.result` | Summary the task's agent reported when it finished (not always present) |
+| `trigger.branch` | Git branch the task ran on (not always present) |
+| `trigger.baseBranch` | Base branch the task branched from (not always present) |
+| `trigger.worktreePath` | Absolute path to the task worktree (not always present) |
+| `trigger.chatId` | Chat session ID (not always present) |
+| `trigger.subChatId` | Chat tab the task ran in (not always present) |
+| `trigger.projectPath` | Main project directory path (not always present) |
 
 ### schedule_trigger
 

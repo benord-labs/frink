@@ -5,7 +5,8 @@ import { create as createBinding } from '../db/repos/flow-trigger-bindings';
 import { createFlowVersion } from '../db/repos/flow-versions';
 import { createFlow } from '../db/repos/flows';
 import { createProject } from '../db/repos/projects';
-import { flows, flowTriggerBindings, projects, tasks } from '../db/schema';
+import { TRIGGER_SCHEMAS } from '../../../shared/lib/output-schemas';
+import { chats, flows, flowTriggerBindings, projects, tasks } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
 const startFlowRunMock = vi.hoisted(() => vi.fn());
@@ -300,12 +301,97 @@ describe('post-task-trigger tick', () => {
         projectId,
         taskStatus: 'completed',
         taskTitle: 'T',
+        source: 'manual',
         taskCompletedAt: AFTER.toISOString(),
+        projectPath: '/tmp/p',
       },
     });
     expect(calls.find((c) => c.flowId === flowB.flowId)?.idempotencyKey).toBe(
       postTaskIdempotencyKey(bindingB.id, task.id),
     );
+  });
+
+  // Catches the schema advertising a field the trigger never saves, or the reverse.
+  it('saves every field TRIGGER_SCHEMAS lists for a task that ran in a chat', async () => {
+    const { flowId } = await seedFlow(db);
+    await seedBinding(db, flowId, projectId);
+    await db.insert(chats).values({
+      id: 'chat-1',
+      projectId,
+      worktreePath: '/tmp/p-wt',
+      branch: 'feature',
+      baseBranch: 'main',
+    });
+    const task = await seedTerminalTask(db, projectId, AFTER);
+    await db
+      .update(tasks)
+      .set({
+        result: {
+          chatId: 'chat-1',
+          subChatId: 'sub-1',
+          executionLeaseId: 'lease-1',
+          agentSignal: { state: 'done', summary: 'Shipped it' },
+        },
+      })
+      .where(eq(tasks.id, task.id));
+
+    await tick();
+
+    const { _frinkTrigger, bindingId, ...fields } = start.mock.calls[0][0].triggerContext ?? {};
+    expect({ _frinkTrigger, bindingId }).toEqual({
+      _frinkTrigger: 'post_task_trigger',
+      bindingId: expect.any(String),
+    });
+    expect(Object.keys(fields).sort()).toEqual(
+      (TRIGGER_SCHEMAS.post_task_trigger ?? []).map((f) => f.key).sort(),
+    );
+    expect(fields).toMatchObject({
+      result: 'Shipped it',
+      chatId: 'chat-1',
+      subChatId: 'sub-1',
+      branch: 'feature',
+      baseBranch: 'main',
+      worktreePath: '/tmp/p-wt',
+      projectPath: '/tmp/p',
+    });
+  });
+
+  // Catches a task result naming a chat from another project leaking that chat's worktree.
+  it('ignores a chat that belongs to a different project than the task', async () => {
+    const { flowId } = await seedFlow(db);
+    await seedBinding(db, flowId, projectId);
+    const other = (await createProject(db, { name: 'Q', path: '/tmp/q' })).id;
+    await db.insert(chats).values({ id: 'chat-q', projectId: other, worktreePath: '/tmp/q-wt' });
+    const task = await seedTerminalTask(db, projectId, AFTER);
+    await db
+      .update(tasks)
+      .set({ result: { chatId: 'chat-q', subChatId: 'sub-q' } })
+      .where(eq(tasks.id, task.id));
+
+    await tick();
+
+    const ctx = start.mock.calls[0][0].triggerContext ?? {};
+    expect(['chatId', 'subChatId', 'worktreePath'].filter((key) => key in ctx)).toEqual([]);
+  });
+
+  it('leaves out the optional fields a task without a chat or summary cannot fill', async () => {
+    const { flowId } = await seedFlow(db);
+    await seedBinding(db, flowId, projectId);
+    const task = await seedTerminalTask(db, projectId, AFTER, 'cancelled');
+    // A cancel result, and a chat link to a chat that no longer exists.
+    await db
+      .update(tasks)
+      .set({ result: { cancelled: true, chatId: 'gone', subChatId: 'sub-gone' } })
+      .where(eq(tasks.id, task.id));
+
+    expect(await tick()).toEqual({ fired: 1, skipped: 0 });
+
+    const ctx = start.mock.calls[0][0].triggerContext ?? {};
+    const optional = (TRIGGER_SCHEMAS.post_task_trigger ?? [])
+      .filter((f) => f.guaranteed === false && f.key !== 'projectPath')
+      .map((f) => f.key);
+    expect(optional.filter((key) => key in ctx)).toEqual([]);
+    expect(ctx).toMatchObject({ taskId: task.id, taskStatus: 'cancelled', source: 'manual' });
   });
 
   // Catches a regression that memoises failed starts (the pair would never fire) or miscounts them.

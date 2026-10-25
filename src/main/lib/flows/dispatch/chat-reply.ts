@@ -95,10 +95,11 @@ async function resolveChatRefs(ctx: {
   const trigger = ctx.triggerContext ?? {};
   const prev = ctx.previousOutput?.outputs ?? {};
 
-  // Fast path: post_task_trigger fan-out supplies both — no upstream query needed.
+  // A post-task trigger names the finished task's chat: a fallback behind the Flow's own chat.
+  const triggerFirst = trigger._frinkTrigger !== 'post_task_trigger';
   const trigChat = readStr(trigger, 'chatId');
   const trigSub = readStr(trigger, 'subChatId');
-  if (trigChat && trigSub) return { chatId: trigChat, subChatId: trigSub };
+  if (triggerFirst && trigChat && trigSub) return { chatId: trigChat, subChatId: trigSub };
 
   // Otherwise resolve from the flow's upstream start_task (not the immediate
   // predecessor — a condition/agent in between drops chatId; sc-802). Precedence:
@@ -110,10 +111,11 @@ async function resolveChatRefs(ctx: {
       upstreamNodeIds: findUpstreamNodeIds(ctx.parsedGraph, ctx.node.id),
     })) ?? {};
 
-  const chatId = trigChat ?? readStr(up, 'chatId') ?? readStr(prev, 'chatId') ?? null;
+  const sources = triggerFirst ? [trigger, up, prev] : [up, prev, trigger];
+  const chatId = sources.map((s) => readStr(s, 'chatId')).find(Boolean) ?? null;
   if (!chatId) return null;
 
-  const subChatId = trigSub ?? readStr(up, 'subChatId') ?? readStr(prev, 'subChatId') ?? null;
+  const subChatId = sources.map((s) => readStr(s, 'subChatId')).find(Boolean) ?? null;
   if (subChatId) return { chatId, subChatId };
 
   // No subChatId in any source — fall back to the chat's sub-chat.

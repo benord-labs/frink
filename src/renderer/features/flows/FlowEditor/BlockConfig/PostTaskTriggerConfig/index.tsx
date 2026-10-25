@@ -5,6 +5,7 @@
 
 import { Button, Input } from '@benord-labs/frink-primitives';
 import { type ReactElement, useMemo } from 'react';
+import { describeTriggerField, TRIGGER_SCHEMAS } from '../../../../../../shared/lib/output-schemas';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { PostTaskTriggerState } from '../../../../../../shared/types/flow';
 import type { PostTaskBindingConfig } from '../../../../../../shared/types/flows/flow-trigger-binding-config';
@@ -202,18 +203,10 @@ export function PostTaskTriggerConfig({
           Available context for downstream blocks
         </p>
         <div className={cn(BLOCK_CONFIG_CALLOUT_CLASS, 'space-y-1')}>
-          {[
-            { label: 'trigger.taskTitle', hint: 'Title of the completed task' },
-            { label: 'trigger.taskStatus', hint: 'Final status (completed, failed…)' },
-            { label: 'trigger.result', hint: 'Task result payload' },
-            { label: 'trigger.worktreePath', hint: 'Worktree path (if task ran in a worktree)' },
-            { label: 'trigger.branch', hint: 'Branch checked out in the worktree' },
-            { label: 'trigger.chatId', hint: 'Originating chat ID' },
-            { label: 'trigger.projectPath', hint: 'Project directory on disk' },
-          ].map(({ label, hint }) => (
-            <div key={label} className="flex items-baseline gap-2 text-xs">
-              <code className="font-mono text-primary/80 shrink-0">{`{{${label}}}`}</code>
-              <span className="text-muted-foreground">{hint}</span>
+          {(TRIGGER_SCHEMAS.post_task_trigger ?? []).map((field) => (
+            <div key={field.key} className="flex items-baseline gap-2 text-xs">
+              <code className="font-mono text-primary/80 shrink-0">{`{{trigger.${field.key}}}`}</code>
+              <span className="text-muted-foreground">{describeTriggerField(field)}</span>
             </div>
           ))}
         </div>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PROVIDERS } from '../../../../shared/integrations/providers';
 import { readyRunFirstRule } from '../../../../shared/lib/flow-admission/run-first-rule';
+import { TRIGGER_SCHEMAS } from '../../../../shared/lib/output-schemas';
 import { runFirstDetails } from './run-first-details';
 
 const values = (details: ReturnType<typeof runFirstDetails>) =>
@@ -45,11 +46,17 @@ describe('runFirstDetails', () => {
   });
 
   it('offers post-task runs the details they save, and batch runs their declared inputs', () => {
-    expect(values(runFirstDetails({ triggerBlockType: 'post_task_trigger' }))).toEqual([
-      'trigger.taskTitle',
-      'trigger.taskStatus',
-      'trigger.projectId',
-    ]);
+    expect(values(runFirstDetails({ triggerBlockType: 'post_task_trigger' }))).toEqual(
+      (TRIGGER_SCHEMAS.post_task_trigger ?? []).map((f) => `trigger.${f.key}`),
+    );
+    const labels = new Map(
+      runFirstDetails({ triggerBlockType: 'post_task_trigger' }).suggestions.map((s) => [
+        s.value,
+        s.label,
+      ]),
+    );
+    expect(labels.get('trigger.result')).toMatch(/\(not always present\)$/);
+    expect(labels.get('trigger.taskTitle')).toBe('Title of the completed task');
     expect(
       values(runFirstDetails({ triggerBlockType: 'manual_trigger', batchKeys: ['ticketId'] })),
     ).toEqual(['trigger.ticketId']);
