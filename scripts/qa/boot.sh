@@ -64,6 +64,8 @@ if [ "${QA_REAL_CLAUDE:-}" = "1" ]; then
 else
   bash scripts/qa/use-fake-claude.sh
 fi
+# The direct launch makes out-qa/main the app path, so the menu bar icons are linked in beside bin.
+ln -sfn "$PWD/resources/tray" out-qa/main/resources/tray
 
 # Provision Electron's app binary. electron@43 declares NO install lifecycle script, so the binary
 # is absent after a clean install and launching electron dies with "Electron uninstall". Doing it

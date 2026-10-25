@@ -12,6 +12,7 @@ import { registerArtifactPreviewIpc } from '.';
 import { attachAgentAbortOnRendererLifecycle } from './navigation-abort';
 import { attachMainWindowNavigationGuard, resolveRendererEntryUrl } from './navigation-guard';
 import { revealWhenReady } from './reveal';
+import { startTray } from './tray';
 import { windowManager } from './window-manager';
 
 // Default zoom factor — the app was designed at this zoom level
@@ -260,10 +261,24 @@ function getPersistedZoomFactor(): number {
   return DEFAULT_ZOOM_FACTOR;
 }
 
-/**
- * Create the main application window
- */
-export function createMainWindow(): BrowserWindow {
+/** Loads the app with `search` (e.g. the chat to open). Signing in is not a precondition. */
+function loadRenderer(window: BrowserWindow, search: URLSearchParams): void {
+  const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+  const indexHtmlPath = join(__dirname, '../renderer/index.html');
+  attachMainWindowNavigationGuard(
+    window.webContents,
+    resolveRendererEntryUrl(devServerUrl, indexHtmlPath),
+  );
+  if (!devServerUrl) return void window.loadFile(indexHtmlPath, { search: search.toString() });
+  const url = new URL(devServerUrl);
+  url.search = search.toString();
+  window.loadURL(url.toString());
+  // Only open DevTools automatically in development
+  if (!app.isPackaged) window.webContents.openDevTools();
+}
+
+/** Create the main application window; `search` opens it somewhere, as the menu bar does. */
+export function createMainWindow(search = new URLSearchParams()): BrowserWindow {
   // Register IPC handlers before creating window
   registerIpcHandlers(getWindow);
 
@@ -382,22 +397,7 @@ export function createMainWindow(): BrowserWindow {
     currentWindow = null;
   });
 
-  // Load the renderer. Signing in is a feature of the app, not a precondition for it.
-  const devServerUrl = process.env.ELECTRON_RENDERER_URL;
-  const indexHtmlPath = join(__dirname, '../renderer/index.html');
-  attachMainWindowNavigationGuard(
-    window.webContents,
-    resolveRendererEntryUrl(devServerUrl, indexHtmlPath),
-  );
-  if (devServerUrl) {
-    window.loadURL(devServerUrl);
-    // Only open DevTools automatically in development
-    if (!app.isPackaged) {
-      window.webContents.openDevTools();
-    }
-  } else {
-    window.loadFile(indexHtmlPath);
-  }
+  loadRenderer(window, search);
 
   // Ensure traffic lights are visible after page load (covers reload/Cmd+R case)
   window.webContents.on('did-finish-load', () => {
@@ -416,5 +416,6 @@ export function createMainWindow(): BrowserWindow {
     log.error('[Window] Window became unresponsive');
   });
 
+  startTray(createMainWindow);
   return window;
 }
