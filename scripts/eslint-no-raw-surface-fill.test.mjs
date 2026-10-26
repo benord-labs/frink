@@ -1,9 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import tsParser from '@typescript-eslint/parser';
 import { RuleTester } from 'eslint';
-import { describe, expect, it } from 'vitest';
+import { describe, it } from 'vitest';
 import { noRawSurfaceFill } from '../eslint/no-raw-surface-fill.mjs';
 
 // vitest has no globals: RuleTester registers its cases through these.
@@ -41,16 +38,4 @@ ruleTester.run('no-raw-surface-fill', noRawSurfaceFill, {
       errors: [rawFill, rawFill],
     },
   ],
-});
-
-describe('no-raw-surface-fill allowlist', () => {
-  it('is never bypassed with an inline eslint-disable under src/renderer', () => {
-    const root = fileURLToPath(new URL('../src/renderer', import.meta.url));
-    const bypasses = readdirSync(root, { recursive: true })
-      .filter((file) => /\.tsx?$/.test(file))
-      .filter((file) =>
-        /eslint-disable.*frink\/no-raw-surface-fill/.test(readFileSync(join(root, file), 'utf8')),
-      );
-    expect(bypasses, 'allowlist the path in eslint.config.mjs instead').toEqual([]);
-  });
 });

@@ -1,0 +1,257 @@
+{
+  "src/main/lib/agents/follows-you.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/main/lib/agents/types.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/main/lib/credentials/accounts.ts": {
+    "frink/no-provider-branch": {
+      "count": 3
+    }
+  },
+  "src/main/lib/mcp/dynamic-chat-server.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/main/lib/mcp/flows-tools/gating/flow-tool-dispatch.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/mcp/flows-tools/permissions/codex-flow-call.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/mobile/domain/composer.ts": {
+    "frink/no-provider-branch": {
+      "count": 5
+    }
+  },
+  "src/main/lib/provider/handlers/agent-brain.ts": {
+    "frink/no-provider-branch": {
+      "count": 5
+    }
+  },
+  "src/main/lib/provider/handlers/allowlist.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/provider/handlers/commands.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/provider/handlers/plugins.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/provider/usage-history/index.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/provider/usage-history/reader.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/socket/execution/flow-resource-cleanup.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/socket/executor.ts": {
+    "frink/no-provider-branch": {
+      "count": 16
+    }
+  },
+  "src/main/lib/socket/operator-reminders.ts": {
+    "frink/no-provider-branch": {
+      "count": 3
+    }
+  },
+  "src/main/lib/socket/streaming/plan-auto-approve.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/main/lib/task-executor/execution-account.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/main/lib/task-executor/index.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/trpc/routers/agent-accounts.ts": {
+    "frink/no-provider-branch": {
+      "count": 7
+    }
+  },
+  "src/main/lib/trpc/routers/agent-utils.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/main/lib/trpc/routers/chats/helpers/name-generation-async.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/main/lib/trpc/routers/claude-code.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/App.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/components/dialogs/settings-tabs/AgentsModelsTab/AccountsList/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/renderer/components/dialogs/settings-tabs/AgentsModelsTab/ProviderTile/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/components/dialogs/settings-tabs/AgentsModelsTab/auth-flow-utils.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/agents/components/ModelPicker/ProviderToggle/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/agents/components/ModelPicker/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/agents/components/model-selector.tsx": {
+    "frink/no-provider-branch": {
+      "count": 4
+    }
+  },
+  "src/renderer/features/agents/hooks/use-model-normalization.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/agents/lib/new-chat-navigation.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/agents/main/active-chat/components/FlowRunStrip/FlowRunMeta/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/renderer/features/agents/main/active-chat/components/StatusAndQueueSection.tsx": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/renderer/features/agents/main/new-chat-form.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/agents/ui/account-indicator.tsx": {
+    "frink/no-provider-branch": {
+      "count": 3
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/BlockConfig/AgentConfig/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/BlockConfig/NodeModelField/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/BlockConfig/StartTaskConfig/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/FlowSettingsPanel/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/hooks/flow-picker-models.ts": {
+    "frink/no-provider-branch": {
+      "count": 4
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/hooks/project-model-affinity.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/renderer/features/flows/FlowEditor/hooks/use-project-model-options.ts": {
+    "frink/no-provider-branch": {
+      "count": 3
+    }
+  },
+  "src/renderer/features/onboarding/ConnectAgentAccountPage/index.tsx": {
+    "frink/no-provider-branch": {
+      "count": 3
+    }
+  },
+  "src/renderer/lib/agent-chat/errors/error-toast-config.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/renderer/lib/ai-providers/chat-options.ts": {
+    "frink/no-provider-branch": {
+      "count": 4
+    }
+  },
+  "src/renderer/lib/ai-providers/use-provider-models.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/shared/integrations/plugin-runtime-support.ts": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "src/shared/integrations/vendor-plugin-pins.ts": {
+    "frink/no-provider-branch": {
+      "count": 2
+    }
+  },
+  "src/shared/lib/execution-settings.ts": {
+    "frink/no-provider-branch": {
+      "count": 3
+    }
+  },
+  "src/shared/lib/models/index.ts": {
+    "frink/no-provider-branch": {
+      "count": 4
+    }
+  }
+}
