@@ -194,7 +194,7 @@ describe('the hook store and what each provider is handed at launch', () => {
   it('keeps the store current for a provider with no hook delivery yet', async () => {
     write(userFile(), { hooks: stopHook('notify') });
 
-    expect(await hooksForLaunch('gemini', null)).toEqual({});
+    expect(await hooksForLaunch('cursor', null)).toEqual({});
     expect(fs.existsSync(storeFile())).toBe(true);
   });
 });

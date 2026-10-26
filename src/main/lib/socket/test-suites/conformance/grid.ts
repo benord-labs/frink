@@ -3,6 +3,7 @@ import { AGENT_RUNTIMES, type AgentRuntime } from '../../../../../shared/lib/ai-
 import { __resetSessionsForTest } from '../../claude-session-registry';
 import { APPROVAL_SCENARIOS } from './approvals';
 import { EXPECTED_FAILURES, type RowId, type ScenarioId } from './baseline';
+import { registerCapabilityRows } from './capabilities';
 import {
   type GridHarness,
   type Observed,
@@ -167,5 +168,6 @@ export function registerConformanceTests(h: GridHarness): void {
     for (const scenario of SCENARIOS) {
       for (const runtime of AGENT_RUNTIMES) registerRow(h, scenario, runtime);
     }
+    registerCapabilityRows(h);
   });
 }

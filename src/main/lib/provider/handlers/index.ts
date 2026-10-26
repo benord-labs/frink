@@ -7,7 +7,7 @@
  * category never touches this index → no merge contention between parallel tickets.
  */
 
-import type { CapabilityCategory } from '../types';
+import type { CapabilityCategory } from '../../../../shared/lib/ai-providers/capabilities';
 import { deliverAgentBrain } from './agent-brain';
 import { enforceAllowlist } from './allowlist';
 import { deliverCommands } from './commands';
