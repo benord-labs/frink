@@ -200,6 +200,11 @@ export const TOOL_OPERATIONS: Readonly<Record<string, ToolOperation>> = {
   Delete: 'delete',
 };
 
+/** The PATH_TOOLS that change a file on disk: every one but the reads. */
+export const FILE_WRITE_TOOLS: ReadonlySet<string> = new Set(
+  [...PATH_TOOLS].filter((tool) => TOOL_OPERATIONS[tool] !== 'read'),
+);
+
 /** Set form of `TOOL_OPERATIONS` keys. Used for membership checks. */
 export const KNOWN_TOOLS: ReadonlySet<string> = new Set(Object.keys(TOOL_OPERATIONS));
 
