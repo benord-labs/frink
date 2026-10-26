@@ -16,6 +16,7 @@ import {
   registerClaudeWarmSessionTests,
   registerCodexSessionCacheTests,
   registerComposerContextTests,
+  registerConformanceTests,
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
   registerFlowRunEndedTests,
@@ -45,9 +46,7 @@ const claudeQueryThrowOnce = (err: Error) =>
     throw err;
   });
 
-// Project lookup moved to an inline getDatabase().select().from(projects).where().limit()
-// Drizzle query (executor.ts:1633). This holder backs the chainable db mock; the row it holds
-// is what that query resolves to.
+// The project row the executor's lookups resolve to, behind both the db and projects-repo mocks.
 const dbProjectState = vi.hoisted(() => ({
   projectRow: null as { id: string; name: string; path: string } | null,
 }));
@@ -1609,6 +1608,7 @@ describe('socket file permission edge cases', () => {
   describe('operator reminder delivery: the Flow run has ended (sc-4467)', () =>
     registerFlowRunEndedTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
   registerComposerContextTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  registerConformanceTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   describe('a message whose turn ended before the provider took it', () =>
     registerUndeliveredMessageTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
 
