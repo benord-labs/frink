@@ -9,13 +9,17 @@ export type FileChangedEvent = { filePath: string; type: string; subChatId: stri
 
 type ToolCard = Extract<UIMessageChunk, { type: 'tool-input-available' }>;
 
-const fileInputSchema = z.object({ file_path: z.string().min(1) });
+// NotebookEdit names its file `notebook_path`; every other write tool uses `file_path`.
+const fileInputSchema = z.union([
+  z.object({ file_path: z.string().min(1) }).transform((input) => input.file_path),
+  z.object({ notebook_path: z.string().min(1) }).transform((input) => input.notebook_path),
+]);
 
 /** The file a write card names, resolved against the chat folder; null for any other card. */
 function writtenFile(card: ToolCard, cwd: string): string | null {
   if (!FILE_WRITE_TOOLS.has(card.toolName)) return null;
   const parsed = fileInputSchema.safeParse(card.input);
-  return parsed.success ? path.resolve(cwd, parsed.data.file_path) : null;
+  return parsed.success ? path.resolve(cwd, parsed.data) : null;
 }
 
 /** Tells every live window a file changed. A crashed renderer keeps isDestroyed() false, so
