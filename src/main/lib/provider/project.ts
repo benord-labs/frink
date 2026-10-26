@@ -10,21 +10,19 @@
  *   PCH-4 agent brain (inject) · PCH-5 allowlist (enforce/advisory) · PCH-6 hooks (file).
  */
 
-import { getCapabilityDescriptor } from './capabilities';
+import { AI_PROVIDERS, type AiProviderId } from '../../../shared/lib/ai-providers';
+import type { CapabilityCategory } from '../../../shared/lib/ai-providers/capabilities';
 import { categoryHandlers } from './handlers';
-import type { CapabilityCategory, DispatchResult, ProbeResult, ProviderType } from './types';
-
-/** The set of providers we have a verified, non-`none` descriptor for. */
-const VERIFIED_PROVIDERS: ReadonlySet<ProviderType> = new Set(['claude-code', 'cursor', 'codex']);
+import type { DispatchResult, ProbeResult } from './types';
 
 /**
  * The provider-scoped interface every downstream ticket inherits. Constructed
- * via {@link project}; dispatches off the capability descriptor + handler registry.
+ * via {@link project}; dispatches off the provider's capability row + handler registry.
  */
 export type ProjectProvider = {
   readonly projectId: string;
   readonly projectPath: string;
-  readonly provider: ProviderType;
+  readonly provider: AiProviderId;
   probe(): ProbeResult;
   deliver(category: CapabilityCategory): Promise<DispatchResult>;
   enforce(category: CapabilityCategory, rule?: unknown): Promise<DispatchResult>;
@@ -32,15 +30,15 @@ export type ProjectProvider = {
 
 /**
  * Construct a provider-scoped interface for one project. `project()` itself is
- * pure + cheap (a descriptor lookup); the async work lives in the handlers.
+ * pure + cheap (a row lookup); the async work lives in the handlers.
  * Named `project` to match the epic's `project(projectId, projectPath, provider)`.
  */
 export function project(
   projectId: string,
   projectPath: string,
-  provider: ProviderType,
+  provider: AiProviderId,
 ): ProjectProvider {
-  const descriptor = getCapabilityDescriptor(provider);
+  const { delivery } = AI_PROVIDERS[provider].capabilities;
   const ctx = { projectId, projectPath, provider };
 
   return {
@@ -48,17 +46,19 @@ export function project(
     projectPath,
     provider,
     probe(): ProbeResult {
-      if (VERIFIED_PROVIDERS.has(provider)) {
-        return { supported: true, descriptor };
-      }
+      // Instructions only report: no handler delivers them, so they make nothing deliverable.
+      const delivers = Object.entries(delivery).some(
+        ([category, mode]) => category !== 'instructions' && mode !== 'none',
+      );
+      if (delivers) return { supported: true, descriptor: delivery };
       return {
         supported: false,
-        descriptor,
-        reason: `Provider '${provider}' is not yet verified; capabilities unavailable (TODO PCH-8).`,
+        descriptor: delivery,
+        reason: `Frink delivers nothing to ${AI_PROVIDERS[provider].longName} yet.`,
       };
     },
     async deliver(category: CapabilityCategory): Promise<DispatchResult> {
-      const mode = descriptor[category];
+      const mode = delivery[category];
       if (mode === 'none') {
         return { category, mode, status: 'noop', detail: 'not bridged for this provider' };
       }
@@ -70,7 +70,7 @@ export function project(
       return handler({ mode, ctx });
     },
     async enforce(category: CapabilityCategory, rule?: unknown): Promise<DispatchResult> {
-      const mode = descriptor[category];
+      const mode = delivery[category];
       if (mode === 'none') {
         return { category, mode, status: 'noop', detail: 'not bridged for this provider' };
       }
