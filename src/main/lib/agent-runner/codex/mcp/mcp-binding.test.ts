@@ -151,6 +151,7 @@ describe('buildCodexMcpBinding', () => {
     expect(binding.threadConfig.mcp_servers).toMatchObject({
       '@scope/server': { enabled: true, command: 'npx', args: ['@scope/server'] },
     });
+    expect(binding.serverNames).toEqual(['@scope/server']);
   });
 
   it('changes the unlogged revision when a credential changes', () => {
@@ -181,6 +182,7 @@ describe('buildCodexMcpBinding', () => {
       __frink_replace: true,
       github: { enabled: true, command: 'gh-mcp' },
     });
+    expect(binding.serverNames).toEqual(['github']);
   });
 
   it('still replaces native MCPs when Frink has no configured servers', () => {

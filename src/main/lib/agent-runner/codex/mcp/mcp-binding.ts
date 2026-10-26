@@ -21,6 +21,8 @@ type CanonicalOAuth = { accessToken?: unknown };
 export type CodexMcpBinding = {
   threadConfig: Record<string, unknown>;
   revision: string;
+  /** The server names Codex is handed. */
+  serverNames: string[];
 };
 
 function codexServerName(name: string): string {
@@ -128,5 +130,6 @@ export function buildCodexMcpBinding(params: {
     .createHash('sha256')
     .update(stableStringify(threadConfig))
     .digest('hex');
-  return { threadConfig, revision };
+  const serverNames = Object.keys(mcpServers).filter((name) => name !== REPLACE_SENTINEL);
+  return { threadConfig, revision, serverNames };
 }
