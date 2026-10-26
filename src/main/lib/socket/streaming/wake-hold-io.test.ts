@@ -37,6 +37,7 @@ function ioWithSpy(
   const io = build({
     chatId: 'c1',
     subChatId: 'sc1',
+    projectPath: '/p',
     buildFinalParts: (): MessagePart[] => finalParts,
     usageTaskId: 'task-1',
     flowDriven: false,

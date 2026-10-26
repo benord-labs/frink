@@ -8,7 +8,7 @@ import type {
 import { vi } from 'vitest';
 import type { TaskStopHook } from '../../../task-stop-hook';
 import type { ClaudeQueryCall } from '../../test-utils';
-import { stopInput } from '../claude-turn-bindings';
+import { RUNNING_TASK, stopInput } from '../claude-turn-bindings';
 
 type QueryInput = {
   prompt: AsyncIterable<SDKUserMessage>;
@@ -78,4 +78,22 @@ export function mockQuery(claudeQueryMock: ReturnType<typeof vi.fn>, cli: CliScr
     });
   });
   return query;
+}
+
+/** Ends turn 1 with `turnEnd` while background work runs, so the chat holds; `wake()` then has the
+ * CLI play `burst` on its own, as a wake burst streaming into the arming message. */
+export function wakingCli(turnEnd: readonly Frame[], burst: (cli: Cli) => AsyncGenerator<Frame>) {
+  let wake = () => {};
+  const woke = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  const script: CliScript = async function* (cli) {
+    await cli.prompt.next();
+    await cli.stop([RUNNING_TASK]);
+    yield* turnEnd;
+    await woke;
+    yield* burst(cli);
+    await never();
+  };
+  return { script, wake };
 }
