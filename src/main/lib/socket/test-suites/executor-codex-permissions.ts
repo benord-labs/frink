@@ -468,15 +468,19 @@ function registerCodexPathAndLifecycleTests({
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
     let approval: Promise<unknown> | undefined;
+    const cardShown = Promise.withResolvers<void>();
     vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
       // SAFETY: the executor reads only type, id and delta from a text-delta chunk.
       yield { type: 'text-delta', id: 'codex-1', delta: 'Running tests' } as UIMessageChunk;
       approval = options.checkApproval({ toolName: 'Bash', input: { command: 'npm test' } });
-      await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
+      await cardShown.promise;
       throw new Error('codex app-server connection closed');
     });
 
-    await handleRemoteExecute({ ...basePayload, message: 'codex turn that dies on a card' });
+    const run = handleRemoteExecute({ ...basePayload, message: 'codex turn that dies on a card' });
+    await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
+    cardShown.resolve();
+    await run;
 
     const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
     expect(card).toBeDefined();

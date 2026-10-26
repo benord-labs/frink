@@ -619,10 +619,6 @@ describe('socket file permission edge cases', () => {
 
     let hookResult: Awaited<ReturnType<PreToolUseHook>> | undefined;
     claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
-      const input = queryInput;
-      expect(input.options?.permissionMode).toBe('auto');
-      expect(input.options?.env?.CLAUDE_CODE_ENABLE_AUTO_MODE).toBe('1');
-
       hookResult = await getPreToolUseHook(queryInput)(
         {
           hook_event_name: 'PreToolUse',
@@ -640,6 +636,8 @@ describe('socket file permission edge cases', () => {
       settings: { model: 'sonnet', autoReviewTools: true },
     });
 
+    expect(claudeQueryMock.mock.lastCall?.[0].options.permissionMode).toBe('auto');
+    expect(claudeQueryMock.mock.lastCall?.[0].options.env.CLAUDE_CODE_ENABLE_AUTO_MODE).toBe('1');
     expect(hookResult).toEqual({});
     expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
@@ -814,19 +812,17 @@ describe('socket file permission edge cases', () => {
       at: new Date().toISOString(),
     });
 
-    const promptCapture: { iterator?: AsyncIterator<unknown> } = {};
+    const promptCapture: { iterator?: AsyncIterator<unknown>; allow?: unknown } = {};
     claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
       const input = queryInput as {
         prompt: AsyncIterable<unknown>;
         options?: { hooks?: { Stop?: Array<{ hooks: Array<(i: unknown) => Promise<unknown>> }> } };
       };
       const stopHook = input.options?.hooks?.Stop?.[0]?.hooks?.[0];
-      expect(stopHook).toBeTypeOf('function'); // armed chat → Stop hook mounted
       promptCapture.iterator = input.prompt[Symbol.asyncIterator]();
       await promptCapture.iterator.next(); // consume the buffered initial turn (queue still open)
-      // Signal present → the hook allows without forcing a continuation…
-      const allow = await stopHook?.({ hook_event_name: 'Stop', stop_hook_active: false });
-      expect(allow).toEqual({});
+      // Signal present → the armed chat's Stop hook allows without forcing a continuation…
+      promptCapture.allow = await stopHook?.({ hook_event_name: 'Stop', stop_hook_active: false });
       yield {
         type: 'result',
         chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-onallow' } }],
@@ -835,6 +831,7 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'do the task' });
 
+    expect(promptCapture.allow).toEqual({});
     // …and only the post-turn disposal (nothing pending) closed the queue.
     const promptIterator = promptCapture.iterator;
     if (!promptIterator) throw new Error('Expected the prompt iterator to be captured');
@@ -2114,11 +2111,14 @@ describe('socket file permission edge cases', () => {
   });
 
   it('drainPendingPermissions resolves pending bash permission wait as denied', async () => {
-    // v2 bash check returns ask → executor prompts via socket; drain resolves it denied.
+    // v2 bash check returns ask → a card is sent; draining it on send, as at shutdown, denies it.
     vi.mocked(checkPermission).mockResolvedValue({
       decision: 'ask',
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
+    vi.mocked(socketClient.sendPermissionRequest).mockImplementation(() =>
+      queueMicrotask(drainPendingPermissions),
+    );
 
     let decision: string | undefined;
     claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
@@ -2130,8 +2130,6 @@ describe('socket file permission edge cases', () => {
         },
         'tool-bash-drain-pending',
       );
-      await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
-      drainPendingPermissions();
       decision = (await pending).hookSpecificOutput.permissionDecision;
       yield {
         chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-bash-drain-pending' } }],
@@ -2144,6 +2142,7 @@ describe('socket file permission edge cases', () => {
       message: 'drain pending permissions at shutdown',
     });
 
+    expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce();
     expect(decision).toBe('deny');
     // Drain must also pop the card from the renderer, as a timeout does, or a re-request stacks.
     const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
@@ -2186,9 +2185,9 @@ describe('socket file permission edge cases', () => {
       });
     });
 
+    let decision: string | undefined;
     claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
-      const hook = getPreToolUseHook(queryInput);
-      const res = await hook(
+      const res = await getPreToolUseHook(queryInput)(
         {
           hook_event_name: 'PreToolUse',
           tool_name: 'Read',
@@ -2196,13 +2195,14 @@ describe('socket file permission edge cases', () => {
         },
         'tool-read-worktree',
       );
-      expect(res.hookSpecificOutput.permissionDecision).toBe('allow');
+      decision = res.hookSpecificOutput.permissionDecision;
       yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-wt-read' } }] };
       yield { type: 'result' };
     });
 
     await handleRemoteExecute({ ...basePayload, message: 'worktree read canonicalization' });
 
+    expect(decision).toBe('allow');
     // Decision: the canonical ROOT path (not the raw worktree path) reaches checkPermission.
     const decisionCall = vi.mocked(checkPermission).mock.calls.find((c) => c[0]?.tool === 'Read');
     expect(decisionCall?.[0]?.input).toMatchObject({ file_path: canonicalFile });
