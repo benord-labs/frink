@@ -26,18 +26,18 @@ import type {
   CodexServiceTier,
 } from '../../../../shared/lib/codex-cli-models';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
-import { createThinkingEmitter, type ThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import { recordCodexTurnStart } from '../../diagnostics/provider-topology';
+import { createTurnStream, frameTurn, type TurnSession, type TurnStream } from '../turn-stream';
 import type { CodexAppServerClient, CodexThreadSubscription } from './app-server-client';
 import { getCodexAppServer } from './app-server-registry';
-import { ChunkQueue } from './chunk-queue';
+import type { ChunkQueue } from './chunk-queue';
 import { type CodexApprovalCheck, registerApprovalHandlers } from './codex-approvals';
 import { getCodexCliMissingMessage, resolveCodexBinary } from './codex-binary';
 import { extractFileChangeItem, type FileChange, mapNotificationToChunks } from './codex-events';
 import { type CodexCommandOutputs, recordCodexCommandOutput } from './command-output';
 import { setCodexLiveTurn } from './codex-live-turn';
-import { completeTurnChunks, makeChunkSink, registerCloseHandlers } from './codex-stream-chunks';
+import { registerCloseHandlers } from './codex-stream-chunks';
 import { buildCodexMcpBinding } from './mcp';
 import { buildCodexSkillRootsBinding } from './skill-roots';
 import {
@@ -255,9 +255,7 @@ export function isRecoverableCodexThreadResumeError(error: unknown): boolean {
 async function openTurn(
   client: CodexAppServerClient,
   params: CodexRunnerParams,
-  queue: ChunkQueue,
-  openTextIds: Set<string>,
-  thinking: ThinkingEmitter,
+  stream: TurnStream,
   fileChangeCache: Map<string, FileChange[]>,
   commandOutputs: CodexCommandOutputs,
 ): Promise<{
@@ -282,13 +280,8 @@ async function openTurn(
       }
     };
     registerApprovalHandlers(s, gatedCheckApproval, fileChangeCache);
-    registerStreamHandlers(
-      s,
-      queue,
-      makeChunkSink(queue, openTextIds, thinking),
-      fileChangeCache,
-      commandOutputs,
-      () => provenanceRule.forgetOnCompaction(client, threadId),
+    registerStreamHandlers(s, stream.queue, stream.emit, fileChangeCache, commandOutputs, () =>
+      provenanceRule.forgetOnCompaction(client, threadId),
     );
   };
   const openOn = async (threadId: string, prompt: string) => {
@@ -345,8 +338,6 @@ function errorText(error: unknown): string {
 export async function* runCodexAgent(
   params: CodexRunnerParams,
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
-  const { cwd, credentialId, abortController } = params;
-
   const modeRefusal = params.mode && unsupportedModeMessage('codex', params.mode);
   if (modeRefusal) {
     yield { type: 'error', errorText: `${modeRefusal} Switch to Agent.` };
@@ -361,8 +352,19 @@ export async function* runCodexAgent(
     return;
   }
 
-  yield { type: 'start' };
+  const stream = createTurnStream();
+  const thread: TurnSession = {};
+  yield* frameTurn(stream, codexTurnChunks(params, binary, stream, thread), () => thread.id);
+}
 
+/** One Codex turn inside the shared framing; its cleanup never yields. */
+async function* codexTurnChunks(
+  params: CodexRunnerParams,
+  binary: string,
+  stream: TurnStream,
+  thread: TurnSession,
+): AsyncGenerator<UIMessageChunk, void, undefined> {
+  const { cwd, credentialId, abortController } = params;
   const skillRoots = buildCodexSkillRootsBinding();
   let runtimeParams: CodexRunnerParams;
   try {
@@ -378,7 +380,6 @@ export async function* runCodexAgent(
     };
   } catch (err) {
     yield { type: 'error', errorText: errorText(err) };
-    yield { type: 'finish' };
     return;
   }
 
@@ -400,7 +401,6 @@ export async function* runCodexAgent(
     );
   } catch (err) {
     yield { type: 'error', errorText: errorText(err) };
-    yield { type: 'finish' };
     return;
   }
 
@@ -413,11 +413,6 @@ export async function* runCodexAgent(
     };
   }
 
-  const queue = new ChunkQueue();
-  const openTextIds = new Set<string>();
-  // Per-turn thinking accumulator: codex reasoning streams into the same live
-  // "Thinking" tool card as Claude (shared emitter) instead of being dropped.
-  const thinking = createThinkingEmitter();
   // Per-turn (generator-local) cache of fileChange paths for approval gating; fresh
   // per invocation, so a resumed thread never reads stale paths from a prior turn.
   const fileChangeCache = new Map<string, FileChange[]>();
@@ -425,27 +420,18 @@ export async function* runCodexAgent(
   const commandOutputs: CodexCommandOutputs = new Map();
   // Connection-level close/error are multi-listener: register up front so a crash
   // ends THIS turn even if the thread subscription isn't wired yet.
-  const closeDisposers = registerCloseHandlers(client, queue);
+  const closeDisposers = registerCloseHandlers(client, stream.queue);
 
   const identity: CodexTurnIdentity = {};
-  let persistedSessionId: string | undefined;
   let sub: CodexThreadSubscription | undefined;
-  const onAbort = createCodexAbortHandler(runtimeParams, client, queue, identity);
+  const onAbort = createCodexAbortHandler(runtimeParams, client, stream.queue, identity);
   abortController.signal.addEventListener('abort', onAbort, { once: true });
 
   try {
-    const opened = await openTurn(
-      client,
-      runtimeParams,
-      queue,
-      openTextIds,
-      thinking,
-      fileChangeCache,
-      commandOutputs,
-    );
+    const opened = await openTurn(client, runtimeParams, stream, fileChangeCache, commandOutputs);
     identity.threadId = opened.threadId;
     identity.turnId = opened.turnId;
-    persistedSessionId = opened.threadId;
+    thread.id = opened.threadId;
     const clientThreads = knownThreads ?? new Set<string>();
     clientThreads.add(opened.threadId);
     if (!knownThreads) resumableThreadsByClient.set(client, clientThreads);
@@ -457,28 +443,23 @@ export async function* runCodexAgent(
       client,
       threadId: opened.threadId,
       turnId: opened.turnId,
-      pushChunk: (chunk) => queue.push(chunk),
+      pushChunk: (chunk) => stream.queue.push(chunk),
       hasOpenApproval: opened.hasOpenApproval,
       hasFlowProvenance: Boolean(runtimeParams.messageProvenance),
       commandOutputs,
     });
 
     // Surface the thread id as the resumable session id.
-    yield { type: 'message-metadata', messageMetadata: { sessionId: persistedSessionId } };
-    yield* drainCodexTurnChunks(queue, abortController.signal);
+    yield { type: 'message-metadata', messageMetadata: { sessionId: opened.threadId } };
+    yield* drainCodexTurnChunks(stream.queue, abortController.signal);
   } catch (err) {
     if (!abortController.signal.aborted) {
       yield { type: 'error', errorText: errorText(err) };
     }
   } finally {
     abortController.signal.removeEventListener('abort', onAbort);
-    yield* completeTurnChunks(thinking, openTextIds);
     clearCodexTurnState(runtimeParams.sessionKey, identity);
     sub?.dispose(); // drop only THIS turn's handlers; other turns on the shared client stay live
     disposeAll(closeDisposers);
-    yield {
-      type: 'finish',
-      messageMetadata: persistedSessionId ? { sessionId: persistedSessionId } : undefined,
-    };
   }
 }

@@ -75,6 +75,8 @@ function makeFakeClient(responses: Record<string, FakeResponse> = {}) {
     fireError: (e: unknown) => {
       for (const h of errorHandlers) h(e);
     },
+    /** Thread subscriptions plus client close and error handlers still registered. */
+    listeners: () => allSubs().length + closeHandlers.size + errorHandlers.size,
     invokeRequest: (method: string, params: unknown) =>
       allSubs()
         .find((s) => s.req.has(method))
@@ -635,6 +637,24 @@ describe('runCodexAgent', () => {
 
     expect(chunks.filter((c) => c.type === 'text-end')).toEqual([{ type: 'text-end', id: 'i1' }]);
   });
+
+  it.each([false, true])(
+    'lets go of its turn when the reader leaves with text open (Stop pressed: %s)',
+    async (stop) => {
+      const fake = startedFakeClient();
+      const turn = params({ sessionKey: 's-reader-left' });
+      const gen = runCodexAgent(turn);
+      await gen.next(); // start
+      await gen.next(); // message-metadata — handlers registered
+      fake.fire('item/agentMessage/delta', { itemId: 'i1', delta: 'hel' });
+      await gen.next(); // text-start: the reply's text is now open
+      if (stop) turn.abortController.abort();
+      await gen.next(); // the reader takes one more chunk, then leaves its loop
+      await gen.return(undefined);
+      expect(getCodexLiveTurn('s-reader-left')).toBeUndefined();
+      expect(fake.listeners()).toBe(0);
+    },
+  );
 
   it('brackets two text blocks in one turn independently (provider closes them out of order)', async () => {
     const { chunks } = await withTurn({}, (fake) => {
@@ -1424,7 +1444,7 @@ describe('runCodexAgent', () => {
   });
 
   it('streams reasoning as a live Thinking tool card (same path as Claude)', async () => {
-    // Reasoning must render, not vanish: makeChunkSink routes reasoning-delta through
+    // Reasoning must render, not vanish: the turn stream's sink routes reasoning-delta through
     // the shared thinking emitter → a `Thinking` tool card, so the pane's pending
     // placeholder clears immediately instead of hanging until the answer arrives.
     const chunks = await deltaStream('item/reasoning/textDelta', [
