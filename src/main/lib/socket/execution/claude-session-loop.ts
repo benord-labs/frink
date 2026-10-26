@@ -8,9 +8,9 @@ import {
   isMainTurnStart,
   isSetterEcho,
   isTurnBoundary,
-  noteSubagentTaskFrame,
 } from '../streaming';
 import { drainToResult } from './claude-session/drain-to-result';
+import { noteSessionFrame } from './claude-session/loaded-check';
 import { logTurnTiming, noteTurnTiming, type TurnTiming } from './claude-session/turn-timing';
 import type { WakePump, WakePumpCallbacks, WakePumpExit } from './wake-pump-types';
 import { settleIfWorkFinished, type WaitOverDrain } from './wake-wait-over';
@@ -101,7 +101,7 @@ async function nextTurnMessage(session: ClaudeSession): Promise<SDKMessage | nul
   // Roster writes stop at the wait-over latch: the roster is keyed by subChatId, and once the
   // wait is over a FRESH session for the same chat may own it — a drain frame repopulating it
   // would resurrect a spinner on a chat that renders finished.
-  if (!session.loop.closeExpected) noteSubagentTaskFrame(session.subChatId, step.value);
+  if (!session.loop.closeExpected) noteSessionFrame(session, step.value);
   return step.value;
 }
 

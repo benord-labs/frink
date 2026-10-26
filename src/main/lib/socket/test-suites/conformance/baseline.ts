@@ -13,7 +13,8 @@ export type ScenarioId =
   | 'resume-after-stop'
   | 'concurrent-approvals'
   | 'stop-while-asking'
-  | 'debug-session';
+  | 'debug-session'
+  | 'staged-vs-loaded';
 export type RowId = `${ScenarioId} x ${AgentRuntime}`;
 
 const NO_DEBUG_SESSION =
@@ -27,6 +28,9 @@ export const EXPECTED_FAILURES: Partial<Record<RowId, string>> = {
   'debug-session x acp': NO_DEBUG_SESSION,
   'debug-session x copilot': NO_DEBUG_SESSION,
   'debug-session x cursor': NO_DEBUG_SESSION,
+  'staged-vs-loaded x codex': "Frink does not read Codex's mcpServerStatus/list yet.",
+  'staged-vs-loaded x acp':
+    'Frink passes OpenCode skills (and MCP servers once the ACP client sends them) but reads no list of what it loaded.',
 };
 
 /** The scenarios whose rows decide each feature flag: a provider holds it only where they pass. */

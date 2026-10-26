@@ -32,8 +32,9 @@ import {
   WRITE_PATH,
 } from './fixtures';
 import { SESSION_SCENARIOS } from './sessions';
+import { expectStagedNotLoadedReported, playStagedNotLoaded } from './staged-not-loaded';
 
-type Check = (seen: Observed, runtime: AgentRuntime) => void;
+type Check = (seen: Observed, runtime: AgentRuntime) => void | Promise<void>;
 
 /** Runs as one row per runtime. Its precondition is its own test and never takes `fails`. */
 export type Scenario = {
@@ -101,6 +102,16 @@ const SCENARIOS: Scenario[] = [
     precondition: { name: 'the turn ran', check: expectCleanReply },
     check: expectDebugSession,
   },
+  {
+    id: 'staged-vs-loaded',
+    appliesTo: {
+      runtimes: ['claude', 'codex', 'acp'],
+      otherwise: 'Frink stages no agents, MCP servers, plugins or skills into this runtime yet.',
+    },
+    play: playStagedNotLoaded,
+    precondition: { name: 'the reply is unchanged by the mismatch', check: expectCleanReply },
+    check: expectStagedNotLoadedReported,
+  },
   ...SESSION_SCENARIOS,
   ...APPROVAL_SCENARIOS,
 ];
@@ -115,11 +126,11 @@ function registerRow(h: GridHarness, scenario: Scenario, runtime: AgentRuntime):
   const { precondition } = scenario;
   if (precondition) {
     it(`conformance: ${row} (precondition: ${precondition.name})`, async () => {
-      precondition.check(await run(), runtime);
+      await precondition.check(await run(), runtime);
     });
   }
   it(`conformance: ${row}`, { fails: row in EXPECTED_FAILURES }, async () => {
-    scenario.check(await run(), runtime);
+    await scenario.check(await run(), runtime);
   });
 }
 
