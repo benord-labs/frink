@@ -47,6 +47,7 @@ export const CANARY_ROWS = [
   'memory',
   'hooks',
   'mcp',
+  'plugins',
 ] as const;
 export type CanaryRow = (typeof CANARY_ROWS)[number];
 export const CANARY_PROVIDERS = ['claude-code', 'opencode', 'copilot'] as const;
@@ -57,6 +58,9 @@ const OPENCODE_PRIVATE =
   "OpenCode's private launch takes no Frink MCP servers, agents, memory or hooks.";
 const COPILOT_PRIVATE =
   "GitHub Copilot runs in a Frink-owned config folder that Frink hands none of the user's setup.";
+
+const CLAUDE_AND_CODEX_PLUGINS =
+  'Frink hands vendor plugins only to Claude, and their skills to Codex.';
 
 /** Canary rows whose setup does not reach the model today, with the cause. Shrink-only. */
 export const CANARY_GAPS: Partial<Record<CanaryRowId, string>> = {
@@ -70,4 +74,6 @@ export const CANARY_GAPS: Partial<Record<CanaryRowId, string>> = {
   'memory x copilot': COPILOT_PRIVATE,
   'hooks x copilot': COPILOT_PRIVATE,
   'mcp x copilot': COPILOT_PRIVATE,
+  'plugins x opencode': CLAUDE_AND_CODEX_PLUGINS,
+  'plugins x copilot': CLAUDE_AND_CODEX_PLUGINS,
 };
