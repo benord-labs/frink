@@ -1,6 +1,7 @@
 import log from 'electron-log';
 // Aliased: the provider factory is named `project`, which the parameter below shadows.
-import { awaitBounded, project as createProjectProvider, type ProviderType } from '../../provider';
+import type { AiProviderId } from '../../../../shared/lib/ai-providers';
+import { awaitBounded, project as createProjectProvider } from '../../provider';
 import { detectUnbridgedProjectSkills } from '../../skills/unbridged-detect';
 import { broadcastToRenderer } from '../client';
 
@@ -12,7 +13,7 @@ const unbridgedToasted = new Set<string>();
 export async function deliverProviderConfig(
   project: { id: string } | null,
   projectPath: string,
-  providerKind: ProviderType,
+  providerKind: AiProviderId,
 ): Promise<void> {
   const PCH_PROVIDER_DELIVERY_ENABLED = true; // skills + commands + agent brains fire at spawn
   if (!PCH_PROVIDER_DELIVERY_ENABLED || !project) return;

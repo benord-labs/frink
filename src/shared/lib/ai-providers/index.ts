@@ -1,5 +1,6 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
 import type { ChatMode } from '../../types/chat-mode';
+import { type CapabilityRow, NOTHING_DELIVERED } from './capabilities';
 
 /** What drives a provider: Claude's SDK, Codex's app server, ACP, or Copilot's or Cursor's SDK. */
 export const AGENT_RUNTIMES = ['claude', 'codex', 'acp', 'copilot', 'cursor'] as const;
@@ -12,6 +13,7 @@ type BaseRow = {
   name: string;
   longName: string;
   passthroughSource: string;
+  capabilities: CapabilityRow;
   // Tagged Preview where people pick it: chats work, but some of Frink's features don't yet.
   preview?: boolean;
 };
@@ -38,6 +40,20 @@ export const AI_PROVIDERS = {
     name: 'Claude',
     longName: 'Claude Code',
     passthroughSource: 'claude-passthrough',
+    capabilities: {
+      delivery: {
+        mcp: 'inject',
+        skills: 'copy',
+        commands: 'copy',
+        agentBrain: 'inject',
+        allowlist: 'enforce',
+        hooks: 'file',
+        // Vendor plugins reach a chat as a hook-stripped copy in its own config folder.
+        plugins: 'copy',
+        // The user's CLAUDE.md is copied into each chat's own config folder.
+        instructions: 'copy',
+      },
+    },
   },
   codex: {
     runtime: 'codex',
@@ -45,6 +61,22 @@ export const AI_PROVIDERS = {
     longName: 'Codex',
     passthroughSource: 'codex-passthrough',
     flag: 'codexAccounts',
+    capabilities: {
+      delivery: {
+        mcp: 'inject',
+        skills: 'copy',
+        // The app server takes no commands; Frink expands a slash command before sending it.
+        commands: 'none',
+        // Sub-agent roles load only as `.toml` files under `~/.codex/agents`.
+        agentBrain: 'copy',
+        allowlist: 'enforce',
+        // Each thread is started with the user's stored hooks.
+        hooks: 'inject',
+        // Staged plugins' skills are added for each launch through the app server.
+        plugins: 'inject',
+        instructions: 'none',
+      },
+    },
   },
   opencode: {
     runtime: 'acp',
@@ -58,6 +90,8 @@ export const AI_PROVIDERS = {
     installHint: 'npm install -g opencode-ai@1.19',
     signInHint: 'opencode auth login',
     platforms: ['darwin', 'linux'],
+    // The launch hands OpenCode the user's instructions files and skill folders in memory.
+    capabilities: { delivery: { ...NOTHING_DELIVERED, skills: 'inject', instructions: 'inject' } },
   },
   copilot: {
     runtime: 'copilot',
@@ -70,6 +104,7 @@ export const AI_PROVIDERS = {
     installHint: 'npm install -g @github/copilot',
     signInHint: 'copilot login',
     platforms: ['darwin', 'linux'],
+    capabilities: { delivery: NOTHING_DELIVERED },
   },
   cursor: {
     runtime: 'cursor',
@@ -82,6 +117,8 @@ export const AI_PROVIDERS = {
     installHint: 'Sign in to Cursor from Frink. Cursor needs a paid plan.',
     signInHint: 'Sign in to Cursor',
     platforms: ['darwin', 'linux'],
+    // Frink hands Cursor only the turn, which runs on its own settings in a Frink-owned home.
+    capabilities: { delivery: NOTHING_DELIVERED },
   },
   grok: {
     runtime: 'acp',
@@ -92,6 +129,7 @@ export const AI_PROVIDERS = {
     installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',
     signInHint: 'grok login',
     platforms: ['darwin'],
+    capabilities: { delivery: NOTHING_DELIVERED },
   },
 } as const satisfies Record<string, AiProviderRow>;
 

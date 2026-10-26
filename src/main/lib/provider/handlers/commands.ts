@@ -4,7 +4,7 @@ import log from 'electron-log';
 import matter from 'gray-matter';
 import { commandNameToRelPath, getCommandContent, listCommands } from '../../commands';
 import { ensureDirExistsAsync } from '../../fs-helpers';
-import type { ProviderType } from '../types';
+import type { AiProviderId } from '../../../../shared/lib/ai-providers';
 import type { CategoryHandler } from './types';
 import { frinkUserHome } from '../../platform/frink-home';
 
@@ -19,11 +19,10 @@ import { frinkUserHome } from '../../platform/frink-home';
  */
 
 /** Provider → machine-local user-global commands dir. Lazy so tests can mock homedir(). */
-function providerCommandDir(provider: ProviderType): string | null {
+function providerCommandDir(provider: AiProviderId): string | null {
   const home = frinkUserHome();
   if (provider === 'claude-code') return path.join(home, '.claude', 'commands');
-  if (provider === 'cursor') return path.join(home, '.cursor', 'commands');
-  // codex/gemini/opencode: descriptor `commands` is `none`; codex reads no commands dir (sc-2800).
+  // Every other provider's row says commands 'none', so Frink keeps no command dir for it.
   return null;
 }
 
