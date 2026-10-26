@@ -11,8 +11,9 @@ import {
   mapPromptResponse,
   mapSessionUpdate,
 } from '../../../agent-runner/acp/acp-updates';
+// executor.test.ts mocks only the agent-runner barrel, so this is the real Codex runner.
+import { runCodexAgent as realCodexAgent } from '../../../agent-runner/codex';
 import type { CodexApprovalCheck } from '../../../agent-runner/codex/codex-approvals';
-import { mapNotificationToChunks } from '../../../agent-runner/codex/codex-events';
 import {
   createCopilotEventState,
   mapCopilotEvent,
@@ -38,6 +39,7 @@ import { type CliScript, mockQuery, wakingCli } from '../claude-query-fake';
 import { credential } from '../composer-context/delivery';
 import type { ExecutorPermissionHarness } from '../executor-codex-permissions';
 import { hookPromptText, type OperatorReminderHarness } from '../operator-reminders/delivery';
+import { queueCodexTurn } from './codex-app-server';
 import { CLAUDE_REPLY, SESSION_ID, type VendorTurns } from './fixtures';
 
 type ExecuteOverrides = NonNullable<Parameters<OperatorReminderHarness['handleRemoteExecute']>[1]>;
@@ -238,14 +240,16 @@ function driveClaude(frames: VendorTurns['claude'], ctx: TurnContext): ExecuteOv
   return {};
 }
 
-function driveCodex(notifications: VendorTurns['codex'], ctx: TurnContext): ExecuteOverrides {
-  const chunks = notifications.flatMap((args) => mapNotificationToChunks(...args));
+/** The real Codex runner, its app-server playing the turn and raising the row's ask. */
+function driveCodex(turn: VendorTurns['codex'], ctx: TurnContext): ExecuteOverrides {
   vi.mocked(runCodexAgent).mockImplementationOnce((params) => {
     const reminders = Object.values(params.operatorReminders ?? {}).map((entry) => entry.value);
     const end = stopEnd(params.abortController?.signal);
     const told = [...reminders, params.prompt].join('\n');
     ctx.inputs.push({ resumedFrom: params.resumeThreadId, told, end });
-    return stoppable(runnerStream(chunks), ctx, end, params.checkApproval);
+    queueCodexTurn(params.sessionKey ?? '', { ...turn, ask: ctx.ask, asksOpen: ctx.asksOpen, end });
+    const run = realCodexAgent(params);
+    return stoppable(run, { ...ctx, ask: undefined }, end, params.checkApproval);
   });
   return {};
 }

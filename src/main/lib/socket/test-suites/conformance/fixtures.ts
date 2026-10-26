@@ -15,11 +15,14 @@ import type { UIMessageChunk } from '../../../claude/types';
 
 /** One Codex app-server notification, as the Codex translator takes it. */
 type CodexNotification = Parameters<typeof mapNotificationToChunks>;
+/** One Codex turn as its fake app-server plays it. `mcpServersListed` replaces its mcpServerStatus/list
+ * reply, which by default names every server the thread was started with, as Codex does. */
+export type CodexTurn = { notifications: CodexNotification[]; mcpServersListed?: string[] };
 
 /** What each runtime's own translator reads for one turn, in that vendor's message types. */
 export type VendorTurns = {
   claude: SDKMessage[];
-  codex: CodexNotification[];
+  codex: CodexTurn;
   acp: RecordedTurn;
   copilot: SessionEvent[];
   cursor: CursorSdkMessage[];
@@ -90,11 +93,13 @@ export const SIMPLE_TURN: ScenarioFixtures = {
   claude: { source: 'SCRIPTED', turn: CLAUDE_REPLY },
   codex: {
     source: 'SCRIPTED',
-    turn: [
-      ['item/agentMessage/delta', { itemId: 'msg-1', delta: REPLY }],
-      ['item/completed', { item: { type: 'agentMessage', id: 'msg-1', text: REPLY } }],
-      CODEX_TURN_DONE,
-    ],
+    turn: {
+      notifications: [
+        ['item/agentMessage/delta', { itemId: 'msg-1', delta: REPLY }],
+        ['item/completed', { item: { type: 'agentMessage', id: 'msg-1', text: REPLY } }],
+        CODEX_TURN_DONE,
+      ],
+    },
   },
   // Teed from OpenCode 1.19.0's offline admission turn on 2026-10-26, its command list left out.
   acp: {
@@ -125,11 +130,13 @@ export const WRITE_FILE: ScenarioFixtures = {
   claude: { source: 'SCRIPTED', turn: CLAUDE_WRITE },
   codex: {
     source: 'SCRIPTED',
-    turn: [
-      ['item/started', { item: { ...CODEX_FILE_CHANGE, status: 'inProgress' } }],
-      ['item/completed', { item: { ...CODEX_FILE_CHANGE, status: 'completed' } }],
-      CODEX_TURN_DONE,
-    ],
+    turn: {
+      notifications: [
+        ['item/started', { item: { ...CODEX_FILE_CHANGE, status: 'inProgress' } }],
+        ['item/completed', { item: { ...CODEX_FILE_CHANGE, status: 'completed' } }],
+        CODEX_TURN_DONE,
+      ],
+    },
   },
   acp: {
     source: 'SCRIPTED',
@@ -209,10 +216,12 @@ export const STOPPED_TURN: ScenarioFixtures = {
   claude: { source: 'SCRIPTED', turn: [CLAUDE_PARTIAL, CLAUDE_WRITE[0]] },
   codex: {
     source: 'SCRIPTED',
-    turn: [
-      ['item/agentMessage/delta', { itemId: 'msg-1', delta: PARTIAL }],
-      WRITE_FILE.codex.turn[0],
-    ],
+    turn: {
+      notifications: [
+        ['item/agentMessage/delta', { itemId: 'msg-1', delta: PARTIAL }],
+        WRITE_FILE.codex.turn.notifications[0],
+      ],
+    },
   },
   acp: {
     source: 'SCRIPTED',
