@@ -614,7 +614,7 @@ export default [
   },
   // Provider branches stay in adapters (existing hits: eslint/baselines/provider-branches.json).
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'mobile/src/**/*.{ts,tsx}'],
     ignores: ['**/*.{test,spec}.{ts,tsx}', '**/test-suites/**', ...PROVIDER_ADAPTER_PATHS],
     languageOptions: {
       parser: tsParser,

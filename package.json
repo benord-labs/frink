@@ -47,7 +47,7 @@
     "test:run:coverage": "vitest run --coverage",
     "prets:check": "node ./scripts/dev/ensure-package-deps.mjs",
     "ts:check": "node ./scripts/dev/ts-check.mjs",
-    "lint:structure": "node --preserve-symlinks node_modules/eslint/bin/eslint.js src relay live-activity-forwarder --suppressions-location eslint/baselines/provider-branches.json",
+    "lint:structure": "node --preserve-symlinks node_modules/eslint/bin/eslint.js src relay live-activity-forwarder mobile --suppressions-location eslint/baselines/provider-branches.json",
     "knip": "knip",
     "knip:fix": "knip --fix",
     "lint:oxlint": "oxlint --disable-nested-config .",
