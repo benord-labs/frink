@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AGENT_RUNTIMES,
   AI_PROVIDERS,
@@ -16,7 +16,9 @@ import {
   type ScenarioId,
 } from './baseline';
 import { registerCapabilityRows } from './capabilities';
+import { fakeCodexAppServers } from './codex-app-server';
 import {
+  drivenAs,
   type GridHarness,
   type Observed,
   runClaudeWakeBurst,
@@ -74,6 +76,12 @@ function expectFileChanged(seen: Observed): void {
   );
 }
 
+/** A runtime without Debug refuses the turn before replying, so its precondition is only that it got it. */
+function expectDebugTurnRan(seen: Observed, runtime: AgentRuntime): void {
+  if (AI_PROVIDERS[drivenAs(runtime)].capabilities.features.debug) expectCleanReply(seen);
+  else expect(seen.inputs).toHaveLength(1);
+}
+
 function expectDebugSession(seen: Observed): void {
   expect(seen.debugSessions).toBe(1);
 }
@@ -99,7 +107,7 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'debug-session',
     play: once(SIMPLE_TURN, { mode: 'debug' }),
-    precondition: { name: 'the turn ran', check: expectCleanReply },
+    precondition: { name: 'the turn ran', check: expectDebugTurnRan },
     check: expectDebugSession,
   },
   {
@@ -138,6 +146,7 @@ function registerRow(h: GridHarness, scenario: Scenario, runtime: AgentRuntime):
  * Registered from executor.test.ts, whose module mocks it relies on. */
 export function registerConformanceTests(h: GridHarness): void {
   describe('conformance grid: every scenario on every runtime', () => {
+    beforeEach(fakeCodexAppServers);
     afterEach(() => __resetSessionsForTest());
     for (const scenario of SCENARIOS) {
       for (const runtime of AGENT_RUNTIMES) registerRow(h, scenario, runtime);
