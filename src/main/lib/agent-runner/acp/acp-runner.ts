@@ -1,11 +1,9 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ClientConnection, ContentBlock, SessionUpdate } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
-import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
-import { ChunkQueue } from '../codex/chunk-queue';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
-import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks';
+import { createTurnStream, frameTurn, type TurnSession, type TurnStream } from '../turn-stream';
 import { type CommandLedger, createCommandLedger } from './acp-command-ledger';
 import { answerPermissionRequest, CANCELLED, questionForTool } from './acp-permissions';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
@@ -139,13 +137,29 @@ export async function* runAcpAgent(
   params: AcpRunnerParams,
   startAgent = startAcpAgentProcess,
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
+  const stream = createTurnStream();
+  const session: TurnSession = {};
+  // The launch exists before the turn starts, so a reader that stops at start still tidies it.
+  const releaseLaunch = () =>
+    void params.launch.cleanup?.().catch((error) => log.warn('[ACP] Launch not tidied', error));
+  yield* frameTurn(
+    stream,
+    acpTurnChunks(params, startAgent, stream, session),
+    () => session.id,
+    releaseLaunch,
+  );
+}
+
+/** One ACP turn inside the shared framing; its cleanup never yields. */
+async function* acpTurnChunks(
+  params: AcpRunnerParams,
+  startAgent: typeof startAcpAgentProcess,
+  { queue, emit }: TurnStream,
+  session: TurnSession,
+): AsyncGenerator<UIMessageChunk, void, undefined> {
   const { signal } = params.abortController;
   const { rules, commandLedger } = params.launch;
 
-  const queue = new ChunkQueue();
-  const openTextIds = new Set<string>();
-  const thinking = createThinkingEmitter();
-  const emit = makeChunkSink(queue, openTextIds, thinking);
   const turn = createAcpTurnState();
   const ledger = commandLedger ? createCommandLedger(commandLedger) : undefined;
   // Aborted once the turn can take no more answers: the user stopped it, or the prompt settled.
@@ -188,8 +202,6 @@ export async function* runAcpAgent(
   };
 
   try {
-    // Inside the try: a reader that stops at this chunk still gets the launch cleaned up.
-    yield { type: 'start' };
     signal.throwIfAborted();
     const widening = WIDENING_COMMAND.exec(params.prompt.trim())?.[0];
     if (widening) {
@@ -224,6 +236,7 @@ export async function* runAcpAgent(
       hasImages: Boolean(params.images?.length),
     });
     sessionId = opened.sessionId;
+    session.id = sessionId;
     turnOver.signal.throwIfAborted();
     yield { type: 'message-metadata', messageMetadata: { sessionId } };
     // Checked again: the turn may have been stopped while the reader held the chunk above.
@@ -258,11 +271,9 @@ export async function* runAcpAgent(
   } finally {
     signal.removeEventListener('abort', onAbort);
     turnOver.abort();
-    // Before the first yield: a reader that stops listening never resumes this generator.
+    // Never yields: a reader that stops listening never resumes this generator.
     void stopAgent(link.agent, turnEnded, params.launch, ledger).catch((error) =>
       log.warn('[ACP] Agent did not stop', error),
     );
-    yield* completeTurnChunks(thinking, openTextIds);
-    yield { type: 'finish', messageMetadata: sessionId ? { sessionId } : undefined };
   }
 }

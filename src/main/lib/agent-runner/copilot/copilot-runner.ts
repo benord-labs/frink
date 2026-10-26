@@ -12,13 +12,11 @@ import type {
 import log from 'electron-log';
 import { EFFORT_LABEL, modelRowFor } from '../../../../shared/lib/model-picker-label/groups';
 import type { ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
-import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import { type AgentModel, rememberAgentModels, rememberedAgentModels } from '../agent-models';
-import { ChunkQueue } from '../codex/chunk-queue';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
-import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks';
+import { createTurnStream, frameTurn } from '../turn-stream';
 import { createCopilotEventState, mapCopilotEvent } from './copilot-events';
 import { createCopilotGate } from './copilot-gate';
 import {
@@ -203,10 +201,7 @@ function messageFor(params: CopilotRunnerParams, lostHistory: boolean): MessageO
 
 /** One turn's stream, gate and client, and the ways the turn can end. */
 class CopilotTurn {
-  readonly queue = new ChunkQueue();
-  readonly openTextIds = new Set<string>();
-  readonly thinking = createThinkingEmitter();
-  private readonly emit = makeChunkSink(this.queue, this.openTextIds, this.thinking);
+  readonly stream = createTurnStream();
   private readonly shown = createCopilotEventState();
   // Aborted once the turn takes no more answers, so a late hook call is refused.
   private readonly over = new AbortController();
@@ -239,14 +234,14 @@ class CopilotTurn {
 
   end(): void {
     this.over.abort();
-    this.queue.finish();
+    this.stream.queue.finish();
   }
 
   /** Ends the turn with an error and stops Copilot as a user stop would. */
   halt(errorText: string): void {
     if (this.isOver) return;
     log.warn(`[Copilot] Stopping the turn: ${errorText}`);
-    this.emit({ type: 'error', errorText });
+    this.stream.emit({ type: 'error', errorText });
     this.stop();
   }
 
@@ -308,7 +303,7 @@ class CopilotTurn {
       const { toolCallId, toolName, arguments: args } = event.data;
       this.gate.noteExecutionStart(toolCallId, toolName, args);
     }
-    mapCopilotEvent(event, this.shown).forEach(this.emit);
+    mapCopilotEvent(event, this.shown).forEach(this.stream.emit);
     if (
       event.type === 'tool.execution_complete' &&
       this.gate.actedUnasked(event.data.toolCallId, event.data)
@@ -368,7 +363,7 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
   if (!opened.ok) return turn.halt(opened.reason);
   if (turn.isOver) return;
   turn.session = opened.session;
-  turn.queue.push({
+  turn.stream.queue.push({
     type: 'message-metadata',
     messageMetadata: { sessionId: opened.session.sessionId },
   });
@@ -381,9 +376,21 @@ export async function* runCopilotAgent(
   params: CopilotRunnerParams,
   deps: CopilotRunnerDeps = {},
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
-  const { signal } = params.abortController;
-  yield { type: 'start' };
   const turn = new CopilotTurn(params);
+  yield* frameTurn(
+    turn.stream,
+    copilotTurnChunks(turn, params, deps),
+    () => turn.session?.sessionId,
+  );
+}
+
+/** One Copilot turn inside the shared framing; its cleanup never yields. */
+async function* copilotTurnChunks(
+  turn: CopilotTurn,
+  params: CopilotRunnerParams,
+  deps: CopilotRunnerDeps,
+): AsyncGenerator<UIMessageChunk, void, undefined> {
+  const { signal } = params.abortController;
   signal.addEventListener('abort', turn.stop, { once: true });
   try {
     // Not awaited, so a stop while Copilot is unresponsive still ends the turn and the client.
@@ -391,18 +398,15 @@ export async function* runCopilotAgent(
       if (!signal.aborted) turn.halt(error instanceof Error ? error.message : String(error));
       turn.end();
     });
-    yield* turn.queue.drain();
+    yield* turn.stream.queue.drain();
   } finally {
     signal.removeEventListener('abort', turn.stop);
     turn.end();
-    // Before the first yield: a reader that stops listening never resumes this generator.
+    // Never yields: a reader that stops listening never resumes this generator.
     if (turn.client) {
       void closeClient(turn.client, turn).catch((error) =>
         log.warn('[Copilot] Did not stop', error),
       );
     }
-    yield* completeTurnChunks(turn.thinking, turn.openTextIds);
-    const sessionId = turn.session?.sessionId;
-    yield { type: 'finish', messageMetadata: sessionId ? { sessionId } : undefined };
   }
 }
