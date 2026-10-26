@@ -25,9 +25,10 @@ type InitReport = {
   plugins?: { name: string; source?: string }[];
 };
 type Snapshot = LoadSet & { configDir: string; projectRoot?: string };
+// A malformed field drops only itself, so the rest of the check still runs.
 const ClaudeSettings = z.object({
-  enabledPlugins: z.record(z.string(), z.boolean()).optional(),
-  skillOverrides: z.record(z.string(), z.string()).optional(),
+  enabledPlugins: z.record(z.string(), z.boolean()).optional().catch(undefined),
+  skillOverrides: z.record(z.string(), z.string()).optional().catch(undefined),
 });
 type ClaudeSettings = z.infer<typeof ClaudeSettings>;
 const pending = new WeakMap<ClaudeSession, Promise<Snapshot | null>>();
@@ -41,8 +42,12 @@ export function expectLoaded(
     session,
     stagedInConfigDir(spawn.configDir).then(
       (staged) => ({ ...spawn, ...staged }),
-      (error: Error) => {
-        captureMainException(error, { surface: STAGED_VS_LOADED_SURFACE });
+      (error: NodeJS.ErrnoException) => {
+        // A parse error can quote the file, so only its kind reaches error reporting.
+        const kind = error.code ?? error.name;
+        captureMainException(new Error(`Could not read the staged Claude config (${kind})`), {
+          surface: STAGED_VS_LOADED_SURFACE,
+        });
         return null;
       },
     ),
