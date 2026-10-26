@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BrowserWindow } from 'electron';
-import { onTestFinished, vi } from 'vitest';
+import { expect, onTestFinished, vi } from 'vitest';
 import type { AgentRuntime, AiProviderId } from '../../../../../shared/lib/ai-providers';
 import { runCodexAgent } from '../../../agent-runner';
 import type { RecordedTurn } from '../../../agent-runner/acp/acp-test-fixtures';
@@ -26,20 +26,21 @@ import { createThinkingEmitter } from '../../../claude/thinking-emitter';
 import { createTransformer as realTransformer } from '../../../claude/transform';
 import type { UIMessageChunk } from '../../../claude/types';
 import { getDefaultClaudeCodeToken } from '../../../credentials';
+import { releaseWakeHold } from '../../claude-wake-hold';
 import * as socketClient from '../../client';
-import { mockQuery, never } from '../claude-query-fake';
+import type { FileChangedEvent } from '../../execution/tool-effects';
+import { mockQuery, never, wakingCli } from '../claude-query-fake';
 import { credential } from '../composer-context/delivery';
 import type { OperatorReminderHarness } from '../operator-reminders/delivery';
-import type { VendorTurns } from './fixtures';
+import { CLAUDE_REPLY, type VendorTurns } from './fixtures';
 
 type ExecuteOverrides = NonNullable<Parameters<OperatorReminderHarness['handleRemoteExecute']>[1]>;
-type FileChanged = { filePath: string; type: string; subChatId: string };
 
 /** What one turn sent out: its stream, its editor-tab refreshes, and how it ended. */
 export type Observed = {
   subChatId: string;
   chunks: UIMessageChunk[];
-  fileChanged: FileChanged[];
+  fileChanged: FileChangedEvent[];
   completed: boolean;
   errors: string[];
 };
@@ -130,12 +131,51 @@ const DRIVERS: Drivers = {
   cursor: (messages) => ({ startCursorTurn: () => runnerStream(cursorChunks(messages)) }),
 };
 
-/** A window whose `webContents.send` is spied, standing in for an open editor. */
+/** A live window whose `webContents.send` is spied, standing in for an open editor. */
 function spyEditorWindow() {
-  const webContents = { send(_channel: string, _payload: FileChanged): void {} };
-  // SAFETY: the file-changed broadcast reads only webContents.send from each window.
-  windowsMock.mockReturnValue([{ webContents } as BrowserWindow]);
+  const webContents = {
+    isCrashed: () => false,
+    send(_channel: string, _payload: FileChangedEvent): void {},
+  };
+  // SAFETY: the file-changed broadcast reads only isDestroyed, webContents.isCrashed and
+  // webContents.send from each window.
+  windowsMock.mockReturnValue([{ isDestroyed: () => false, webContents } as BrowserWindow]);
   return vi.spyOn(webContents, 'send');
+}
+
+/** One sub-chat on `runtime` with a spied editor window: run its turn, then read what it sent. */
+function startRow(h: OperatorReminderHarness, runtime: AgentRuntime) {
+  const subChatId = randomUUID();
+  restoreSuiteMocksAfterTest();
+  const send = spyEditorWindow();
+  return {
+    subChatId,
+    async execute(overrides: ExecuteOverrides): Promise<void> {
+      await h.handleRemoteExecute(
+        { ...h.basePayload, subChatId, message: 'conformance turn' },
+        { ...overrides, runtimeFor: () => runtime },
+      );
+      // Non-Claude completions are sent on the next tick.
+      await new Promise((resolve) => setImmediate(resolve));
+    },
+    observe(): Observed {
+      const sent = vi.mocked(socketClient.sendStreamChunkDirect).mock.calls.map(([p]) => p);
+      const completed = vi
+        .mocked(socketClient.sendExecuteCompleteDirect)
+        .mock.calls.map(([p]) => p);
+      const errors = vi.mocked(socketClient.sendErrorDirect).mock.calls.map(([p]) => p);
+      return {
+        subChatId,
+        // SAFETY: every turn loop in the executor streams UIMessageChunk values only.
+        chunks: forSubChat(sent, subChatId).map((payload) => payload.chunk as UIMessageChunk),
+        fileChanged: send.mock.calls.flatMap(([channel, payload]) =>
+          channel === 'file-changed' ? [payload] : [],
+        ),
+        completed: forSubChat(completed, subChatId).length > 0,
+        errors: forSubChat(errors, subChatId).map((payload) => payload.error),
+      };
+    },
+  };
 }
 
 /** Runs one turn on `runtime` through handleRemoteExecute, fed by its own translator's output. */
@@ -144,31 +184,36 @@ export async function runConformanceTurn<R extends AgentRuntime>(
   runtime: R,
   turn: VendorTurns[R],
 ): Promise<Observed> {
-  const subChatId = randomUUID();
-  restoreSuiteMocksAfterTest();
-  const send = spyEditorWindow();
+  const row = startRow(h, runtime);
   const provider = PROVIDER_FOR[runtime];
   if (provider) vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(credential(provider));
-  const overrides = DRIVERS[runtime](turn, h);
-  await h.handleRemoteExecute(
-    { ...h.basePayload, subChatId, message: 'conformance turn' },
-    { ...overrides, runtimeFor: () => runtime },
-  );
-  // Non-Claude completions are sent on the next tick.
-  await new Promise((resolve) => setImmediate(resolve));
-  const sent = vi.mocked(socketClient.sendStreamChunkDirect).mock.calls.map(([p]) => p);
-  const completed = vi.mocked(socketClient.sendExecuteCompleteDirect).mock.calls.map(([p]) => p);
-  const errors = vi.mocked(socketClient.sendErrorDirect).mock.calls.map(([p]) => p);
-  return {
-    subChatId,
-    // SAFETY: every turn loop in the executor streams UIMessageChunk values only.
-    chunks: forSubChat(sent, subChatId).map((payload) => payload.chunk as UIMessageChunk),
-    fileChanged: send.mock.calls.flatMap(([channel, payload]) =>
-      channel === 'file-changed' ? [payload] : [],
-    ),
-    completed: forSubChat(completed, subChatId).length > 0,
-    errors: forSubChat(errors, subChatId).map((payload) => payload.error),
-  };
+  await row.execute(DRIVERS[runtime](turn, h));
+  return row.observe();
+}
+
+/** Claude replies and holds on running background work; a wake then plays `burst` into that reply. */
+export async function runClaudeWakeBurst(
+  h: OperatorReminderHarness,
+  burst: VendorTurns['claude'],
+): Promise<Observed> {
+  const row = startRow(h, 'claude');
+  transformerMock.mockImplementation(realTransformer);
+  const cli = wakingCli(CLAUDE_REPLY, async function* () {
+    yield* burst;
+  });
+  mockQuery(h.claudeQueryMock, cli.script);
+  onTestFinished(() => releaseWakeHold(row.subChatId, 'test cleanup'));
+  await row.execute({});
+  cli.wake();
+  await vi.waitFor(() => expect(burstCompleted(row.subChatId)).toBe(true));
+  return row.observe();
+}
+
+/** Whether a wake burst on `subChatId` has been persisted. */
+function burstCompleted(subChatId: string): boolean {
+  return vi
+    .mocked(socketClient.sendExecuteCompleteDirect)
+    .mock.calls.some(([payload]) => payload.subChatId === subChatId && payload.wakeBurst === true);
 }
 
 function forSubChat<P extends { subChatId: string }>(payloads: P[], subChatId: string): P[] {
