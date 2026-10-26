@@ -3,6 +3,8 @@ import path from 'node:path';
 import { TRPCError } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
+import { getDatabase } from '../../db';
+import { listClaimedPaths } from '../../db/repos/projects';
 import { terminalManager } from '../../terminal/manager';
 import { type DevServerLink, watchDevServers } from '../../terminal/port-manager';
 import type { TerminalEvent } from '../../terminal/types';
@@ -207,7 +209,12 @@ export const terminalRouter = router({
     .input(z.object({ path: z.string().min(1) }))
     .subscription(({ input }) => {
       return observable<DevServerLink[]>((emit) =>
-        watchDevServers(input.path, (links) => emit.next(links)),
+        watchDevServers(
+          input.path,
+          (links) => emit.next(links),
+          undefined,
+          (gitRoots) => listClaimedPaths(getDatabase(), gitRoots),
+        ),
       );
     }),
 });
