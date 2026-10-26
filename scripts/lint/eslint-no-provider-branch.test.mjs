@@ -80,6 +80,8 @@ describe('no-provider-branch wiring', () => {
     expect(await isOn('src/main/lib/agent-runner/codex/codex-usage.ts')).toBe(false);
     expect(await isOn('src/main/lib/socket/execution/claude-session/prewarm.ts')).toBe(false);
     expect(await isOn('src/main/lib/socket/executor.test.ts')).toBe(false);
+    expect(await isOn('mobile/src/screens/Chat/Composer/sheets.tsx')).toBe(true);
+    expect(await isOn('mobile/tests/fixtures/sim-relay.ts')).toBe(false);
   });
 
   it('allowlists only adapter paths that exist', () => {
@@ -96,16 +98,21 @@ describe('no-provider-branch wiring', () => {
     }
     const script = readJson('package.json').scripts['lint:structure'];
     expect(script).toContain(`--suppressions-location ${BASELINE}`);
+    expect(script.split(' ')).toContain('mobile');
     expect(script).not.toContain('--pass-on-unpruned-suppressions');
   });
 });
 
+// A disable naming a frink rule, a `/* eslint frink/…: off */` config comment, or a rule-less disable.
+const BYPASS =
+  /eslint-disable.*frink\/|\/\*\s*eslint\s[^*]*frink\/|eslint-disable(?:-next-line|-line)?(?=\s*(?:\*\/|--|$))/m;
+
 describe('frink rules', () => {
-  it('are never bypassed with an inline eslint-disable under src/', () => {
-    const src = join(ROOT, 'src');
-    const bypasses = readdirSync(src, { recursive: true })
+  it('are never bypassed with an inline eslint comment', () => {
+    const bypasses = ['src', 'mobile/src']
+      .flatMap((dir) => readdirSync(join(ROOT, dir), { recursive: true }).map((f) => join(dir, f)))
       .filter((file) => /\.tsx?$/.test(file))
-      .filter((file) => /eslint-disable.*frink\//.test(readFileSync(join(src, file), 'utf8')));
-    expect(bypasses, 'allowlist the path in eslint.config.mjs instead').toEqual([]);
+      .filter((file) => BYPASS.test(readFileSync(join(ROOT, file), 'utf8')));
+    expect(bypasses, 'name the rule, or allowlist the path in eslint.config.mjs').toEqual([]);
   });
 });
