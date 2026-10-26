@@ -163,22 +163,7 @@ async function acquireRepositoryPlugin(
     );
     if (manifest.name !== pin.name || manifest.version !== pin.version)
       throw new Error('Package identity mismatch');
-    // Runtime discovery metadata is a Frink projection, never an alteration to vendor bytes.
-    fs.mkdirSync(path.join(marketplaceDir, '.claude-plugin'), { recursive: true });
-    fs.writeFileSync(
-      path.join(marketplaceDir, '.claude-plugin', 'marketplace.json'),
-      JSON.stringify({
-        name: pin.marketplace,
-        owner: { name: 'Frink' },
-        plugins: [
-          {
-            name: pin.name,
-            version: pin.version,
-            source: { source: 'github', repo: pin.payloadRepo, ref: pin.gitCommitSha },
-          },
-        ],
-      }),
-    );
+    writeRepositoryCatalogue(marketplaceDir, pin);
     fs.rmSync(repository, { recursive: true, force: true });
     fs.rmSync(archive, { force: true });
     return { ok: true, sourceDir, marketplaceDir };
@@ -186,4 +171,23 @@ async function acquireRepositoryPlugin(
     fs.rmSync(scratch, { recursive: true, force: true });
     return { ok: false, reason: 'Could not acquire and verify the pinned official package.' };
   }
+}
+
+/** A repository package's catalogue: runtime discovery metadata Frink writes, never vendor bytes. */
+export function writeRepositoryCatalogue(marketplaceDir: string, pin: VendorPluginPin): void {
+  fs.mkdirSync(path.join(marketplaceDir, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(marketplaceDir, '.claude-plugin', 'marketplace.json'),
+    JSON.stringify({
+      name: pin.marketplace,
+      owner: { name: 'Frink' },
+      plugins: [
+        {
+          name: pin.name,
+          version: pin.version,
+          source: { source: 'github', repo: pin.payloadRepo, ref: pin.gitCommitSha },
+        },
+      ],
+    }),
+  );
 }
