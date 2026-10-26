@@ -78,3 +78,10 @@ export function setCodexSession(
   codexSessionParentChat.set(subChatId, chatId);
   codexSessionCache.set(subChatId, sessionId);
 }
+
+/** Test-only: clear every chat as a chat delete would, so a turn still running cannot re-cache. */
+export function _clearCodexSessionsForTests(): void {
+  for (const chatId of new Set([...codexSessionParentChat.values(), ...liveTurns.keys()])) {
+    clearCodexSession(chatId);
+  }
+}

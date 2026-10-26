@@ -67,8 +67,6 @@ export function registerCodexSessionCacheTests(
   resetHarness: (machineId: string, projectRow: typeof project) => void,
 ): void {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(runCodexAgent).mockReset();
     resetHarness(project.machine_id, project);
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(codexCredential);
   });
