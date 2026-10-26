@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { ErrorCodes, ResponseError } from 'vscode-jsonrpc/node';
 import { z } from 'zod';
@@ -52,9 +53,17 @@ async function loadedSkillFolders(client: Client, cwd: string): Promise<string[]
   );
 }
 
-const stagedSkillFolders = async (roots: string[]) => [
-  ...new Set((await Promise.all(roots.map(skillFolders))).flat()),
-];
+/** Each staged skill folder, keyed by the folder name Codex lists once it follows links. */
+async function stagedSkillFolders(roots: string[]): Promise<Map<string, string>> {
+  const folders = new Map<string, string>();
+  for (const root of roots) {
+    for (const name of await skillFolders(root)) {
+      const real = await fs.promises.realpath(path.join(root, name)).catch(() => name);
+      folders.set(path.basename(real), name);
+    }
+  }
+  return folders;
+}
 
 /** A stop or a restart disposed the app-server, so there is nothing left to compare. */
 const appServerGone = (error: Error) =>
@@ -73,16 +82,19 @@ export function checkCodexThreadLoaded(
   return Promise.all([
     servers ? loadedMcpServers(client, threadId) : undefined,
     skills ? loadedSkillFolders(client, staged.cwd) : undefined,
-    skills ? stagedSkillFolders(staged.skillRoots) : [],
+    skills ? stagedSkillFolders(staged.skillRoots) : new Map<string, string>(),
   ])
-    .then(([mcpServers, loadedSkills, stagedSkills]) =>
+    .then(([mcpServers, loadedSkills, stagedSkills]) => {
+      const loaded = loadedSkills
+        ? [...stagedSkills].flatMap(([real, name]) => (loadedSkills.includes(real) ? [name] : []))
+        : undefined;
       reportStagedNotLoaded(
         'codex',
         staged.subChatId,
-        { mcpServers: staged.mcpServers, skills: stagedSkills },
-        { mcpServers, skills: loadedSkills },
-      ),
-    )
+        { mcpServers: staged.mcpServers, skills: [...new Set(stagedSkills.values())] },
+        { mcpServers, skills: loaded },
+      );
+    })
     .catch((error: Error) => {
       if (!appServerGone(error)) captureMainException(error, { surface: STAGED_VS_LOADED_SURFACE });
     });
