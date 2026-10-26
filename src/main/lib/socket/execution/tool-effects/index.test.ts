@@ -34,15 +34,18 @@ function play(chunks: UIMessageChunk[]) {
 }
 
 describe('createToolEffects', () => {
-  it.each(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Delete'])(
-    'a finished %s card tells the renderer its file changed',
-    (toolName) => {
-      const notify = play([card('c1', toolName, { file_path: NOTES }), done('c1')]);
-      expect(notify.mock.calls).toEqual([
-        [{ filePath: NOTES, type: `tool-${toolName}`, subChatId: SUB_CHAT }],
-      ]);
-    },
-  );
+  it.each([
+    ['Write', { file_path: NOTES }],
+    ['Edit', { file_path: NOTES }],
+    ['MultiEdit', { file_path: NOTES }],
+    ['NotebookEdit', { notebook_path: NOTES }],
+    ['Delete', { file_path: NOTES }],
+  ])('a finished %s card tells the renderer its file changed', (toolName, input) => {
+    const notify = play([card('c1', toolName, input), done('c1')]);
+    expect(notify.mock.calls).toEqual([
+      [{ filePath: NOTES, type: `tool-${toolName}`, subChatId: SUB_CHAT }],
+    ]);
+  });
 
   it('resolves a relative path against the chat folder and keeps an absolute one', () => {
     const elsewhere = path.resolve('/elsewhere', 'a.md');
