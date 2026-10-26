@@ -199,12 +199,8 @@ function registerAttachedAbortTests(harness: ClaudeTurnAbortHarness): void {
     await run;
 
     expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(socketClient.sendExecuteCompleteDirect).toHaveBeenCalledWith(
-        expect.objectContaining({ assistantMessageId: payload.assistantMessageId }),
-      ),
-    );
-    const [complete] = vi.mocked(socketClient.sendExecuteCompleteDirect).mock.calls.at(-1) ?? [];
+    await vi.waitFor(() => expect(completes()).toHaveLength(1));
+    const [complete] = completes();
     expect(JSON.stringify(complete?.finalParts)).toContain('halfway there');
     expect(complete?.metadata).toBeUndefined();
   });
