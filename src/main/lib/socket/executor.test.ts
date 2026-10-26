@@ -425,9 +425,11 @@ async function firePromptSubmit(input: object): Promise<void> {
   firedReminders.set(input, await userPromptSubmitReminder(input));
 }
 
-// CLAUDE_CONFIG_DIR isolation creates dirs under app.getPath('userData') (/mock/userData).
-// Re-stub after clearAllMocks.
+// Every case starts with no pending card and a no-op card sender (cases opt in to answers),
+// and re-stubs the fs calls CLAUDE_CONFIG_DIR isolation makes under /mock/userData.
 beforeEach(() => {
+  drainPendingPermissions();
+  vi.mocked(socketClient.sendPermissionRequest).mockReset();
   stubPermissionsStoreDefault();
   dbProjectState.projectRow = null;
   vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
@@ -584,19 +586,6 @@ describe('socket file permission edge cases', () => {
     vi.spyOn(toolValidation, 'resolvePermissionProjectPath').mockImplementation(
       (pathValue) => pathValue,
     );
-
-    // Default: auto-approve all permission requests.
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation((payload) => {
-      const handler = getRegisteredPermissionResponseHandler();
-      if (!handler) return;
-      handler({
-        chatId: payload.chatId,
-        subChatId: payload.subChatId,
-        requestId: payload.requestId,
-        approved: true,
-        duration: 'always',
-      });
-    });
   });
 
   it('uses Claude native Auto Mode and delegates only the v2 ask residual', async () => {
@@ -2109,15 +2098,9 @@ describe('socket file permission edge cases', () => {
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
 
-    const queuedRequests: QueuedPermissionRequest[] = [];
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation((payload) => {
-      queuedRequests.push(payload as QueuedPermissionRequest);
-    });
-
+    let decision: string | undefined;
     claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
-      const hook = getPreToolUseHook(queryInput);
-
-      const pending = hook(
+      const pending = getPreToolUseHook(queryInput)(
         {
           hook_event_name: 'PreToolUse',
           tool_name: 'Bash',
@@ -2125,20 +2108,9 @@ describe('socket file permission edge cases', () => {
         },
         'tool-bash-drain-pending',
       );
-
-      await Promise.resolve();
-      expect(queuedRequests).toHaveLength(1);
+      await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
       drainPendingPermissions();
-
-      // Drain must also pop the prompt from the renderer queue, mirroring the
-      // timeout path — otherwise the card lingers and a re-request stacks.
-      expect(socketClient.sendPermissionDismiss).toHaveBeenCalledWith(
-        expect.objectContaining({ requestId: queuedRequests[0].requestId }),
-      );
-
-      const res = await pending;
-      expect(res.hookSpecificOutput.permissionDecision).toBe('deny');
-
+      decision = (await pending).hookSpecificOutput.permissionDecision;
       yield {
         chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-bash-drain-pending' } }],
       };
@@ -2147,8 +2119,15 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({
       ...basePayload,
-      message: 'drain pending permissions simulates disconnect',
+      message: 'drain pending permissions at shutdown',
     });
+
+    expect(decision).toBe('deny');
+    // Drain must also pop the card from the renderer, as a timeout does, or a re-request stacks.
+    const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
+    expect(socketClient.sendPermissionDismiss).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: card?.requestId }),
+    );
   });
 
   it('worktree file op: canonical ROOT path drives BOTH the decision input and the prompt display (real PreToolUse hook + real remap)', async () => {
@@ -2174,7 +2153,7 @@ describe('socket file permission edge cases', () => {
     } as Awaited<ReturnType<typeof checkPermission>>);
 
     const requests: QueuedPermissionRequest[] = [];
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation((payload) => {
+    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
       requests.push(payload as QueuedPermissionRequest);
       getRegisteredPermissionResponseHandler()?.({
         chatId: payload.chatId,
