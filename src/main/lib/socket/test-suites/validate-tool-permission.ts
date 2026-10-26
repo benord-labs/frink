@@ -172,7 +172,6 @@ function registerDispatcherDecisionTests({
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
     vi.mocked(persistApprovedRule).mockClear();
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation(() => {});
     const oldController = new AbortController();
     const successorController = new AbortController();
     _registerExecutionForTests('flow-abort-sub', successorController);

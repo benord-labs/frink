@@ -164,14 +164,9 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
         yield* UNKEPT_TURN_END;
       });
 
-      try {
-        await handleRemoteExecute({ ...payload, message: 'ship it' });
-        // The hook's card is the only one: a second request would come from canUseTool.
-        expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce();
-      } finally {
-        // clearAllMocks keeps implementations; later suites must not inherit the auto-timeout.
-        vi.mocked(socketClient.sendPermissionRequest).mockReset();
-      }
+      await handleRemoteExecute({ ...payload, message: 'ship it' });
+      // The hook's card is the only one: a second request would come from canUseTool.
+      expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce();
 
       expect(decisions).toEqual([
         {
