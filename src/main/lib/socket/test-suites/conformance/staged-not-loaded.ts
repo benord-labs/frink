@@ -13,10 +13,11 @@ const CLAUDE_INIT_WITHOUT_SERVERS = [
   { type: 'system', subtype: 'init', mcp_servers: NO_SERVERS },
 ] as SDKMessage[];
 
-/** Claude's init lists no MCP server; the other runtimes play a plain reply. */
+/** Claude's init and Codex's server list name no MCP server; the others play a plain reply. */
 const STAGED_NOT_LOADED: ScenarioFixtures = {
   ...SIMPLE_TURN,
   claude: { source: 'SCRIPTED', turn: [...CLAUDE_INIT_WITHOUT_SERVERS, ...CLAUDE_REPLY] },
+  codex: { source: 'SCRIPTED', turn: { ...SIMPLE_TURN.codex.turn, mcpServersListed: [] } },
 };
 
 /** Named for its row, so one row's report is never deduplicated against another's. */
