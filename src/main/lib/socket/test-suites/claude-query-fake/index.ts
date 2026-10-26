@@ -7,7 +7,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { vi } from 'vitest';
 import type { TaskStopHook } from '../../../task-stop-hook';
-import type { ClaudeQueryCall } from '../../test-utils';
+import type { ClaudeQueryCall, PreToolUseQueryInput } from '../../test-utils';
 import { RUNNING_TASK, stopInput } from '../claude-turn-bindings';
 
 type QueryInput = {
@@ -16,8 +16,10 @@ type QueryInput = {
     abortController?: AbortController;
     hooks: { Stop: Array<{ hooks: TaskStopHook[] }> } & NonNullable<
       NonNullable<ClaudeQueryCall['options']>['hooks']
-    >;
+    > &
+      NonNullable<NonNullable<PreToolUseQueryInput['options']>['hooks']>;
     canUseTool: CanUseTool;
+    resume?: string;
   };
 };
 export type Cli = {
