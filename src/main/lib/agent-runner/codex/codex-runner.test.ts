@@ -13,6 +13,7 @@ import {
   _resetProviderTopologyForTests,
   getRuntimeTopologySnapshot,
 } from '../../diagnostics/provider-topology';
+import * as sentry from '../../sentry/init';
 import { COMMAND_APPROVAL_METHOD, FILE_CHANGE_APPROVAL_METHOD } from './codex-events';
 import {
   codexHostPermissionDeduper,
@@ -851,6 +852,36 @@ describe('runCodexAgent', () => {
     expect(options.args.join(' ')).not.toContain('frink-secret');
     // configRevision = mcp-binding sha + vendor-skill-roots sha (sc-1731).
     expect(appServerCall?.[4]).toMatch(/^[a-f0-9]{64}:[a-f0-9]{64}$/);
+  });
+
+  it('reports a staged MCP server that a fresh thread does not list', async () => {
+    const capture = vi.spyOn(sentry, 'captureMainMessage');
+    const fake = startedFakeClient({
+      'config/read': { config: {} },
+      'thread/start': { thread: { id: 'th1' } },
+      'turn/start': { turn: { id: 'tn1' } },
+      'mcpServerStatus/list': { data: [{ name: 'frink_dynamic_chat' }], nextCursor: null },
+    });
+    const canonicalMcpServers = {
+      linear: { url: 'https://l.test' },
+      frink_dynamic_chat: { url: 'x' },
+    };
+    const gen = runCodexAgent(params({ sessionKey: 'chat-1', canonicalMcpServers }));
+    await gen.next();
+    await gen.next();
+    fake.fire('turn/completed', { turn: { status: 'completed' } });
+    await drain(gen);
+
+    const listed = fake.sent.find((sent) => sent.method === 'mcpServerStatus/list');
+    expect(listed?.params).toMatchObject({ threadId: 'th1' });
+    await vi.waitFor(() =>
+      expect(capture).toHaveBeenCalledWith(
+        'codex loaded less than Frink staged (mcpServers: linear)',
+        'warning',
+        expect.objectContaining({ runtime: 'codex', subChatId: 'chat-1' }),
+        expect.any(Array),
+      ),
+    );
   });
 
   it('recovers a vanished live thread by starting fresh with the fallback prompt', async () => {
