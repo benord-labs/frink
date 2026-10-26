@@ -1176,6 +1176,192 @@ describe('flow-step-executor', () => {
     expect(p.error).toBe('Error: something went wrong');
   });
 
+  describe('failed step error names the cause, not just the first stderr line', () => {
+    async function errorFor(stderr: string, exitCode = 1): Promise<string> {
+      runShellCommandMock.mockResolvedValueOnce({
+        stdout: '',
+        stderr,
+        exitCode,
+        timedOut: false,
+        spawnMessage: undefined,
+      });
+      const driver = makeStepDriver();
+      await driver._trigger('execute', {
+        nodeRunId: nid(),
+        flowRunId: 'fr-1',
+        projectId: 'p1',
+        blockType: 'run_command',
+        command: 'fail-command',
+        workingDirectory: 'project_root',
+        timeoutMs: 5000,
+      });
+      const result = driver._emitted.find(([e]) => e === 'result');
+      // SAFETY: flow:step-result's payload always carries an `error` field on a failed step.
+      const p = result?.[1] as { error?: unknown };
+      return String(p.error);
+    }
+
+    it('leads a Python traceback with its exception line', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "<string>", line 2, in <module>',
+        '    d["x"]',
+        '    ~^^^^^',
+        "KeyError: 'x'",
+        '',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe("KeyError: 'x'");
+    });
+
+    it('leads a Python SyntaxError with its message, keeping the line number', async () => {
+      const stderr = [
+        '  File "<stdin>", line 179',
+        '    print("abc',
+        '          ^',
+        'SyntaxError: unterminated string literal (detected at line 179)',
+        '',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe(
+        'SyntaxError: unterminated string literal (detected at line 179) — File "<stdin>", line 179',
+      );
+    });
+
+    it('leads a Node crash with its Error line, skipping stack frames and the version footer', async () => {
+      const stderr = [
+        '/private/tmp/job.js:2',
+        'throw new Error("boom");',
+        '      ^',
+        '',
+        'Error: boom',
+        '    at Object.<anonymous> (/private/tmp/job.js:2:7)',
+        '    at Module._compile (node:internal/modules/cjs/loader:1706:14)',
+        '',
+        'Node.js v22.20.0',
+        '',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('Error: boom — /private/tmp/job.js:2');
+    });
+
+    it('names a bare Python exception that has no message', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "<string>", line 1, in <module>',
+        '    raise ValueError',
+        'ValueError',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('ValueError');
+    });
+
+    it('names the traceback exception even when later stderr follows it', async () => {
+      const traceback = 'Traceback (most recent call last):\n  File "x.py", line 1, in <module>';
+      expect(await errorFor(`${traceback}\nKeyError: 'x'\ndone\n`)).toBe("KeyError: 'x'");
+      expect(await errorFor(`${traceback}\nValueError\ndone\n`)).toBe('ValueError');
+    });
+
+    it('names a custom Python exception whose class is not called …Error', async () => {
+      const stderr = 'Traceback (most recent call last):\n  File "<string>", line 2\nBoom: kaput\n';
+      expect(await errorFor(stderr)).toBe('Boom: kaput');
+    });
+
+    it('ignores traceback source lines that mention an error', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "job.py", line 9, in check',
+        '    if self.error:',
+        'Boom: kaput',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('Boom: kaput');
+    });
+
+    it('names the exception of a traceback indented as a whole', async () => {
+      const stderr =
+        '  Traceback (most recent call last):\n    File "x.py", line 1\n  ValueError\n';
+      expect(await errorFor(stderr)).toBe('ValueError');
+    });
+
+    it('names the cause of an exception group nested inside a traceback', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  + Exception Group Traceback (most recent call last):',
+        '  | ExceptionGroup: g (1 sub-exception)',
+        '    | ValueError: x',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('ValueError: x');
+      const bare =
+        'Traceback (most recent call last):\n  + Exception Group Traceback (most recent call last):\n    | ValueError\n';
+      expect(await errorFor(bare)).toBe('ValueError');
+    });
+
+    it('keeps the first line when a traceback is cut off before its exception', async () => {
+      const stderr = 'Loading...\nTraceback (most recent call last):\n  File "x.py", line 1\n';
+      expect(await errorFor(stderr)).toBe('Loading...');
+      const withSource =
+        'Traceback (most recent call last):\n  File "job.py", line 9\n    if self.error:\n';
+      expect(await errorFor(withSource)).toBe('Traceback (most recent call last):');
+    });
+
+    it('ignores a stack frame whose path contains `error:`', async () => {
+      const stderr = 'Error: boom\n    at run (/app/error:handler.js:3:1)\n';
+      expect(await errorFor(stderr)).toBe('Error: boom');
+    });
+
+    it('reports a leading blank line as the line after it', async () => {
+      expect(await errorFor('\nfatal: not a git repository\n', 128)).toBe(
+        'fatal: not a git repository',
+      );
+    });
+
+    it('reads Windows CRLF stderr without stray carriage returns', async () => {
+      const stderr =
+        'Traceback (most recent call last):\r\n  File "C:\\job.py", line 2\r\nKeyError: \'x\'\r\n';
+      expect(await errorFor(stderr)).toBe("KeyError: 'x'");
+    });
+
+    it('leads a Node error that carries a code', async () => {
+      const stderr = [
+        'node:internal/modules/esm/resolve:873',
+        '  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);',
+        '        ^',
+        '',
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'left-pad' imported from /app/job.mjs",
+        '    at packageResolve (node:internal/modules/esm/resolve:873:9)',
+        '',
+        'Node.js v22.20.0',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe(
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'left-pad' imported from /app/job.mjs — node:internal/modules/esm/resolve:873",
+      );
+    });
+
+    it("keeps the first line when no line reads as an error message, so npm's log-path trailer does not lead", async () => {
+      const stderr = [
+        'npm error Missing script: "nope"',
+        'npm error',
+        'npm error To see a list of scripts, run:',
+        'npm error   npm run',
+        'npm error A complete log of this run can be found in: /Users/me/.npm/_logs/debug-0.log',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('npm error Missing script: "nope"');
+    });
+
+    it('reports single-line stderr exactly as written', async () => {
+      expect(await errorFor('fatal: not a git repository\n', 128)).toBe(
+        'fatal: not a git repository',
+      );
+    });
+
+    it('reports the exit code when stderr is empty', async () => {
+      expect(await errorFor('', 2)).toBe('Command exited with code 2');
+    });
+
+    it('keeps the cause within the length cap for long stderr', async () => {
+      const stderr = `${'x'.repeat(600)}\nValueError: bad input\n`;
+      const error = await errorFor(stderr);
+      expect(error.length).toBe(500);
+      expect(error.startsWith('ValueError: bad input — ')).toBe(true);
+    });
+  });
+
   // sc-612: converging merge tests
 
   it('start_task empty baseBranches falls back to payload.branch (legacy single-branch path)', async () => {

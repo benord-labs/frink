@@ -95,3 +95,49 @@ export function buildTestResult(
     warning,
   };
 }
+
+// `KeyError: 'x'`, `Error [ERR_X]: …`, `fatal: …`, `error[E0425]: …`: the keyword followed by a colon.
+const CAUSE_LINE = /(error|exception|fatal)\b(\s*\[[^\]]*\])?:/i;
+const PYTHON_TRACEBACK_HEADER = 'Traceback (most recent call last):';
+const BARE_PYTHON_EXCEPTION = /^[\w.]*(Error|Exception)$/; // `raise ValueError` prints just `ValueError`
+
+const isCause = (line: string) => CAUSE_LINE.test(line) && !line.startsWith('at ');
+
+const indentOf = (line: string) => line.length - line.trimStart().length;
+const lastCause = (lines: string[]) => [...lines].reverse().find(isCause);
+
+/** Python prints the exception at its traceback header's margin, below the deeper-indented frames. */
+function findCause(rawLines: string[]): string | undefined {
+  const trimmed = rawLines.map((line) => line.trim());
+  const header = trimmed.lastIndexOf(PYTHON_TRACEBACK_HEADER);
+  if (header < 0) return lastCause(trimmed);
+  const margin = indentOf(rawLines[header]);
+  const atMargin = rawLines
+    .slice(header + 1)
+    .filter((line) => indentOf(line) <= margin)
+    .map((line) => line.trim());
+  const pythonCause = (line: string) => isCause(line) || BARE_PYTHON_EXCEPTION.test(line);
+  if (atMargin.length === 0) {
+    // A nested exception group draws its exceptions inside a `|` box; a cut-off traceback has none.
+    const boxed = trimmed
+      .slice(header + 1)
+      .filter((line) => line.startsWith('|'))
+      .map((line) => line.slice(1).trim());
+    return [...boxed].reverse().find(pythonCause);
+  }
+  return [...atMargin].reverse().find(pythonCause) ?? atMargin.at(-1);
+}
+
+/** One-line stderr summary: the cause line first, then the first line as context; else the first line. */
+export function summarizeStderr(stderr: string): string {
+  const rawLines = stderr
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim());
+  const first = rawLines[0]?.trim() ?? '';
+  if (rawLines.length <= 1) return first;
+
+  const cause = findCause(rawLines) ?? first;
+  if (cause === first || first === PYTHON_TRACEBACK_HEADER) return cause;
+  return `${cause} — ${first}`;
+}
