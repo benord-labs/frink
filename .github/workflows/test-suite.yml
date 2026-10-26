@@ -22,7 +22,9 @@ permissions:
 env:
   VITEST_MAX_WORKERS: 3
   # Changes that can alter whether an installed agent asks before it acts; both admission jobs run on them.
-  ADMISSION_PATHS: '^(src/main/lib/agent-runner/(copilot|acp|codex|process-settlement)/|src/main/lib/agent-runner/(path-questions|env-file-reads)\.ts$|src/main/lib/permissions/|src/main/lib/platform/login-shell-env\.ts$|package\.json$|bun\.lock$|src/shared/lib/ai-providers/|src/main/lib/socket/execution/copilot-turn/|\.github/workflows/test-suite\.yml$)'
+  ADMISSION_PATHS: '^(src/main/lib/agent-runner/(copilot|acp|codex|process-settlement)/|src/main/lib/agent-runner/(path-questions|env-file-reads)\.ts$|src/main/lib/permissions/|src/main/lib/platform/login-shell-env\.ts$|package\.json$|bun\.lock$|src/shared/lib/ai-providers/|src/main/lib/socket/execution/copilot-turn/|src/main/lib/socket/test-suites/conformance/(canary|baseline)\.ts$|\.github/workflows/test-suite\.yml$)'
+  # Changes that can alter which of the user's setup reaches a Claude chat's model; the Claude canary runs on them.
+  CLAUDE_CANARY_PATHS: '^(src/main/lib/(claude|provider|mcp/runtime)/|src/main/lib/socket/execution/claude-session/|src/main/lib/platform/login-shell-env\.ts$|src/main/lib/frink-system-prompt\.ts$|src/main/lib/trpc/routers/agent-utils\.ts$|src/main/lib/mcp/config\.ts$|src/main/lib/agent-runner/acp/agents/admission-model\.ts$|src/main/lib/socket/test-suites/conformance/(canary|baseline|anthropic-model)\.ts$|src/shared/lib/ai-providers/|scripts/binaries/(claude-cli-version\.json|download-claude-binary\.mjs)$|package\.json$|bun\.lock$|\.github/workflows/test-suite\.yml$)'
 
 jobs:
   pull-request-suite:
@@ -365,3 +367,50 @@ jobs:
           FRINK_COPILOT_ADMISSION_BIN: ${{ runner.temp }}/cp/node_modules/.bin/copilot
           FRINK_COPILOT_ADMISSION_REQUIRED: '1'
         run: bun run test -- run src/main/lib/agent-runner/copilot/copilot-admission.test.ts
+
+  # Starts the pinned Claude CLI against a scripted model to prove the user's setup reaches the model.
+  claude-canary:
+    if: github.event_name != 'push'
+    name: Claude setup canary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip pull requests that leave Claude's setup delivery alone
+        id: scope
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq "$CLAUDE_CANARY_PATHS"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.run != 'false'
+
+      - name: Install root dependencies
+        if: steps.scope.outputs.run != 'false'
+        run: bun install --frozen-lockfile
+
+      # The pinned version from its public release bucket; nothing signs in.
+      - name: Download the pinned Claude CLI
+        if: steps.scope.outputs.run != 'false'
+        run: bun run claude:download
+
+      # Fails, rather than skips, when the download left no binary to test.
+      - name: Canary run
+        if: steps.scope.outputs.run != 'false'
+        env:
+          FRINK_CLAUDE_CANARY_REQUIRED: '1'
+        run: |
+          FRINK_CLAUDE_CANARY_BIN="$PWD/resources/bin/$(node -p 'process.platform+"-"+process.arch')/claude" \
+            bun run test -- run src/main/lib/socket/execution/claude-session/claude-canary.test.ts
