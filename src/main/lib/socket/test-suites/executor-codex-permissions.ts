@@ -1,7 +1,7 @@
 import os from 'node:os';
 import { expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
-import { listPendingPermissionRequests } from '../streaming/pending-permission';
+import { hasPendingPermissionRequest } from '../streaming/pending-permission/validate-tool-permission';
 import { registerCodexHookTests } from './codex';
 import { registerCustomNodePermissionTests } from './executor-custom-node-permissions';
 
@@ -467,7 +467,6 @@ function registerCodexPathAndLifecycleTests({
       decision: 'ask',
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce(() => {});
     let approval: Promise<unknown> | undefined;
     vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
       // SAFETY: the executor reads only type, id and delta from a text-delta chunk.
@@ -481,7 +480,7 @@ function registerCodexPathAndLifecycleTests({
 
     const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
     expect(card).toBeDefined();
-    expect(listPendingPermissionRequests()).not.toContainEqual(card);
+    expect(hasPendingPermissionRequest(basePayload.subChatId)).toBe(false);
     await expect(approval).resolves.toMatchObject({ allowed: false });
   });
 }
