@@ -7,7 +7,7 @@
  * category under `./handlers/`). Later tickets fill ONLY their handler file —
  * never this dispatcher or the registry index, and never the ~4000-line executor.ts:
  *   PCH-2 skills (copy) · PCH-2b commands (copy) · PCH-3 MCP (inject) ·
- *   PCH-4 agent brain (inject) · PCH-5 allowlist (enforce/advisory) · PCH-6 hooks (file).
+ *   PCH-4 agent brain (inject) · PCH-5 allowlist (enforce).
  */
 
 import { AI_PROVIDERS, type AiProviderId } from '../../../shared/lib/ai-providers';
@@ -64,8 +64,9 @@ export function project(
       }
       const handler = categoryHandlers(category)?.deliver;
       if (!handler) {
-        // Category is a rule (enforce-only) — deliver() is a no-op for it.
-        return { category, mode, status: 'noop', detail: 'rule mode — use enforce()' };
+        // An enforce-only rule, or a category each launch hands its provider itself.
+        const detail = mode === 'enforce' ? 'rule mode — use enforce()' : 'handed over at launch';
+        return { category, mode, status: 'noop', detail };
       }
       return handler({ mode, ctx });
     },

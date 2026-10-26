@@ -137,7 +137,7 @@ describe('unsupportedModes', () => {
   it.each([
     ['claude-code', []],
     [undefined, []],
-    ['codex', ['plan']],
+    ['codex', ['plan', 'debug']],
     ['opencode', ['debug']],
     ['copilot', ['debug']],
     ['cursor', ['debug']],
@@ -153,6 +153,9 @@ describe('unsupportedModes', () => {
     );
     expect(unsupportedModeMessage('grok', 'debug')).toBe(
       "Debug mode isn't available for Grok yet.",
+    );
+    expect(unsupportedModeMessage('codex', 'debug')).toBe(
+      "Debug mode isn't available for OpenAI yet.",
     );
   });
 

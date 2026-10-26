@@ -246,6 +246,27 @@ describe('phone composer', () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
+  it('hides Debug on an OpenAI chat in a project', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.debugAvailable).toBe(false);
+  });
+
+  it.each([
+    ['plan', 'Plan'],
+    ['debug', 'Debug'],
+  ] as const)('refuses %s on an OpenAI chat and keeps its mode', async (mode, name) => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+
+    await expect(setMobileMode({ type: 'setMode', ...identity, mode })).rejects.toMatchObject({
+      status: 400,
+      message: `${name} mode isn't available for OpenAI yet. Pick another mode.`,
+    });
+    expect(fixture.updateSubChatMode).not.toHaveBeenCalled();
+  });
+
   it('scopes an account switch to the project, or changes the default without one', async () => {
     await setMobileAccount({ type: 'setAccount', ...identity, accountId: 'acc-2' });
     expect(fixture.setProjectAccount).toHaveBeenCalledWith({

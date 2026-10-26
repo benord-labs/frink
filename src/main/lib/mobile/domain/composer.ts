@@ -1,5 +1,6 @@
 /** The phone's composer controls, reading and writing the values main owns through the desktop's
  *  own paths, so each window follows the phone live. */
+import { unsupportedModeMessage, unsupportedModes } from '../../../../shared/lib/ai-providers';
 import { getAutoModeUnavailableReason } from '../../../../shared/lib/auto-mode-availability';
 import {
   type CodexAccountCatalog,
@@ -87,6 +88,14 @@ function phoneSpeedCredits(
   return codexTierCredits(modelId, speed, current === speed ? undefined : accountTiers);
 }
 
+/** Debug runs only in a project, and only on a provider that has it. */
+function debugAvailable(
+  projectId: string | null | undefined,
+  accountType: string | undefined,
+): boolean {
+  return Boolean(projectId) && !unsupportedModes(accountType).includes('debug');
+}
+
 export async function readMobileComposer(input: ComposerRequest): Promise<MobileComposer> {
   const { chat, subChat } = await requireChat(input.chatId, input.subChatId);
   const [account, accounts] = await Promise.all([
@@ -105,7 +114,7 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
   const tiers = provider === 'codex' ? (catalog?.tiers ?? {}) : null;
   return {
     mode: (subChat.mode as MobileChatMode) ?? 'agent',
-    debugAvailable: Boolean(chat.projectId),
+    debugAvailable: debugAvailable(chat.projectId, account?.type),
     provider,
     account: account
       ? {
@@ -166,6 +175,9 @@ export async function setMobileMode(input: SetModeRequest): Promise<MobileCompos
   if (input.mode === 'debug' && !chat.projectId) {
     throw new MobileApiError(400, 'Debug mode needs a project.');
   }
+  const account = await mobileCallers.claudeCode.getResolvedAccount({ chatId: chat.id });
+  const refusal = unsupportedModeMessage(account?.type, input.mode);
+  if (refusal) throw new MobileApiError(400, `${refusal} Pick another mode.`);
   // The desktop's own route: it writes the row under the sub-chat lock and echoes to every window.
   await mobileCallers.chats.updateSubChatMode({ id: subChat.id, mode: input.mode });
   return readMobileComposer({ type: 'composer', chatId: chat.id, subChatId: subChat.id });

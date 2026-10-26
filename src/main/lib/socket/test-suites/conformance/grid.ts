@@ -4,7 +4,13 @@ import { __resetSessionsForTest } from '../../claude-session-registry';
 import { APPROVAL_SCENARIOS } from './approvals';
 import { EXPECTED_FAILURES, type RowId, type ScenarioId } from './baseline';
 import { registerCapabilityRows } from './capabilities';
-import { type GridHarness, type Observed, runClaudeWakeBurst, runConformanceTurn } from './drive';
+import {
+  type GridHarness,
+  type Observed,
+  runClaudeWakeBurst,
+  runConformanceTurn,
+  type TurnOptions,
+} from './drive';
 import {
   REPLY,
   type ScenarioFixtures,
@@ -29,9 +35,9 @@ export type Scenario = {
 
 /** Plays one turn of each runtime's own fixture. */
 const once =
-  (fixtures: ScenarioFixtures): Scenario['play'] =>
+  (fixtures: ScenarioFixtures, options?: TurnOptions): Scenario['play'] =>
   (h, runtime) =>
-    runConformanceTurn(h, runtime, fixtures[runtime].turn);
+    runConformanceTurn(h, runtime, fixtures[runtime].turn, options);
 
 function expectCleanReply(seen: Observed): void {
   const text = seen.chunks.flatMap((chunk) => (chunk.type === 'text-delta' ? [chunk.delta] : []));
@@ -55,6 +61,10 @@ function expectFileChanged(seen: Observed): void {
   );
 }
 
+function expectDebugSession(seen: Observed): void {
+  expect(seen.debugSessions).toBe(1);
+}
+
 const SCENARIOS: Scenario[] = [
   { id: 'simple-turn', play: once(SIMPLE_TURN), check: expectCleanReply },
   {
@@ -72,6 +82,12 @@ const SCENARIOS: Scenario[] = [
     play: (h) => runClaudeWakeBurst(h, WRITE_FILE.claude.turn),
     precondition: { name: 'the write card reached the stream', check: expectWriteCard },
     check: expectFileChanged,
+  },
+  {
+    id: 'debug-session',
+    play: once(SIMPLE_TURN, { mode: 'debug' }),
+    precondition: { name: 'the turn ran', check: expectCleanReply },
+    check: expectDebugSession,
   },
   ...SESSION_SCENARIOS,
   ...APPROVAL_SCENARIOS,
@@ -103,6 +119,6 @@ export function registerConformanceTests(h: GridHarness): void {
     for (const scenario of SCENARIOS) {
       for (const runtime of AGENT_RUNTIMES) registerRow(h, scenario, runtime);
     }
-    registerCapabilityRows(h);
+    registerCapabilityRows(h, SCENARIOS);
   });
 }

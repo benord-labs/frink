@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../../../components/ui/select';
-import { planModeOption, useProjectModelOptions } from '../../hooks/use-project-model-options';
+import { modeOption, useProjectModelOptions } from '../../hooks/use-project-model-options';
 import { AvailableVariables } from '../AvailableVariables';
 import { NodeModelField } from '../NodeModelField';
 import { NodeProjectRow } from '../NodeProjectRow';
@@ -53,7 +53,7 @@ export function StartTaskConfig({
 
   const flowDefaultModel = flowSettings?.defaultModel;
   const effectiveProjectId = getEffectiveNodeProjectId(projectId, flowSettings?.defaultProjectId);
-  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable } =
+  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, modeUnavailable } =
     useProjectModelOptions(effectiveProjectId, {
       model,
       flowDefaultModel,
@@ -61,7 +61,7 @@ export function StartTaskConfig({
     });
 
   const projErr = getNodeProjectFieldError(effectiveProjectId);
-  const plan = planModeOption(startMode, planUnavailable);
+  const plan = modeOption(startMode, 'plan', modeUnavailable('plan'));
 
   return (
     <div className="space-y-4">
