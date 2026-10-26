@@ -171,7 +171,6 @@ function registerCanaryGapRows(): void {
     );
     expect(mismatched).toEqual([]);
   });
-  it.todo('canary x codex: needs the patched app-server in CI');
   it.todo('canary x cursor: needs a signed-in run');
   it.todo('canary x every provider on Windows: no Windows test run');
 }

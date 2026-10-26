@@ -155,6 +155,31 @@ jobs:
       - name: Run the Codex provider regression tests
         run: node scripts/binaries/build-codex-frink.mjs --test-only
 
+  # The Codex setup canary on the binary this pull request built, so a patch change is canaried before merge.
+  codex-canary:
+    name: Codex setup canary (linux-x64)
+    needs: codex-native-linux-x64
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: frink-codex-linux-x64
+          path: resources/bin/linux-x64
+      # An artifact drops file modes.
+      - run: chmod +x resources/bin/linux-x64/codex
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Canary run
+        env:
+          FRINK_CODEX_CANARY_REQUIRED: '1'
+          FRINK_CODEX_CANARY_BIN: ${{ github.workspace }}/resources/bin/linux-x64/codex
+        run: bun run test -- run src/main/lib/agent-runner/codex/codex-canary.test.ts
+
   # Same build + handshake for macOS. Nothing needs it: there is no mac packaging job, and mac
   # releases build Codex locally (`bun run release`), so the slow Intel leg holds up no packaging.
   codex-native-mac:

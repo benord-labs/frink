@@ -50,12 +50,14 @@ export const CANARY_ROWS = [
   'plugins',
 ] as const;
 export type CanaryRow = (typeof CANARY_ROWS)[number];
-export const CANARY_PROVIDERS = ['claude-code', 'opencode', 'copilot'] as const;
+export const CANARY_PROVIDERS = ['claude-code', 'opencode', 'copilot', 'codex'] as const;
 export type CanaryProvider = (typeof CANARY_PROVIDERS)[number];
 export type CanaryRowId = `${CanaryRow} x ${CanaryProvider}`;
 
 const OPENCODE_PRIVATE =
   "OpenCode's private launch takes no Frink MCP servers, agents, memory or hooks.";
+const CODEX_OWN_FILES =
+  "Codex reads its own AGENTS.md files and memories, never the user's CLAUDE.md or Claude's memory.";
 const COPILOT_PRIVATE =
   "GitHub Copilot runs in a Frink-owned config folder that Frink hands none of the user's setup.";
 
@@ -76,4 +78,6 @@ export const CANARY_GAPS: Partial<Record<CanaryRowId, string>> = {
   'mcp x copilot': COPILOT_PRIVATE,
   'plugins x opencode': CLAUDE_AND_CODEX_PLUGINS,
   'plugins x copilot': CLAUDE_AND_CODEX_PLUGINS,
+  'instructions x codex': CODEX_OWN_FILES,
+  'memory x codex': CODEX_OWN_FILES,
 };
