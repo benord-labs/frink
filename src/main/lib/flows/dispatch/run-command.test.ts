@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { createNodeRun } from '../../db/repos/node-runs';
 import { seedCompletedNodeRun, seedFlowRun } from '../../db/test-utils/flow-fixtures';
@@ -358,4 +358,93 @@ describe('run_command in an uncertain shell context', () => {
     expect(res.type).toBe('completed');
     expect(h.executeShellStep).toHaveBeenCalledTimes(1);
   });
+});
+
+// Flow values are escaped for POSIX shells only; on Windows without Git Bash, cmd.exe would read
+// them as command syntax.
+describe('run_command without a POSIX shell', () => {
+  const NO_SHELL_MESSAGE =
+    'run_command "Run": This command uses Flow values, which need Git Bash on Windows. Install Git for Windows, then run it again.';
+  const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
+  const realPlatform = process.platform;
+  const resolveCommandShell = vi.fn<() => Promise<string | undefined>>();
+
+  function stubPlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  }
+
+  function run(command: string, v?: string) {
+    const ctx = { ...rcCtx({ command }), previousOutput: { ...CONDITION_PREV, outputs: { v } } };
+    // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads; the override only
+    // swaps in outputs holding `v`.
+    return dispatchRunCommand(ctx as never, { resolveCommandShell });
+  }
+
+  beforeEach(() => {
+    stubPlatform('win32');
+    resolveCommandShell.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => stubPlatform(realPlatform));
+
+  it('refuses a command carrying a Flow value before anything runs', async () => {
+    const res = await run('echo {{previous.v}}', "x' & calc & '");
+
+    expect(res).toEqual({ type: 'error', message: NO_SHELL_MESSAGE });
+    expect(h.executeShellStep).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty value too, since its quotes are literal to cmd.exe', async () => {
+    const res = await run('echo {{previous.v}}', '');
+
+    expect(res).toEqual({ type: 'error', message: NO_SHELL_MESSAGE });
+    expect(h.executeShellStep).not.toHaveBeenCalled();
+  });
+
+  it('runs a placeholder-free command under cmd.exe without probing for a shell', async () => {
+    const res = await run('dir');
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep.mock.calls[0]?.[0]).toMatchObject({ command: 'dir' });
+    expect(resolveCommandShell).not.toHaveBeenCalled();
+  });
+
+  it('runs a command whose placeholder stays literal in a comment', async () => {
+    const res = await run('echo hi # {{previous.v}}', 'x & calc');
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep.mock.calls[0]?.[0]).toMatchObject({
+      command: 'echo hi # {{previous.v}}',
+    });
+  });
+
+  it('runs a command carrying a Flow value when Git Bash resolves', async () => {
+    resolveCommandShell.mockResolvedValue(GIT_BASH);
+
+    const res = await run('echo {{previous.v}}', 'a & b');
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep.mock.calls[0]?.[0]).toMatchObject({ command: "echo 'a & b'" });
+  });
+
+  // The render swaps an over-cap command for its own failing stub, which is not a Flow value, so the
+  // node must not blame Flow values for it.
+  it('leaves an over-cap command to the render-limit failure instead', async () => {
+    const res = await run('x'.repeat(256 * 1024 + 1));
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep.mock.calls[0]?.[0].command).toContain('256KB safety limit');
+    expect(resolveCommandShell).not.toHaveBeenCalled();
+  });
+
+  it.each(['darwin', 'linux'] as const)(
+    'runs a command carrying a Flow value on %s without probing',
+    async (p) => {
+      stubPlatform(p);
+
+      const res = await run('echo {{previous.v}}', 'a & b');
+
+      expect(res.type).toBe('completed');
+      expect(resolveCommandShell).not.toHaveBeenCalled();
+    },
+  );
 });
