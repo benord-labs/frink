@@ -16,8 +16,12 @@ vi.mock('../ui/agent-edit-tool', () => ({
   AgentEditTool: () => null,
 }));
 
+// The reply's file-link scope asks where the chat works and which file a bare name stands for.
 vi.mock('../../../lib/trpc', () => ({
-  trpc: {},
+  trpc: {
+    chats: { get: { useQuery: () => ({ data: undefined }) } },
+    files: { resolveNames: { useQuery: () => ({ data: undefined }) } },
+  },
 }));
 
 vi.mock('../../../hooks/useFlowBaseSnapshot', () => ({
