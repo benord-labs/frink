@@ -10,6 +10,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CodexApprovalRequest } from '../../codex/codex-events';
 import * as database from '../../../db';
 import { freshDb } from '../../../db/test-utils/fresh-db';
+import {
+  plantCanarySetup,
+  registerCanaryRows,
+} from '../../../socket/test-suites/conformance/canary';
 import { startAcpAgentProcess } from '../acp-process';
 import { runAcpAgent } from '../acp-runner';
 import { collectChunks } from '../acp-test-fixtures';
@@ -29,8 +33,6 @@ const BIN = process.env.FRINK_ACP_ADMISSION_BIN;
 const REQUIRED = process.env.FRINK_ACP_ADMISSION_REQUIRED === '1';
 const TURN_MS = 90_000;
 const BLOCKED = 'Frink blocked a command the agent did not ask about and stopped this chat.';
-const INSTRUCTION_MARK = 'admission-instruction-7f3a';
-const SKILL_MARK = 'admission-skill-91b2';
 const SECRET_TEXT = 'outside-secret-5c1e';
 const UNSAFE_SETTINGS =
   "Settings from an organisation, sign-in provider or administrator can change how OpenCode asks for permission, so Frink can't run it safely.";
@@ -123,11 +125,7 @@ describe.runIf(BIN)('OpenCode admission', () => {
     // A tool left in an earlier launch's private folder must never load.
     const leftover = path.join(runRoot, 'leftover', 'config', 'opencode', 'tool', 'evil.ts');
     await write(leftover, markerModule(mark('leftover-tool')));
-    await write(path.join(project, 'AGENTS.md'), `Follow the house style. ${INSTRUCTION_MARK}\n`);
-    await write(
-      path.join(home, '.claude', 'skills', 'house-style', 'SKILL.md'),
-      `---\nname: house-style\ndescription: House style guide ${SKILL_MARK}\n---\nUse tabs.\n`,
-    );
+    await plantCanarySetup({ home, project });
     await write(path.join(project, 'notes.txt'), 'scratch\n');
     await write(path.join(outside, 'existing.txt'), 'keep me\n');
     await write(path.join(outside, 'secret.txt'), `${SECRET_TEXT}\n`);
@@ -437,19 +435,18 @@ describe.runIf(BIN)('OpenCode admission', () => {
     );
   });
 
-  it(
-    'follows the project instructions and lists the user’s skills',
+  registerCanaryRows(
+    'opencode',
     async () => {
       const updates = vi.spyOn(acpUpdates, 'mapSessionUpdate');
       const replies = vi.spyOn(acpUpdates, 'mapPromptResponse');
-      const result = await turn('instructions', [], true);
-      expect(result.requests[0]).toContain(INSTRUCTION_MARK);
-      expect(result.requests[0]).toContain(SKILL_MARK);
+      const result = await turn('canary', [], true);
       // Tees this real turn as the conformance grid's RECORDED OpenCode fixture.
       const recordTo = process.env.FRINK_RECORD_ACP_TURN;
       const messages = updates.mock.calls.map(([update]) => ({ update }));
       const recorded = { messages, response: replies.mock.calls[0]?.[0] };
       if (recordTo) await writeFile(recordTo, JSON.stringify(recorded, null, 2));
+      return result.requests;
     },
     TURN_MS,
   );

@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGENT_RUNTIMES, type AgentRuntime } from '../../../../../shared/lib/ai-providers';
+import {
+  AGENT_RUNTIMES,
+  AI_PROVIDERS,
+  type AgentRuntime,
+} from '../../../../../shared/lib/ai-providers';
 import { __resetSessionsForTest } from '../../claude-session-registry';
 import { APPROVAL_SCENARIOS } from './approvals';
-import { EXPECTED_FAILURES, type RowId, type ScenarioId } from './baseline';
+import {
+  CANARY_GAPS,
+  CANARY_PROVIDERS,
+  CANARY_ROWS,
+  type CanaryRowId,
+  EXPECTED_FAILURES,
+  type RowId,
+  type ScenarioId,
+} from './baseline';
 import { registerCapabilityRows } from './capabilities';
 import {
   type GridHarness,
@@ -121,4 +133,25 @@ export function registerConformanceTests(h: GridHarness): void {
     }
     registerCapabilityRows(h, SCENARIOS);
   });
+  registerCanaryGapRows();
+}
+
+/** A canary gap is listed exactly when its capability cell is `none`, so a downgrade needs a cause.
+ * The real-binary canaries run in their providers' own suites. */
+function registerCanaryGapRows(): void {
+  it('conformance: canary gaps match the capability rows', () => {
+    const mismatched = CANARY_PROVIDERS.flatMap((id) =>
+      CANARY_ROWS.flatMap((row) => {
+        const rowId: CanaryRowId = `${row} x ${id}`;
+        if (row === 'instructions (project)') return [];
+        const none = AI_PROVIDERS[id].capabilities.delivery[row] === 'none';
+        const listed = rowId in CANARY_GAPS;
+        return listed === none ? [] : [rowId];
+      }),
+    );
+    expect(mismatched).toEqual([]);
+  });
+  it.todo('canary x codex: needs the patched app-server in CI');
+  it.todo('canary x cursor: needs a signed-in run');
+  it.todo('canary x every provider on Windows: no Windows test run');
 }

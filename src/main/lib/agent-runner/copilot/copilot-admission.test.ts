@@ -21,6 +21,7 @@ import { collectChunks } from '../acp/acp-test-fixtures';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import * as database from '../../db';
 import { freshDb } from '../../db/test-utils/fresh-db';
+import { plantCanarySetup, registerCanaryRows } from '../../socket/test-suites/conformance/canary';
 import type { CopilotRunnerDeps } from './copilot-runner';
 import { type CopilotRunnerParams, resolveCopilotLaunch, runCopilotAgent } from './index';
 
@@ -332,6 +333,8 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     await write(path.join(project, `--pre=${preScript}`), 'hello\n');
     await write(inOutside('secret.txt'), `${SECRET_TEXT}\n`);
     await symlink(outside, inProject('linked'));
+    // Last, so it merges into the hostile Claude settings above rather than replacing them.
+    await plantCanarySetup({ home, project });
   }
 
   /** Wraps the real client: a stand-in sign-in answer, and a record of what the session reported. */
@@ -848,6 +851,12 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       expect(Date.now() - killedAt).toBeLessThan(5_000);
       expect(existsSync(inProject('m-crash'))).toBe(false);
     },
+    TURN_MS,
+  );
+
+  registerCanaryRows(
+    'copilot',
+    () => turn('canary').then(() => bodiesByCase.get('canary') ?? []),
     TURN_MS,
   );
 

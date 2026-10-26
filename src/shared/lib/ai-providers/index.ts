@@ -52,6 +52,8 @@ export const AI_PROVIDERS = {
         plugins: 'copy',
         // The user's CLAUDE.md is copied into each chat's own config folder.
         instructions: 'copy',
+        // Each launch points the CLI at the project's own auto-memory folder.
+        memory: 'inject',
       },
       features: { debug: true },
     },
@@ -76,6 +78,7 @@ export const AI_PROVIDERS = {
         // Staged plugins' skills are added for each launch through the app server.
         plugins: 'inject',
         instructions: 'none',
+        memory: 'none',
       },
       features: { debug: false },
     },

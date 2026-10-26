@@ -33,3 +33,38 @@ export const EXPECTED_FAILURES: Partial<Record<RowId, string>> = {
 export const FEATURE_ROWS: Record<Feature, readonly [ScenarioId, ...ScenarioId[]]> = {
   debug: ['debug-session'],
 };
+
+/** The parts of the user's setup the canary plants. Every row but the project tier is a capability
+ * category, so its expected outcome is that provider's cell. */
+export const CANARY_ROWS = [
+  'instructions (project)',
+  'instructions',
+  'skills',
+  'agentBrain',
+  'memory',
+  'hooks',
+  'mcp',
+] as const;
+export type CanaryRow = (typeof CANARY_ROWS)[number];
+export const CANARY_PROVIDERS = ['claude-code', 'opencode', 'copilot'] as const;
+export type CanaryProvider = (typeof CANARY_PROVIDERS)[number];
+export type CanaryRowId = `${CanaryRow} x ${CanaryProvider}`;
+
+const OPENCODE_PRIVATE =
+  "OpenCode's private launch takes no Frink MCP servers, agents, memory or hooks.";
+const COPILOT_PRIVATE =
+  "GitHub Copilot runs in a Frink-owned config folder that Frink hands none of the user's setup.";
+
+/** Canary rows whose setup does not reach the model today, with the cause. Shrink-only. */
+export const CANARY_GAPS: Partial<Record<CanaryRowId, string>> = {
+  'agentBrain x opencode': OPENCODE_PRIVATE,
+  'memory x opencode': OPENCODE_PRIVATE,
+  'hooks x opencode': OPENCODE_PRIVATE,
+  'mcp x opencode': OPENCODE_PRIVATE,
+  'instructions x copilot': COPILOT_PRIVATE,
+  'skills x copilot': COPILOT_PRIVATE,
+  'agentBrain x copilot': COPILOT_PRIVATE,
+  'memory x copilot': COPILOT_PRIVATE,
+  'hooks x copilot': COPILOT_PRIVATE,
+  'mcp x copilot': COPILOT_PRIVATE,
+};
