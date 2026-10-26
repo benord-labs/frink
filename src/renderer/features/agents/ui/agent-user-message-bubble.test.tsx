@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnsweredQuestion } from '../../../../shared/lib/agent-questions/answered-questions';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { TriggerBubbleParseResult } from '../../../../shared/lib/trigger-bubble-marker';
-import { chatMarkdownModeAtom } from '../atoms';
+import { chatMarkdownUserAtom } from '../../../lib/atoms';
 import { AgentUserMessageBubble } from './agent-user-message-bubble';
 
 const parseTriggerBubbleMessageMock = vi.fn<(text: string) => TriggerBubbleParseResult>();
@@ -200,9 +200,9 @@ describe('AgentUserMessageBubble', () => {
     expect(screen.getByText('plain text body')).toBeInTheDocument();
   });
 
-  function renderInStore(ui: ReactNode, mode: 'raw' | 'rendered' | null = null) {
+  function renderInStore(ui: ReactNode, formatUserMessages = false) {
     const store = createStore();
-    if (mode !== null) store.set(chatMarkdownModeAtom, mode);
+    store.set(chatMarkdownUserAtom, formatUserMessages);
     return render(<Provider store={store}>{ui}</Provider>);
   }
 
@@ -213,19 +213,23 @@ describe('AgentUserMessageBubble', () => {
     expect(screen.getByTestId('raw-mention')).toHaveTextContent('**Project**: frink');
     expect(screen.queryByTestId('markdown-rendered')).not.toBeInTheDocument();
 
-    const toggle = screen.getByRole('button', { name: 'Render markdown' });
+    const toggle = screen.getByRole('button', { name: 'Format your messages' });
     fireEvent.click(toggle);
 
     expect(screen.getByTestId('markdown-rendered')).toHaveTextContent('**Project**: frink');
     expect(screen.queryByTestId('raw-mention')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'View raw text' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Show your messages as plain text' }),
+    ).toBeInTheDocument();
   });
 
   it('hides the toggle when no markdown is detected', () => {
     renderInStore(<AgentUserMessageBubble messageId="md2" textContent="just plain words here" />);
 
-    expect(screen.queryByRole('button', { name: 'Render markdown' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'View raw text' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Format your messages' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Show your messages as plain text' }),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the command pill on the raw path in rendered mode', () => {
@@ -238,7 +242,7 @@ describe('AgentUserMessageBubble', () => {
 
     renderInStore(
       <AgentUserMessageBubble messageId="md3" textContent="/plan fix the **thing**" />,
-      'rendered',
+      true,
     );
 
     // Command pill stays rendered via RenderFileMentions (raw-mention mock)...
