@@ -11,10 +11,8 @@ import {
   mapPromptResponse,
   mapSessionUpdate,
 } from '../../../agent-runner/acp/acp-updates';
-import { ChunkQueue } from '../../../agent-runner/codex/chunk-queue';
 import type { CodexApprovalCheck } from '../../../agent-runner/codex/codex-approvals';
 import { mapNotificationToChunks } from '../../../agent-runner/codex/codex-events';
-import { completeTurnChunks, makeChunkSink } from '../../../agent-runner/codex/codex-stream-chunks';
 import {
   createCopilotEventState,
   mapCopilotEvent,
@@ -23,8 +21,8 @@ import {
   createCursorEventState,
   mapCursorMessage,
 } from '../../../agent-runner/cursor/cursor-events';
+import { createTurnStream, frameTurn } from '../../../agent-runner/turn-stream';
 import { createTransformer } from '../../../claude';
-import { createThinkingEmitter } from '../../../claude/thinking-emitter';
 // executor.test.ts mocks only the claude barrel, so this is the real SDK-to-chunk transformer.
 import { createTransformer as realTransformer } from '../../../claude/transform';
 import type { UIMessageChunk } from '../../../claude/types';
@@ -94,20 +92,14 @@ function restoreSuiteMocksAfterTest(): void {
   });
 }
 
-/** Frames translator output the way the Codex, ACP, Copilot and Cursor runners all do. */
-async function* runnerStream(
-  chunks: UIMessageChunk[],
-): AsyncGenerator<UIMessageChunk, void, undefined> {
-  const queue = new ChunkQueue();
-  const openTextIds = new Set<string>();
-  const thinking = createThinkingEmitter();
-  chunks.forEach(makeChunkSink(queue, openTextIds, thinking));
-  queue.finish();
-  yield { type: 'start' };
-  yield { type: 'message-metadata', messageMetadata: { sessionId: SESSION_ID } };
-  yield* queue.drain();
-  yield* completeTurnChunks(thinking, openTextIds);
-  yield { type: 'finish' };
+/** Feeds translator output through the framing every non-Claude runner streams through, after
+ * the session announcement each runner sends first. */
+function runnerStream(chunks: UIMessageChunk[]): AsyncGenerator<UIMessageChunk, void, undefined> {
+  const stream = createTurnStream();
+  stream.emit({ type: 'message-metadata', messageMetadata: { sessionId: SESSION_ID } });
+  chunks.forEach(stream.emit);
+  stream.queue.finish();
+  return frameTurn(stream, stream.queue.drain(), () => undefined);
 }
 
 function acpChunks({ messages, response }: RecordedTurn): UIMessageChunk[] {

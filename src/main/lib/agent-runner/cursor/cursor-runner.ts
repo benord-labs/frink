@@ -5,12 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { SDKModel, SettingSource } from '@cursor/sdk';
 import { utilityProcess } from 'electron';
 import log from 'electron-log';
-import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
-import { ChunkQueue } from '../codex/chunk-queue';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
-import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks';
+import { createTurnStream, frameTurn } from '../turn-stream';
 import {
   type CursorModel,
   type CursorSdkMessage,
@@ -172,10 +170,7 @@ const folderNote = (launch: CursorLaunch) => path.join(path.dirname(launch.store
 
 /** One turn's stream, gate, private home and host process, and the ways the turn can end. */
 class CursorTurn {
-  readonly queue = new ChunkQueue();
-  readonly openTextIds = new Set<string>();
-  readonly thinking = createThinkingEmitter();
-  private readonly emit = makeChunkSink(this.queue, this.openTextIds, this.thinking);
+  readonly stream = createTurnStream();
   private readonly shown = createCursorEventState();
   // Aborted once the turn takes no more answers, so a late hook call is refused.
   private readonly over = new AbortController();
@@ -210,7 +205,7 @@ class CursorTurn {
 
   readonly end = (): void => {
     this.over.abort();
-    this.queue.finish();
+    this.stream.queue.finish();
   };
 
   /** Ends the turn with an error; safe to call again once it has ended. */
@@ -219,7 +214,7 @@ class CursorTurn {
     log.warn(`[Cursor] Stopping the turn: ${text}`);
     // Tagged so the chat offers a button to Cursor's connect page.
     const signIn = text === SIGNED_OUT ? { debugInfo: { category: 'CURSOR_SIGNED_OUT' } } : {};
-    this.emit({ type: 'error', errorText: text, ...signIn });
+    this.stream.emit({ type: 'error', errorText: text, ...signIn });
     this.end();
   }
 
@@ -288,7 +283,7 @@ class CursorTurn {
         this.noted = writeFile(folderNote(this.params.launch), this.params.cwd).catch((error) =>
           log.warn("[Cursor] Could not note the chat's folder", error),
         );
-        return this.emit({
+        return this.stream.emit({
           type: 'message-metadata',
           messageMetadata: { sessionId: message.agentId },
         });
@@ -304,7 +299,7 @@ class CursorTurn {
   private onSdkMessage(message: CursorSdkMessage): void {
     // Frink's check sees the prompt before Cursor answers; anything earlier means it did not load.
     if (!this.gate.canarySeen() && !BEFORE_CANARY.has(message.type)) return this.halt(NOT_LOADED);
-    mapCursorMessage(message, this.shown).forEach(this.emit);
+    mapCursorMessage(message, this.shown).forEach(this.stream.emit);
     // A failed step still uses up its allowance; only a successful one can trip.
     if (message.type === 'tool_call' && message.status !== 'running') {
       const { name, args, result } = message;
@@ -345,10 +340,17 @@ export async function* runCursorAgent(
   params: CursorRunnerParams,
   deps: CursorRunnerDeps = {},
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
+  const turn = new CursorTurn(params, deps);
+  yield* frameTurn(turn.stream, cursorTurnChunks(turn, params), () => turn.agentId);
+}
+
+/** One Cursor turn inside the shared framing; its cleanup never yields. */
+async function* cursorTurnChunks(
+  turn: CursorTurn,
+  params: CursorRunnerParams,
+): AsyncGenerator<UIMessageChunk, void, undefined> {
   const { signal } = params.abortController;
   const { home } = params.launch;
-  yield { type: 'start' };
-  const turn = new CursorTurn(params, deps);
   signal.addEventListener('abort', turn.end, { once: true });
   const started = turn.begin(lastTurnOfChat.get(home)).catch((error) => {
     log.warn('[Cursor] Could not start the host', error);
@@ -365,14 +367,9 @@ export async function* runCursorAgent(
   lastTurnOfChat.set(home, released);
   try {
     if (signal.aborted) turn.end();
-    yield* turn.queue.drain();
+    yield* turn.stream.queue.drain();
   } finally {
     signal.removeEventListener('abort', turn.end);
     turn.end();
-    yield* completeTurnChunks(turn.thinking, turn.openTextIds);
-    yield {
-      type: 'finish',
-      messageMetadata: turn.agentId ? { sessionId: turn.agentId } : undefined,
-    };
   }
 }
