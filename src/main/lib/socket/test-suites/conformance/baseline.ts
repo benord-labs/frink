@@ -28,7 +28,8 @@ export const EXPECTED_FAILURES: Partial<Record<RowId, string>> = {
   'debug-session x acp': NO_DEBUG_SESSION,
   'debug-session x copilot': NO_DEBUG_SESSION,
   'debug-session x cursor': NO_DEBUG_SESSION,
-  'staged-vs-loaded x codex': "Frink does not read Codex's mcpServerStatus/list yet.",
+  'staged-vs-loaded x codex':
+    'The grid replaces runCodexAgent whole, so the app-server lists this check reads are never sent here.',
   'staged-vs-loaded x acp':
     'Frink passes OpenCode skills (and MCP servers once the ACP client sends them) but reads no list of what it loaded.',
 };
