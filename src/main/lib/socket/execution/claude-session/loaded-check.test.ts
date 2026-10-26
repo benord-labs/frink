@@ -115,10 +115,19 @@ describe('noteSessionFrame', () => {
     await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     process.off('unhandledRejection', unhandled);
-    expect(capture).toHaveBeenCalledWith(expect.any(SyntaxError), {
-      surface: 'provider-staged-vs-loaded',
-    });
+    expect(capture).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Could not read the staged Claude config (SyntaxError)' }),
+      { surface: 'provider-staged-vs-loaded' },
+    );
     expect(unhandled).not.toHaveBeenCalled();
+  });
+
+  it('still checks skills when a plugin entry in the staged settings is malformed', async () => {
+    const capture = vi.spyOn(sentry, 'captureMainMessage');
+    await write(path.join(configDir, 'settings.json'), '{"enabledPlugins":{"odd@m":"yes"}}');
+    await writeSkill('plain');
+    noteSessionFrame(spawned(), init({ skills: [], slash_commands: [] }));
+    expect(await reported(capture)).toBe('claude loaded less than Frink staged (skills: plain)');
   });
 
   it('does not report a skill its SKILL.md hides from users', async () => {
