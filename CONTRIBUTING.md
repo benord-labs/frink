@@ -47,6 +47,11 @@ the skill-content drift check and the test suite on every pull request
 (`.github/workflows/test-suite.yml`); run them locally before you push. `bun run format` fixes
 formatting, and `bun run lint` runs the format check, oxlint and the structure lint together.
 
+The structure lint also counts provider-specific branches outside each provider's adapter, in
+`eslint/baselines/provider-branches.json`. The counts only go down: after you remove one, run
+`bun run lint:structure --prune-suppressions` and commit the file. If you rename a counted file, rename its key in that file.
+To hide the counted ones in your editor, give the ESLint extension `"eslint.options": { "applySuppressions": true, "suppressionsLocation": "eslint/baselines/provider-branches.json" }`.
+
 ## Pull requests
 
 Keep each PR small and single-purpose — under ~500 lines of diff. Out-of-scope work you find along
