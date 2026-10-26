@@ -38,8 +38,8 @@ type WriteCard = Pick<
   'toolCallId' | 'toolName' | 'input'
 >;
 
-export const REPLY = 'All done.';
-const SESSION_ID = 'sess-conformance';
+export const REPLY = 'done';
+export const SESSION_ID = 'sess-conformance';
 const NOTE = 'hello';
 export const WRITE_PATH = path.resolve('/workspace/project', 'notes.md');
 const WRITE_ID = 'call-write';
@@ -96,9 +96,25 @@ export const SIMPLE_TURN: ScenarioFixtures = {
       CODEX_TURN_DONE,
     ],
   },
+  // Teed from OpenCode 1.19.0's offline admission turn on 2026-10-26, its command list left out.
   acp: {
-    source: 'SCRIPTED',
-    turn: { messages: [{ update: acpSays(REPLY) }], response: { stopReason: 'end_turn' } },
+    source: 'RECORDED',
+    turn: {
+      messages: [
+        {
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: 'msg_176029be9001PYwX0KTnBq493n',
+            content: { type: 'text', text: 'done' },
+          },
+        },
+      ],
+      response: {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        _meta: {},
+      },
+    },
   },
   copilot: { source: 'SCRIPTED', turn: [copilotSays(REPLY)] },
   cursor: { source: 'SCRIPTED', turn: [cursor.says(REPLY)] },
@@ -176,4 +192,35 @@ export const WRITE_CARDS: Record<AgentRuntime, WriteCard> = {
   acp: { ...EDIT_CARD, input: { file_path: WRITE_PATH, old_string: '', new_string: NOTE } },
   copilot: { ...EDIT_CARD, input: { file_path: WRITE_PATH, old_string: '', new_string: NOTE } },
   cursor: { ...EDIT_CARD, input: { file_path: WRITE_PATH } },
+};
+
+export const PARTIAL = 'Halfway there';
+
+// SAFETY: the transformer and the Claude session loop read only these fields of an SDK frame.
+const CLAUDE_PARTIAL = {
+  type: 'assistant',
+  parent_tool_use_id: null,
+  session_id: SESSION_ID,
+  message: { content: [{ type: 'text', text: PARTIAL }] },
+} as SDKMessage;
+
+/** The agent says PARTIAL, then starts the write: Stop pressed between them shows what leaks. */
+export const STOPPED_TURN: ScenarioFixtures = {
+  claude: { source: 'SCRIPTED', turn: [CLAUDE_PARTIAL, CLAUDE_WRITE[0]] },
+  codex: {
+    source: 'SCRIPTED',
+    turn: [
+      ['item/agentMessage/delta', { itemId: 'msg-1', delta: PARTIAL }],
+      WRITE_FILE.codex.turn[0],
+    ],
+  },
+  acp: {
+    source: 'SCRIPTED',
+    turn: {
+      messages: [{ update: acpSays(PARTIAL) }, WRITE_FILE.acp.turn.messages[0]],
+      response: { stopReason: 'cancelled' },
+    },
+  },
+  copilot: { source: 'SCRIPTED', turn: [copilotSays(PARTIAL), WRITE_FILE.copilot.turn[0]] },
+  cursor: { source: 'SCRIPTED', turn: [cursor.says(PARTIAL), WRITE_FILE.cursor.turn[0]] },
 };
