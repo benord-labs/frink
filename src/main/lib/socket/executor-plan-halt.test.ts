@@ -1216,7 +1216,7 @@ Done.
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
       expect(card?.input?.planPath).toBe(`${sessionPlansDir}/from-sdk.md`);
       // The only signal separating "the named file won" from "the scan happened to agree".
-      expect(fs.promises.readdir).not.toHaveBeenCalled();
+      expect(fs.promises.readdir).not.toHaveBeenCalledWith(sessionPlansDir, expect.anything());
     });
 
     it('vetoes a named file whose plan text is empty and falls back to the scan', async () => {
@@ -1358,7 +1358,7 @@ Done.
       const finalParts = await finalPartsOfLastComplete();
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
       expect(card?.input?.planPath).toBe(`${sessionPlansDir}/from-sdk.md`);
-      expect(fs.promises.readdir).not.toHaveBeenCalled();
+      expect(fs.promises.readdir).not.toHaveBeenCalledWith(sessionPlansDir, expect.anything());
     });
 
     it('re-emits the card when a follow-up turn amends the plan with Edit only and never re-calls ExitPlanMode', async () => {

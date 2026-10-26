@@ -37,6 +37,7 @@ import { type ClaudeSession, createSession } from '../../claude-session-registry
 import { resolvePermissionMode } from '../../streaming/plan-auto-approve';
 import { renderFlowBriefingSection } from '../prompt-prefix/flow-briefing-section';
 import { deliverProviderConfig } from '../provider-delivery';
+import { expectLoaded } from './loaded-check';
 import { buildClaudeSessionCallbacks, type ClaudeSessionScope } from './session-callbacks';
 import { MESSAGE_PROVENANCE_RULE } from '../../../../../shared/lib/message-markers/message-provenance';
 
@@ -445,5 +446,11 @@ export function spawnClaudeSession(
   // to hold the rule; for any other the hook sends it once.
   session.provenanceRuleKnown =
     !options.resume && options.systemPrompt.append.includes(MESSAGE_PROVENANCE_RULE);
+  expectLoaded(session, {
+    configDir: spec.configDir,
+    projectRoot: options.projectConfigRoot ?? options.cwd,
+    agents: Object.keys(options.agents ?? {}),
+    mcpServers: Object.keys(spec.mcpServers ?? {}),
+  });
   return session;
 }
