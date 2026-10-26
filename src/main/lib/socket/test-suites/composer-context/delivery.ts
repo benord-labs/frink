@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AiProviderId } from '../../../../../shared/lib/ai-providers';
 import type { MessageOrigin } from '../../../../../shared/lib/message-markers/message-provenance';
 import { TRIGGER_BUBBLE_MARKER } from '../../../../../shared/lib/trigger-bubble-marker';
 import type { ConversationTurn } from '../../../../../shared/types/execution';
@@ -25,7 +26,8 @@ const SKILL_NOTE =
   'The user\'s message names the skill "deploy". If they are asking you to run it, run that skill with any arguments they gave (in Claude Code, with the Skill tool). If they only mention it, do not run it. If no skill by that name is available to you, say so.';
 const ATTACHED_NOTE =
   'The user attached the file `/tmp/p.txt`. Its contents are not in this message: read it with your file tools before responding.';
-const credential = (type: 'codex' | 'opencode') =>
+/** A signed-in account for a provider whose own binary keeps its sign-in. */
+export const credential = (type: AiProviderId) =>
   ({
     token: null,
     isApiKey: false,

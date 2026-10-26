@@ -6,6 +6,7 @@ export { registerClaudeTurnBindingTests } from './claude-turn-bindings';
 export { registerClaudeWarmSessionTests } from './claude-warm-session';
 export { registerClaudeWarmSessionGuardTests } from './claude-warm-session-guards';
 export { registerComposerContextTests } from './composer-context';
+export { registerConformanceTests } from './conformance';
 export { registerExecutorPermissionTests } from './executor-codex-permissions';
 export {
   registerFlowRunEndedTests,

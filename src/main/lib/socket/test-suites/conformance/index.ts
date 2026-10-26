@@ -1,0 +1,1 @@
+export { registerConformanceTests } from './grid';
