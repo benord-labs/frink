@@ -623,6 +623,21 @@ export default [
     plugins: { frink: frinkPlugin },
     rules: { 'frink/no-provider-branch': 'error' },
   },
+  // The executor turns a throw in a fake CLI generator into a failed turn; checks there can pass.
+  {
+    files: ['src/main/lib/socket/**/*.test.ts', 'src/main/lib/socket/test-suites/**/*.ts'],
+    languageOptions: { parser: tsParser, parserOptions: { sourceType: 'module' } },
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: ":function[generator=true] CallExpression[callee.name='expect']",
+          message:
+            'Capture the value in the fake CLI and assert it after the turn ends, or await a promise the test resolves.',
+        },
+      ],
+    },
+  },
   // File-size + function-size limits. Source = 500/file + 200/function. Tests =
   // 2000/file (loose). Stub plugins register rule names for legacy inline disables.
   {

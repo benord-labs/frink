@@ -248,12 +248,21 @@ import {
 } from '../../../shared/plan-parts-filter';
 import { findUnapprovedPlanPart } from '../../../shared/types/plan';
 import { buildPartsFromChunks } from './claude-turn-context';
-import type { MessagePart } from './client';
+import { sendPermissionRequest, type MessagePart } from './client';
 import { handleRemoteExecute } from './executor';
 import { emitBurstPlanCard } from './streaming/burst-chunks';
-import { validateToolPermission } from './streaming/pending-permission/validate-tool-permission';
+import {
+  drainPendingPermissions,
+  validateToolPermission,
+} from './streaming/pending-permission/validate-tool-permission';
 import { PLAN_SUBMITTED_FOR_REVIEW } from './streaming/plan-auto-approve';
 import { claudePromptText } from './test-utils';
+
+// Every case starts with no pending card and a no-op card sender; cases opt in to answers.
+beforeEach(() => {
+  drainPendingPermissions();
+  vi.mocked(sendPermissionRequest).mockReset();
+});
 
 function stubPermissionsStoreDefault() {
   vi.mocked(checkPermission).mockResolvedValue({ decision: 'allow' });
@@ -964,7 +973,6 @@ Done.
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
     // Approve any card, so a regression surfaces as an extra request rather than a 9.5-min hang.
-    vi.mocked(clientModule.sendPermissionRequest).mockClear();
     vi.mocked(clientModule.sendPermissionRequest).mockImplementation((request) => {
       permissionBridge.lastResponseHandler?.({ ...request, approved: true });
     });
@@ -999,16 +1007,12 @@ Done.
       },
     );
 
-    try {
-      await handleRemoteExecute({
-        ...basePayload,
-        message: 'plan turn, arm fails, MCP call',
-        settings: { model: 'sonnet', autoReviewTools: true },
-      });
-      expect(clientModule.sendPermissionRequest).not.toHaveBeenCalled();
-    } finally {
-      vi.mocked(clientModule.sendPermissionRequest).mockReset();
-    }
+    await handleRemoteExecute({
+      ...basePayload,
+      message: 'plan turn, arm fails, MCP call',
+      settings: { model: 'sonnet', autoReviewTools: true },
+    });
+    expect(clientModule.sendPermissionRequest).not.toHaveBeenCalled();
 
     expect(decisions[0]).toEqual({ behavior: 'allow', updatedInput: {} });
   });
@@ -1633,8 +1637,6 @@ describe('validateToolPermission vendor plugin routing [sc-2068 -> 2026-09-03 un
   const PLUGIN_TOOL = 'mcp__plugin_slack_slack__chat_post_message';
 
   beforeEach(async () => {
-    const clientModule = await import('./client');
-    vi.mocked(clientModule.sendPermissionRequest).mockClear();
     const { getProjectByPath } = await import('../db/repos/projects');
     // SAFETY: validateToolPermission reads only id/name/path off the project row;
     // the partial fixture holds exactly the consumed fields.
