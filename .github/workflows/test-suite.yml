@@ -25,6 +25,10 @@ env:
   ADMISSION_PATHS: '^(src/main/lib/agent-runner/(copilot|acp|codex|process-settlement)/|src/main/lib/agent-runner/(path-questions|env-file-reads)\.ts$|src/main/lib/permissions/|src/main/lib/platform/login-shell-env\.ts$|package\.json$|bun\.lock$|src/shared/lib/ai-providers/|src/main/lib/socket/execution/copilot-turn/|src/main/lib/socket/test-suites/conformance/(canary|baseline)\.ts$|\.github/workflows/test-suite\.yml$)'
   # Changes that can alter which of the user's setup reaches a Claude chat's model; the Claude canary runs on them.
   CLAUDE_CANARY_PATHS: '^(src/main/lib/(claude|provider|mcp/runtime)/|src/main/lib/socket/execution/claude-session/|src/main/lib/platform/login-shell-env\.ts$|src/main/lib/frink-system-prompt\.ts$|src/main/lib/trpc/routers/agent-utils\.ts$|src/main/lib/mcp/config\.ts$|src/main/lib/agent-runner/acp/agents/admission-model\.ts$|src/main/lib/socket/test-suites/conformance/(canary|baseline|anthropic-model)\.ts$|src/shared/lib/ai-providers/|src/shared/(integrations/vendor-plugin-pins|launch-flags)\.ts$|scripts/binaries/(claude-cli-version\.json|download-claude-binary\.mjs)$|package\.json$|bun\.lock$|\.github/workflows/test-suite\.yml$)'
+  # Changes that can alter which of the user's setup reaches a Codex chat's model; the Codex canary runs on them.
+  CODEX_CANARY_PATHS: '^(src/main/lib/agent-runner/(codex|turn-stream)/|src/main/lib/agent-runner/(bundled-binary|acp/agents/admission-model)\.ts$|src/main/lib/(provider|skills|mcp/runtime)/|src/main/lib/mcp/config\.ts$|src/main/lib/frink-skills-dir\.ts$|src/main/lib/socket/execution/provider-delivery\.ts$|src/main/lib/platform/(login-shell-env|frink-home)\.ts$|src/main/lib/claude/(vendor-plugins/|vendor-plugin-acquire/|session-config-dir\.ts$)|src/main/lib/socket/test-suites/conformance/(canary|baseline|responses-model)\.ts$|src/shared/lib/ai-providers/|src/shared/(integrations/vendor-plugin-pins|launch-flags)\.ts$|package\.json$|bun\.lock$|\.github/workflows/(test-suite|build-desktop)\.yml$)'
+  # Changes that rebuild Codex, so main's cache cannot hold the build; Build Desktop canaries it instead.
+  CODEX_BUILD_PATHS: '^(patches/codex/|scripts/binaries/build-codex-frink\.mjs$)'
 
 jobs:
   pull-request-suite:
@@ -414,3 +418,61 @@ jobs:
         run: |
           FRINK_CLAUDE_CANARY_BIN="$PWD/resources/bin/$(node -p 'process.platform+"-"+process.arch')/claude" \
             bun run test -- run src/main/lib/socket/execution/claude-session/claude-canary.test.ts
+
+  # The patched Codex app-server from Build Desktop's main-seeded cache, against a scripted model.
+  codex-canary:
+    if: github.event_name != 'push'
+    name: Codex setup canary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, platformKey: linux-x64 }
+          - { os: macos-15, platformKey: darwin-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip pull requests that leave Codex's setup delivery alone or rebuild Codex
+        id: scope
+        if: github.event_name == 'pull_request'
+        run: |
+          range="origin/${{ github.base_ref }}...HEAD"
+          files=$(git diff --name-only "$range")
+          toolchain=$(git diff "$range" -- .github/workflows/build-desktop.yml | grep -c '^[-+] *CODEX_RUST_TOOLCHAIN:' || true)
+          if [ "$toolchain" -gt 0 ] || grep -Eq "$CODEX_BUILD_PATHS" <<<"$files" || ! grep -Eq "$CODEX_CANARY_PATHS" <<<"$files"; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read Build Desktop's Codex toolchain
+        id: toolchain
+        if: steps.scope.outputs.run != 'false'
+        run: |
+          echo "rust=$(sed -n "s/^ *CODEX_RUST_TOOLCHAIN: '\(.*\)'$/\1/p" .github/workflows/build-desktop.yml)" >> "$GITHUB_OUTPUT"
+
+      # Build Desktop's exact key, so a miss means its key or seeding changed: fail, never skip.
+      - name: Restore the built Codex
+        if: steps.scope.outputs.run != 'false'
+        uses: actions/cache/restore@v4
+        with:
+          path: resources/bin/${{ matrix.platformKey }}
+          key: codex-bin-${{ matrix.os }}-${{ matrix.platformKey }}-rust${{ steps.toolchain.outputs.rust }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
+          fail-on-cache-miss: true
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.run != 'false'
+
+      - name: Install root dependencies
+        if: steps.scope.outputs.run != 'false'
+        run: bun install --frozen-lockfile
+
+      - name: Canary run
+        if: steps.scope.outputs.run != 'false'
+        env:
+          FRINK_CODEX_CANARY_REQUIRED: '1'
+          FRINK_CODEX_CANARY_BIN: ${{ github.workspace }}/resources/bin/${{ matrix.platformKey }}/codex
+        run: bun run test -- run src/main/lib/agent-runner/codex/codex-canary.test.ts

@@ -1,6 +1,6 @@
-import http from 'node:http';
+import type http from 'node:http';
 import { z } from 'zod';
-import { listen } from '../../../agent-runner/acp/agents/admission-model';
+import { serveScripted, streamEvents } from '../../../agent-runner/acp/agents/admission-model';
 
 /** The parts of a Messages request the scripted model reads. */
 const MessagesRequest = z.looseObject({
@@ -19,17 +19,14 @@ function message(model: string, stopped: boolean) {
 }
 
 function streamReply(res: http.ServerResponse, model: string): void {
-  const events = [
+  streamEvents(res, [
     { type: 'message_start', message: { ...message(model, false), usage: USAGE } },
     { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
     { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: REPLY } },
     { type: 'content_block_stop', index: 0 },
     { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: USAGE },
     { type: 'message_stop' },
-  ];
-  res.writeHead(200, { 'content-type': 'text/event-stream' });
-  for (const event of events) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-  res.end();
+  ]);
 }
 
 function json<Body>(res: http.ServerResponse, body: Body): void {
@@ -49,11 +46,6 @@ export async function startScriptedAnthropicModel() {
     if (stream) return streamReply(res, model);
     json(res, { ...message(model, true), usage: USAGE });
   };
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (part) => (body += part));
-    req.on('end', () => answer(req.url ?? '', body, res));
-  });
-  const url = `http://127.0.0.1:${await listen(server)}`;
-  return { url, requests, server };
+  const { server, port } = await serveScripted(answer);
+  return { url: `http://127.0.0.1:${port}`, requests, server };
 }
