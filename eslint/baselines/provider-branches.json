@@ -1,4 +1,14 @@
 {
+  "mobile/src/screens/Chat/Composer/controls.tsx": {
+    "frink/no-provider-branch": {
+      "count": 1
+    }
+  },
+  "mobile/src/screens/Chat/Composer/sheets.tsx": {
+    "frink/no-provider-branch": {
+      "count": 4
+    }
+  },
   "src/main/lib/agents/follows-you.ts": {
     "frink/no-provider-branch": {
       "count": 2
