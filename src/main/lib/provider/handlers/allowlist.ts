@@ -8,9 +8,7 @@ import type { CategoryHandler } from './types';
  * Defense-in-depth behind the SDK's own per-agent `tools`/`disallowedTools`
  * filtering: the session's PreToolUse allowlist hook (which carries `agent_id`/`agent_type`
  * attribution — `canUseTool` does not) routes attributed sub-agent tool calls here
- * and hard-denies an off-allowlist call on an `enforce` provider. On an `advisory`
- * provider (Cursor — no host veto) nothing is denied; the degrade is the coarse
- * `readonly:` frontmatter the agent-brain projection stamps.
+ * and hard-denies an off-allowlist call on an `enforce` provider.
  *
  * Honest limits, by design:
  *  - NAME-level matching only (no tool-argument inspection). `mcp__*` names match
@@ -75,10 +73,6 @@ type AllowlistRule = {
 };
 
 export const enforceAllowlist: CategoryHandler = async ({ mode, rule, ctx }) => {
-  if (mode !== 'enforce') {
-    // Advisory provider — never deny; the coarse readonly projection is the degrade.
-    return { category: 'allowlist', mode, status: 'noop', detail: 'advisory — no host veto' };
-  }
   if (!rule) {
     // The spine's rule param is optional; without a call to judge there is nothing to enforce.
     return { category: 'allowlist', mode, status: 'noop', detail: 'no rule provided' };

@@ -13,6 +13,8 @@ That's it. **Frink never reads or stores your token.** It only checks that the s
 
 Every AI account belongs to this computer — Claude and OpenAI sign-ins and API-key accounts alike.
 
+OpenAI chats don't have Plan or Debug mode yet, so Frink doesn't offer them there.
+
 ### OpenCode (macOS and Linux)
 
 OpenCode is a free, open-source coding agent that can use many AI providers, including free models. Frink runs the OpenCode you install yourself.

@@ -31,6 +31,7 @@ import { listLinkedProjects } from '../../../db/repos/chat-linked-projects';
 import { getChatWithProjectAccount } from '../../../db/repos/chats';
 import { updateSubChatSession } from '../../../db/repos/sub-chats';
 import * as toolValidation from '../../../permissions/tool-validation';
+import { registerDebugSession } from '../../../debug-ingest/ingest-server';
 import { releaseWakeHold } from '../../claude-wake-hold';
 import * as socketClient from '../../client';
 import type { MessageDelivery } from '../../execution/message-provenance/origin';
@@ -70,6 +71,8 @@ export type Observed = {
   inputs: TurnInput[];
   /** The permission cards raised for this sub-chat. */
   cards: PermissionCard[];
+  /** How many of Frink's debug sessions the row registered. */
+  debugSessions: number;
   /** The other sub-chat, in a row that runs two at once. */
   peer?: Observed;
 };
@@ -92,6 +95,10 @@ const PROVIDER_FOR: Partial<Record<AgentRuntime, AiProviderId>> = {
   copilot: 'copilot',
   cursor: 'cursor',
 };
+
+/** The provider a row on `runtime` runs as. */
+export const drivenAs = (runtime: AgentRuntime): AiProviderId =>
+  PROVIDER_FOR[runtime] ?? 'claude-code';
 
 const transformerMock = vi.mocked(createTransformer);
 const windowsMock = vi.mocked(BrowserWindow.getAllWindows);
@@ -320,7 +327,7 @@ function spyEditorWindow() {
   return vi.spyOn(webContents, 'send');
 }
 
-type TurnOptions = TurnScript & TurnSetup & { mode?: ChatMode; sessionId?: string };
+export type TurnOptions = TurnScript & TurnSetup & { mode?: ChatMode; sessionId?: string };
 
 /** One sub-chat on `runtime` with a spied editor window: run its turns in order, then read them. */
 export function startRow<R extends AgentRuntime>(
@@ -329,6 +336,7 @@ export function startRow<R extends AgentRuntime>(
   provider = PROVIDER_FOR[runtime],
 ) {
   const subChatId = randomUUID();
+  const debugSessionsBefore = vi.mocked(registerDebugSession).mock.calls.length;
   restoreSuiteMocksAfterTest();
   const send = spyEditorWindow();
   const stop = () => handleRemoteStop({ chatId: h.basePayload.chatId, subChatId });
@@ -391,6 +399,7 @@ export function startRow<R extends AgentRuntime>(
         errors: forSubChat(errors, subChatId).map((payload) => payload.error),
         inputs: row.inputs,
         cards: forSubChat(cards, subChatId),
+        debugSessions: vi.mocked(registerDebugSession).mock.calls.length - debugSessionsBefore,
       };
     },
   };
@@ -401,10 +410,10 @@ export async function runConformanceTurn<R extends AgentRuntime>(
   h: GridHarness,
   runtime: R,
   turn: VendorTurns[R],
-  setup: TurnSetup = {},
+  options?: TurnOptions,
 ): Promise<Observed> {
   const row = startRow(h, runtime);
-  await row.turn(turn, setup);
+  await row.turn(turn, options);
   return row.observe();
 }
 
