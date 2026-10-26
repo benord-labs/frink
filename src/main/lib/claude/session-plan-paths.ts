@@ -11,10 +11,15 @@ export function isValidSubChatIdForSessionPaths(id: string): boolean {
   return SUBCHAT_ID_PATH_SAFE_RE.test(id);
 }
 
+/** The folder holding every chat's isolated Claude config dir. */
+export function claudeSessionsRoot(): string {
+  return path.join(app.getPath('userData'), 'claude-sessions');
+}
+
 /** This chat's isolated Claude config dir (`CLAUDE_CONFIG_DIR`), or undefined for an unsafe id. */
 export function claudeSessionConfigDir(subChatId: string): string | undefined {
   if (!isValidSubChatIdForSessionPaths(subChatId)) return undefined;
-  return path.join(app.getPath('userData'), 'claude-sessions', subChatId);
+  return path.join(claudeSessionsRoot(), subChatId);
 }
 
 function getClaudePlansDir(): string {
@@ -40,7 +45,7 @@ function assertSafeSubChatIdForSessionPlans(subChatId: string): void {
 
 export function getClaudeSessionPlansDir(subChatId: string): string {
   assertSafeSubChatIdForSessionPlans(subChatId);
-  const base = path.resolve(app.getPath('userData'), 'claude-sessions');
+  const base = path.resolve(claudeSessionsRoot());
   const resolved = path.resolve(base, subChatId, 'plans');
   if (!isPathWithinProject(resolved, base)) {
     throw new Error('Session plans directory resolved outside allowed base path');

@@ -25,7 +25,9 @@ function claimed({ delivery }: CapabilityRow): Handed {
   return {
     mcp: delivery.mcp !== 'none',
     hooks: delivery.hooks !== 'none',
-    files: [delivery.skills, delivery.commands, delivery.agentBrain].includes('copy'),
+    files: [delivery.skills, delivery.commands, delivery.agentBrain].some(
+      (mode) => mode === 'copy' || mode === 'file',
+    ),
   };
 }
 

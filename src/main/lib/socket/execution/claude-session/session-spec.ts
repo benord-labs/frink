@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import { app } from 'electron';
 import log from 'electron-log';
 import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../../../shared/types/execution';
@@ -19,6 +18,7 @@ import { readUserAutoModeRules } from '../../../claude/auto-mode-rules';
 import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
 import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
+import { claudeSessionsRoot } from '../../../claude/session-plan-paths';
 import type { CredentialResult } from '../../../credentials';
 import { hooksForLaunch } from '../../../provider/hooks/store';
 import {
@@ -161,7 +161,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
 
   // Isolated config dir prevents the CLI from reading ~/.claude.json MCPs.
   // Frink passes MCPs explicitly via options.mcpServers from ~/.frink/mcp/config.json.
-  const isolatedConfigDir = path.join(app.getPath('userData'), 'claude-sessions', subChatId);
+  const isolatedConfigDir = path.join(claudeSessionsRoot(), subChatId);
 
   // The stored credential rides a pipe, not the env the CLI's Bash and MCP servers inherit.
   // Why: docs/decisions/child-process-env-secrets.md
