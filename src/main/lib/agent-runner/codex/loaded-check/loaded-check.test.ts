@@ -139,6 +139,18 @@ describe('checkCodexThreadLoaded', () => {
     ]);
   });
 
+  it('matches a linked skill folder under the name Codex lists after following the link', async () => {
+    const target = path.join(root, 'elsewhere', 'real-beta');
+    await fs.promises.mkdir(target, { recursive: true });
+    await fs.promises.writeFile(path.join(target, 'SKILL.md'), '---\nname: x\n---\n');
+    await fs.promises.mkdir(skillRoot, { recursive: true });
+    await fs.promises.symlink(target, path.join(skillRoot, 'beta'), 'dir');
+    const capture = vi.spyOn(sentry, 'captureMainMessage');
+    const { client } = appServer({ skills: listing('real-beta') });
+    await checkCodexThreadLoaded(client, 'th1', staged({ skillRoots: [skillRoot] }));
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it('sends nothing when nothing is staged, or registering the skill roots failed', async () => {
     await writeSkill('alpha');
     const { client, sendRequest } = appServer({});
