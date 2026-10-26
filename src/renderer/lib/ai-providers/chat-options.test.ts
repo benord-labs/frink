@@ -259,10 +259,10 @@ describe('unsupportedChatControls', () => {
     expect(unsupportedChatControls(provider)).toEqual({ modes: [], commands: [] });
   });
 
-  it('hides Plan, its command and /goal for Codex, which keeps compacting', () => {
+  it('hides Plan, Debug, their commands and /goal for Codex, which keeps compacting', () => {
     expect(unsupportedChatControls('codex')).toEqual({
-      modes: ['plan'],
-      commands: ['plan', 'goal'],
+      modes: ['plan', 'debug'],
+      commands: ['plan', 'debug', 'goal'],
     });
   });
 

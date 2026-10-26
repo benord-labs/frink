@@ -27,7 +27,7 @@ describe('project().deliver dispatch (async, registry-routed)', () => {
   const p = project('proj-1', '/tmp/proj', 'claude-code');
 
   it('routes a deliver category off its descriptor mode to its handler stub', async () => {
-    // claude-code mcp = inject; skills = copy; hooks = file. Each → its PCH-x stub.
+    // claude-code mcp = inject; skills = copy. Each → its PCH-x handler.
     expect(await p.deliver('mcp')).toMatchObject({
       category: 'mcp',
       mode: 'inject',
@@ -37,9 +37,14 @@ describe('project().deliver dispatch (async, registry-routed)', () => {
       category: 'skills',
       mode: 'copy',
     });
-    expect(await p.deliver('hooks')).toMatchObject({
+  });
+
+  it('leaves hooks to the launch, which hands them to the provider itself', async () => {
+    expect(await p.deliver('hooks')).toEqual({
       category: 'hooks',
       mode: 'file',
+      status: 'noop',
+      detail: 'handed over at launch',
     });
   });
 

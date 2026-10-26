@@ -16,6 +16,8 @@ vi.hoisted(() => {
 afterEach(cleanup);
 
 const PLAN_UNAVAILABLE = "Plan mode isn't available for OpenAI yet. Pick another mode.";
+const DEBUG_UNAVAILABLE = "Debug mode isn't available for OpenAI yet. Pick another mode.";
+const DEBUG_NOTES = /Debug mode runs an interactive hypothesis-driven session/;
 
 function renderAgentStep(accountType: string, mode?: string): void {
   renderWithTrpc(
@@ -48,14 +50,34 @@ describe('AgentConfig mode on an OpenAI project', () => {
     expect(await screen.findByText(PLAN_UNAVAILABLE)).toBeInTheDocument();
     expect(screen.queryByLabelText('Auto-approve the plan')).toBeNull();
   });
+
+  it('leaves Debug off the menu once an OpenAI project resolves', async () => {
+    renderAgentStep('codex');
+    openModeMenu();
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'Debug' })).toBeNull());
+    expect(screen.getByRole('option', { name: 'Agent (execute)' })).toBeInTheDocument();
+  });
+
+  it('says why a step saved as Debug will not run, without the debug notes', async () => {
+    renderAgentStep('codex', 'debug');
+    expect(await screen.findByText(DEBUG_UNAVAILABLE)).toBeInTheDocument();
+    expect(screen.queryByText(DEBUG_NOTES)).toBeNull();
+  });
 });
 
 describe('AgentConfig mode on a Claude project', () => {
-  it('offers Plan and its auto-approve box', async () => {
+  it('offers Plan, Debug and the auto-approve box', async () => {
     renderAgentStep('claude-code', 'plan');
     expect(screen.getByLabelText('Auto-approve the plan')).toBeInTheDocument();
     openModeMenu();
     expect(await screen.findByRole('option', { name: 'Plan' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Debug' })).toBeInTheDocument();
     expect(screen.queryByText(PLAN_UNAVAILABLE)).toBeNull();
+  });
+
+  it('keeps the debug notes on a step saved as Debug', async () => {
+    renderAgentStep('claude-code', 'debug');
+    await waitFor(() => expect(screen.getByText(DEBUG_NOTES)).toBeInTheDocument());
+    expect(screen.queryByText(DEBUG_UNAVAILABLE)).toBeNull();
   });
 });

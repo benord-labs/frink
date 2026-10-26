@@ -1,5 +1,5 @@
 /** Model and mode wiring for a flow node: Claude vs Codex options from the project's account, the
- * inherit-option label, clearing a saved model of the other provider, and why Plan can't run. */
+ * inherit-option label, clearing a saved model of the other provider, and why a mode can't run. */
 
 import { useEffect, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
@@ -8,6 +8,7 @@ import {
   isInstalledAgent,
   unsupportedModeMessage,
 } from '../../../../../shared/lib/ai-providers';
+import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import {
   CODEX_MODEL_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
@@ -22,21 +23,28 @@ import {
 const accountTypeToExecutionKind = (type: string | undefined): FlowProjectExecutionKind =>
   type === 'codex' ? 'codex' : 'claude-code';
 
-/** Why a project on this account can't run Plan, with what to do instead; null when it can. */
-function planUnavailableFor(type: string | undefined): string | null {
-  const refusal = unsupportedModeMessage(type, 'plan');
+/** Why a project on this account can't run `mode`, with what to do instead; null when it can. */
+function modeUnavailableFor(type: string | undefined, mode: ChatMode): string | null {
+  const refusal = unsupportedModeMessage(type, mode);
   return refusal && `${refusal} Pick another mode.`;
 }
 
-/** A Mode field offers no Plan where Plan can't run, unless the step is already saved as Plan:
- * that stays selected, shows why it won't run, and has no auto-approve to set. */
-export function planModeOption(mode: string, planUnavailable: string | null) {
-  const savedAsPlan = mode === 'plan';
+/** A Mode field offers no `option` where it can't run, unless the step is already saved as it:
+ * that stays selected and shows why. `ready` = saved as it and able to run. */
+export function modeOption(saved: string, option: ChatMode, unavailable: string | null) {
+  const savedAsOption = saved === option;
   return {
-    offered: savedAsPlan || planUnavailable === null,
-    error: savedAsPlan ? planUnavailable : null,
-    autoApprove: savedAsPlan && planUnavailable === null,
+    offered: savedAsOption || unavailable === null,
+    error: savedAsOption ? unavailable : null,
+    ready: savedAsOption && unavailable === null,
   };
+}
+
+/** An Agent step's Plan and Debug options, and why its saved mode won't run (null when it will). */
+export function agentModeOptions(saved: string, unavailable: (mode: ChatMode) => string | null) {
+  const plan = modeOption(saved, 'plan', unavailable('plan'));
+  const debug = modeOption(saved, 'debug', unavailable('debug'));
+  return { plan, debug, error: plan.error ?? debug.error };
 }
 
 type UseProjectModelOptionsConfig = {
@@ -79,7 +87,8 @@ export function useProjectModelOptions(
     (executionKind === 'unknown' && (catalogHint?.startsWith(CODEX_MODEL_PREFIX) ?? false));
 
   const modelOptions = isCodexProject ? CODEX_MODEL_OPTIONS : CLAUDE_MODEL_OPTIONS;
-  const planUnavailable = accountKnown ? planUnavailableFor(resolvedAccount?.type) : null;
+  const modeUnavailable = (mode: ChatMode) =>
+    accountKnown ? modeUnavailableFor(resolvedAccount?.type, mode) : null;
 
   const modelPlaceholder = flowDefaultModel
     ? `Flow default (${modelOptions.find((o) => o.value === flowDefaultModel)?.label ?? flowDefaultModel})`
@@ -93,5 +102,5 @@ export function useProjectModelOptions(
     clearModelRef.current();
   }, [executionKind, model]);
 
-  return { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable };
+  return { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, modeUnavailable };
 }

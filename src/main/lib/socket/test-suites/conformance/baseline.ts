@@ -1,4 +1,5 @@
 import type { AgentRuntime } from '../../../../../shared/lib/ai-providers';
+import type { Feature } from '../../../../../shared/lib/ai-providers/capabilities';
 
 export type ScenarioId =
   | 'simple-turn'
@@ -11,11 +12,24 @@ export type ScenarioId =
   | 'stop-keeps-partial'
   | 'resume-after-stop'
   | 'concurrent-approvals'
-  | 'stop-while-asking';
+  | 'stop-while-asking'
+  | 'debug-session';
 export type RowId = `${ScenarioId} x ${AgentRuntime}`;
+
+const NO_DEBUG_SESSION =
+  "Only Claude's session sets up Frink's debug session; the other runners refuse a Debug turn.";
 
 /** Rows that fail today, with the cause. Shrink-only: a listed row that passes fails the grid. */
 export const EXPECTED_FAILURES: Partial<Record<RowId, string>> = {
   'write-file-changed x codex':
     'Its Edit card names the file only in `changes`, so no `file_path` reaches the shared tool effect.',
+  'debug-session x codex': NO_DEBUG_SESSION,
+  'debug-session x acp': NO_DEBUG_SESSION,
+  'debug-session x copilot': NO_DEBUG_SESSION,
+  'debug-session x cursor': NO_DEBUG_SESSION,
+};
+
+/** The scenarios whose rows decide each feature flag: a provider holds it only where they pass. */
+export const FEATURE_ROWS: Record<Feature, readonly [ScenarioId, ...ScenarioId[]]> = {
+  debug: ['debug-session'],
 };
