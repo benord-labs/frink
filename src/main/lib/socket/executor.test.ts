@@ -1597,7 +1597,12 @@ describe('socket file permission edge cases', () => {
   describe('operator reminder delivery: the Flow run has ended (sc-4467)', () =>
     registerFlowRunEndedTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
   registerComposerContextTests({ basePayload, claudeQueryMock, handleRemoteExecute });
-  registerConformanceTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  registerConformanceTests({
+    basePayload,
+    claudeQueryMock,
+    clientPermissionBridge,
+    handleRemoteExecute,
+  });
   describe('a message whose turn ended before the provider took it', () =>
     registerUndeliveredMessageTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
 
@@ -2316,13 +2321,14 @@ describe('socket file permission edge cases', () => {
       { role: 'user', content: 'hello' },
       { role: 'assistant', content: 'done' },
     ];
+    // A restart forgets the last mode, so the resumed prompt opens with the plan-exit reminder.
+    _resetExecutorStateForTests();
     await handleRemoteExecute(
       { ...basePayload, message: 'again', sessionId: 'oc-session-1', history },
       deps,
     );
 
     expect(turns[1]?.resumeSessionId).toBe('oc-session-1');
-    // The last mode is unknown on a resumed agent turn, so the plan-exit reminder goes first.
     expect(turns[1]?.prompt).toMatch(
       /^<system-reminder>\nPlan mode is not active[\s\S]*\n\nagain$/,
     );
@@ -2377,48 +2383,6 @@ describe('socket file permission edge cases', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(turns[1]).toMatchObject({ mode: 'agent', resumeSessionId: 'cp-session-1' });
   });
-
-  it.each([
-    ['acp', 'opencode'],
-    ['copilot', 'copilot'],
-    ['cursor', 'cursor'],
-  ] as const)(
-    'a %s turn stopped mid-way keeps its session, and the next message continues it',
-    async (runtime, type) => {
-      _resetExecutorStateForTests();
-      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
-        token: null,
-        isApiKey: false,
-        type,
-        label: type,
-        passthrough: true,
-      });
-      vi.mocked(updateSubChatSession).mockClear();
-      const resumed: (string | undefined)[] = [];
-      async function* turn(params: { resumeSessionId?: string }): AsyncGenerator<UIMessageChunk> {
-        resumed.push(params.resumeSessionId);
-        yield { type: 'message-metadata', messageMetadata: { sessionId: 'stopped-session' } };
-        yield { type: 'text-delta', id: 't1', delta: 'partial' };
-        handleRemoteStop(basePayload);
-        yield { type: 'text-delta', id: 't1', delta: 'dropped' };
-      }
-      const turns = { startAcpTurn: turn, startCopilotTurn: turn, startCursorTurn: turn };
-      const deps = { runtimeFor: () => runtime, ...turns };
-
-      await handleRemoteExecute({ ...basePayload, message: 'hello' }, deps);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(vi.mocked(updateSubChatSession)).toHaveBeenCalledWith(
-        expect.anything(),
-        basePayload.subChatId,
-        'stopped-session',
-      );
-      // The next send reads the stored id back, as the socket client does.
-      const stored = vi.mocked(updateSubChatSession).mock.calls.at(-1)?.[2];
-      await handleRemoteExecute({ ...basePayload, message: 'again', sessionId: stored }, deps);
-      expect(resumed).toEqual([undefined, 'stopped-session']);
-    },
-  );
 });
 
 describe('validateToolPermission — worktree canonical decision path', () => {

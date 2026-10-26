@@ -202,13 +202,8 @@ export const executionAbortSources = new Map<string, string>();
  * file verbatim as the awaiting-approval card, then approval feeds that same text to the next prompt.
  */
 
-/**
- * Tracks the last `mode` the executor ran with for each sub-chat. When the next turn switches
- * out of plan mode while resuming the SDK session, the persisted transcript still contains the
- * SDK's `<system-reminder>Plan mode is active</system-reminder>`. Without an exit reminder the
- * model parrots that stale state. We mirror Claude Code TUI's `plan_mode_exit` attachment by
- * detecting the transition here and delivering a one-shot exit reminder (`operator-reminders.ts`).
- */
+/** The mode of the last turn each sub-chat's provider took, on every runtime; a restart forgets it.
+ * A resumed turn that left Plan is told so once (`operator-reminders.ts`). */
 const lastExecutedModeBySubChat = new Map<string, ChatMode>();
 
 /** Test-only: reset module-level executor state so test order doesn't matter. */
@@ -544,6 +539,10 @@ export async function handleRemoteExecute(
       { raw: unmarked, prompt: message },
       isPersonAuthored(payload.delivery, rawMessage),
     );
+    const promptAccepted = () => {
+      undelivered.accepted();
+      lastExecutedModeBySubChat.set(subChatId, mode);
+    };
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');
     recordLiveStreamStart({
@@ -876,6 +875,7 @@ export async function handleRemoteExecute(
       const codexPartsState = createPartsState();
       const toolEffects = createToolEffects(projectPath, subChatId);
       const codexChunks: UIMessageChunk[] = [];
+      turn.lastCollectedChunks = codexChunks;
       let codexIdx = 0;
       let codexMetadata: MessageMetadata = {}; // session id + latest token usage, persisted below
       // settings.model carries the RAW codex picker id (e.g. codex-gpt-5.3-codex-high); the executor
@@ -974,7 +974,7 @@ export async function handleRemoteExecute(
           if (abortController.signal.aborted) break;
           // An agent that answers took the prompt; an error alone proves nothing.
           if (USER_VISIBLE_CHUNK_TYPES.has(chunk.type) && !chunk.type.endsWith('error')) {
-            undelivered.accepted();
+            promptAccepted();
           }
           if ('messageMetadata' in chunk) {
             const sessionId = chunk.messageMetadata?.sessionId;
@@ -1156,7 +1156,7 @@ export async function handleRemoteExecute(
     turn.nextMessageIndex = () => messageIndex++;
     turn.pendingReminders = turnReminders.reminders;
     turn.pendingFlowRunEnded = flowRunEnded && { ...flowRunEnded, subChatId };
-    turn.onPromptAccepted = undelivered.accepted;
+    turn.onPromptAccepted = promptAccepted;
     turn.messageProvenance = provenance;
     turn.composerNotes = composer.notes.map((note) => note.text);
 
@@ -1844,7 +1844,6 @@ export async function handleRemoteExecute(
       });
     }
 
-    lastExecutedModeBySubChat.set(subChatId, mode);
     log.info(`[Socket Executor] Execution complete for ${subChatId}`);
   } catch (error) {
     executionFailed = true;
