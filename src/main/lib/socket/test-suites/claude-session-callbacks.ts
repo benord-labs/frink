@@ -359,11 +359,7 @@ function itStopsOnFreshPostPlanPark(harness: ClaudeSessionCallbackHarness): void
       yield* UNKEPT_TURN_END;
     });
 
-    try {
-      await handleRemoteExecute({ ...payload, message: 'implement the plan' });
-    } finally {
-      latestSignal.mockReset();
-    }
+    await handleRemoteExecute({ ...payload, message: 'implement the plan' });
 
     expect(decisions).toEqual(['block', undefined]);
   });

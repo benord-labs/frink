@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { USER_ABORT_ERROR_PATTERNS } from '../../../shared/lib/user-abort-error';
 import type { TaskResultRecord } from '../db/repos/tasks';
 import {
@@ -345,6 +345,11 @@ import { channelOwner } from '../mcp/execution-identity';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import * as toolValidation from '../permissions/tool-validation';
 import { checkPermission } from '../permissions/v2/check';
+import {
+  ensureLoginShellEnv,
+  LoginShellEnvResolver,
+  setLoginShellEnvResolver,
+} from '../platform/login-shell-env';
 import { resumeParkedTaskInPlace } from '../tasks';
 import type { MessagePart } from './client';
 import type { startAcpTurn } from './execution/acp-turn';
@@ -368,6 +373,7 @@ function stubPermissionsStoreDefault() {
   vi.mocked(checkPermission).mockResolvedValue({ decision: 'allow' });
 }
 
+import { __resetSessionsForTest } from './claude-session-registry';
 import {
   applyChunkToParts,
   buildPartsFromChunks,
@@ -375,6 +381,7 @@ import {
   partsSnapshot,
 } from './claude-turn-context';
 import * as socketClient from './client';
+import { _clearCodexSessionsForTests } from './codex-session';
 import {
   _clearActiveExecutionsForTests,
   _extractImagePartsFromMessageForTests,
@@ -403,8 +410,8 @@ import {
   userPromptSubmitReminder,
 } from './test-utils';
 
-// The invariant middle of the handleRemoteExecute describe blocks' beforeEach. Each block's
-// own prefix (clearAllMocks/reset/state) and suffix (credential/provider mocks) stay inline.
+// The invariant start of the handleRemoteExecute describe blocks' beforeEach, after the root
+// reset. Each block's own state and credential/provider mocks stay inline.
 function applyExecutorMockDefaults(
   machineId: string,
   project: NonNullable<typeof dbProjectState.projectRow>,
@@ -425,11 +432,28 @@ async function firePromptSubmit(input: object): Promise<void> {
   firedReminders.set(input, await userPromptSubmitReminder(input));
 }
 
-// Every case starts with no pending card and a no-op card sender (cases opt in to answers),
-// and re-stubs the fs calls CLAUDE_CONFIG_DIR isolation makes under /mock/userData.
-beforeEach(() => {
+// A fake login shell, resolved before any case: the real one would spawn and rewrite PATH mid-case.
+beforeAll(async () => {
+  const env = { PATH: process.env.PATH ?? '' };
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () => ({ ok: true, env }),
+      extendPath: (p) => p ?? '',
+    }),
+  );
+  await ensureLoginShellEnv();
+});
+
+// Each case starts clean, so order never matters: earlier sessions end and settle, then every mock
+// returns to its factory default. The fs calls CLAUDE_CONFIG_DIR isolation makes stay stubbed.
+beforeEach(async () => {
   drainPendingPermissions();
-  vi.mocked(socketClient.sendPermissionRequest).mockReset();
+  __resetSessionsForTest();
+  vi.useRealTimers();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  vi.resetAllMocks();
+  _clearCodexSessionsForTests();
+  _resetExecutorStateForTests();
   stubPermissionsStoreDefault();
   dbProjectState.projectRow = null;
   vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
@@ -560,9 +584,6 @@ describe('socket file permission edge cases', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
     dbProjectState.projectRow = project;
     vi.mocked(getChatWithProjectAccount).mockResolvedValue(null);
     vi.mocked(getTaskById).mockResolvedValue(null);
@@ -818,7 +839,6 @@ describe('socket file permission edge cases', () => {
     const promptIterator = promptCapture.iterator;
     if (!promptIterator) throw new Error('Expected the prompt iterator to be captured');
     expect((await promptIterator.next()).done).toBe(true);
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValue(undefined); // avoid leaking to next test
   });
 
   // ── Wake hold: pending background work keeps the CLI alive; the harness wake streams ──
@@ -885,7 +905,6 @@ describe('socket file permission edge cases', () => {
 
     query.endStream(); // CLI ends → pump exits → session disposed
     await settle();
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValue(undefined);
   });
 
   it('holds the session when the turn entered plan mode mid-turn, with the lock carried into the burst', async () => {
@@ -932,7 +951,6 @@ describe('socket file permission edge cases', () => {
 
     handle.endStream();
     await settle();
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValue(undefined);
   });
 
   it('holds a turn that STARTED in plan mode when background subagents are still running', async () => {
@@ -978,7 +996,6 @@ describe('socket file permission edge cases', () => {
 
     handle.endStream();
     await settle();
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValue(undefined);
   });
 
   it('does not quiet-mark a plan turn ending with nothing pending — the plan machinery owns it', async () => {
@@ -2276,7 +2293,6 @@ describe('socket file permission edge cases', () => {
   });
 
   it('streams an agent chat through its ACP turn and continues that session next turn', async () => {
-    _resetExecutorStateForTests();
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
       token: null,
       isApiKey: false,
@@ -2337,7 +2353,6 @@ describe('socket file permission edge cases', () => {
   });
 
   it('streams a GitHub Copilot chat through its own turn and continues that session next turn', async () => {
-    _resetExecutorStateForTests();
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
       token: null,
       isApiKey: false,
@@ -2390,11 +2405,6 @@ describe('validateToolPermission — worktree canonical decision path', () => {
   const worktreeFile = '/Users/dev/.frink/worktrees/myproj/brave-lion-aabbcc/src/lib/foo.ts';
   const canonicalFile = '/Users/dev/myproj/src/lib/foo.ts';
   const subChatId = '11111111-1111-4111-8111-111111111111';
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    stubPermissionsStoreDefault();
-  });
 
   function lastDecisionInput(): Record<string, unknown> {
     return vi.mocked(checkPermission).mock.calls[0]?.[0]?.input as Record<string, unknown>;
@@ -2525,11 +2535,9 @@ describe('context isolation edge cases', () => {
   }
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
     applyExecutorMockDefaults(machineId, project);
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(claudeCredential);
     vi.mocked(createTransformer).mockReturnValue(function* (sdkMessage: unknown) {
       const chunks = (sdkMessage as { chunks?: UIMessageChunk[] }).chunks ?? [];
       for (const chunk of chunks) {
@@ -3914,11 +3922,7 @@ describe('context isolation edge cases', () => {
 
 // The helpers below execute up to five full turns; keep their budget load-safe and their mocks local.
 describe('provider session cache helpers', () => {
-  registerCodexSessionCacheTests((machineId, project) => {
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    applyExecutorMockDefaults(machineId, project);
-  });
+  registerCodexSessionCacheTests(applyExecutorMockDefaults);
 });
 
 describe('execute-complete payload', () => {
@@ -4067,10 +4071,10 @@ describe('execution-scoped MCP URL wiring', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
     dbProjectState.projectRow = project;
     vi.mocked(getChatWithProjectAccount).mockResolvedValue(null);
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.mocked(createTransformer).mockReturnValue(function* () {});
   });
 
   it('addresses Claude frink_dynamic_chat by its channel and toolset, never an executionId', async () => {
@@ -4133,8 +4137,6 @@ describe('Claude MCP runtime loading', () => {
   };
 
   beforeEach(() => {
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
     // Keep these tests local-only; project scope map is not relevant here.
     dbProjectState.projectRow = project;
     vi.mocked(getChatWithProjectAccount).mockResolvedValue(null);
@@ -4154,13 +4156,12 @@ describe('Claude MCP runtime loading', () => {
   });
 
   afterEach(() => {
-    delete process.env.EXA_API_KEY;
-    delete process.env.ARGV_SECRET_CANARY;
+    vi.unstubAllEnvs();
   });
 
   it('includes env_var MCP when required key exists in process env', async () => {
-    process.env.EXA_API_KEY = 'exa-secret';
-    process.env.ARGV_SECRET_CANARY = 'ambient-secret-canary';
+    vi.stubEnv('EXA_API_KEY', 'exa-secret');
+    vi.stubEnv('ARGV_SECRET_CANARY', 'ambient-secret-canary');
     vi.mocked(getGlobalMcpServers).mockImplementation(async () => ({
       exa: {
         name: 'exa',
@@ -4250,7 +4251,7 @@ describe('Claude MCP runtime loading', () => {
   });
 
   it('merges process env for non-env_var MCPs that only provide creds.env', async () => {
-    process.env.PATH = '/usr/bin';
+    vi.stubEnv('PATH', '/usr/bin');
     vi.mocked(getGlobalMcpServers).mockImplementation(async () => ({
       exa: {
         name: 'exa',
@@ -5653,9 +5654,6 @@ Done.
 <!-- FRINK_PLAN_COMPLETE -->`;
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
     applyExecutorMockDefaults(machineId, project);
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(claudeCredential);
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
@@ -7050,11 +7048,6 @@ describe('Plan-mode exit reminder (plan→agent transition)', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    // Reset the module-level lastExecutedModeBySubChat map so test order doesn't matter.
-    _resetExecutorStateForTests();
     applyExecutorMockDefaults(machineId, project);
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(claudeCredential);
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
@@ -7433,10 +7426,6 @@ describe('Debug-mode exit reminder (debug→agent transition)', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    _resetExecutorStateForTests();
     debugIngestMocks.startIngestServer.mockResolvedValue(9876);
     debugIngestMocks.registerDebugSession.mockImplementation((sessionId: string) => ({
       endpointUrl: `http://127.0.0.1:9876/ingest/${sessionId}`,
@@ -7614,10 +7603,6 @@ describe('Debug-mode session stability across turns (edge case #1)', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    _resetExecutorStateForTests();
     debugIngestMocks.startIngestServer.mockResolvedValue(9876);
     debugIngestMocks.registerDebugSession.mockImplementation((sessionId: string) => ({
       endpointUrl: `http://127.0.0.1:9876/ingest/${sessionId}`,
@@ -7788,10 +7773,6 @@ describe('Debug-mode port change reminder after app restart', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    _resetExecutorStateForTests();
     debugIngestMocks.startIngestServer.mockResolvedValue(9876);
     debugIngestMocks.registerDebugSession.mockImplementation((sessionId: string) => ({
       endpointUrl: `http://127.0.0.1:9876/ingest/${sessionId}`,
@@ -7878,10 +7859,6 @@ describe('Debug-mode session ID format', () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    _resetExecutorStateForTests();
     debugIngestMocks.startIngestServer.mockResolvedValue(9876);
     debugIngestMocks.registerDebugSession.mockImplementation((sessionId: string) => ({
       endpointUrl: `http://127.0.0.1:9876/ingest/${sessionId}`,
@@ -7968,10 +7945,6 @@ describe('Debug-mode + worktree-backed chat (log path follows worktree)', () => 
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    claudeQueryMock.mockReset();
-    stubPermissionsStoreDefault();
-    _resetExecutorStateForTests();
     debugIngestMocks.startIngestServer.mockResolvedValue(9876);
     debugIngestMocks.registerDebugSession.mockImplementation((sessionId: string) => ({
       endpointUrl: `http://127.0.0.1:9876/ingest/${sessionId}`,
