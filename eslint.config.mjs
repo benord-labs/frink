@@ -21,6 +21,7 @@ import {
   projectStructurePlugin,
 } from 'eslint-plugin-project-structure';
 import { MAIN_LIB_DOMAINS, RENDERER_LIB_DOMAINS } from './eslint/domains.mjs';
+import { noProviderBranch, PROVIDER_ADAPTER_PATHS } from './eslint/no-provider-branch.mjs';
 import { noRawSurfaceFill } from './eslint/no-raw-surface-fill.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,11 @@ const [
   loadBaseline('exempt.mjs', 'mainStructureExempt'),
   loadBaseline('exempt.mjs', 'importWallExempt'),
 ]);
+
+// One plugin object: ESLint refuses two blocks that register different objects under one name.
+const frinkPlugin = {
+  rules: { 'no-raw-surface-fill': noRawSurfaceFill, 'no-provider-branch': noProviderBranch },
+};
 
 const regex = {
   PascalCase: '^[A-Z][a-zA-Z0-9]*$',
@@ -603,8 +609,19 @@ export default [
       parser: tsParser,
       parserOptions: { ecmaFeatures: { jsx: true }, sourceType: 'module' },
     },
-    plugins: { frink: { rules: { 'no-raw-surface-fill': noRawSurfaceFill } } },
+    plugins: { frink: frinkPlugin },
     rules: { 'frink/no-raw-surface-fill': 'error' },
+  },
+  // Provider branches stay in adapters (existing hits: eslint/baselines/provider-branches.json).
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['**/*.{test,spec}.{ts,tsx}', '**/test-suites/**', ...PROVIDER_ADAPTER_PATHS],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: { ecmaFeatures: { jsx: true }, sourceType: 'module' },
+    },
+    plugins: { frink: frinkPlugin },
+    rules: { 'frink/no-provider-branch': 'error' },
   },
   // File-size + function-size limits. Source = 500/file + 200/function. Tests =
   // 2000/file (loose). Stub plugins register rule names for legacy inline disables.
