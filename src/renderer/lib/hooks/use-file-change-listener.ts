@@ -44,7 +44,7 @@ function invalidateWorkingLineChangesForWorktree(
 }
 
 /**
- * Hook that listens for file changes from Claude Write/Edit tools
+ * Hook that listens for file changes from agent write tools
  * and invalidates the git status query to trigger a refetch
  */
 export function useFileChangeListener(worktreePath: string | null | undefined) {
