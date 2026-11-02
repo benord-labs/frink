@@ -63,6 +63,7 @@ export function registerCodeNavigationOpener(
         sourcePaneIndex: sourceFile?.sourcePaneIndex,
         sourceChatId: sourceFile?.sourceChatId,
         isWorktreeContext: sourceFile?.isWorktreeContext,
+        isOtherProject: sourceFile?.isOtherProject,
         intent: 'preview',
       });
 

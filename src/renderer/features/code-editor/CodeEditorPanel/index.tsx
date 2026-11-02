@@ -73,6 +73,7 @@ import {
   codeEditorWidthAtom,
   codeSelectionContextAtomFamily,
   consumePendingReveal,
+  contextPathForTab,
   diffModePreferenceAtom,
   editorActivePaneIndexAtom,
   editorIsSplitActiveAtom,
@@ -92,6 +93,7 @@ import {
   type RevealLineDetail,
   revokeBlobUrlIfPresent,
   revokePdfBlobIfPresent,
+  selectionFileNameForTab,
   shouldRevealNow,
   trackPaneTabAtom,
   updateFileContentAtom,
@@ -108,6 +110,7 @@ import { appStore } from '@/lib/jotai-store';
 import { getPaneColor } from '@/lib/pane-colors';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { cn, isMac } from '@/lib/utils';
+import { OtherProjectNotice } from './OtherProjectNotice';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
@@ -141,13 +144,14 @@ function sanitizeMonacoColorizedHtml(html: string): string {
 function buildCodeSelectionContext(
   selection: { startLineNumber: number; endLineNumber: number },
   selectedText: string,
-  currentFile: { path: string; name: string; language?: string },
+  currentFile: OpenFile,
+  target: { chatId: string; isSplit: boolean },
 ): CodeSelectionContext {
   return {
     id: crypto.randomUUID(),
     text: selectedText,
-    filePath: currentFile.path,
-    fileName: currentFile.name,
+    filePath: contextPathForTab(currentFile, target.chatId, target.isSplit).path,
+    fileName: selectionFileNameForTab(currentFile, target.chatId, target.isSplit),
     language: currentFile.language ?? 'plaintext',
     startLine: selection.startLineNumber,
     endLine: selection.endLineNumber,
@@ -417,6 +421,8 @@ export function CodeEditorPanel() {
   filesRef.current = files;
   const codeEditorActiveChatIdRef = useRef(codeEditorActiveChatId);
   codeEditorActiveChatIdRef.current = codeEditorActiveChatId;
+  const isSplitActiveRef = useRef(isSplitActive);
+  isSplitActiveRef.current = isSplitActive;
   // Tab-bar overflow fade indicators — bound via useTabOverflow after visibleFiles is computed.
   const tabBarRef = useRef<HTMLDivElement>(null);
 
@@ -438,13 +444,16 @@ export function CodeEditorPanel() {
   }, [activePath, activeFile?.sourcePaneIndex, trackPaneTab]);
 
   // Sync active file to per-chat context so context stays correct when switching tabs or after project switch
+  const activeContextPath = activeFile
+    ? contextPathForTab(activeFile, activeFile.sourceChatId, isSplitActive).path
+    : undefined;
   useEffect(() => {
-    if (!activeFile?.sourceChatId) return;
+    if (!activeFile?.sourceChatId || activeContextPath === undefined) return;
     appStore.set(chatContextFileAtomFamily(activeFile.sourceChatId), {
       name: activeFile.name,
-      path: activeFile.path,
+      path: activeContextPath,
     });
-  }, [activeFile?.sourceChatId, activeFile?.name, activeFile?.path]);
+  }, [activeFile?.sourceChatId, activeFile?.name, activeContextPath]);
 
   // Auto-focus: when active pane changes in split view, switch to that pane's last active tab
   const prevPaneIndexRef = useRef(editorActivePaneIndex);
@@ -1228,7 +1237,10 @@ export function CodeEditorPanel() {
     if (selectedText.length < 1) return;
     appStore.set(
       codeSelectionContextAtomFamily(chatId),
-      buildCodeSelectionContext(selection, selectedText, currentFile),
+      buildCodeSelectionContext(selection, selectedText, currentFile, {
+        chatId,
+        isSplit: isSplitActiveRef.current,
+      }),
     );
   }, []);
 
@@ -1259,10 +1271,10 @@ export function CodeEditorPanel() {
           appStore.set(codeSelectionContextAtomFamily(chatId), null);
           const currentFile = activeFileRef.current;
           if (currentFile) {
-            appStore.set(chatContextFileAtomFamily(chatId), {
-              name: currentFile.name,
-              path: currentFile.path,
-            });
+            appStore.set(
+              chatContextFileAtomFamily(chatId),
+              contextPathForTab(currentFile, chatId, isSplitActiveRef.current),
+            );
           }
           return;
         }
@@ -1275,7 +1287,10 @@ export function CodeEditorPanel() {
 
         appStore.set(
           codeSelectionContextAtomFamily(chatId),
-          buildCodeSelectionContext(selection, selectedText, currentFile),
+          buildCodeSelectionContext(selection, selectedText, currentFile, {
+            chatId,
+            isSplit: isSplitActiveRef.current,
+          }),
         );
       }, debounceDelay);
     });
@@ -1883,6 +1898,7 @@ export function CodeEditorPanel() {
               canSave={isTextEditorFile}
             />
           )}
+          <OtherProjectNotice file={activeFile} />
 
           {/* Editor area — min-h-0 lets content scroll instead of growing over the header (isolate = stacking) */}
           <div className="isolate min-h-0 flex-1 overflow-hidden">
