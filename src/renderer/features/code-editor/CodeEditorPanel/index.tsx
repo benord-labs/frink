@@ -104,6 +104,7 @@ import {
   getEditorTabCycleDirection,
   getProjectName,
   groupFilesByProject,
+  shouldGroupTabsByProject,
 } from '@/lib/code-editor/tabs';
 import type { ShortcutActionId } from '@/lib/hotkeys';
 import { appStore } from '@/lib/jotai-store';
@@ -1698,7 +1699,7 @@ export function CodeEditorPanel() {
                   <output className="px-3 py-1.5 text-xs text-muted-foreground italic">
                     No files from this pane
                   </output>
-                ) : isSplitActive && groupedFiles.length > 1 ? (
+                ) : shouldGroupTabsByProject(groupedFiles) ? (
                   groupedFiles.map((group) => (
                     <div key={group.projectPath ?? 'none'} className="flex items-center shrink-0">
                       <ProjectGroupSeparator

@@ -168,6 +168,12 @@ type Project = {
 };
 
 const ROOT = '/Users/sam/app';
+const OTHER = '/Users/sam/api';
+/** Every registered project; the chat's own is `app`. */
+const PROJECTS = [
+  { id: 'app', name: 'app', path: ROOT },
+  { id: 'api', name: 'api', path: OTHER },
+];
 
 const lookup = z.object({ relativePath: z.string() });
 
@@ -190,11 +196,11 @@ function renderReply(
   // The chat view loaded the chat long before this reply, and is the one that keeps it fresh.
   queries.setQueryData(
     getQueryKey(trpc.chats.get, { id: 'chat-1' }, 'query'),
-    { project: projectPath ? { path: projectPath } : null },
+    { project: projectPath ? { id: 'app', name: 'app', path: projectPath } : null },
     { updatedAt: 0 },
   );
   const asked: [path: string, input: unknown][] = [];
-  renderWithTrpc<string | Entry[] | Entry['type'] | null>(
+  renderWithTrpc<string | Entry[] | Entry['type'] | typeof PROJECTS | null>(
     <Provider store={store}>
       <TooltipProvider>
         <CurrentChatWorktreeProvider worktreePath={worktreePath} chatId="chat-1">
@@ -213,6 +219,7 @@ function renderReply(
     </Provider>,
     async (op) => {
       if (op.path === 'external.getHomePath') return answerHomePath(op);
+      if (op.path === 'projects.list') return PROJECTS;
       asked.push([op.path, op.input]);
       if (op.path === 'files.search') return index;
       const { relativePath } = lookup.parse(op.input);
@@ -451,6 +458,72 @@ describe('opening a file from its badge', () => {
 
     expect(badgeNamed('a.ts').tagName).toBe('SPAN');
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it("opens another project's file as that project's, at its line, and names the project", async () => {
+    const { store, asked } = renderReply(`See \`${OTHER}/src/a.ts:7\`.`, {
+      disk: [{ path: 'src/a.ts', type: 'file' }],
+    });
+
+    const badge = await screen.findByRole('button', { name: /a\.ts/ });
+    expect(badge).toHaveTextContent(/^a\.tsapi · L7$/);
+    fireEvent.focus(badge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      /^In api · \/Users\/sam\/api\/src\/a\.ts$/,
+    );
+    fireEvent.click(badge);
+
+    await waitFor(() =>
+      expect(reveals).toMatchObject([{ filePath: `${OTHER}/src/a.ts`, lineNumber: 7 }]),
+    );
+    expect(store.get(openFilesAtom)).toEqual([
+      expect.objectContaining({
+        path: 'src/a.ts',
+        projectPath: OTHER,
+        isOtherProject: true,
+        isWorktreeContext: false,
+        sourceChatId: 'chat-1',
+      }),
+    ]);
+    expect(store.get(openFilesAtom)[0]).not.toHaveProperty('projectName');
+    expect(asked).toEqual([['files.entryType', { projectPath: OTHER, relativePath: 'src/a.ts' }]]);
+  });
+
+  it('names the other project when the file is missing from it', async () => {
+    renderReply(`See \`${OTHER}/src/gone.ts\`.`, { disk: [] });
+
+    fireEvent.click(await screen.findByRole('button', { name: /gone\.ts/ }));
+
+    await waitFor(() => expect(toast.getHistory()).toHaveLength(toasts + 1));
+    expect(toast.getHistory().at(-1)).toMatchObject({ title: "Couldn't find gone.ts in api" });
+  });
+
+  it("opens a registered project's file from a chat with no project", async () => {
+    const { store } = renderReply(`See \`~/api/src/a.ts\`.`, {
+      disk: [{ path: 'src/a.ts', type: 'file' }],
+      projectPath: null,
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /a\.ts/ }));
+
+    await waitFor(() => expect(store.get(openFilesAtom)).toHaveLength(1));
+    expect(store.get(openFilesAtom)[0]).toMatchObject({ projectPath: OTHER, isOtherProject: true });
+  });
+
+  it("leaves a worktree chat's link into its own project's main folder shut, and says why", async () => {
+    renderReply(`See \`${ROOT}/src/a.ts\`.`, {
+      disk: [{ path: 'src/a.ts', type: 'file' }],
+      worktreePath: '/Users/sam/.frink/worktrees/app/fix',
+    });
+
+    fireEvent.focus(badgeNamed('a.ts'));
+
+    await waitFor(() =>
+      expect(screen.getByRole('tooltip')).toHaveTextContent(
+        /^In app's main folder, not this chat's worktree · \/Users\/sam\/app\/src\/a\.ts$/,
+      ),
+    );
+    expect(badgeNamed('a.ts').tagName).toBe('SPAN');
   });
 });
 

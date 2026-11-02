@@ -39,3 +39,8 @@ export function groupFilesByProject(files: OpenFile[]): FileProjectGroup[] {
 
   return grouped;
 }
+
+/** Whether the tab bar splits tabs into project groups: only when they come from more than one. */
+export function shouldGroupTabsByProject(groups: FileProjectGroup[]): boolean {
+  return groups.length > 1;
+}

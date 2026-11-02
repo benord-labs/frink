@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OpenFile } from '@/lib/code-editor/state';
-import { groupFilesByProject } from './group-files-by-project';
+import { groupFilesByProject, shouldGroupTabsByProject } from './group-files-by-project';
 
 const file = (path: string, projectPath?: string): OpenFile => ({
   path,
@@ -41,5 +41,22 @@ describe('groupFilesByProject', () => {
     ]);
     expect(groups[0]).toMatchObject({ projectPath: undefined, projectName: 'Files' });
     expect(groups[1]).toMatchObject({ projectName: 'api' });
+  });
+});
+
+describe('shouldGroupTabsByProject', () => {
+  it.each([
+    [
+      'one project',
+      [file('/work/api/a.ts', '/work/api'), file('/work/api/b.ts', '/work/api')],
+      false,
+    ],
+    [
+      'two projects',
+      [file('/work/api/a.ts', '/work/api'), file('/work/web/b.ts', '/work/web')],
+      true,
+    ],
+  ])('groups the tabs of %s: %s', (_, files, grouped) => {
+    expect(shouldGroupTabsByProject(groupFilesByProject(files))).toBe(grouped);
   });
 });

@@ -3,6 +3,7 @@ import {
   bareFileNameTarget,
   type FileLinkTarget,
   fileLinkOpenInput,
+  fileLinkOpenInputAcrossProjects,
   findShortenedPath,
   inlineCodeFileTarget,
   isBareFileName,
@@ -241,6 +242,68 @@ describe('fileLinkOpenInput', () => {
       expect(fileLinkOpenInput('src/a.ts', { ...project, ...missing })).toBeNull();
     },
   );
+});
+
+describe('fileLinkOpenInputAcrossProjects', () => {
+  const projects = [
+    { id: 'code', name: 'code', path: '/Users/sam/code' },
+    { id: 'app', name: 'app', path: '/Users/sam/code/app' },
+    { id: 'ui', name: 'ui', path: '/Users/sam/code/app/packages/ui' },
+    { id: 'api', name: 'api', path: '/Users/sam/code/api' },
+  ];
+  const chat: Parameters<typeof fileLinkOpenInput>[1] = {
+    home: '/Users/sam',
+    root: '/Users/sam/code/app',
+    isWorktreeContext: false,
+    chatId: 'chat-1',
+  };
+  const worktreeChat = {
+    ...chat,
+    root: '/Users/sam/.frink/worktrees/app/fix',
+    isWorktreeContext: true,
+  };
+  const open = (file: string, base = chat, chatProjectId: string | null = 'app') =>
+    fileLinkOpenInputAcrossProjects(file, base, projects, chatProjectId);
+
+  it("opens a full path in another project as that project's file", () => {
+    expect(open('/Users/sam/code/api/src/a.ts')).toEqual({
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/Users/sam/code/api',
+      isWorktreeContext: false,
+      sourceChatId: 'chat-1',
+      intent: 'pinned',
+      isOtherProject: true,
+      projectName: 'api',
+    });
+  });
+
+  it.each([
+    ['a ~/ path', '~/code/api/src/a.ts', chat, 'app', 'api'],
+    ['a worktree chat', '/Users/sam/code/api/src/a.ts', worktreeChat, 'app', 'api'],
+    ['a general chat', '/Users/sam/code/app/src/a.ts', { ...chat, root: undefined }, null, 'app'],
+    ["the project around the chat's", '/Users/sam/code/notes.md', chat, 'app', 'code'],
+  ])('opens %s in the project it names', (_, file, base, chatProjectId, projectName) => {
+    expect(open(file, base, chatProjectId)).toMatchObject({
+      projectName,
+      isOtherProject: true,
+      isWorktreeContext: false,
+    });
+  });
+
+  it("opens a nested project's file in the chat's own folder, which it tries first", () => {
+    const input = open('/Users/sam/code/app/packages/ui/a.ts');
+    expect(input).toMatchObject({ path: 'packages/ui/a.ts', projectPath: '/Users/sam/code/app' });
+    expect(input?.isOtherProject).toBeUndefined();
+  });
+
+  it.each([
+    ['outside every project', '/Users/sam/other/a.ts', chat],
+    ['written relative to the chat folder', '../api/a.ts', chat],
+    ["in a worktree chat's own main folder", '/Users/sam/code/app/src/a.ts', worktreeChat],
+  ])('opens nothing for a path %s', (_, file, base) => {
+    expect(open(file, base)).toBeNull();
+  });
 });
 
 describe('isBareRelativePath', () => {
