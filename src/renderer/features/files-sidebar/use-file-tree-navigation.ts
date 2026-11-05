@@ -15,6 +15,8 @@ type FileTreeKeyboardCallbacks = {
   onClearSelection: () => void;
   /** Start rename for the selected node */
   onStartRename: (path: string) => void;
+  /** What Enter does to the selected node; without it Enter renames, as F2 does */
+  onEnter?: (path: string) => void;
   /** Duplicate the selected file/folder */
   onDuplicate: (path: string) => void;
   /** Copy the selected path to internal clipboard */
@@ -54,6 +56,7 @@ export function useFileTreeNavigation(
     onSelectByPath,
     onClearSelection,
     onStartRename,
+    onEnter,
     onDuplicate,
     onCopy,
     onExpand,
@@ -78,11 +81,11 @@ export function useFileTreeNavigation(
       const isShift = e.shiftKey;
       const isAlt = e.altKey;
 
-      // --- Enter or F2: Rename ---
+      // --- Enter or F2: Rename (Enter runs onEnter instead when one is given) ---
       if ((e.key === 'Enter' || e.key === 'F2') && !isMeta && !isShift && selectedNode) {
         e.preventDefault();
         e.stopPropagation();
-        onStartRename(selectedNode.path);
+        (e.key === 'Enter' && onEnter ? onEnter : onStartRename)(selectedNode.path);
         return;
       }
 
@@ -220,6 +223,7 @@ export function useFileTreeNavigation(
       getVisiblePaths,
       isInlineActive,
       onStartRename,
+      onEnter,
       onDuplicate,
       onCopy,
       onClearSelection,

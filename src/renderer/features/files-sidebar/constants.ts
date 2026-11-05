@@ -15,6 +15,10 @@ export const PANE_FILE_TREE_READY_EVENT = 'pane-file-tree:ready' as const;
 export const FILE_TREE_KEY_SHORTCUTS =
   'ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowUp Shift+ArrowDown Meta+A Control+A Meta+C Control+C Meta+D Control+D Meta+V Control+V Escape Backspace';
 
+/** aria-keyshortcuts value for another project's read-only tree, which only moves and opens */
+export const READ_ONLY_FILE_TREE_KEY_SHORTCUTS =
+  'ArrowUp ArrowDown ArrowLeft ArrowRight Enter Space Escape';
+
 /** Indent width per level in pixels (used by TreeNode and InlineInput) */
 export const TREE_INDENT_WIDTH = 12;
 /** Base padding for the first level (used by TreeNode and InlineInput) */

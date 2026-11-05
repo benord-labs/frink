@@ -21,6 +21,7 @@ import { fileTreeDndMeasuring } from '../utils/file-tree-dnd-measuring';
 import { InlineInput } from './InlineInput';
 import { SelectionActionsContext, SelectionStateContext } from './MultiSelectContext';
 import { useModifiedFilter } from './modified-filter-context';
+import { useReadOnlyTree } from './ReadOnlyContext';
 import { TreeNode, type TreeNodeDragData, type TreeNodeDropData } from './TreeNode';
 import { NOOP_SELECTION_STORE, type SelectionStore } from './use-multi-select';
 
@@ -167,6 +168,7 @@ export const FileTree = memo(function FileTree({
   pathToExpandAfterDrop,
 }: Props): ReactElement {
   const showModifiedOnly = useModifiedFilter();
+  const readOnly = useReadOnlyTree();
   const [activeItem, setActiveItem] = useState<TreeNodeDragData | null>(null);
   const [creatingItem, setCreatingItem] = useState<CreatingItem | null>(null);
   const creatingItemRef = useRef<CreatingItem | null>(null);
@@ -322,8 +324,9 @@ export const FileTree = memo(function FileTree({
               pathToExpandAfterDrop={pathToExpandAfterDrop}
             />
           ))}
-          {/* Visual hint — actual root drop target is the parent scroll container */}
-          <RootDropHint />
+          {/* Visual hint — actual root drop target is the parent scroll container. A read-only
+              tree takes no drops, though it can share a DndContext with a tree that does. */}
+          {!readOnly && <RootDropHint />}
         </div>
       </SelectionStateContext.Provider>
     </SelectionActionsContext.Provider>
