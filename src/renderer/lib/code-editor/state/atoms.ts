@@ -251,7 +251,10 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
 
   if (existing) {
     const existingKey = fileKey(existing.path, existing.projectPath);
-    const mergedProjectPath = file.projectPath ?? existing.projectPath;
+    // The tab's path is relative to its own folder, so the two stay together: the same file opened
+    // through a nested project's folder must not pair that folder with the tab's path. Only a
+    // legacy tab with no folder takes the incoming one.
+    const mergedProjectPath = existing.projectPath ?? file.projectPath;
     const mergedIsWorktree = existing.isWorktreeContext || file.isWorktreeContext;
     // A tab moving into another pane's group stays a preview only if that group has none.
     const keepsPreview =

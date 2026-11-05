@@ -1,5 +1,6 @@
 import { createStore } from 'jotai';
 import { describe, expect, it } from 'vitest';
+import { getFullPath } from '../files/model-path';
 import {
   activeFilePathAtom,
   clearPaneContextAtom,
@@ -241,6 +242,34 @@ describe('code-editor preview tabs', () => {
     expect(files[0]?.sourcePaneIndex).toBe(1);
     expect(files[0]?.sourceChatId).toBe('chat-2');
     expect(files[0]?.isWorktreeContext).toBe(true);
+  });
+
+  // A chat in /code names the file from its own folder; a chat elsewhere names it from app's.
+  it("keeps a tab's path with its own folder when a nested project's folder opens the same file", () => {
+    const store = createStore();
+    store.set(openFileAtom, {
+      path: 'app/src/a.ts',
+      name: 'a.ts',
+      projectPath: '/code',
+      sourceChatId: 'chat-code',
+      intent: 'pinned',
+    });
+
+    store.set(openFileAtom, {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/code/app',
+      sourceChatId: 'chat-web',
+      isOtherProject: true,
+      intent: 'pinned',
+    });
+
+    const files = store.get(openFilesAtom);
+    expect(files).toHaveLength(1);
+    const [tab] = files;
+    expect(getFullPath(tab?.projectPath, tab?.path ?? '')).toBe('/code/app/src/a.ts');
+    expect(store.get(activeFilePathAtom)).toBe(fileKey(tab?.path ?? '', tab?.projectPath));
+    expect(tab).toMatchObject({ sourceChatId: 'chat-web', isOtherProject: true });
   });
 
   it('remains idempotent under rapid mixed canonical open calls', () => {

@@ -14,6 +14,8 @@ type AgentFileItemProps = Omit<ComponentProps<'button'>, 'children'> & {
   /** Replaces the file-type icon, for attachments that are not files. */
   icon?: ComponentType;
   size?: number;
+  /** The project the file is from, after its name; when room runs short it is cut before the name. */
+  project?: string;
   /** Short suffix after the name, such as a line range; shown in place of the size. */
   detail?: string;
   isLoading?: boolean;
@@ -37,12 +39,13 @@ function BoxlessText({ children }: { children: string }) {
   return <span className="contents">{children}</span>;
 }
 
-/** An attachment as a mention badge: icon, name and an optional size or line range. */
+/** An attachment as a mention badge: icon, name, then an optional project and size or line range. */
 export function AgentFileItem({
   filename,
   path,
   icon,
   size,
+  project,
   detail,
   isLoading = false,
   asButton = false,
@@ -74,6 +77,12 @@ export function AgentFileItem({
         </Tooltip>
       ) : (
         name
+      )}
+      {/* Shrinks a thousand times faster than the name, so a long project name gives way first. */}
+      {project && (
+        <span className="shrink-1000 font-normal before:mr-1 before:content-['·']">
+          {text(project)}
+        </span>
       )}
       {suffix && (
         <span className="shrink-0 font-normal tabular-nums before:mr-1 before:content-['·']">

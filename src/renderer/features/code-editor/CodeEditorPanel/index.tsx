@@ -100,11 +100,10 @@ import {
 } from '@/lib/code-editor/state';
 import { customHotkeysAtom } from '@/lib/atoms';
 import {
+  arrangeTabsByProject,
   disambiguateProjectPaths,
   getEditorTabCycleDirection,
   getProjectName,
-  groupFilesByProject,
-  shouldGroupTabsByProject,
 } from '@/lib/code-editor/tabs';
 import type { ShortcutActionId } from '@/lib/hotkeys';
 import { appStore } from '@/lib/jotai-store';
@@ -112,6 +111,7 @@ import { getPaneColor } from '@/lib/pane-colors';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { cn, isMac } from '@/lib/utils';
 import { OtherProjectNotice } from './OtherProjectNotice';
+import { ProjectGroupSeparator } from './ProjectGroupSeparator';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
@@ -276,10 +276,6 @@ const FileTab = memo(function FileTab({
   );
 });
 
-type ProjectGroupSeparatorProps = {
-  projectName: string;
-};
-
 /** Fade gradient overlay indicating hidden tabs beyond the scroll boundary */
 const TabOverflowFade = memo(function TabOverflowFade({ side }: { side: 'left' | 'right' }) {
   return (
@@ -291,17 +287,6 @@ const TabOverflowFade = memo(function TabOverflowFade({ side }: { side: 'left' |
           : 'right-0 bg-linear-to-l from-muted/80 to-transparent',
       )}
     />
-  );
-});
-
-/** Separator between project groups in the tab bar */
-const ProjectGroupSeparator = memo(function ProjectGroupSeparator({
-  projectName,
-}: ProjectGroupSeparatorProps) {
-  return (
-    <div className="flex items-center px-2 py-1.5 text-[10px] text-muted-foreground/60 font-medium uppercase tracking-wider select-none shrink-0 border-r border-border/30">
-      {projectName}
-    </div>
   );
 });
 
@@ -474,13 +459,14 @@ export function CodeEditorPanel() {
     }
   }, [editorActivePaneIndex, isSplitActive, lastActiveTabPerPane, files, setActivePath]);
 
-  // Compute visible (possibly filtered) and grouped files for the tab bar
-  const { visibleFiles, groupedFiles } = useMemo(() => {
+  // Compute visible (possibly filtered) files, and how the tab bar groups and orders them
+  const { visibleFiles, tabGroups, tabOrder } = useMemo(() => {
     let visible = files;
     if (isSplitActive && filterToActivePane && editorActivePaneIndex !== null) {
       visible = files.filter((f) => f.sourcePaneIndex === editorActivePaneIndex);
     }
-    return { visibleFiles: visible, groupedFiles: groupFilesByProject(visible) };
+    const { groups, order } = arrangeTabsByProject(visible);
+    return { visibleFiles: visible, tabGroups: groups, tabOrder: order };
   }, [files, isSplitActive, filterToActivePane, editorActivePaneIndex]);
 
   // Tab-bar overflow fade indicators; re-measures on scroll/resize and when the
@@ -509,8 +495,15 @@ export function CodeEditorPanel() {
 
   const previousInlineDiffAvailabilityRef = useRef(false);
 
-  // Global editor shortcuts: cycle tabs (Cmd+Shift+]/[) and open Monaco's find widget.
-  useEditorWindowShortcuts({ visibleFiles, activePath, setActivePath, editorRef, isOpen });
+  // Global editor shortcuts: cycle tabs (Cmd+Shift+]/[) in the order the tab bar draws them, and
+  // open Monaco's find widget.
+  useEditorWindowShortcuts({
+    visibleFiles: tabOrder,
+    activePath,
+    setActivePath,
+    editorRef,
+    isOpen,
+  });
 
   const revealLineInEditor = useCallback((detail: RevealLineDetail): boolean => {
     const editor = editorRef.current;
@@ -1699,11 +1692,15 @@ export function CodeEditorPanel() {
                   <output className="px-3 py-1.5 text-xs text-muted-foreground italic">
                     No files from this pane
                   </output>
-                ) : shouldGroupTabsByProject(groupedFiles) ? (
-                  groupedFiles.map((group) => (
+                ) : tabGroups ? (
+                  tabGroups.map((group) => (
                     <div key={group.projectPath ?? 'none'} className="flex items-center shrink-0">
                       <ProjectGroupSeparator
-                        projectName={
+                        projectPath={group.projectPath}
+                        worktreeChatId={
+                          group.files.find((file) => file.isWorktreeContext)?.sourceChatId
+                        }
+                        folderName={
                           group.projectPath
                             ? (projectDisplayNames.get(group.projectPath) ?? group.projectName)
                             : group.projectName

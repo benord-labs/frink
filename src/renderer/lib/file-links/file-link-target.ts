@@ -165,6 +165,19 @@ export function fileLinkProject<T extends { path: string }>(
   return filePath ? findProjectForPath(filePath, projects) : null;
 }
 
+/** A worktree chat's own project, when a full or `~/` path lies anywhere in that project's main
+ *  folder, which the chat doesn't work in. Another project registered inside that folder counts
+ *  as the main folder too. */
+export function fileLinkOwnMainFolder<T extends LinkProject>(
+  file: string,
+  { home, isWorktreeContext }: Pick<FileLinkBase, 'home' | 'isWorktreeContext'>,
+  projects: readonly T[],
+  chatProjectId: string | null | undefined,
+): T | null {
+  const own = isWorktreeContext && projects.find((project) => project.id === chatProjectId);
+  return own ? fileLinkProject(file, home, [own]) : null;
+}
+
 /** As fileLinkOpenInput, then a full or `~/` path in another registered project opens there.
  *  The chat's own project never opens this way, so a worktree chat's link into its main folder
  *  stays shut. */
@@ -176,6 +189,7 @@ export function fileLinkOpenInputAcrossProjects(
 ): FileLinkOpenInput | null {
   const own = fileLinkOpenInput(file, base);
   if (own) return own;
+  if (fileLinkOwnMainFolder(file, base, projects, chatProjectId)) return null;
   const project = fileLinkProject(file, base.home, projects);
   if (!project || project.id === chatProjectId) return null;
   const input = fileLinkOpenInput(file, { ...base, root: project.path, isWorktreeContext: false });
