@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { atom, getDefaultStore } from 'jotai';
 import { createRef, useCallback, useRef } from 'react';
@@ -36,6 +36,12 @@ const clearSelectionMock = vi.hoisted(() => vi.fn());
 const searchState = vi.hoisted(() => ({
   searchQuery: '',
   debouncedQuery: '',
+}));
+// The Search tab's query and each folder's matches for it.
+const contentState = vi.hoisted(() => ({
+  query: '',
+  invalidRegex: false,
+  matchesByPath: {} as Record<string, unknown[]>,
 }));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
@@ -98,11 +104,13 @@ vi.mock('@/lib/trpc', () => ({
         listDirectory: { invalidate: utilsInvalidate.listDirectory },
         search: { invalidate: utilsInvalidate.search },
         searchContent: { invalidate: utilsInvalidate.searchContent },
+        entryType: { invalidate: vi.fn() },
       },
     }),
     files: {
       listDirectory: { useQuery: () => ({ data: directoryState.rootContents, isLoading: false }) },
       search: { useQuery: () => ({ data: [], isLoading: false }) },
+      entryType: { useQuery: () => ({ data: 'folder', isSuccess: true }) },
       moveFile: { useMutation: () => ({ mutate: vi.fn() }) },
       batchMoveFiles: { useMutation: () => ({ mutate: vi.fn() }) },
       createFile: { useMutation: () => ({ mutate: vi.fn() }) },
@@ -123,10 +131,6 @@ vi.mock('@/lib/trpc', () => ({
 
 vi.mock('./ContentSearchOptionsRow', () => ({
   ContentSearchOptionsRow: () => null,
-}));
-
-vi.mock('./ContentSearchResults', () => ({
-  ContentSearchResults: () => null,
 }));
 
 vi.mock('./FileTree', () => ({
@@ -177,16 +181,21 @@ vi.mock('./use-chat-context-file', () => ({
 }));
 
 vi.mock('./use-content-search-tab', () => ({
-  useContentSearchTab: () => ({
-    contentSearchQuery: '',
-    contentDebouncedQuery: '',
+  useContentSearchTab: ({ projectPath }: { projectPath: string }) => ({
+    contentSearchQuery: contentState.query,
+    contentDebouncedQuery: contentState.query,
     setContentSearchQuery: vi.fn(),
     contentSearchOptions: { caseSensitive: false, wholeWord: false, regex: false },
     setContentSearchOptions: vi.fn(),
-    contentMatches: [],
-    contentSearchInvalidRegex: false,
+    contentMatches: contentState.matchesByPath[projectPath] ?? [],
+    contentSearchInvalidRegex: contentState.invalidRegex,
     isLoadingContentSearch: false,
     highlightContentMatch: (line: string) => line,
+  }),
+  useContentSearch: ({ projectPath }: { projectPath: string }) => ({
+    matches: contentState.matchesByPath[projectPath] ?? [],
+    invalidRegex: contentState.invalidRegex,
+    isLoading: false,
   }),
 }));
 
@@ -229,6 +238,9 @@ afterEach(() => {
   clearSelectionMock.mockReset();
   searchState.searchQuery = '';
   searchState.debouncedQuery = '';
+  contentState.query = '';
+  contentState.invalidRegex = false;
+  contentState.matchesByPath = {};
   directoryState.rootContents = [];
   duplicateMutateMock.mockReset();
   externalOnPasteMock.mockReset();
@@ -951,5 +963,120 @@ describe('PaneFileTree with another project in the tree', () => {
     showChat('b');
     expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
     expect(chatTree()).toBeVisible();
+  });
+});
+
+describe('PaneFileTree Search tab with other projects in the tree', () => {
+  const store = getDefaultStore();
+  const api = { id: 'api', name: 'api', path: '/w/api' };
+  const match = (id: string) => ({
+    id,
+    filePath: 'src/a.ts',
+    lineNumber: 4,
+    startColumn: 1,
+    endColumn: 10,
+    lineText: 'useOrders()',
+  });
+  // `count` matches spread over five files, each a line of its own.
+  const matchesIn = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      ...match(`${prefix}-${i}`),
+      filePath: `src/${prefix}-${i % 5}.ts`,
+      lineNumber: i + 1,
+    }));
+  const showSearchTab = (projectPath = '/tmp/proj') => {
+    render(<PaneFileTree projectPath={projectPath} chatId="chat-1" paneIndex={0} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  };
+  const searchFor = (query: string, projectPath = '/tmp/proj') => {
+    contentState.query = query;
+    contentState.matchesByPath = { [projectPath]: [match('own')], '/w/api': [match('browsed')] };
+    showSearchTab(projectPath);
+  };
+  const section = (heading: string) =>
+    within(screen.getByRole('heading', { name: heading }).parentElement as HTMLElement);
+  const openTab = () =>
+    store.get(openFilesAtom).map(({ path, projectPath, isOtherProject }) => ({
+      path,
+      projectPath,
+      isOtherProject,
+    }));
+
+  afterEach(() => {
+    store.set(openFilesAtom, []);
+    store.set(activeFilePathAtom, null);
+  });
+
+  it.each([
+    ['no other project is in the tree', [], 'useOrders', 1],
+    ['nothing is typed yet', [api], '', 0],
+  ])("shows only the chat's results, with no heading, when %s", (_, extras, query, matches) => {
+    treeState.extras = extras;
+    searchFor(query);
+
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /useOrders/ })).toHaveLength(matches);
+  });
+
+  it('groups matches under each project in tree order, opening the same path from each', () => {
+    treeState.extras = [api];
+    searchFor('useOrders');
+
+    expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+      'projThis chat',
+      'apiBrowsing',
+    ]);
+    const [own, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
+    fireEvent.click(own);
+    expect(openTab()).toEqual([
+      { path: '/tmp/proj/src/a.ts', projectPath: '/tmp/proj', isOtherProject: undefined },
+    ]);
+    fireEvent.click(browsed);
+    expect(openTab()).toEqual([
+      { path: '/w/api/src/a.ts', projectPath: '/w/api', isOtherProject: true },
+    ]);
+  });
+
+  it("names the pane's folder in This chat's tooltip, the folder its matches come from", () => {
+    treeState.extras = [api];
+    searchFor('useOrders', '/tmp/proj-wt');
+
+    expect(screen.getByRole('heading', { name: 'proj This chat' })).toHaveAttribute(
+      'title',
+      '/tmp/proj-wt',
+    );
+  });
+
+  it('says once, with no heading, that an invalid pattern is invalid', () => {
+    treeState.extras = [api];
+    contentState.invalidRegex = true;
+    searchFor('use(');
+
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Invalid regular expression.')).toHaveLength(1);
+  });
+
+  it('counts and pages each project on its own', () => {
+    treeState.extras = [api];
+    contentState.query = 'useOrders';
+    contentState.matchesByPath = {
+      '/tmp/proj': matchesIn('own', 60),
+      '/w/api': matchesIn('api', 55),
+    };
+    showSearchTab();
+    const own = () => section('proj This chat');
+    const browsed = () => section('api Browsing');
+    const shown = (part: ReturnType<typeof section>) =>
+      part.getAllByRole('button', { name: /useOrders/ }).length;
+
+    expect(own().getByText('60 results in 5 files')).toBeInTheDocument();
+    expect(browsed().getByText('55 results in 5 files')).toBeInTheDocument();
+    expect([shown(own()), shown(browsed())]).toEqual([50, 50]);
+
+    fireEvent.click(browsed().getByRole('button', { name: 'Show 5 more (5 remaining)' }));
+
+    expect([shown(own()), shown(browsed())]).toEqual([50, 55]);
+    expect(browsed().queryByRole('button', { name: /^Show/ })).not.toBeInTheDocument();
+    expect(own().getByRole('button', { name: 'Show 10 more (10 remaining)' })).toBeInTheDocument();
   });
 });

@@ -1,6 +1,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
+import { cn } from '@/lib/utils';
 import { LoadingState } from '../LoadingState';
 import type { ContentSearchMatch } from '../types/content-search-match';
 
@@ -17,6 +18,12 @@ type ContentSearchResultsProps = {
   ) => void;
   renderLine: (lineText: string) => string | ReactNode[];
   pageSize?: number;
+  /** Shown above the results, e.g. the project they come from */
+  heading?: ReactNode;
+  /** Merged over the defaults, e.g. to drop the scroll area for results inside a shared one */
+  className?: string;
+  /** What shows when nothing matches */
+  emptyMessage?: string;
 };
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -29,6 +36,9 @@ export function ContentSearchResults({
   onSelectMatch,
   renderLine,
   pageSize = DEFAULT_PAGE_SIZE,
+  heading,
+  className,
+  emptyMessage = 'No matches found.',
 }: ContentSearchResultsProps) {
   const trimmedQuery = query.trim();
   const [visibleCount, setVisibleCount] = useState(pageSize);
@@ -60,7 +70,8 @@ export function ContentSearchResults({
   }, [matches]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+    <div className={cn('flex-1 overflow-y-auto px-2 py-2 space-y-1', className)}>
+      {heading}
       {isLoading ? (
         <LoadingState />
       ) : trimmedQuery.length === 0 ? (
@@ -68,7 +79,7 @@ export function ContentSearchResults({
       ) : invalidRegex ? (
         <div className="text-xs text-destructive px-2 py-1">Invalid regular expression.</div>
       ) : matches.length === 0 ? (
-        <div className="text-xs text-muted-foreground px-2 py-1">No matches found.</div>
+        <div className="text-xs text-muted-foreground px-2 py-1">{emptyMessage}</div>
       ) : (
         <>
           <div className="px-1 pb-1 text-[11px] text-muted-foreground">

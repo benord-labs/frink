@@ -2,10 +2,9 @@ import type { ReactElement, ReactNode } from 'react';
 import { useEffect, useId, useRef } from 'react';
 import type { TreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { RootCreateContextMenu } from '../../RootCreateContextMenu';
+import { THIS_CHAT_BADGE } from '../constants';
 import { ExtraProjectRoot } from '../ExtraProjectRoot';
 import { ProjectRootRow } from '../ProjectRootRow';
-
-const THIS_CHAT_BADGE = { label: 'This chat', tone: 'main' } as const;
 
 type Props = {
   /** The chat's tree projects, from useTreeProjects */

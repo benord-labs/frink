@@ -1,13 +1,8 @@
-import { useSetAtom } from 'jotai';
-import { Eye } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
-import { openFileAtom } from '@/lib/code-editor/state';
 import { trpc } from '@/lib/trpc';
-import {
-  normalizePathSlashes,
-  trimTrailingSlashes,
-} from '../../../../../shared/lib/path-normalization';
+import { asEntryOfParent } from '@/lib/workspace-context/project-paths';
+import { useOpenBrowsedFile } from '@/lib/workspace-context/use-open-browsed-file';
 import { FILES_FETCH_LIMIT, READ_ONLY_FILE_TREE_KEY_SHORTCUTS } from '../../constants';
 import { FileTree } from '../../FileTree';
 import { ReadOnlyContext } from '../../FileTree/ReadOnlyContext';
@@ -18,21 +13,12 @@ import { useFileTreeNavigation } from '../../use-file-tree-navigation';
 import { useFileTreeNodes } from '../../utils/build-file-tree';
 import { getVisiblePaths } from '../../utils/get-visible-paths';
 import { createMetaLookupFromDOM } from '../../utils/meta-lookup-from-dom';
+import { BROWSING_BADGE, FOCUS_REFRESH_MS } from '../constants';
 import { ProjectRootRow } from '../ProjectRootRow';
 
-/** Window focus re-reads the files at most this often. */
-const FOCUS_REFRESH_MS = 30_000;
 /** The branch is re-read at most this often: reading it lists every branch and worktree. */
 const BRANCH_STALE_MS = 60_000;
-const BROWSING_BADGE = { label: 'Browsing', icon: Eye, tone: 'browse' } as const;
 const doNothing = () => {};
-
-/** A folder as an entry of the folder that holds it, which is how files.entryType can stat it. */
-function asEntryOfParent(folderPath: string) {
-  const folder = trimTrailingSlashes(normalizePathSlashes(folderPath));
-  const cut = folder.lastIndexOf('/') + 1;
-  return { projectPath: folder.slice(0, cut), relativePath: folder.slice(cut) };
-}
 
 type Props = {
   /** The other project, shown from its registered folder */
@@ -67,7 +53,7 @@ export function ExtraProjectRoot({
   const containerRef = useRef<HTMLDivElement>(null);
   const treeId = useId();
   const utils = trpc.useUtils();
-  const openFile = useSetAtom(openFileAtom);
+  const openInEditor = useOpenBrowsedFile({ projectPath: project.path, chatId, paneIndex });
   const selection = useMultiSelect();
   const isSearching = searchQuery.length > 0;
   const folderEntry = asEntryOfParent(project.path);
@@ -128,19 +114,6 @@ export function ExtraProjectRoot({
     setExpanded(next);
     if (next) refresh();
   };
-
-  // A browsed file never becomes the chat's context file: it isn't in the chat's own project.
-  const openInEditor = (path: string) =>
-    openFile({
-      path,
-      name: path.split('/').pop() ?? path,
-      projectPath: project.path,
-      isOtherProject: true,
-      isWorktreeContext: false,
-      sourceChatId: chatId,
-      sourcePaneIndex: paneIndex,
-      intent: 'preview',
-    });
 
   const rowAt = (path: string) =>
     containerRef.current?.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(path)}"]`);

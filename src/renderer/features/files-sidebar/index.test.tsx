@@ -2,8 +2,10 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { atom } from 'jotai';
+import { atom, getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { openFilesAtom } from '@/lib/code-editor/state';
+import { filesSidebarActiveTabAtom } from './atoms';
 import { FilesSidebar } from './index';
 
 const mockState = vi.hoisted(() => ({
@@ -16,6 +18,11 @@ const clearSelectionMock = vi.hoisted(() => vi.fn());
 const searchState = vi.hoisted(() => ({
   searchQuery: '',
   debouncedQuery: '',
+}));
+// The Search tab's query and each folder's matches for it.
+const contentState = vi.hoisted(() => ({
+  query: '',
+  matchesByPath: {} as Record<string, unknown[]>,
 }));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
@@ -77,6 +84,7 @@ vi.mock('@/lib/trpc', () => ({
         listDirectory: { invalidate: vi.fn() },
         search: { invalidate: vi.fn() },
         searchContent: { invalidate: vi.fn() },
+        entryType: { invalidate: vi.fn() },
       },
     }),
     chats: {
@@ -88,6 +96,7 @@ vi.mock('@/lib/trpc', () => ({
       listDirectory: { useQuery: () => ({ data: directoryState.rootContents, isLoading: false }) },
       search: { useQuery: () => ({ data: [], isLoading: false }) },
       searchContent: { useQuery: () => ({ data: { matches: [], invalidRegex: false } }) },
+      entryType: { useQuery: () => ({ data: 'folder', isSuccess: true }) },
       moveFile: { useMutation: () => ({ mutate: vi.fn() }) },
       batchMoveFiles: { useMutation: () => ({ mutate: vi.fn() }) },
       createFile: { useMutation: () => ({ mutate: vi.fn() }) },
@@ -117,6 +126,7 @@ vi.mock('./atoms', () => ({
   filesSidebarOpenAtom: atom(true),
   filesSidebarActiveTabAtom: atom('files'),
   filesSidebarWidthAtom: atom(320),
+  contentSearchOptionsAtom: atom({ matchCase: false, wholeWord: false, useRegex: false }),
 }));
 
 vi.mock('../sidebar/components/SidebarHeaderWithSearch', () => ({
@@ -128,10 +138,6 @@ vi.mock('../sidebar/components/SidebarHeaderWithSearch', () => ({
 
 vi.mock('./ContentSearchOptionsRow', () => ({
   ContentSearchOptionsRow: () => null,
-}));
-
-vi.mock('./ContentSearchResults', () => ({
-  ContentSearchResults: () => null,
 }));
 
 vi.mock('./FilesSidebarFooter', () => ({
@@ -181,16 +187,21 @@ vi.mock('./use-chat-context-file', () => ({
 }));
 
 vi.mock('./use-content-search-tab', () => ({
-  useContentSearchTab: () => ({
-    contentSearchQuery: '',
-    contentDebouncedQuery: '',
+  useContentSearchTab: ({ projectPath }: { projectPath: string }) => ({
+    contentSearchQuery: contentState.query,
+    contentDebouncedQuery: contentState.query,
     setContentSearchQuery: vi.fn(),
     contentSearchOptions: { matchCase: false, wholeWord: false, useRegex: false },
     setContentSearchOptions: vi.fn(),
-    contentMatches: [],
+    contentMatches: contentState.matchesByPath[projectPath] ?? [],
     contentSearchInvalidRegex: false,
     isLoadingContentSearch: false,
     highlightContentMatch: (line: string) => line,
+  }),
+  useContentSearch: ({ projectPath }: { projectPath: string }) => ({
+    matches: contentState.matchesByPath[projectPath] ?? [],
+    invalidRegex: false,
+    isLoading: false,
   }),
 }));
 
@@ -247,6 +258,10 @@ afterEach(() => {
   clearSelectionMock.mockReset();
   searchState.searchQuery = '';
   searchState.debouncedQuery = '';
+  contentState.query = '';
+  contentState.matchesByPath = {};
+  getDefaultStore().set(filesSidebarActiveTabAtom, 'files');
+  getDefaultStore().set(openFilesAtom, []);
   directoryState.rootContents = [];
   navigationState.onCopy = null;
   duplicateMutateMock.mockReset();
@@ -572,5 +587,49 @@ describe('FilesSidebar with another project in the tree', () => {
     fireEvent.click(thisChatRow());
     askForFocus();
     expect(thisChatRow()).toHaveFocus();
+  });
+
+  it("groups the Search tab's matches by project and opens a browsed match as a browsed tab", () => {
+    const match = (id: string) => ({
+      id,
+      filePath: 'src/a.ts',
+      lineNumber: 4,
+      startColumn: 1,
+      endColumn: 10,
+      lineText: 'useOrders()',
+    });
+    treeState.extras = [api];
+    contentState.query = 'useOrders';
+    contentState.matchesByPath = { '/tmp/proj': [match('own')], '/w/api': [match('browsed')] };
+    render(<FilesSidebar chatId="chat-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const headings = screen.getAllByRole('heading');
+    expect(headings.map((heading) => heading.textContent)).toEqual([
+      'projThis chat',
+      'apiBrowsing',
+    ]);
+    expect(headings[0]).toHaveAttribute('title', '/tmp/proj');
+    const [, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
+    fireEvent.click(browsed);
+    expect(
+      getDefaultStore()
+        .get(openFilesAtom)
+        .map(({ path, projectPath, isOtherProject, sourceChatId, sourcePaneIndex }) => ({
+          path,
+          projectPath,
+          isOtherProject,
+          sourceChatId,
+          sourcePaneIndex,
+        })),
+    ).toEqual([
+      {
+        path: '/w/api/src/a.ts',
+        projectPath: '/w/api',
+        isOtherProject: true,
+        sourceChatId: 'chat-1',
+        sourcePaneIndex: undefined,
+      },
+    ]);
   });
 });

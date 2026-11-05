@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { findProjectForPath, isRealProjectPath, pathsOverlap } from './project-paths';
+import {
+  asEntryOfParent,
+  findProjectForPath,
+  isRealProjectPath,
+  pathsOverlap,
+} from './project-paths';
 
 const projects = [
   { id: 'root', path: '/' },
@@ -51,5 +56,15 @@ describe('pathsOverlap', () => {
     ['C:\\Code', 'c:/code/api', true],
   ])('%s and %s overlap: %s', (a, b, overlap) => {
     expect(pathsOverlap(a, b)).toBe(overlap);
+  });
+});
+
+describe('asEntryOfParent', () => {
+  it.each([
+    ['/w/api', { projectPath: '/w/', relativePath: 'api' }],
+    ['/w/api/', { projectPath: '/w/', relativePath: 'api' }],
+    ['C:\\Code\\Api', { projectPath: 'C:/Code/', relativePath: 'Api' }],
+  ])('reads %s as an entry of the folder that holds it', (folder, entry) => {
+    expect(asEntryOfParent(folder)).toEqual(entry);
   });
 });

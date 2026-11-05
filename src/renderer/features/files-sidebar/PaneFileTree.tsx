@@ -28,7 +28,6 @@ import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { SidebarHeaderWithSearch } from '../sidebar/components/SidebarHeaderWithSearch';
 import type { FilesSidebarTab } from './atoms';
 import { ContentSearchOptionsRow } from './ContentSearchOptionsRow';
-import { ContentSearchResults } from './ContentSearchResults';
 import { FILES_SIDEBAR_SEARCH_INPUT_CLASS, filesSidebarTabButtonClass } from './chrome';
 import {
   FILE_TREE_KEY_SHORTCUTS,
@@ -51,6 +50,7 @@ import {
   useFileTreeRefreshListeners,
 } from './refresh-trigger';
 import { AddProjectButton } from './tree-roots/AddProjectButton';
+import { SearchRootsLayout } from './tree-roots/SearchRootsLayout';
 import { TreeRootsLayout } from './tree-roots/TreeRootsLayout';
 import { useChatContextFile } from './use-chat-context-file';
 import { useContentSearchTab } from './use-content-search-tab';
@@ -892,7 +892,11 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
             </RootCreateContextMenu>
           </TreeRootsLayout>
         ) : (
-          <ContentSearchResults
+          <SearchRootsLayout
+            projects={treeProjects}
+            chatId={chatId ?? ''}
+            mainPath={projectPath}
+            paneIndex={paneIndex}
             isLoading={isLoading}
             query={contentDebouncedQuery}
             invalidRegex={contentSearchInvalidRegex}

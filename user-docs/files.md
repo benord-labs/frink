@@ -71,7 +71,7 @@ The project you pick appears below the chat's own project. Each project in the t
 - A project you added is labelled **Browsing** and shows the branch its folder has checked out.
 - The **×** on a browsed project's row takes it out of the tree. Its files stay where they are.
 
-The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. A browsed project's files are read again when you show them and when you come back to Frink.
+The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. On the **Search** tab, it looks inside the files of every project in the tree and lists the matches under each project's name, in the tree's order, each project with its own count. Click a match to open the file at that line. A browsed project's files are read again when you show them and when you come back to Frink.
 
 Browsed projects are read-only in the tree: you can't create, rename, move, paste, drop or delete files there. You can still open a file and edit it in the editor.
 
