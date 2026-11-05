@@ -57,3 +57,24 @@ A file opens when it is in this chat's folder or in one of your other projects:
 A file from another project shows that project's name on its badge and in its tooltip. While it's open, a note above the editor says you're browsing that project; browsing doesn't change what the agent can read. When open files come from more than one project, the editor's tabs are grouped by project.
 
 A badge that can't open still shows the file's path when you hover over it. In a worktree chat, a file in the project's main folder stays closed, because the chat works in its own worktree; the tooltip says so.
+
+## Browse another project's files
+
+A chat works in one project, but its file tree can show your other projects too, so you can read their files without leaving the chat.
+
+1. Click **Add project** (the folder with a plus) beside the search field at the top of the file tree.
+2. Type to search your projects by name or folder, then pick one with the mouse, or with the arrow keys and **Enter**.
+
+The project you pick appears below the chat's own project. Each project in the tree has a row you can click to show or hide its files:
+
+- The chat's own project is labelled **This chat**.
+- A project you added is labelled **Browsing** and shows the branch its folder has checked out.
+- The **×** on a browsed project's row takes it out of the tree. Its files stay where they are.
+
+The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. A browsed project's files are read again when you show them and when you come back to Frink.
+
+Browsed projects are read-only in the tree: you can't create, rename, move, paste, drop or delete files there. You can still open a file and edit it in the editor.
+
+Browsing doesn't change the chat, its agent, its branch or what the agent can read. The list belongs to the chat, so it shows wherever the chat's file tree does, and it's cleared when Frink restarts.
+
+The picker lists your other projects, except the ones already in the tree and any project inside the chat's folder or holding it. **Add project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.

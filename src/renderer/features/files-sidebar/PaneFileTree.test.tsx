@@ -54,9 +54,11 @@ const fileTreePropsState = vi.hoisted(() => ({
   onFileClick: null as null | ((path: string) => void),
   renamingPath: null as string | null | undefined,
 }));
-// The other projects in the chat's tree; none unless a test adds some.
+// The other projects in the chat's tree, and the ones that could be added; none unless a test adds some.
 const treeState = vi.hoisted(() => ({
   extras: [] as Array<{ id: string; name: string; path: string }>,
+  candidates: [] as Array<{ id: string; name: string; path: string }>,
+  add: vi.fn(),
   remove: vi.fn(),
 }));
 
@@ -147,9 +149,13 @@ vi.mock('./FileTree', () => ({
 }));
 
 vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
-  useTreeProjects: () => ({
+  useTreeProjects: (chatId?: string) => ({
     main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: 'main' },
     extras: treeState.extras,
+    candidates: treeState.candidates,
+    projectsStatus: 'success',
+    canAdd: Boolean(chatId),
+    add: treeState.add,
     remove: treeState.remove,
   }),
 }));
@@ -234,6 +240,8 @@ afterEach(() => {
   fileTreePropsState.onFileClick = null;
   fileTreePropsState.renamingPath = null;
   treeState.extras = [];
+  treeState.candidates = [];
+  treeState.add.mockReset();
   treeState.remove.mockReset();
   mutationHandlers.deleteOnSuccess = null;
   utilsInvalidate.listDirectory.mockReset();
@@ -904,6 +912,24 @@ describe('PaneFileTree with another project in the tree', () => {
     pressDeleteAndNewFile(thisChatRow());
     expect(actions.onDeleteFile).toHaveBeenCalledExactlyOnceWith('src/a.ts');
     expect(actions.onSetRootCreating).toHaveBeenCalledExactlyOnceWith('file');
+  });
+
+  it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
+    const user = userEvent.setup();
+    treeState.candidates = [api];
+    const { rerender } = render(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" />);
+
+    await user.click(screen.getByRole('button', { name: 'Add project' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'api' }));
+    expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
+
+    // What the real hook does once the project is in the chat's list.
+    treeState.extras = [api];
+    chatTree().focus();
+    rerender(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" />);
+    expect(screen.getByRole('region', { name: 'api' })).toBeInTheDocument();
+    // A remounted tree would have lost focus.
+    expect(chatTree()).toHaveFocus();
   });
 
   it('opens This chat again for another chat, and once no other project is left', () => {

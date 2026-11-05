@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { atom } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FilesSidebar } from './index';
@@ -38,8 +39,11 @@ const fileTreePropsState = vi.hoisted(() => ({
 // The other projects in the chat's tree (none unless a test adds some), and what the host hands on.
 const treeState = vi.hoisted(() => ({
   extras: [] as Array<{ id: string; name: string; path: string }>,
+  candidates: [] as Array<{ id: string; name: string; path: string }>,
+  add: vi.fn(),
   projectCount: undefined as number | undefined,
   isMainRootHidden: undefined as undefined | (() => boolean),
+  searchAccessory: undefined as unknown,
 }));
 
 vi.mock('@/components/ui/context-menu', () => ({
@@ -116,7 +120,10 @@ vi.mock('./atoms', () => ({
 }));
 
 vi.mock('../sidebar/components/SidebarHeaderWithSearch', () => ({
-  SidebarHeaderWithSearch: () => null,
+  SidebarHeaderWithSearch: (props: { searchAccessory?: React.ReactNode }) => {
+    treeState.searchAccessory = props.searchAccessory;
+    return props.searchAccessory;
+  },
 }));
 
 vi.mock('./ContentSearchOptionsRow', () => ({
@@ -135,9 +142,13 @@ vi.mock('./FilesSidebarFooter', () => ({
 }));
 
 vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
-  useTreeProjects: () => ({
+  useTreeProjects: (chatId?: string) => ({
     main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: null },
     extras: treeState.extras,
+    candidates: treeState.candidates,
+    projectsStatus: 'success',
+    canAdd: Boolean(chatId),
+    add: treeState.add,
     remove: vi.fn(),
   }),
 }));
@@ -247,6 +258,9 @@ afterEach(() => {
   fileTreePropsState.nodes = [];
   fileTreePropsState.onMoveFile = undefined;
   treeState.extras = [];
+  treeState.candidates = [];
+  treeState.add.mockReset();
+  treeState.searchAccessory = undefined;
   cleanup();
 });
 
@@ -509,6 +523,30 @@ describe('FilesSidebar with another project in the tree', () => {
     expect(treeState.isMainRootHidden?.()).toBe(false);
     fireEvent.click(thisChatRow());
     expect(treeState.isMainRootHidden?.()).toBe(true);
+  });
+
+  it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
+    const user = userEvent.setup();
+    treeState.candidates = [api];
+    const { rerender } = render(<FilesSidebar chatId="chat-1" />);
+
+    await user.click(screen.getByRole('button', { name: 'Add project' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'api' }));
+    expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
+
+    // What the real hook does once the project is in the chat's list.
+    treeState.extras = [api];
+    chatTree().focus();
+    rerender(<FilesSidebar chatId="chat-1" />);
+    expect(screen.getByRole('region', { name: 'api' })).toBeInTheDocument();
+    // A remounted tree would have lost focus.
+    expect(chatTree()).toHaveFocus();
+  });
+
+  it('leaves the header without a slot for Add project when the chat has no project folder', () => {
+    render(<FilesSidebar />);
+
+    expect(treeState.searchAccessory).toBeUndefined();
   });
 
   it('opens This chat again on a switch to another chat', () => {

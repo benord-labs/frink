@@ -41,6 +41,7 @@ import {
   triggerFileTreeReveal,
   useFileTreeRefreshListeners,
 } from './refresh-trigger';
+import { AddProjectButton } from './tree-roots/AddProjectButton';
 import { focusChatTree, TreeRootsLayout } from './tree-roots/TreeRootsLayout';
 import { useChatContextFile } from './use-chat-context-file';
 import { useContentSearchTab } from './use-content-search-tab';
@@ -684,7 +685,9 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
             closeTooltipLabel="Close files"
             closeShortcutId="toggle-files"
             showClearInInput
+            searchAccessory={treeProjects.canAdd ? <AddProjectButton chatId={chatId} /> : undefined}
             searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
+            className="@container/files-header"
           />
           <div className="flex items-center gap-1.5 border-b border-border/25 px-3 pb-2">
             {renderTabButton('files', 'Files')}

@@ -1,5 +1,5 @@
 import { Box, FolderOpen } from 'lucide-react';
-import { GitHubAvatar } from '../../../../components/GitHubAvatar';
+import { GitHubAvatar } from '../GitHubAvatar';
 
 // Helper component to render project icon (avatar or folder)
 export function ProjectIcon({

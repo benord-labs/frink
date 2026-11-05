@@ -50,6 +50,7 @@ import {
   triggerFileTreeReveal,
   useFileTreeRefreshListeners,
 } from './refresh-trigger';
+import { AddProjectButton } from './tree-roots/AddProjectButton';
 import { TreeRootsLayout } from './tree-roots/TreeRootsLayout';
 import { useChatContextFile } from './use-chat-context-file';
 import { useContentSearchTab } from './use-content-search-tab';
@@ -753,8 +754,9 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
           closeTooltipLabel="Close files"
           closeShortcutId="toggle-files"
           showClearInInput
+          searchAccessory={treeProjects.canAdd ? <AddProjectButton chatId={chatId} /> : undefined}
           searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
-          className="pt-3! px-2 pb-0"
+          className="@container/files-header pt-3! px-2 pb-0"
         />
         <div className="flex items-center gap-1.5 border-b border-border/25 px-3 pb-2">
           <Button

@@ -50,3 +50,5 @@ Both give you a project; they differ only in **where the folder lives and whethe
 ## Switching it for a chat
 
 The picker only sets the context for the chat you're about to start. Open a new chat and it resets to **Open project** (general chat on send) — your previous projects are always one click away in the list.
+
+A chat has one project at a time, but you can browse your other projects' files from its file tree without changing that project; see [Browse another project's files](./files.md#browse-another-projects-files).

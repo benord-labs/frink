@@ -11,7 +11,7 @@ import { validateProjectAgainstList } from '../../../lib/validate-project-agains
 import { type SelectedProject, selectedProjectAtom } from '../atoms';
 import { GitHubCloneDialog } from './GitHubCloneDialog';
 import { PickerList, type PickerView } from './PickerList';
-import { ProjectIcon } from './ProjectIcon';
+import { ProjectIcon } from '../../../components/ProjectIcon';
 import { isProjectSelectionCandidate, type ProjectSelectionCandidate } from './types';
 
 type ProjectSelectorProps = {

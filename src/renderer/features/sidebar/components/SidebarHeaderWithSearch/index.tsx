@@ -77,7 +77,8 @@ function SidebarHeaderWithSearchComponent({
             size="sm"
             className={cn(
               'relative z-0 border-input bg-muted pl-8',
-              showClearInInput && 'pr-8',
+              // Room for the clear button only while it shows, so a narrow field keeps its placeholder
+              showClearInInput && searchQuery && 'pr-8',
               searchInputClassName,
             )}
           />

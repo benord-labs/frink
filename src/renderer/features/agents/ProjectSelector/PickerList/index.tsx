@@ -25,7 +25,7 @@ import {
 import { isBuildProjectPath } from '../../../../lib/build-project';
 import type { SelectedProject } from '../../atoms';
 import { formatTimeAgo } from '../../utils/format-time-ago';
-import { ProjectIcon } from '../ProjectIcon';
+import { ProjectIcon } from '../../../../components/ProjectIcon';
 import type { ProjectSelectionCandidate } from '../types';
 
 const GitHubIcon = iconifyComponent(githubLogo);
