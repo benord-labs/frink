@@ -43,6 +43,8 @@ type Props = {
   paneIndex?: number;
   /** The tree's name filter, already debounced; empty lists the folder */
   searchQuery?: string;
+  /** Gives the tree its own drag and drop context, for a host that has no shared one */
+  manageDnd?: boolean;
   onRemove: () => void;
 };
 
@@ -56,6 +58,7 @@ export function ExtraProjectRoot({
   chatId,
   paneIndex,
   searchQuery = '',
+  manageDnd = false,
   onRemove,
 }: Props): ReactElement {
   const [expanded, setExpanded] = useState(true);
@@ -199,7 +202,7 @@ export function ExtraProjectRoot({
                 nodes={nodes}
                 projectPath={project.path}
                 paneIndex={paneIndex}
-                manageDnd={false}
+                manageDnd={manageDnd}
                 onFileClick={openInEditor}
                 searchQuery={searchQuery}
                 onSelect={(path, name, type) => selection.selectOne(path, { name, type })}

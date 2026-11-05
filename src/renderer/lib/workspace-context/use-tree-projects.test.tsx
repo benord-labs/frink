@@ -47,7 +47,10 @@ const CHECKED_OUT: Record<string, string> = { '/wt/app-1': 'feat-moved', '/w/app
 let listState: 'ready' | 'pending' | 'error' = 'ready';
 
 async function answer(op: Operation): Promise<unknown> {
-  if (op.path === 'chats.get') return CHATS[(op.input as { id: string }).id] ?? null;
+  if (op.path === 'chats.get') {
+    const { id } = op.input as { id: string };
+    return id === 'loading' ? new Promise(() => {}) : (CHATS[id] ?? null);
+  }
   if (op.path === 'changes.getBranches') {
     const current = CHECKED_OUT[(op.input as { worktreePath: string }).worktreePath];
     if (!current) throw new Error('not a git repository');
@@ -96,10 +99,12 @@ afterEach(() => {
 
 describe('useTreeProjects', () => {
   it.each([
-    ['a new-chat pane', 'empty-0'],
-    ['a general chat', 'general'],
-    ['a virtual folder chat', 'virtual'],
-  ])('has no main project and adds nothing for %s', async (_, chatId) => {
+    ['no chat at all', '', true],
+    ['a new-chat pane', 'empty-0', true],
+    ['a general chat', 'general', true],
+    ['a virtual folder chat', 'virtual', true],
+    ['a chat still loading', 'loading', false],
+  ])('has no main project and adds nothing for %s', async (_, chatId, isLoaded) => {
     // The worktree chat lists projects only after both chats load, so this chat has loaded by then.
     const { tree, storedIds } = renderTrees([chatId, 'worktree'], ['api']);
     await waitFor(() => expect(tree('worktree').candidates).not.toHaveLength(0));
@@ -107,6 +112,7 @@ describe('useTreeProjects', () => {
     act(() => tree().add('web'));
 
     expect(tree()).toMatchObject({ main: null, canAdd: false, extras: [], candidates: [] });
+    expect(tree().isLoaded).toBe(isLoaded);
     expect(storedIds()).toEqual(['api']);
   });
 
@@ -119,7 +125,7 @@ describe('useTreeProjects', () => {
     await waitFor(() => expect(idsOf(tree().extras)).toEqual(['web', 'api']));
     expect(tree().extras[0]).toEqual({ id: 'web', name: 'web', path: '/w/web' });
     expect(idsOf(tree().candidates)).toEqual(['docs']);
-    expect(tree()).toMatchObject({ canAdd: true, projectsStatus: 'success' });
+    expect(tree()).toMatchObject({ canAdd: true, projectsStatus: 'success', isLoaded: true });
   });
 
   it("offers a folder that is only some other chat's worktree", async () => {
@@ -170,5 +176,7 @@ describe('useTreeProjects', () => {
     await waitFor(() => expect(tree().main?.workingPath).toBe('/w/app'));
     await waitFor(() => expect(tree().projectsStatus).toBe(state));
     expect(tree()).toMatchObject({ extras: [], candidates: [], canAdd: true });
+    // A failed list is final; one still loading may yet hold the chat's extra projects.
+    expect(tree().isLoaded).toBe(state === 'error');
   });
 });

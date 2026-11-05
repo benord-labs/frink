@@ -53,6 +53,7 @@ export function ProjectRootRow({
         <TooltipTrigger asChild>
           <button
             type="button"
+            data-root-row
             aria-expanded={expanded}
             aria-controls={controlsId}
             onClick={() => onExpandedChange(!expanded)}

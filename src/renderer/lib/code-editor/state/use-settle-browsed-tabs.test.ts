@@ -16,7 +16,7 @@ const browsed: OpenFile = {
 };
 
 type Chat = Parameters<typeof useSettleBrowsedTabs>[0]['chat'];
-type Props = { chat: Chat; isSplitActive: boolean };
+type Props = { chat: Chat; isSplitActive: boolean; keepProjectPaths?: string[] };
 
 const inRepo = (id: string): Chat => ({ id, project: { path: '/repo' } });
 
@@ -40,6 +40,14 @@ describe('useSettleBrowsedTabs', () => {
     rerender({ chat: inRepo('chat-c'), isSplitActive: false });
 
     expect(store.get(openFilesAtom)).toEqual([]);
+  });
+
+  it("keeps the tab on a switch to a chat whose file tree has the tab's project", () => {
+    const { store, rerender } = renderSettle({ chat: inRepo('chat-a'), isSplitActive: false });
+
+    rerender({ chat: inRepo('chat-c'), isSplitActive: false, keepProjectPaths: ['/ros-service'] });
+
+    expect(store.get(openFilesAtom)).toEqual([{ ...browsed, sourceChatId: 'chat-c' }]);
   });
 
   it('waits for the chat to load', () => {

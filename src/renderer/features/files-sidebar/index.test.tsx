@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { atom } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FilesSidebar } from './index';
@@ -33,6 +33,13 @@ const fileTreePropsState = vi.hoisted(() => ({
   onCopyItem: null as null | ((path: string) => void),
   onPasteIntoFolder: null as null | ((targetFolder: string) => void),
   nodes: [] as Array<{ path: string; gitStatus?: string }>,
+  onMoveFile: undefined as unknown,
+}));
+// The other projects in the chat's tree (none unless a test adds some), and what the host hands on.
+const treeState = vi.hoisted(() => ({
+  extras: [] as Array<{ id: string; name: string; path: string }>,
+  projectCount: undefined as number | undefined,
+  isMainRootHidden: undefined as undefined | (() => boolean),
 }));
 
 vi.mock('@/components/ui/context-menu', () => ({
@@ -121,7 +128,24 @@ vi.mock('./ContentSearchResults', () => ({
 }));
 
 vi.mock('./FilesSidebarFooter', () => ({
-  FilesSidebarFooter: () => null,
+  FilesSidebarFooter: (props: { projectCount?: number }) => {
+    treeState.projectCount = props.projectCount;
+    return null;
+  },
+}));
+
+vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
+  useTreeProjects: () => ({
+    main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: null },
+    extras: treeState.extras,
+    remove: vi.fn(),
+  }),
+}));
+
+vi.mock('./tree-roots/ExtraProjectRoot', () => ({
+  ExtraProjectRoot: (props: { project: { name: string }; manageDnd?: boolean }) => (
+    <section data-read-only-root aria-label={props.project.name} data-dnd={props.manageDnd} />
+  ),
 }));
 
 vi.mock('./FileTree', () => ({
@@ -130,7 +154,9 @@ vi.mock('./FileTree', () => ({
     onCopyItem?: (path: string) => void;
     onPasteIntoFolder?: (targetFolder: string) => void;
     nodes: Array<{ path: string; gitStatus?: string }>;
+    onMoveFile?: unknown;
   }) => {
+    fileTreePropsState.onMoveFile = props.onMoveFile;
     fileTreePropsState.pathToExpandAfterDrop = props.pathToExpandAfterDrop;
     fileTreePropsState.onCopyItem = props.onCopyItem ?? null;
     fileTreePropsState.onPasteIntoFolder = props.onPasteIntoFolder ?? null;
@@ -176,7 +202,9 @@ vi.mock('./use-external-file-drop', () => ({
 }));
 
 vi.mock('./use-file-tree-hotkeys', () => ({
-  useFileTreeHotkeys: () => {},
+  useFileTreeHotkeys: (params: { isMainRootHidden?: () => boolean }) => {
+    treeState.isMainRootHidden = params.isMainRootHidden;
+  },
 }));
 
 vi.mock('./use-file-tree-navigation', () => ({
@@ -217,6 +245,8 @@ afterEach(() => {
   fileTreePropsState.onCopyItem = null;
   fileTreePropsState.onPasteIntoFolder = null;
   fileTreePropsState.nodes = [];
+  fileTreePropsState.onMoveFile = undefined;
+  treeState.extras = [];
   cleanup();
 });
 
@@ -456,5 +486,53 @@ describe('FilesSidebar external-drop announcement', () => {
     const liveRegion = container.querySelector('[role="tree"] [role="status"]');
     expect(liveRegion).toBeInTheDocument();
     expect(liveRegion).toHaveTextContent('');
+  });
+});
+
+describe('FilesSidebar with another project in the tree', () => {
+  const api = { id: 'api', name: 'api', path: '/w/api' };
+  const thisChatRow = () => screen.getByRole('button', { name: 'proj This chat' });
+  const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
+
+  it("mounts it below the chat's tree with its own drag and drop, and counts both projects", () => {
+    treeState.extras = [api];
+    render(<FilesSidebar chatId="chat-1" />);
+    const section = screen.getByRole('region', { name: 'api' });
+
+    expect(chatTree().compareDocumentPosition(section)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(chatTree().contains(section)).toBe(false);
+    expect(section).toHaveAttribute('data-dnd', 'true');
+    expect(fileTreePropsState.onMoveFile).toBeTypeOf('function');
+    expect(treeState.projectCount).toBe(2);
+
+    // The shortcuts skip the chat's tree once This chat is closed.
+    expect(treeState.isMainRootHidden?.()).toBe(false);
+    fireEvent.click(thisChatRow());
+    expect(treeState.isMainRootHidden?.()).toBe(true);
+  });
+
+  it('opens This chat again on a switch to another chat', () => {
+    treeState.extras = [api];
+    const { rerender } = render(<FilesSidebar chatId="chat-1" />);
+    fireEvent.click(thisChatRow());
+
+    rerender(<FilesSidebar chatId="chat-2" />);
+
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(chatTree()).toBeVisible();
+    expect(treeState.isMainRootHidden?.()).toBe(false);
+  });
+
+  it("focuses This chat, not the hidden tree, when the files shortcut asks while it's closed", () => {
+    treeState.extras = [api];
+    render(<FilesSidebar chatId="chat-1" />);
+    const askForFocus = () => act(() => void window.dispatchEvent(new Event('file-tree:focus')));
+
+    askForFocus();
+    expect(chatTree()).toHaveFocus();
+
+    fireEvent.click(thisChatRow());
+    askForFocus();
+    expect(thisChatRow()).toHaveFocus();
   });
 });

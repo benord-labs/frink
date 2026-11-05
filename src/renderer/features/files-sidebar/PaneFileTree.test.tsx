@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { atom, getDefaultStore } from 'jotai';
+import { createRef, useCallback, useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   activeFilePathAtom,
@@ -9,8 +11,9 @@ import {
   fileKey,
   openFilesAtom,
 } from '@/lib/code-editor/state';
-import { PaneFileTree } from './PaneFileTree';
+import { PaneFileTree, type PaneFileTreeHandle } from './PaneFileTree';
 import { FILE_TREE_REFRESH_EVENT } from './refresh-trigger';
+import { useFileTreeHotkeys } from './use-file-tree-hotkeys';
 
 const mockState = vi.hoisted(() => ({
   selectedCount: 0,
@@ -49,6 +52,12 @@ const fileTreePropsState = vi.hoisted(() => ({
   onPasteIntoFolder: null as null | ((targetFolder: string) => void),
   nodes: [] as Array<{ path: string; gitStatus?: string }>,
   onFileClick: null as null | ((path: string) => void),
+  renamingPath: null as string | null | undefined,
+}));
+// The other projects in the chat's tree; none unless a test adds some.
+const treeState = vi.hoisted(() => ({
+  extras: [] as Array<{ id: string; name: string; path: string }>,
+  remove: vi.fn(),
 }));
 
 vi.mock('@dnd-kit/core', () => ({
@@ -125,14 +134,36 @@ vi.mock('./FileTree', () => ({
     onPasteIntoFolder?: (targetFolder: string) => void;
     nodes: Array<{ path: string; gitStatus?: string }>;
     onFileClick?: (path: string) => void;
+    renamingPath?: string | null;
   }) => {
     fileTreePropsState.onFileClick = props.onFileClick ?? null;
+    fileTreePropsState.renamingPath = props.renamingPath;
     fileTreePropsState.pathToExpandAfterDrop = props.pathToExpandAfterDrop;
     fileTreePropsState.onCopyItem = props.onCopyItem ?? null;
     fileTreePropsState.onPasteIntoFolder = props.onPasteIntoFolder ?? null;
     fileTreePropsState.nodes = props.nodes;
     return <div data-testid="file-tree">tree</div>;
   },
+}));
+
+vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
+  useTreeProjects: () => ({
+    main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: 'main' },
+    extras: treeState.extras,
+    remove: treeState.remove,
+  }),
+}));
+
+vi.mock('./tree-roots/ExtraProjectRoot', () => ({
+  ExtraProjectRoot: (props: {
+    project: { name: string };
+    searchQuery: string;
+    onRemove: () => void;
+  }) => (
+    <section data-read-only-root aria-label={props.project.name} data-query={props.searchQuery}>
+      <button type="button" onClick={props.onRemove}>{`Remove ${props.project.name}`}</button>
+    </section>
+  ),
 }));
 
 vi.mock('./use-chat-context-file', () => ({
@@ -201,6 +232,9 @@ afterEach(() => {
   fileTreePropsState.onPasteIntoFolder = null;
   fileTreePropsState.nodes = [];
   fileTreePropsState.onFileClick = null;
+  fileTreePropsState.renamingPath = null;
+  treeState.extras = [];
+  treeState.remove.mockReset();
   mutationHandlers.deleteOnSuccess = null;
   utilsInvalidate.listDirectory.mockReset();
   utilsInvalidate.search.mockReset();
@@ -756,5 +790,140 @@ describe('PaneFileTree opens files into the editor', () => {
 
     expect(store.get(codeEditorOpenAtom)).toBe(true);
     expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/a.ts']);
+  });
+});
+
+// Wired as split view wires the active pane: a callback ref files the pane's handle in a map, and
+// the handle is read from there only while this container renders, which a pane toggling its own
+// row doesn't cause.
+function PaneWithShortcuts(actions: {
+  onDeleteFile: (path: string) => void;
+  onSetRootCreating: (type: 'file' | 'folder') => void;
+}) {
+  const handles = useRef(new Map<number, PaneFileTreeHandle>());
+  const activeHandleRef = useRef<PaneFileTreeHandle | null>(null);
+  activeHandleRef.current = handles.current.get(0) ?? null;
+  const setHandle = useCallback((handle: PaneFileTreeHandle | null) => {
+    if (handle) handles.current.set(0, handle);
+    else handles.current.delete(0);
+  }, []);
+  useFileTreeHotkeys({
+    projectPath: '/tmp/proj',
+    isOpen: true,
+    onOpen: () => {},
+    selectedNodePath: 'src/a.ts',
+    isInlineActive: false,
+    treeContainerRef: { current: null },
+    isMainRootHidden: () => activeHandleRef.current?.getIsMainRootHidden?.() ?? false,
+    ...actions,
+  });
+  return <PaneFileTree ref={setHandle} projectPath="/tmp/proj" chatId="chat-1" />;
+}
+
+/** Renders the pane as split view does, once more so the container holds the pane's handle. */
+function renderPaneWithShortcuts() {
+  const actions = { onDeleteFile: vi.fn(), onSetRootCreating: vi.fn() };
+  const view = render(<PaneWithShortcuts {...actions} />);
+  const rerenderContainer = () => view.rerender(<PaneWithShortcuts {...actions} />);
+  rerenderContainer();
+  return { actions, rerenderContainer };
+}
+
+const pressDeleteAndNewFile = (target: Element) => {
+  fireEvent.keyDown(target, { key: 'Backspace', metaKey: true });
+  fireEvent.keyDown(target, { key: 'N', code: 'KeyN', metaKey: true, shiftKey: true });
+};
+
+describe('PaneFileTree with another project in the tree', () => {
+  const api = { id: 'api', name: 'api', path: '/w/api' };
+  const thisChatRow = () => screen.getByRole('button', { name: 'proj This chat on branch main' });
+  const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
+  const sectionButton = () => screen.getByRole('button', { name: 'Remove api' });
+
+  it("shows This chat and the project outside the chat's tree, counted in the footer", () => {
+    treeState.extras = [api];
+    searchState.debouncedQuery = 'src';
+    render(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" isWorktree={false} />);
+    const section = screen.getByRole('region', { name: 'api' });
+
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    // The chat's tree takes its keys and pastes on its own element, so they never reach the section.
+    expect(chatTree().contains(section)).toBe(false);
+    expect(section).toHaveAttribute('data-query', 'src');
+    expect(screen.getByText('2 projects in this tree')).toBeInTheDocument();
+
+    fireEvent.click(sectionButton());
+    expect(treeState.remove).toHaveBeenCalledExactlyOnceWith('api');
+  });
+
+  it("closes the chat's tree on Enter on This chat, without renaming the selected file", async () => {
+    treeState.extras = [api];
+    mockState.primary = { path: 'src/a.ts', name: 'a.ts', type: 'file' };
+    const handle = createRef<PaneFileTreeHandle>();
+    render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="chat-1" />);
+    expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
+
+    thisChatRow().focus();
+    await userEvent.keyboard('{Enter}');
+
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'false');
+    expect(chatTree()).not.toBeVisible();
+    expect(handle.current?.getIsMainRootHidden?.()).toBe(true);
+    expect(fileTreePropsState.renamingPath).toBeNull();
+    // The same key on the tree itself does rename, so the row's Enter really missed the tree.
+    fireEvent.keyDown(chatTree(), { key: 'Enter' });
+    expect(fileTreePropsState.renamingPath).toBe('src/a.ts');
+  });
+
+  it.each([
+    ['act', "in the chat's tree", 1, chatTree],
+    ['do nothing', "in the project's section", 0, sectionButton],
+  ])('Cmd+Backspace and Cmd+Shift+N %s with focus %s', (_, __, calls, focusTarget) => {
+    treeState.extras = [api];
+    const { actions } = renderPaneWithShortcuts();
+
+    pressDeleteAndNewFile(focusTarget());
+
+    expect(actions.onDeleteFile).toHaveBeenCalledTimes(calls);
+    expect(actions.onSetRootCreating).toHaveBeenCalledTimes(calls);
+  });
+
+  it('Cmd+Backspace and Cmd+Shift+N skip a closed This chat and act once it opens again', () => {
+    treeState.extras = [api];
+    const { actions, rerenderContainer } = renderPaneWithShortcuts();
+
+    // The container doesn't re-render, so it still holds the handle from before the row closed.
+    fireEvent.click(thisChatRow());
+    pressDeleteAndNewFile(thisChatRow());
+    expect(actions.onDeleteFile).not.toHaveBeenCalled();
+    expect(actions.onSetRootCreating).not.toHaveBeenCalled();
+
+    // Now it holds one from while the row was closed.
+    rerenderContainer();
+    fireEvent.click(thisChatRow());
+    pressDeleteAndNewFile(thisChatRow());
+    expect(actions.onDeleteFile).toHaveBeenCalledExactlyOnceWith('src/a.ts');
+    expect(actions.onSetRootCreating).toHaveBeenCalledExactlyOnceWith('file');
+  });
+
+  it('opens This chat again for another chat, and once no other project is left', () => {
+    treeState.extras = [api];
+    const handle = createRef<PaneFileTreeHandle>();
+    const { rerender } = render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="a" />);
+    const showChat = (chatId: string) =>
+      rerender(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId={chatId} />);
+
+    fireEvent.click(thisChatRow());
+    showChat('b');
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
+
+    fireEvent.click(thisChatRow());
+    treeState.extras = [];
+    showChat('b');
+    treeState.extras = [api];
+    showChat('b');
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(chatTree()).toBeVisible();
   });
 });

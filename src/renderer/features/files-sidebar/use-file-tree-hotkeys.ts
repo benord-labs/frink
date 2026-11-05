@@ -10,7 +10,8 @@ import { useEffect } from 'react';
  *
  * If the file tree is closed when a creation shortcut fires, it will be
  * auto-opened before starting the action. Delete requires a selected node
- * and an open tree.
+ * and an open tree. None of them act on the chat's own tree while focus is in
+ * another project's read-only section or the chat's tree is collapsed.
  *
  * Used by both `FilesSidebar` (single-pane) and `SplitViewContainer`
  * (active pane in split view).
@@ -37,6 +38,8 @@ type UseFileTreeShortcutsParams = {
   onBatchDelete?: (paths: string[]) => void;
   /** Get all selected paths for batch operations. */
   getSelectedPaths?: () => string[];
+  /** Whether the chat's own tree is collapsed under its "This chat" row, read at each key press. */
+  isMainRootHidden?: () => boolean;
 };
 
 export function useFileTreeHotkeys({
@@ -50,6 +53,7 @@ export function useFileTreeHotkeys({
   treeContainerRef,
   onBatchDelete,
   getSelectedPaths,
+  isMainRootHidden,
 }: UseFileTreeShortcutsParams): void {
   useEffect(() => {
     // Shortcuts require a project to target
@@ -58,6 +62,9 @@ export function useFileTreeHotkeys({
     const handleGlobalFileShortcut = (e: KeyboardEvent) => {
       // Skip if an inline input is active
       if (isInlineActive) return;
+      // Another project's section is read-only, and a collapsed tree hides what would change.
+      if (e.target instanceof Element && e.target.closest('[data-read-only-root]')) return;
+      if (isMainRootHidden?.()) return;
 
       const isMeta = e.metaKey || e.ctrlKey;
       const isShift = e.shiftKey;
@@ -116,5 +123,6 @@ export function useFileTreeHotkeys({
     treeContainerRef,
     onBatchDelete,
     getSelectedPaths,
+    isMainRootHidden,
   ]);
 }
