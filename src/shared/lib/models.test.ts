@@ -651,6 +651,7 @@ describe('Haiku 5.5 catalog (1M-native, Medium default, full effort ladder)', ()
 describe('claudeModelUsesAdaptiveThinking', () => {
   it('is true for adaptive-thinking families (manual budget_tokens would 400)', () => {
     for (const cli of [
+      'claude-fable-5-2',
       'claude-fable-5-1',
       'claude-fable-5',
       'claude-opus-5-5',
@@ -901,51 +902,44 @@ describe('Edge Case: Picker Item Shape for Unified Trigger (High)', () => {
   });
 });
 
-describe('Fable 5.1 catalog (1M-native, High default)', () => {
-  const FABLE_5_1_VARIANTS = [
-    'fable-5.1',
-    'fable-5.1-low',
-    'fable-5.1-medium',
-    'fable-5.1-xhigh',
-    'fable-5.1-max',
-  ];
+describe.each([
+  { family: 'fable-5.2', cli: 'claude-fable-5-2', olderFamily: 'fable-5.1' },
+  { family: 'fable-5.1', cli: 'claude-fable-5-1', olderFamily: 'fable-5' },
+])('$family catalog (1M-native, High default)', ({ family, cli, olderFamily }) => {
+  const variants = ['', '-low', '-medium', '-xhigh', '-max'].map((s) => `${family}${s}`);
 
   it('has exactly 5 variants plus Ultra twins: single 1M row × full effort ladder', () => {
-    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'fable-5.1' && !m.ultra).map(
+    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === family && !m.ultra).map(
       (m) => m.id,
     );
-    expect(ids).toEqual(FABLE_5_1_VARIANTS);
+    expect(ids).toEqual(variants);
   });
 
-  it('pins every variant cliValue to claude-fable-5-1 with a 1M context label', () => {
-    for (const id of FABLE_5_1_VARIANTS) {
+  it('pins every variant cliValue with a 1M context label', () => {
+    for (const id of variants) {
       const model = CLAUDE_CODE_MODELS.find((m) => m.id === id);
-      expect(model?.cliValue, id).toBe('claude-fable-5-1');
+      expect(model?.cliValue, id).toBe(cli);
       expect(model?.contextWindow, id).toBe('1M context');
     }
   });
 
   it('getClaudeSdkEffort maps all 5 variants to correct effort levels (High default)', () => {
-    expect(getClaudeSdkEffort('fable-5.1')).toBe('high');
-    expect(getClaudeSdkEffort('fable-5.1-low')).toBe('low');
-    expect(getClaudeSdkEffort('fable-5.1-medium')).toBe('medium');
-    expect(getClaudeSdkEffort('fable-5.1-xhigh')).toBe('xhigh');
-    expect(getClaudeSdkEffort('fable-5.1-max')).toBe('max');
+    expect(variants.map(getClaudeSdkEffort)).toEqual(['high', 'low', 'medium', 'xhigh', 'max']);
   });
 
   it('never requests the 1M beta header (1M is native)', () => {
-    for (const id of FABLE_5_1_VARIANTS) {
+    for (const id of variants) {
       expect(claudeModelRequires1M(id), id).toBe(false);
     }
   });
 
-  it('surfaces before Fable 5 in the picker', () => {
+  it('surfaces before the previous Fable in the picker', () => {
     const families = CLAUDE_CODE_MODELS_CATALOG.map((m) => m.familyId);
-    expect(families.indexOf('fable-5.1')).toBeLessThan(families.indexOf('fable-5'));
+    expect(families.indexOf(family)).toBeLessThan(families.indexOf(olderFamily));
   });
 
   it('is live regardless of the fable5 launch flag (that flag gates Fable 5 only)', () => {
-    expect(CLAUDE_CODE_MODELS.some((m) => m.familyId === 'fable-5.1')).toBe(true);
+    expect(CLAUDE_CODE_MODELS.some((m) => m.familyId === family)).toBe(true);
   });
 });
 
@@ -1029,7 +1023,7 @@ describe('splitNewestFamilies', () => {
   // Pins what the page shows today, so a catalog edit shows up in review.
   it('splits the shipped catalogs as expected', () => {
     expect(names(splitNewestFamilies(CLAUDE_MODEL_FAMILIES).newest)).toEqual([
-      'Fable 5.1',
+      'Fable 5.2',
       'Opus 5.5',
       'Sonnet 5.5',
       'Haiku 5.5',
