@@ -101,6 +101,36 @@ Anything left unset means that feature is off in the build.
 
 Official Windows and Linux releases get the same telemetry keys as the mac release.
 
+## Usage analytics test accounts
+
+Install and weekly-active counts for official builds are only meaningful with PostHog's
+**Filter out internal and test users** switched on. The project's test-account filter excludes two cohorts:
+
+- **Internal / Test users**: dynamic, matches persons with `$internal_or_test_user = true`. To add a
+  maintainer machine, read the `.install_id` file in Frink's app data folder on that machine, find
+  the person with that distinct ID in PostHog, and set `$internal_or_test_user` to `true` on it.
+- **CI launch tests (Linux launch smoke, before the analytics opt-out)**: a fixed list of 66 installs.
+  Until the Linux launch smoke set `FRINK_DISABLE_USAGE_ANALYTICS=1` (2026-10-19), each build-desktop
+  run created a new install. The list does not grow. It holds every person between the public
+  launch (2026-09-26) and that change (2026-10-19 21:14 UTC) that is Linux only and has exactly
+  three events, `desktop_opened`, `first_launch` and `desktop_opened`, within 10 seconds. All 66
+  were seen from 2026-10-07 to 2026-10-16, each inside a "launch the deb and the AppImage" smoke
+  step. This query returns exactly the 66:
+
+  ```sql
+  SELECT person_id
+  FROM events
+  WHERE timestamp >= '2026-09-26' AND timestamp < '2026-10-19 21:14:27'
+  GROUP BY person_id
+  HAVING any(properties.platform) = 'linux' AND uniq(properties.platform) = 1
+     AND count() = 3 AND countIf(event = 'desktop_opened') = 2
+     AND countIf(event = 'first_launch') = 1
+     AND dateDiff('second', min(timestamp), max(timestamp)) <= 10
+  ```
+
+Any new automated launch of a packaged build must set `FRINK_DISABLE_USAGE_ANALYTICS=1`, so it never
+needs adding here.
+
 ## Forks
 
 Your build is yours: it never talks to Frink's infrastructure.
