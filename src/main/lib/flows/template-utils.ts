@@ -40,7 +40,7 @@ type ResolvedValue = string | undefined | typeof UNRENDERABLE;
 
 /** Max total output length for shell-rendered templates (ARG_MAX / argv size guard). */
 const MAX_SHELL_RENDERED_OUTPUT = 256 * 1024;
-const SHELL_RENDER_LIMIT_COMMAND =
+export const SHELL_RENDER_LIMIT_COMMAND =
   "printf '%s\\n' 'Frink: rendered command exceeded the 256KB safety limit' >&2; exit 1";
 
 /** Cap for a ROUTING template: an over-long branch or project key is an authoring error, not a route. */

@@ -103,4 +103,25 @@ describe('resolveCommandShell', () => {
     await expect(resolveCommandShell()).resolves.toBe('C:\\Program Files\\Git\\bin\\bash.exe');
     expect(execFileMock).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps a found shell when an overlapping probe misses later', async () => {
+    stubPlatform('win32');
+    let finishHit: (v: { stdout: string }) => void = () => {};
+    let finishMiss: (e: Error) => void = () => {};
+    execFileMock
+      .mockReturnValueOnce(new Promise((resolve) => (finishHit = resolve)))
+      .mockReturnValueOnce(new Promise((_, reject) => (finishMiss = reject)));
+    existsSyncMock.mockReturnValue(true);
+    const { resolveCommandShell } = await import('./command-shell');
+
+    const first = resolveCommandShell();
+    const second = resolveCommandShell();
+    finishHit({ stdout: 'C:\\Program Files\\Git\\cmd\\git.exe\r\n' });
+    await expect(first).resolves.toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    finishMiss(new Error('timed out'));
+
+    await expect(second).resolves.toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    await expect(resolveCommandShell()).resolves.toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+  });
 });
