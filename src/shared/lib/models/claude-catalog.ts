@@ -71,7 +71,7 @@ const DEFAULT_EFFORTS: EffortTier[] = [
 ];
 
 // `xhigh` and `max` are the top tiers (the bundled CLI accepts `low|medium|high|xhigh|max`).
-// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5.5 / 5 / Haiku 5.5 support them — the SDK silently downgrades elsewhere.
+// Only Fable 5.2 / 5.1 / 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5.5 / 5 / Haiku 5.5 support them — the SDK silently downgrades elsewhere.
 const XHIGH_TIER: EffortTier = {
   suffix: '-xhigh',
   label: 'Extra High',
@@ -90,7 +90,7 @@ const OPUS_47_EFFORTS: EffortTier[] = [
   { suffix: '-max', label: 'Max', effort: 'max', budget: EFFORT_MAX },
 ];
 
-// High-default families (Fable 5.1, Fable 5, Opus 5, Opus 4.8, Sonnet 5.5, Sonnet 5) — Anthropic sets `effort: high` as the API
+// High-default families (Fable 5.2, 5.1, 5, Opus 5, Opus 4.8, Sonnet 5.5, Sonnet 5) — Anthropic sets `effort: high` as the API
 // default and all support the full ladder. Bare row (no suffix) is High; Low / Medium / Extra High /
 // Max explicit.
 const HIGH_DEFAULT_EFFORTS: EffortTier[] = [
@@ -193,6 +193,18 @@ function buildVariant(
  * the dormant Fable 5 definition is preserved and validated for a one-flag re-enable.
  */
 export const CLAUDE_CODE_MODELS_CATALOG: ClaudeCodeModel[] = [
+  // ── Fable 5.2 ── successor to Fable 5.1; 1M native, adaptive thinking (always on), High default.
+  ...buildFamily({
+    base: 'opus',
+    familyId: 'fable-5.2',
+    familyName: 'Fable 5.2',
+    version: '5.2',
+    cliValue: 'claude-fable-5-2',
+    efforts: HIGH_DEFAULT_EFFORTS,
+    idPrefix: 'fable-5.2',
+    contexts: [{ suffix: '', ctx: '1M context', prefix: '' }],
+    adaptiveThinking: true,
+  }),
   // ── Fable 5.1 ── successor to Fable 5 at the same price; 1M native (no beta), adaptive thinking, High default.
   ...buildFamily({
     base: 'opus',
