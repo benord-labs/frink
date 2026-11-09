@@ -1,5 +1,7 @@
+import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { findGitRoot, mainCheckout } from '../git/repo-root';
 import {
   appRootOf,
   isIgnoredPort,
@@ -21,7 +23,12 @@ export type DevServer = {
   cwd: string;
   /** Nearest folder above `cwd` holding a `.git` entry; null outside any repository. */
   gitRoot: string | null;
+  /** The main checkout's real path when `gitRoot` is a linked worktree; null otherwise. */
+  mainCheckout: string | null;
 };
+
+/** The chat's repository root, and which of its linked worktrees another chat or project owns. */
+export type ChatRepo = { root: string; claimed: ReadonlySet<string> };
 
 export type DevServerLink = Pick<DevServer, 'port' | 'label' | 'url'>;
 
@@ -47,37 +54,60 @@ function isInside(child: string, parent: string): boolean {
   return child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 }
 
-/** Servers running inside `chatPath`, except those in a repository nested below it. */
-export function devServersForPath(servers: DevServer[], chatPath: string): DevServer[] {
-  return servers.filter(
-    (server) =>
-      isInside(server.cwd, chatPath) &&
-      (server.gitRoot === null || isInside(chatPath, server.gitRoot)),
+function inChatFolder(server: DevServer, chatPath: string): boolean {
+  return (
+    isInside(server.cwd, chatPath) &&
+    (server.gitRoot === null || isInside(chatPath, server.gitRoot))
   );
 }
 
-async function findGitRoot(cwd: string): Promise<string | null> {
-  let dir = cwd;
-  while (true) {
-    try {
-      await fs.stat(path.join(dir, '.git'));
-      return dir;
-    } catch {
-      const parent = path.dirname(dir);
-      if (parent === dir) return null;
-      dir = parent;
-    }
+/** The server's label naming its worktree, when it runs at the chat's folder in an unowned linked
+ * worktree of the chat's repository; null otherwise. */
+function linkedWorktreeLabel(server: DevServer, chatPath: string, repo?: ChatRepo): string | null {
+  const { gitRoot } = server;
+  if (!repo || gitRoot === null || server.mainCheckout !== repo.root) return null;
+  if (repo.claimed.has(gitRoot)) return null;
+  if (!isInside(server.cwd, path.join(gitRoot, path.relative(repo.root, chatPath)))) return null;
+  return `${server.label} · ${path.basename(gitRoot)}`;
+}
+
+/**
+ * Servers running inside `chatPath`, except those in a repository nested below it, plus servers
+ * an agent started in an unowned linked worktree of the chat's repository, labelled with that worktree.
+ */
+export function devServersForPath(
+  servers: DevServer[],
+  chatPath: string,
+  repo?: ChatRepo,
+): DevServer[] {
+  return servers.flatMap((server) => {
+    if (inChatFolder(server, chatPath)) return [server];
+    const label = linkedWorktreeLabel(server, chatPath, repo);
+    return label === null ? [] : [{ ...server, label }];
+  });
+}
+
+/** The real path of a linked worktree's main checkout; null for any other git root. */
+function linkedMainCheckout(gitRoot: string): string | null {
+  const main = mainCheckout(gitRoot);
+  if (main === gitRoot) return null;
+  try {
+    return realpathSync.native(main);
+  } catch {
+    return null;
   }
 }
 
 /** Watches every listening TCP port on the machine while at least one chat is subscribed. */
 export class PortManager {
-  private listeners = new Set<ServersListener>();
+  /** Each listener, and whether it hears every scan or only scans that change the list. */
+  private listeners = new Map<ServersListener, boolean>();
   private servers: DevServer[] = [];
   private snapshotKey = '';
   private scanInterval: ReturnType<typeof setInterval> | null = null;
   private isScanning = false;
   private gitRoots = new Map<string, string | null>();
+  private mainCheckouts = new Map<string, string | null>();
 
   /** Listeners run from `appRoot` are Frink's own helpers; agent and terminal servers run outside it. */
   constructor(
@@ -85,8 +115,8 @@ export class PortManager {
     private readonly appRoot: string = appRootOf(process.execPath),
   ) {}
 
-  subscribe(listener: ServersListener): () => void {
-    this.listeners.add(listener);
+  subscribe(listener: ServersListener, { everyScan = false } = {}): () => void {
+    this.listeners.set(listener, everyScan);
     if (this.listeners.size === 1) this.start();
     return () => {
       this.listeners.delete(listener);
@@ -110,6 +140,7 @@ export class PortManager {
     this.servers = [];
     this.snapshotKey = '';
     this.gitRoots.clear();
+    this.mainCheckouts.clear();
   }
 
   async scan(): Promise<void> {
@@ -137,13 +168,15 @@ export class PortManager {
         const url = toUrl(listener.address, listener.port);
         const key = `${cwd}\0${url}`;
         if (!cwd || command.startsWith(this.appRoot) || servers.has(key)) continue;
+        const gitRoot = this.gitRootFor(cwd);
         servers.set(key, {
           pid: listener.pid,
           port: listener.port,
           label: labelFromCommand(command, cwd) || listener.command || 'server',
           url,
           cwd,
-          gitRoot: await this.gitRootFor(cwd),
+          gitRoot,
+          mainCheckout: gitRoot === null ? null : this.mainCheckoutFor(gitRoot),
         });
       }
       this.publish([...servers.values()].sort((a, b) => a.port - b.port));
@@ -152,20 +185,33 @@ export class PortManager {
     }
   }
 
-  private async gitRootFor(cwd: string): Promise<string | null> {
+  private gitRootFor(cwd: string): string | null {
     const cached = this.gitRoots.get(cwd);
     if (cached !== undefined) return cached;
-    const root = await findGitRoot(cwd);
+    const root = findGitRoot(cwd);
     this.gitRoots.set(cwd, root);
     return root;
   }
 
+  private mainCheckoutFor(gitRoot: string): string | null {
+    const cached = this.mainCheckouts.get(gitRoot);
+    if (cached !== undefined) return cached;
+    const main = linkedMainCheckout(gitRoot);
+    this.mainCheckouts.set(gitRoot, main);
+    return main;
+  }
+
   private publish(servers: DevServer[]): void {
+    if (this.listeners.size === 0) return;
     const key = JSON.stringify(servers);
-    if (this.listeners.size === 0 || key === this.snapshotKey) return;
-    this.snapshotKey = key;
-    this.servers = servers;
-    for (const listener of this.listeners) listener(servers);
+    const changed = key !== this.snapshotKey;
+    if (changed) {
+      this.snapshotKey = key;
+      this.servers = servers;
+    }
+    for (const [listener, everyScan] of this.listeners) {
+      if (changed || everyScan) listener(this.servers);
+    }
   }
 }
 
@@ -173,29 +219,45 @@ const portManager = new PortManager();
 
 /**
  * Streams the links for one chat folder: the current list right away, then every change.
+ * `claimed` returns which of the given linked worktrees another chat or project owns; it is
+ * re-checked on every scan, since a chat can claim a worktree while its server keeps running.
  * Returns the unsubscribe.
  */
 export function watchDevServers(
   chatPath: string,
   onLinks: (links: DevServerLink[]) => void,
   manager: Pick<PortManager, 'subscribe' | 'getServers'> = portManager,
+  claimed: (gitRoots: string[]) => ReadonlySet<string> = () => new Set(),
 ): () => void {
   let resolvedPath = path.resolve(chatPath);
-  const send = (servers: DevServer[]) => {
-    onLinks(
-      devServersForPath(servers, resolvedPath).map(({ port, label, url }) => ({
-        port,
-        label,
-        url,
-      })),
+  let repoRoot: string | null = null;
+  const chatRepo = (servers: DevServer[]): ChatRepo | undefined => {
+    const root = repoRoot;
+    if (root === null) return undefined;
+    const linked = new Set(
+      servers.flatMap((server) =>
+        server.gitRoot !== null && server.mainCheckout === root ? [server.gitRoot] : [],
+      ),
     );
+    return { root, claimed: linked.size > 0 ? claimed([...linked]) : linked };
   };
-  const unsubscribe = manager.subscribe(send);
+  let sentKey: string | null = null;
+  const send = (servers: DevServer[]) => {
+    const links = devServersForPath(servers, resolvedPath, chatRepo(servers)).map(
+      ({ port, label, url }) => ({ port, label, url }),
+    );
+    const key = JSON.stringify(links);
+    if (key === sentKey) return;
+    sentKey = key;
+    onLinks(links);
+  };
+  const unsubscribe = manager.subscribe(send, { everyScan: true });
   // lsof reports resolved folders, so match against the real path behind any symlink.
   // A folder that no longer exists keeps its given path and simply matches nothing.
   void fs.realpath(resolvedPath).then(
     (realPath) => {
       resolvedPath = realPath;
+      repoRoot = findGitRoot(realPath);
       send(manager.getServers());
     },
     () => send(manager.getServers()),

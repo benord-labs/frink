@@ -6,7 +6,7 @@ import log from 'electron-log';
 import stableStringify from 'fast-json-stable-stringify';
 import simpleGit from 'simple-git';
 import { z } from 'zod';
-import { findGitRoot } from '../../../claude/auto-memory';
+import { findGitRoot } from '../../../git/repo-root';
 import { frinkUserHome } from '../../../platform/frink-home';
 import { captureMainException } from '../../../sentry/init';
 import { type HookSettings, hookEventsSchema, readHookSettings } from '../inventory';
