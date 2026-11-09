@@ -30,6 +30,7 @@ import type {
   StreamChunkPayload,
 } from '../client';
 import { ChatBusyError, DuplicateMessageError } from '../execution/send-admission';
+import { createToolEffects } from '../execution/tool-effects';
 import { lastFinishMetadata, stampTurnUsage } from '../execution/turn-usage';
 import { clearChunkCounter } from './assistant-chunk-checkpoint';
 import { emitBurstPlanCard } from './burst-chunks';
@@ -114,6 +115,8 @@ async function sendPlanApproval(
 export function buildWakeHoldIo(params: {
   chatId: string;
   subChatId: string;
+  /** The chat folder relative write paths resolve against. */
+  projectPath: string;
   /** Executor-owned: folds a burst's chunks into the parts we persist (plan-mode filtering et al).
    * MUST be built with the ARMING TURN'S REAL MODE, never a constant: a plan turn's bursts can emit
    * a plan card, and only the plan branch dedupes that card against the prose repeating it. Folding
@@ -133,12 +136,14 @@ export function buildWakeHoldIo(params: {
   clearCurrentExecutionChat: (executionContextId: string) => void;
 }): WakeHoldIo {
   const { chatId, subChatId, buildFinalParts, send, planAutoApproval } = params;
+  const toolEffects = createToolEffects(params.projectPath, subChatId);
   let holdActive = false;
   /** A carded auto-approved plan, sent once the burst that carded it is persisted. */
   let approvedPlanText: string | null = null;
   const io: WakeHoldIo = {
     chatId,
     streamChunk: (msgId, chunk, parts, messageIndex) => {
+      toolEffects(chunk);
       send.sendStreamChunkDirect({
         chatId,
         subChatId,

@@ -63,7 +63,6 @@ import {
   resumeParkedTaskInPlace,
   stampedErrorCategory,
 } from '../tasks';
-import { broadcastWriteToolFileChangedIpc } from '../trpc/routers/claude-file-changed';
 import {
   clearLinkedTaskQuietEnd,
   finalizeLinkedTaskSignalFromContext,
@@ -119,6 +118,7 @@ import { deliverProviderConfig } from './execution/provider-delivery';
 import { startAcpTurn } from './execution/acp-turn';
 import { startCopilotTurn } from './execution/copilot-turn';
 import { startCursorTurn } from './execution/cursor-turn';
+import { createToolEffects } from './execution/tool-effects';
 import { lastFinishMetadata, stampTurnUsage } from './execution/turn-usage';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
 import {
@@ -874,6 +874,7 @@ export async function handleRemoteExecute(
       });
 
       const codexPartsState = createPartsState();
+      const toolEffects = createToolEffects(projectPath, subChatId);
       const codexChunks: UIMessageChunk[] = [];
       let codexIdx = 0;
       let codexMetadata: MessageMetadata = {}; // session id + latest token usage, persisted below
@@ -982,6 +983,7 @@ export async function handleRemoteExecute(
           }
           codexChunks.push(chunk);
           applyChunkToParts(codexPartsState, chunk);
+          toolEffects(chunk);
           sendRunStreamChunkDirect({
             chatId,
             subChatId,
@@ -1171,7 +1173,7 @@ export async function handleRemoteExecute(
 
       // Stream messages as they come
       const toolNameByCallId = new Map<string, string>();
-      const toolInputByCallId = new Map<string, Record<string, unknown>>();
+      const toolEffects = createToolEffects(projectPath, subChatId);
       // Claude Code plan mode: SDK's native plan mode produces Write (plan file) → ExitPlanMode.
       // Submission (the hook's deny, or an auto-approve node's allowed call) emits the frink-plan card.
       let exitPlanModeToolCallId: string | null = null;
@@ -1199,17 +1201,14 @@ export async function handleRemoteExecute(
       // sub_chats.session_id NULL and Continue has nothing to resume — persist on first
       // announcement instead (the finish-path persist stays the authoritative overwrite).
       let earlySessionIdPersisted = false;
-      /** tool-input bookkeeping + plan-mode stream tracking: records name/input for the broadcast
-       * below, flips to plan mode on a mid-turn EnterPlanMode (persist + IPC keep the renderer's
-       * toggle in sync), pins the FIRST ExitPlanMode call id (duplicates must not emit frink-plan
-       * twice), and tracks the last plan-dir Write (only the final version is emitted). */
+      /** Records tool names, flips to plan mode on a mid-turn EnterPlanMode, pins the FIRST
+       * ExitPlanMode call id (one frink-plan card), and tracks the last plan-dir Write. */
       const trackToolInputChunk = (chunk: UIMessageChunk): void => {
         if (chunk.type === 'tool-input-start') {
           toolNameByCallId.set(chunk.toolCallId, chunk.toolName);
         }
         if (chunk.type !== 'tool-input-available') return;
         toolNameByCallId.set(chunk.toolCallId, chunk.toolName);
-        toolInputByCallId.set(chunk.toolCallId, chunk.input as Record<string, unknown>);
         if (chunk.toolName === 'EnterPlanMode' && !effectivePlanMode) {
           effectivePlanMode = true;
           // Planning mid-turn re-locks terminals: this turn now finishes via ExitPlanMode too.
@@ -1283,16 +1282,6 @@ export async function handleRemoteExecute(
         }
       };
 
-      /** tool-output side: broadcast file-changed IPC for tools whose input we tracked. */
-      const broadcastToolOutputChunk = (chunk: UIMessageChunk): void => {
-        if (chunk.type !== 'tool-output-available') return;
-        const toolName = toolNameByCallId.get(chunk.toolCallId);
-        const toolInput = toolInputByCallId.get(chunk.toolCallId);
-        if (toolName !== undefined && toolInput !== undefined) {
-          broadcastWriteToolFileChangedIpc(`tool-${toolName}`, toolInput, projectPath, subChatId);
-        }
-      };
-
       /** Non-auto plan, post-submission: keep the model's overrun out of history (reload view
        * must equal live view). */
       const isPostPlanOverrun = (chunk: UIMessageChunk): boolean =>
@@ -1358,7 +1347,7 @@ export async function handleRemoteExecute(
             await handleExitPlanModeCompletion();
           }
 
-          broadcastToolOutputChunk(chunk);
+          toolEffects(chunk);
 
           if (isPostPlanOverrun(chunk)) continue;
 
@@ -1657,6 +1646,7 @@ export async function handleRemoteExecute(
           io: buildWakeHoldIo({
             chatId,
             subChatId,
+            projectPath,
             flowDriven: isFlowDrivenExecution,
             planAutoApproval:
               flowPlanAutoApprove && mode === 'plan' ? { projectId, settings, signalTaskId } : null,

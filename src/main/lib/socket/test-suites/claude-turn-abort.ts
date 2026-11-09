@@ -17,14 +17,7 @@ import {
   runningTask,
   TURN_END,
 } from './claude-turn-bindings';
-import {
-  type Cli,
-  type CliScript,
-  type Frame,
-  mockQuery,
-  never,
-  UNCLEAN_RESULT,
-} from './claude-query-fake';
+import { type Cli, mockQuery, never, UNCLEAN_RESULT, wakingCli } from './claude-query-fake';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type ClaudeTurnAbortHarness = Pick<
@@ -48,24 +41,6 @@ const heldCli = (adopted: (cli: Cli) => Promise<void>) =>
     yield* TURN_END;
     await never();
   };
-
-/** Turn 1 leaves background work running so the chat holds; `wake()` then has the CLI run `burst`
- * on its own, as a wake burst streaming into the arming message. */
-function wakingCli(burst: (cli: Cli) => AsyncGenerator<Frame>) {
-  let wake = () => {};
-  const woke = new Promise<void>((resolve) => {
-    wake = resolve;
-  });
-  const script: CliScript = async function* (cli) {
-    await cli.prompt.next();
-    await cli.stop([RUNNING_TASK]);
-    yield* TURN_END;
-    await woke;
-    yield* burst(cli);
-    await never();
-  };
-  return { script, wake };
-}
 
 const streamed = () => JSON.stringify(vi.mocked(socketClient.sendStreamChunkDirect).mock.calls);
 const completes = () =>
@@ -345,7 +320,7 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
     const toolDone = new Promise<void>((resolve) => {
       finishTool = resolve;
     });
-    const cli = wakingCli(async function* () {
+    const cli = wakingCli(TURN_END, async function* () {
       yield {
         type: 'assistant',
         chunks: [{ type: 'text-delta', id: 'b', delta: 'checking build' }],
@@ -390,7 +365,7 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
   });
 
   it('a wait that ends on its own only closes stdin, so an answer written after EOF still lands', async () => {
-    const cli = wakingCli(async function* (wakingCliSide) {
+    const cli = wakingCli(TURN_END, async function* (wakingCliSide) {
       yield {
         type: 'assistant',
         chunks: [{ type: 'text-delta', id: 'w', delta: 'coverage done' }],

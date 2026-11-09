@@ -3,7 +3,7 @@ import { AGENT_RUNTIMES, type AgentRuntime } from '../../../../../shared/lib/ai-
 import { __resetSessionsForTest } from '../../claude-session-registry';
 import type { OperatorReminderHarness } from '../operator-reminders/delivery';
 import { EXPECTED_FAILURES, type RowId, type ScenarioId } from './baseline';
-import { type Observed, runConformanceTurn } from './drive';
+import { type Observed, runClaudeWakeBurst, runConformanceTurn } from './drive';
 import {
   REPLY,
   type ScenarioFixtures,
@@ -18,10 +18,18 @@ type Check = (seen: Observed, runtime: AgentRuntime) => void;
 /** Runs as one row per runtime. Its precondition is its own test and never takes `fails`. */
 type Scenario = {
   id: ScenarioId;
-  fixtures: ScenarioFixtures;
+  play: (h: OperatorReminderHarness, runtime: AgentRuntime) => Promise<Observed>;
+  /** The runtimes the scenario can happen on; every other cell is skipped with `otherwise`. */
+  appliesTo?: { runtimes: readonly AgentRuntime[]; otherwise: string };
   precondition?: { name: string; check: Check };
   check: Check;
 };
+
+/** Plays one turn of each runtime's own fixture. */
+const once =
+  (fixtures: ScenarioFixtures): Scenario['play'] =>
+  (h, runtime) =>
+    runConformanceTurn(h, runtime, fixtures[runtime].turn);
 
 function expectCleanReply(seen: Observed): void {
   const text = seen.chunks.flatMap((chunk) => (chunk.type === 'text-delta' ? [chunk.delta] : []));
@@ -46,10 +54,20 @@ function expectFileChanged(seen: Observed): void {
 }
 
 const SCENARIOS: Scenario[] = [
-  { id: 'simple-turn', fixtures: SIMPLE_TURN, check: expectCleanReply },
+  { id: 'simple-turn', play: once(SIMPLE_TURN), check: expectCleanReply },
   {
     id: 'write-file-changed',
-    fixtures: WRITE_FILE,
+    play: once(WRITE_FILE),
+    precondition: { name: 'the write card reached the stream', check: expectWriteCard },
+    check: expectFileChanged,
+  },
+  {
+    id: 'write-in-wake-burst',
+    appliesTo: {
+      runtimes: ['claude'],
+      otherwise: 'Only Claude keeps its CLI open between turns for background work.',
+    },
+    play: (h) => runClaudeWakeBurst(h, WRITE_FILE.claude.turn),
     precondition: { name: 'the write card reached the stream', check: expectWriteCard },
     check: expectFileChanged,
   },
@@ -57,7 +75,11 @@ const SCENARIOS: Scenario[] = [
 
 function registerRow(h: OperatorReminderHarness, scenario: Scenario, runtime: AgentRuntime): void {
   const row: RowId = `${scenario.id} x ${runtime}`;
-  const run = () => runConformanceTurn(h, runtime, scenario.fixtures[runtime].turn);
+  if (scenario.appliesTo && !scenario.appliesTo.runtimes.includes(runtime)) {
+    it.skip(`conformance: ${row} (n/a: ${scenario.appliesTo.otherwise})`);
+    return;
+  }
+  const run = () => scenario.play(h, runtime);
   const { precondition } = scenario;
   if (precondition) {
     it(`conformance: ${row} (precondition: ${precondition.name})`, async () => {

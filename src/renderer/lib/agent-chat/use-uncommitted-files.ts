@@ -19,7 +19,7 @@ export function useUncommittedFiles<File extends { displayPath: string }>(
     { worktreePath: worktreePath || '' },
     {
       enabled: !!worktreePath && changedFiles.length > 0 && !isStreaming,
-      // No polling - updates triggered by file-changed events from Claude tools
+      // No polling - updates triggered by file-changed events from agent tools
       staleTime: 30000,
       placeholderData: (prev) => prev,
     },

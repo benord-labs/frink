@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import log from 'electron-log';
 import matter from 'gray-matter';
 import { stringify as stringifyToml } from 'smol-toml';
-import { PATH_TOOLS, TOOL_OPERATIONS } from '../../../../shared/types/permissions';
+import { FILE_WRITE_TOOLS, TOOL_OPERATIONS } from '../../../../shared/types/permissions';
 import { ensureDirExistsAsync } from '../../fs-helpers';
 import type { CategoryHandler } from './types';
 import { frinkUserHome } from '../../platform/frink-home';
@@ -130,7 +130,7 @@ function declaredToolList(value: unknown): string[] | null {
  * only. `Bash`, `Task` and the like are write-class too, but still run there, so they do not count. */
 function sandboxCoversDisallowed(data: Record<string, unknown>): boolean {
   const disallowed = declaredToolList(data.disallowedTools) ?? [];
-  return disallowed.every((t) => PATH_TOOLS.has(t) && TOOL_OPERATIONS[t] !== 'read');
+  return disallowed.every((t) => FILE_WRITE_TOOLS.has(t));
 }
 
 /**
