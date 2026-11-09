@@ -11,14 +11,15 @@ import {
   REMARK_PLUGINS,
 } from '../../components/chat-markdown-renderer';
 import { FileLinkBadgeContext, type FileReference } from './file-link-badge-context';
+import { buildFileLinkLabels, FileLinkScopeContext } from './file-link-scope';
 import { remarkFileLinks } from './remark-file-links';
 
 type Mode = 'streaming' | 'static';
 
 const WITHOUT_FILE_LINKS = REMARK_PLUGINS.filter((plugin) => plugin !== remarkFileLinks);
 
-function renderTestBadge({ path, line, label }: FileReference): ReactNode {
-  return <mark data-path={path} data-line={line} data-label={label} />;
+function renderTestBadge({ path, line, label, suffix }: FileReference): ReactNode {
+  return <mark data-path={path} data-line={line} data-label={label} data-suffix={suffix} />;
 }
 
 function toHost(element: ReactNode): HTMLElement {
@@ -38,6 +39,24 @@ function renderWithBadges(markdown: string, mode: Mode): HTMLElement {
     <FileLinkBadgeContext value={renderTestBadge}>
       {markdownView(markdown, mode)}
     </FileLinkBadgeContext>,
+  );
+}
+
+/** Markdown inside a reply whose lookup answered `resolved` and whose badges rendered `references`.
+ * A static render runs no effects, so the references a live reply's badges register are given here. */
+function renderInReply(
+  markdown: string,
+  mode: Mode,
+  resolved: Record<string, string | null>,
+  references: string[] = Object.keys(resolved),
+): HTMLElement {
+  const scope = { ...buildFileLinkLabels(references, resolved, '/repo'), register: () => () => {} };
+  return toHost(
+    <FileLinkScopeContext value={scope}>
+      <FileLinkBadgeContext value={renderTestBadge}>
+        {markdownView(markdown, mode)}
+      </FileLinkBadgeContext>
+    </FileLinkScopeContext>,
   );
 }
 
@@ -75,6 +94,39 @@ describe.each<Mode>(['streaming', 'static'])('file references in %s markdown', (
       { path: 'src/a.ts', line: '42', label: 'src/a.ts:42' },
     ]);
     expect(host.textContent).toContain('not index.ts.');
+  });
+
+  it('draws a bare name as a badge only once its reply places it', () => {
+    const host = renderInReply('Edit `socket.ts`, `index.ts` and `gone.ts`.', mode, {
+      'socket.ts': 'src/main/socket.ts',
+      'index.ts': null,
+      'gone.ts': null,
+    });
+    expect(badges(host)).toEqual([{ path: 'src/main/socket.ts', label: 'socket.ts' }]);
+    expect(host.textContent).toContain('index.ts and gone.ts.');
+  });
+
+  it('keeps a bare name with a line a badge, at the placed path when there is one', () => {
+    const host = renderInReply('See `socket.ts:4` and `other.ts:9`.', mode, {
+      'socket.ts': 'src/main/socket.ts',
+    });
+    expect(badges(host)).toEqual([
+      { path: 'src/main/socket.ts', line: '4', label: 'socket.ts:4' },
+      { path: 'other.ts', line: '9', label: 'other.ts:9' },
+    ]);
+  });
+
+  it('labels same-name files with their folders, across blocks', () => {
+    const host = renderInReply(
+      'Changed `src/a/index.ts`.\n\nAnd `index.ts`.',
+      mode,
+      { 'index.ts': 'lib/b/index.ts' },
+      ['src/a/index.ts', 'index.ts'],
+    );
+    expect(badges(host)).toEqual([
+      { path: 'src/a/index.ts', label: 'src/a/index.ts', suffix: 'src/a' },
+      { path: 'lib/b/index.ts', label: 'index.ts', suffix: 'lib/b' },
+    ]);
   });
 
   it('draws path-shaped code inside bold, a heading and a table cell', () => {

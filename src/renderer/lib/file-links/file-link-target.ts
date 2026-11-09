@@ -31,6 +31,8 @@ const GENERIC_HOST =
 const COUNTRY_HOST =
   /^[^.].*\.(?:uk|de|fr|nl|se|no|fi|dk|pl|ch|at|be|es|it|pt|eu|us|ca|au|nz|jp|kr|cn|br|ru|mx|ie|cz|tr|sg|hk|cc)$/i;
 const EDGE_SLASHES = /^\.\/|\/+$/g;
+// A name with an extension and no folder, line, scheme or leading dot: `index.ts`, `package.json`.
+const BARE_NAME = /^[^\s/\\:.][^\s/\\:]*\.[\w-]+$/;
 
 function splitLine(raw: string): FileLinkTarget {
   const suffix = LINE_SUFFIX.exec(raw);
@@ -97,6 +99,19 @@ export function inlineCodeFileTarget(code: string): FileLinkTarget | null {
   return !isHost && FILE_EXTENSION.test(name) && !VERSION_SUFFIX.test(name) ? target : null;
 }
 
+/** Reads a bare file name in inline code, such as `index.ts`: a file only once the project has exactly one.
+ * Host-shaped names (`main.pl`, `example.com`) are looked up too: only a real project file matches. */
+export function bareFileNameTarget(code: string): FileLinkTarget | null {
+  const name = code.trim();
+  const isName = BARE_NAME.test(name) && !PLACEHOLDER.test(name) && !VERSION_SUFFIX.test(name);
+  return isName ? { path: name } : null;
+}
+
+/** True for a reference written as a name alone, which only a project lookup can place. */
+export function isBareFileName(file: string): boolean {
+  return !file.includes('/');
+}
+
 /** True when a reference's own text is just the file's name or path, so the badge alone says it. */
 export function isFileNameLabel(label: string, target: FileLinkTarget): boolean {
   const own = splitLine(label.trim());
@@ -136,6 +151,7 @@ export function isBareRelativePath(file: string): boolean {
 
 /** The full path a shortened one stands for: the only project entry, file or folder, that ends with it. */
 export function findShortenedPath(file: string, entries: { path: string }[]): string | undefined {
-  const tails = entries.filter((entry) => entry.path.endsWith(`/${file}`));
+  // Windows lists project entries with `\`.
+  const tails = entries.filter((entry) => entry.path.replaceAll('\\', '/').endsWith(`/${file}`));
   return tails.length === 1 ? tails[0].path : undefined;
 }
