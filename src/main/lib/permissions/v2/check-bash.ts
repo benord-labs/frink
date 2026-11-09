@@ -9,9 +9,10 @@
 import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
 import { type CommandSignature, generatePatternChoices } from '../command-parser';
-import { extractSignature, type SubCommand, splitCommand } from './bash-parser';
+import { extractSignature, type Signature, type SubCommand, splitCommand } from './bash-parser';
 import { expandTilde } from './check-edit';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
+import { hasEscapingRedirect, type RedirectRoots, redirectSettled } from './redirects';
 import { isSystemDeniedPath } from './system-denied-patterns';
 import type { DenyReason, MatchContext, PermissionResult, PromptData } from './types';
 
@@ -168,7 +169,7 @@ const ENV_TOKEN_REGEX = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * Drop fd-dups (`>&2`, `2>&1` → `'2>&1'` strips to `'1'` digit, etc.) since
  * those aren't paths.
  */
-const REDIRECT_OP_PREFIX = /^(?:&?>>?|\d?>>?|\d?<|<<<?|&>|>&)/;
+const REDIRECT_OP_PREFIX = /^(?:&?>>?|\d?>>?|\d?<>|\d?<|<<<?|&>|>&)/;
 const LONE_DIGIT = /^\d+$/;
 
 /**
@@ -308,27 +309,104 @@ function exactMatchRules(rules: string[] | undefined): string[] {
   return out;
 }
 
+/** Prefix and tool-wide allow/ask rules never match an exact-match-only signature. */
+function evaluateSignature(sig: Signature, docs: ScopedDocs, input: { command: string }) {
+  const ctx: MatchContext = { bashCommandSignature: sig };
+  const exactOnly = (doc: ScopedDocs['policy']) =>
+    sig.isExactMatchOnly
+      ? { ...doc, allow: exactMatchRules(doc.allow), ask: exactMatchRules(doc.ask) }
+      : doc;
+  return combineScopes(
+    evalScope(exactOnly(docs.policy), 'Bash', input, ctx),
+    evalScope(exactOnly(docs.project), 'Bash', input, ctx),
+    evalScope(exactOnly(docs.user), 'Bash', input, ctx),
+  );
+}
+
+/**
+ * A sub that writes outside the project keeps every deny and ask the plain
+ * signature gets; an allow then also needs an exact rule naming the whole command.
+ */
+function evaluateEscapingSub(
+  sig: Signature,
+  raw: string,
+  docs: ScopedDocs,
+  input: { command: string },
+) {
+  const plain = evaluateSignature(sig, docs, input);
+  const whole = evaluateSignature(
+    { ...sig, fullSignature: raw, isExactMatchOnly: true },
+    docs,
+    input,
+  );
+  if (plain.decision === 'deny') return plain;
+  if (whole.decision === 'deny') return whole;
+  if (plain.decision === 'ask' && plain.rule) return plain;
+  if (whole.decision !== 'ask' || whole.rule) return whole;
+  return plain.decision === 'ask' ? plain : whole;
+}
+
+type RedirectContext = { roots: RedirectRoots; subs: SubCommand[] };
+
+/** The sub's signature and decision; an escaping sub needs an exact rule naming it whole. */
+function judgeSub(
+  index: number,
+  ctx: RedirectContext,
+  docs: ScopedDocs,
+  input: { command: string },
+) {
+  const sub = ctx.subs[index];
+  const base = extractSignature(sub);
+  // A metachar-hidden directory makes the denied list unevaluable, so a prefix
+  // rule must not auto-allow it — same treatment `$VAR` gets.
+  const plainSig = hasUnresolvableDirectory(sub) ? { ...base, isExactMatchOnly: true } : base;
+  const escaping = hasEscapingRedirect(sub, ctx.roots, redirectSettled(ctx.subs, index));
+  if (!escaping)
+    return { escaping, sig: plainSig, combined: evaluateSignature(plainSig, docs, input) };
+  // Deny rules are checked verbatim, so `Bash(rm:*)` deny fires even on an exact-only sub.
+  const combined = evaluateEscapingSub(plainSig, sub.raw, docs, input);
+  return {
+    escaping,
+    sig: { ...plainSig, fullSignature: sub.raw, isExactMatchOnly: true },
+    combined,
+  };
+}
+
+/** Over-50 suggestions skip exact-only and escaping subs: no prefix rule could cover them. */
+function overCapSuggestions(ctx: RedirectContext): string[] {
+  return buildSuggestedRules(
+    ctx.subs.flatMap((sub, index) => {
+      const settled = redirectSettled(ctx.subs, index);
+      if (hasUnresolvableDirectory(sub) || hasEscapingRedirect(sub, ctx.roots, settled)) return [];
+      const sig = extractSignature(sub);
+      return sig.isExactMatchOnly || sig.base === '' ? [] : [sig];
+    }),
+  );
+}
+
+function askReason(rule: string | undefined, escaping: boolean): PromptData['reason'] {
+  if (rule) return 'rule:ask';
+  return escaping ? 'redirect-outside-project' : 'no-matching-rule';
+}
+
+/** `commandCwd`: the folder the provider runs this command in, never the model's input. */
 export function checkBash(
   input: { command: string },
   docs: ScopedDocs,
   projectRoot: string,
+  executionRoot?: string,
+  commandCwd?: string,
 ): PermissionResult {
   const subs = splitCommand(input.command);
+  const ctx: RedirectContext = { roots: { projectRoot, executionRoot, cwd: commandCwd }, subs };
 
   if (subs.length > SUBCOMMAND_CAP) {
     return askResult({
       tool: 'Bash',
       input,
       reason: 'over-50-subcommands',
-      // Skip exact-only subs (the matcher drops prefix rules for them); always an
-      // array, so nothing prefix-able hides persistence instead of the `:*` fallback.
-      suggestedRules: buildSuggestedRules(
-        subs.flatMap((sub) => {
-          if (hasUnresolvableDirectory(sub)) return [];
-          const sig = extractSignature(sub);
-          return sig.isExactMatchOnly || sig.base === '' ? [] : [sig];
-        }),
-      ),
+      // Always an array, so nothing prefix-able hides persistence instead of the `:*` fallback.
+      suggestedRules: overCapSuggestions(ctx),
     });
   }
 
@@ -345,48 +423,14 @@ export function checkBash(
   // An exact-only sub that got no exact rule cannot be expressed by any rule.
   let unmintableExact = false;
   let askPrompt: PromptData | undefined;
+  let redirectAsked = false;
 
-  for (const sub of subs) {
-    // Tier-1c: bash-Read parity. Read-ish/write-ish commands + redirections
-    // checked against SYSTEM_DENIED_PATTERNS.
+  for (const [index, sub] of subs.entries()) {
+    // Tier-1c: read/write commands and redirections against SYSTEM_DENIED_PATTERNS.
     const deniedPath = findSystemDeniedPathInSub(sub, projectRoot);
     if (deniedPath) return denyResult({ kind: 'safety:path', path: deniedPath });
 
-    // Rule eval
-    const base = extractSignature(sub);
-    // A metachar-hidden directory makes the denied list unevaluable, so a prefix
-    // rule must not auto-allow it — same treatment `$VAR` gets.
-    const sig = hasUnresolvableDirectory(sub) ? { ...base, isExactMatchOnly: true } : base;
-    const ctx: MatchContext = { bashCommandSignature: sig };
-
-    // Build per-scope docs filtered to exact-match rules when sig demands it.
-    // Tier-1c-deny rules still apply because filtering only removes prefix
-    // wildcards from `allow` and `ask`; deny rules are checked verbatim
-    // (we want `Bash(rm:*)` deny to fire even on an expansion-flagged sub).
-    const docsToUse = sig.isExactMatchOnly
-      ? {
-          policy: {
-            ...docs.policy,
-            allow: exactMatchRules(docs.policy.allow),
-            ask: exactMatchRules(docs.policy.ask),
-          },
-          project: {
-            ...docs.project,
-            allow: exactMatchRules(docs.project.allow),
-            ask: exactMatchRules(docs.project.ask),
-          },
-          user: {
-            ...docs.user,
-            allow: exactMatchRules(docs.user.allow),
-            ask: exactMatchRules(docs.user.ask),
-          },
-        }
-      : docs;
-
-    const policy = evalScope(docsToUse.policy, 'Bash', input, ctx);
-    const project = evalScope(docsToUse.project, 'Bash', input, ctx);
-    const user = evalScope(docsToUse.user, 'Bash', input, ctx);
-    const combined = combineScopes(policy, project, user);
+    const { escaping, sig, combined } = judgeSub(index, ctx, docs, input);
 
     if (combined.decision === 'deny') {
       return denyResult({
@@ -398,6 +442,7 @@ export function checkBash(
       });
     }
     if (combined.decision === 'ask') {
+      redirectAsked ||= escaping && !combined.rule;
       if (!sig.isExactMatchOnly) askSignatures.push(sig);
       // The matcher compares an exact rule against `fullSignature`, so a truncated
       // one (`grep foo` for `grep foo src/*/x.ts`) could never match the rule.
@@ -409,15 +454,18 @@ export function checkBash(
       askPrompt ??= {
         tool: 'Bash',
         input,
-        reason: combined.rule ? 'rule:ask' : 'no-matching-rule',
+        reason: askReason(combined.rule, escaping),
         matchedRule: combined.rule,
         matchedTier: combined.tier,
       };
     }
-    // allow → nothing to collect; sub is already permitted
   }
 
   if (askPrompt) {
+    // Name the redirect even when another part of a compound command asked first.
+    if (askPrompt.reason === 'no-matching-rule' && redirectAsked) {
+      askPrompt.reason = 'redirect-outside-project';
+    }
     const rules = [...buildSuggestedRules(askSignatures), ...exactRules];
     // Empty = no rule can express the command. A lone withheld wrapper (`sudo npm i`)
     // stays unset for the card's fallback; an unmintable exact-only sub makes it dead.

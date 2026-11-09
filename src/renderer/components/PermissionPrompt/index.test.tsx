@@ -685,3 +685,17 @@ describe('PermissionPrompt — per-flow agent-run consent', () => {
     expect(onDeny).toHaveBeenCalledWith('flow-1');
   });
 });
+
+describe('PermissionPrompt — redirect banner', () => {
+  it('says why a command whose output goes outside the project asks', () => {
+    const req = makeBashRequest({
+      prompt: {
+        tool: 'Bash',
+        input: { command: 'echo x >> ~/.zshrc' },
+        reason: 'redirect-outside-project',
+      },
+    });
+    render(<PermissionPrompt request={req} onApprove={vi.fn()} onDeny={vi.fn()} />);
+    expect(screen.getByText(/output stays inside this project/i)).toBeTruthy();
+  });
+});

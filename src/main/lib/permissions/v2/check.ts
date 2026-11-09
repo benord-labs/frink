@@ -41,7 +41,11 @@ export function resetDocsLoader(): void {
   activeLoader = DEFAULT_LOADER;
 }
 
-export async function checkPermission(req: PermissionRequest): Promise<PermissionResult> {
+/** `executionPath`: the folder the agent runs in, when it differs from `projectPath` (a worktree).
+ * `commandCwd`: the folder the provider runs a Bash command in (Codex only). */
+export async function checkPermission(
+  req: PermissionRequest & { executionPath?: string; commandCwd?: string },
+): Promise<PermissionResult> {
   // Rules that cannot be read cannot be honoured, so an unreadable store denies
   // instead of falling through to the no-rules prompt default.
   let docs: ScopedDocs;
@@ -53,7 +57,9 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
   }
 
   if (req.tool === 'Bash') {
-    return checkBash(req.input as { command: string }, docs, req.projectPath);
+    // SAFETY: a Bash tool call's input carries its command string.
+    const input = req.input as { command: string };
+    return checkBash(input, docs, req.projectPath, req.executionPath, req.commandCwd);
   }
 
   if (PATH_TOOLS.has(req.tool)) {

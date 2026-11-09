@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { z } from 'zod';
 import {
   FRINK_DYNAMIC_CHAT_MCP_KEY,
   parseMcpToolFullName,
@@ -20,6 +21,9 @@ type ValidateToolPermission = (
   executionSignal?: AbortSignal,
   trustedFrinkOwnedMcp?: boolean,
   mcpIdentity?: { server: string; tool: string },
+  presentation?: undefined,
+  executionPath?: string,
+  commandCwd?: string,
 ) => Promise<ApprovalOutcome>;
 
 type CodexHostPermissionOptions = {
@@ -82,6 +86,9 @@ export function createCodexHostPermissionCheck({
       executionSignal,
       trustedFrinkMcpFor(request, frinkMcpInjected),
       request.mcp,
+      undefined,
+      projectPath,
+      z.string().optional().catch(undefined).parse(request.input.cwd),
     );
     if (result.allowed !== null) return result;
     return autoReview
