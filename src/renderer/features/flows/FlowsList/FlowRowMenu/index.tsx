@@ -116,6 +116,7 @@ export function FlowRowMenu({ flow, enabled, hasDraft, onDelete }: FlowRowMenuPr
     },
     onError: (err, _, context) => {
       if (context?.prev) utils.flows.list.setData(undefined, context.prev);
+      Sentry.captureException(err, { tags: { source: 'FlowRowMenu', action: 'toggle-enabled' } });
       toast.error(err.message || 'Could not update flow');
     },
     onSettled: () => void utils.flows.list.invalidate(),
@@ -131,6 +132,7 @@ export function FlowRowMenu({ flow, enabled, hasDraft, onDelete }: FlowRowMenuPr
         refreshAfterCancel(runId);
         return;
       }
+      Sentry.captureException(err, { tags: { source: 'FlowRowMenu', action: 'stop-run' } });
       toast.error(err.message || 'Could not stop run');
     },
   });
