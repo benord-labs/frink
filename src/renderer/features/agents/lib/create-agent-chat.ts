@@ -44,6 +44,7 @@ import {
 } from '../stores/message-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
+import { setCompacting } from './compaction-flag';
 import { resolveCompletionEffects } from './completion-effects';
 import type { ExecutionAccountKind } from './resolve-execution-model-cli';
 import { WebSocketChatTransport } from './websocket-chat-transport';
@@ -201,6 +202,8 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
       if (agentChatStore.wasTornDown(chat)) return;
       const turnErrored = erroredChats.delete(chat);
       clearLoadingViaStore(subChatId);
+      // A turn that ends mid-compaction sends no settling chunk, so the live flag ends with it.
+      setCompacting(subChatId, false);
       appStore.set(wakeHoldAdoptedAtomFamily(subChatId), false);
       // Sync status to global store for queue processing (even when component unmounted).
       useStreamingStatusStore.getState().setStatus(subChatId, 'ready');
