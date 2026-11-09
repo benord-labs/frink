@@ -117,6 +117,15 @@ describe('AgentsPreferencesTab — keep awake copy', () => {
   });
 });
 
+describe('AgentsPreferencesTab — chat formatting', () => {
+  it('offers the reply and your-message switches at their defaults', () => {
+    renderTab({ enabled: true });
+
+    expect(screen.getByRole('switch', { name: 'Format replies' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Format your messages' })).not.toBeChecked();
+  });
+});
+
 describe('AgentsPreferencesTab — keep awake', () => {
   it('shows the saved value and saves a switch-off', async () => {
     const { save, keepAwake } = renderTab({ enabled: true });

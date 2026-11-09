@@ -11,17 +11,15 @@ import {
   filterCanonicalPlanParts,
 } from '../../../../shared/plan-parts-filter';
 import { isFrinkPlanMessagePartType } from '../../../../shared/types/plan';
-import {
-  resolveRenderMarkdown,
-  useChatMarkdownToggle,
-} from '../../../hooks/use-chat-markdown-toggle';
+import { useChatMarkdownToggle } from '../../../hooks/use-chat-markdown-toggle';
+import { chatMarkdownAssistantAtom } from '../../../lib/atoms';
 import { useReadImageFile } from '../../../lib/code-editor/files/use-read-image-file';
 import { useCollapseBoundary } from '../../../lib/agent-chat/collapse/use-collapse-boundary';
 import { pendingTurnCard } from '../../../lib/agent-chat/planning/planning-status-message';
 import { compactingAtomFor } from '../lib/compaction-flag';
 import * as FlowPatch from '../../../lib/flows/flow-change-tool';
 import { cn } from '../../../lib/utils';
-import { chatMarkdownModeAtom, showMessageJsonAtom } from '../atoms';
+import { showMessageJsonAtom } from '../atoms';
 import { HtmlArtifactCard } from '../HtmlArtifactCard';
 import type { Message, MessagePart } from '../stores/message-store';
 import { AgentFlowRunTool } from '../ui/AgentFlowRunTool';
@@ -191,7 +189,9 @@ const AssistantMessageFooterRow = memo(function AssistantMessageFooterRow({
     <div className="flex justify-between items-center h-6 px-2 mt-1">
       <div className="flex items-center gap-0.5">
         <CopyButton text={text} isMobile={isMobile} />
-        {showToggle && <MarkdownToggleButton rendered={renderMarkdown} onToggle={toggle} />}
+        {showToggle && (
+          <MarkdownToggleButton forRole="assistant" rendered={renderMarkdown} onToggle={toggle} />
+        )}
       </div>
       <AgentMessageUsage metadata={msgMetadata} isStreaming={isStreaming} isMobile={isMobile} />
     </div>
@@ -211,10 +211,8 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   const messageParts = message?.parts || [];
   const interruptedBy = (message?.metadata as AgentMessageMetadata | undefined)?.interruptedBy;
 
-  // One atom subscription per message (not per text part) — resolve the markdown
-  // render mode for assistant bubbles (default rendered) and thread it down.
-  const markdownMode = useAtomValue(chatMarkdownModeAtom);
-  const renderMarkdown = resolveRenderMarkdown(markdownMode, 'assistant');
+  // One subscription per message, not per text part: the switch the footer toggle flips.
+  const renderMarkdown = useAtomValue(chatMarkdownAssistantAtom);
 
   /** Dedupe duplicate plan markdown in message parts when a frink-plan card already carries the same planText (matches executor `buildFinalPartsForPersist`). */
   const messagePartsForRender = useMemo(() => {

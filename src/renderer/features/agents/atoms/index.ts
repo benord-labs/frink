@@ -477,17 +477,6 @@ export const showMessageJsonAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 );
 
-// Chat-bubble markdown rendering preference. Tri-state so user (default raw) and assistant
-// (default rendered) keep their natural look until the user picks: null = per-role default,
-// then 'raw' | 'rendered' applies to ALL bubbles. Persisted across reloads.
-export type ChatMarkdownMode = 'raw' | 'rendered' | null;
-export const chatMarkdownModeAtom = atomWithStorage<ChatMarkdownMode>(
-  'preferences:chat-markdown-mode',
-  null,
-  undefined,
-  { getOnInit: true },
-);
-
 // Enable Claude task management tools (TaskCreate, TaskUpdate, etc.). Passed to socket executor and local subscription.
 export const enableTasksAtom = atomWithStorage<boolean>('agents:enableTasks', true, undefined, {
   getOnInit: true,

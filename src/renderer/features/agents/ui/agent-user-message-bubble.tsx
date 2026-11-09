@@ -297,7 +297,11 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
                     <span />
                   )}
                   {showToggle && (
-                    <MarkdownToggleButton rendered={renderMarkdown} onToggle={toggle} />
+                    <MarkdownToggleButton
+                      forRole="user"
+                      rendered={renderMarkdown}
+                      onToggle={toggle}
+                    />
                   )}
                 </div>
               )}

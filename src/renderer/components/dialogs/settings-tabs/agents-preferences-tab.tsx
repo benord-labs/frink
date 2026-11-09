@@ -17,6 +17,7 @@ import {
 } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
 import { Switch } from '../../ui/switch';
+import { ChatFormattingSettings } from './ChatFormattingSettings';
 import { FlowConcurrencySettings } from './FlowConcurrencySettings';
 import { MenuBarStatusSetting } from './MenuBarStatusSetting';
 import { SettingsTabHeader } from './SettingsTabHeader';
@@ -165,6 +166,8 @@ export function AgentsPreferencesTab() {
           </div>
         </SettingsCard>
       </SettingsSection>
+
+      <ChatFormattingSettings />
 
       <FlowConcurrencySettings />
 
