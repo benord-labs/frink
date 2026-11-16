@@ -186,6 +186,26 @@ describe('summarizeStderr: shell failures with no error keyword', () => {
   });
 
   it.each([
+    [
+      'a command that cannot run over an earlier tolerated missing file',
+      'building\nls: missing-file: No such file or directory\n/bin/sh: nosuchcmd: command not found\n',
+      '/bin/sh: nosuchcmd: command not found — building',
+    ],
+    [
+      'a refused command over an earlier tolerated missing file',
+      'building\nls: missing-file: No such file or directory\nbash: line 2: ./deploy.sh: Permission denied\n',
+      'bash: line 2: ./deploy.sh: Permission denied — building',
+    ],
+    [
+      'the first of a cascade of missing files',
+      'building\nbash: line 1: cd: build: No such file or directory\ncat: out.txt: No such file or directory\n',
+      'bash: line 1: cd: build: No such file or directory — building',
+    ],
+  ])('leads with %s', (_case, stderr, summary) => {
+    expect(summarizeStderr(stderr)).toBe(summary);
+  });
+
+  it.each([
     ['a phrase mid-line', 'warning: permission denied for cache, retrying'],
     ['"not found" without a shell name', 'module: api: not found'],
   ])('does not treat %s as a shell failure', (_case, line) => {
