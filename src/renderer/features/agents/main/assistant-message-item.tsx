@@ -554,7 +554,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   if (!message) return null;
 
   return (
-    <FileLinkScope isStreaming={isStreaming}>
+    <FileLinkScope isStreaming={isStreaming && isLastMessage}>
       <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
         <div className="flex flex-col gap-1.5">
           {shouldCollapse && visibleStepsCount > 0 && (

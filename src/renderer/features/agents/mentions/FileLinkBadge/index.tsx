@@ -149,10 +149,18 @@ type FileLinkScopeProps = { isStreaming: boolean; children: ReactNode };
 export function FileLinkScope({ isStreaming, children }: FileLinkScopeProps) {
   const { root } = useChatFileRoot();
   const { references, register } = useRenderedReferences();
-  const names = isStreaming ? [] : references.filter(isBareFileName).slice(0, MAX_RESOLVED_NAMES);
+  // Sorted, so the lookup is asked again only when the names change, not their order.
+  const names = isStreaming
+    ? []
+    : references.filter(isBareFileName).toSorted().slice(0, MAX_RESOLVED_NAMES);
   const resolved = trpc.files.resolveNames.useQuery(
     { projectPath: root ?? '', names },
-    { enabled: Boolean(root) && names.length > 0, staleTime: 30_000 },
+    {
+      enabled: Boolean(root) && names.length > 0,
+      staleTime: 30_000,
+      // Placed names stay badges while a lookup for a changed name list is on its way.
+      placeholderData: (previous) => previous,
+    },
   ).data;
   const labels = useMemo(
     () => (isStreaming ? NO_LABELS : buildFileLinkLabels(references, resolved, root)),

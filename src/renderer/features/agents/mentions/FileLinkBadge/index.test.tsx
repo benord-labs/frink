@@ -597,6 +597,8 @@ function renderScopedReply(
     </Provider>
   );
   const asked: unknown[] = [];
+  // While set, lookups are asked but wait to be answered.
+  let held: Promise<void> | undefined;
   const view = renderWithTrpc<string | Record<string, string | null>>(
     reply([texts].flat()),
     async (op) => {
@@ -605,11 +607,24 @@ function renderScopedReply(
         throw new Error(`Unexpected test operation: ${op.path}`);
       const { names } = resolveInput.parse(op.input);
       asked.push(op.input);
+      await held;
       return Object.fromEntries(names.map((name) => [name, files[name] ?? null]));
     },
     queries,
   );
-  return { ...view, asked, showParts: (parts: string[]) => view.rerender(reply(parts)) };
+  const holdAnswers = () => {
+    let release = () => {};
+    held = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  };
+  return {
+    ...view,
+    asked,
+    holdAnswers,
+    showParts: (parts: string[]) => view.rerender(reply(parts)),
+  };
 }
 
 describe('bare file names in a reply', () => {
@@ -623,7 +638,7 @@ describe('bare file names in a reply', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent(/^src\/main\/socket\.ts$/);
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(screen.getByText('index.ts')).not.toHaveAttribute('aria-hidden');
-    expect(asked).toEqual([{ projectPath: ROOT, names: ['socket.ts', 'index.ts', 'gone.ts'] }]);
+    expect(asked).toEqual([{ projectPath: ROOT, names: ['gone.ts', 'index.ts', 'socket.ts'] }]);
   });
 
   it('tells same-name files apart by their folders', async () => {
@@ -674,12 +689,39 @@ describe('bare file names in a reply', () => {
   it('looks up at most 200 names, and still places those', async () => {
     const names = Array.from({ length: 201 }, (_, index) => `f${index}.ts`);
     const { asked } = renderScopedReply(names.map((name) => `\`${name}\``).join(' '), {
-      files: { 'f0.ts': 'src/f0.ts', 'f200.ts': 'src/f200.ts' },
+      files: { 'f0.ts': 'src/f0.ts', 'f99.ts': 'src/f99.ts' },
     });
 
+    // In name order, `f99.ts` is the 201st.
     expect(await screen.findByRole('button', { name: 'f0.ts' })).toBeInTheDocument();
-    expect(asked).toEqual([{ projectPath: ROOT, names: names.slice(0, 200) }]);
-    expect(screen.queryByRole('button', { name: 'f200.ts' })).toBeNull();
+    expect(asked).toEqual([{ projectPath: ROOT, names: names.toSorted().slice(0, 200) }]);
+    expect(screen.queryByRole('button', { name: 'f99.ts' })).toBeNull();
+  });
+
+  // Expanding collapsed steps or a plan card adds names, and with them a new lookup.
+  it('keeps the placed names while a lookup for more names is on its way', async () => {
+    const { asked, holdAnswers, showParts } = renderScopedReply('Edit `socket.ts`.', {
+      files: { 'socket.ts': 'src/main/socket.ts', 'other.ts': 'src/other.ts' },
+    });
+    expect(await screen.findByRole('button', { name: 'socket.ts' })).toBeInTheDocument();
+    const release = holdAnswers();
+
+    showParts(['Edit `socket.ts`.', 'And `other.ts`.']);
+
+    await waitFor(() => expect(asked).toHaveLength(2));
+    expect(screen.getByRole('button', { name: 'socket.ts' })).toBeInTheDocument();
+    release();
+    expect(await screen.findByRole('button', { name: 'other.ts' })).toBeInTheDocument();
+  });
+
+  it('asks once for the same names in another order', async () => {
+    const { asked, showParts } = renderScopedReply(['Edit `b.ts`.', 'And `a.ts`.']);
+    await waitFor(() => expect(asked).toHaveLength(1));
+
+    showParts(['And `a.ts`.', 'Edit `b.ts`.']);
+
+    await waitFor(() => expect(screen.getByText('a.ts')).toBeInTheDocument());
+    expect(asked).toEqual([{ projectPath: ROOT, names: ['a.ts', 'b.ts'] }]);
   });
 
   it('looks nothing up while the reply is still streaming', () => {
