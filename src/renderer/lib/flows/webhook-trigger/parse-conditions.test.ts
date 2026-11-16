@@ -9,7 +9,12 @@ describe('parseConditions', () => {
       fromStatus: '',
       toStatus: '',
       filters: [],
+      filtersApply: false,
     });
+  });
+
+  it('says stored filters apply unless they are an empty list, which filters nothing', () => {
+    expect(parseConditions({ filters: [] }, 'story_assigned', 'shortcut').filtersApply).toBe(false);
   });
 
   it('defaults new Shortcut rules to anyone and preserves an explicitly saved me condition', () => {

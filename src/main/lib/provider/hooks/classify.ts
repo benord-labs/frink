@@ -60,6 +60,14 @@ const COMMAND_FIELD_RULES = {
     v === true
       ? background('asyncRewake')
       : unless(v === false, 'malformed', notFlag('asyncRewake')),
+  // Frink's runner reports a failed hook and lets the action go ahead, which is Claude's default.
+  onFailure: (v) =>
+    v === 'block'
+      ? {
+          code: 'field-unsupported',
+          reason: `it blocks the action when it fails, which is ${NOT_YET}`,
+        }
+      : unless(v === 'continue', 'malformed', 'its onFailure is neither "continue" nor "block"'),
 } satisfies Record<keyof SdkCommandHook, (value: unknown) => FieldRule>;
 
 const PROJECT_REF = /CLAUDE_PROJECT_DIR\}?"?\/[\w./@-]+/;

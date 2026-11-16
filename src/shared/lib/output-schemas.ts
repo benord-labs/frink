@@ -11,6 +11,9 @@
  * **Authoritative runtime shapes** — what handlers actually write into `outputs` — live in
  * `src/main/lib/flows/dispatch/`. Update those handlers and this file together.
  */
+import { POST_TASK_TRIGGER_FIELDS } from './flow-triggers/post-task-fields';
+import { AGENT_OUTPUT_SCHEMA } from './output-schema-blocks/agent';
+
 /**
  * Declares one output field produced by a custom node.
  * Defined here (shared) so both the Electron main process (discovery, cloud DTO)
@@ -59,6 +62,8 @@ export type TriggerFieldSchema = {
    * than confident-valid, since field names are provider-specific.
    */
   openEnded?: boolean;
+  /** False if some runs of this trigger leave the field out (omit to mean always present) */
+  guaranteed?: boolean;
 };
 /**
  * Output fields each block type writes to `outputs` when it completes.
@@ -170,70 +175,7 @@ export const OUTPUT_SCHEMAS: Record<string, OutputFieldSchema[]> = {
    * NOT prepended to this block's `instructions` or repeated in the message. Rendered once per run
    * against {{trigger.*}}. Lets a root agent set shared PRD/spec context without touching each node.
    */
-  agent: [
-    {
-      key: 'summary',
-      type: 'string',
-      description: 'Short summary the agent reported on completion',
-      guaranteed: false,
-    },
-    {
-      key: 'details',
-      type: 'string',
-      description: 'Detailed output the agent reported on completion',
-      guaranteed: false,
-    },
-    {
-      key: 'chatId',
-      type: 'string',
-      description: 'Chat session ID — used by downstream agent and chat_reply blocks',
-      guaranteed: true,
-    },
-    {
-      key: 'worktreePath',
-      type: 'string',
-      description: 'Absolute path to the git worktree used by this agent',
-      guaranteed: false,
-    },
-    {
-      key: 'branch',
-      type: 'string',
-      description: 'Git branch the agent worked on',
-      guaranteed: false,
-    },
-    {
-      key: 'baseBranch',
-      type: 'string',
-      description: 'Base branch',
-      guaranteed: false,
-    },
-    {
-      key: 'spawnedTaskId',
-      type: 'string',
-      description: 'Task ID — only present when fireAndForget is true',
-      guaranteed: false,
-    },
-    {
-      key: 'fireAndForget',
-      type: 'boolean',
-      description: 'True when agent was launched in async fire-and-forget mode',
-      guaranteed: false,
-    },
-    {
-      key: 'taskStatus',
-      type: 'string',
-      description:
-        'Task status when the node ended in a non-standard state (e.g. needs_attention when agent did not signal). Use {{previous.taskStatus}} to branch on this.',
-      guaranteed: false,
-    },
-    {
-      key: 'verification',
-      type: 'object',
-      description:
-        "Structured verification result from the agent's frink_task_signal call — only present when the agent explicitly includes a verification object. Use dot notation: {{previous.verification.passed}}",
-      guaranteed: false,
-    },
-  ],
+  agent: AGENT_OUTPUT_SCHEMA,
 
   http_request: [
     {
@@ -391,28 +333,19 @@ export const OUTPUT_SCHEMAS: Record<string, OutputFieldSchema[]> = {
   ],
 };
 
+/** A trigger field's description, flagged when some runs leave the field out. */
+export function describeTriggerField(field: TriggerFieldSchema): string {
+  return field.guaranteed === false
+    ? `${field.description} (not always present)`
+    : field.description;
+}
+
 /**
  * Fields available on `{{trigger.*}}` based on which trigger type fired the flow.
  * These come from `flow_runs.trigger_context`, not from block outputs.
  */
 export const TRIGGER_SCHEMAS: Record<string, TriggerFieldSchema[]> = {
-  post_task_trigger: [
-    { key: 'taskId', type: 'string', description: 'UUID of the completed task' },
-    { key: 'taskTitle', type: 'string', description: 'Title of the completed task' },
-    { key: 'taskStatus', type: 'string', description: 'Final status of the task' },
-    {
-      key: 'source',
-      type: 'string',
-      description: 'How the task was created (e.g. manual, flow, slack)',
-    },
-    { key: 'projectId', type: 'string', description: 'UUID of the project the task belonged to' },
-    { key: 'result', type: 'string', description: 'Result summary from the task signal' },
-    { key: 'branch', type: 'string', description: 'Git branch the task ran on' },
-    { key: 'baseBranch', type: 'string', description: 'Base branch the task branched from' },
-    { key: 'worktreePath', type: 'string', description: 'Absolute path to the task worktree' },
-    { key: 'chatId', type: 'string', description: 'Chat session ID of the triggering task' },
-    { key: 'projectPath', type: 'string', description: 'Main project directory path' },
-  ],
+  post_task_trigger: POST_TASK_TRIGGER_FIELDS,
   schedule_trigger: [
     {
       key: 'scheduledAt',

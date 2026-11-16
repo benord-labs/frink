@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { assertSourceConfigSurface } from './codex-config-surface.mjs';
 import { downloadToFile, sha256File } from './http-download.mjs';
 import { installStaged, stagingPath, sweepStaging } from './install-file.mjs';
 
@@ -529,6 +530,7 @@ async function preparedCodexWorkspace(tempRoot, manifest) {
       fs.readFileSync(path.join(sourceDir, ...THREAD_ITEM_SCHEMA_PATH), 'utf8'),
     ),
   );
+  assertSourceConfigSurface(manifest, sourceDir);
   const rustc = rustcExecutable();
   assertRustVersion(rustc, manifest.rust);
   return {

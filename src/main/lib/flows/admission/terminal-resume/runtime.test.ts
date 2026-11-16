@@ -240,6 +240,32 @@ describe('terminal Flow resume admission runtime', () => {
     expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
   });
 
+  // A paused run's resume never moves the run, so a crash-claimed one would otherwise hold its
+  // slot as an ambiguous claim on every boot.
+  it('frees the slot a crash-claimed resume of a paused run held, leaving the run paused', async () => {
+    const nodeRunId = persistTerminalResume('claimed-paused');
+    db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, 'claimed-paused')).run();
+    db.update(nodeRuns).set({ status: 'blocked' }).where(eq(nodeRuns.id, nodeRunId)).run();
+    const queued = await controller.enqueueTerminalResume({
+      flowRunId: 'claimed-paused',
+      nodeRunId,
+    });
+    await controller.claimEligible();
+    const queuedStart = await requestFlowStart(startInput('behind-paused-claim'));
+
+    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 1, ambiguous: 0 });
+
+    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+      state: 'failed',
+    });
+    await vi.waitFor(() =>
+      expect(mocks.startDispatcher).toHaveBeenCalledWith(queuedStart.run.id, expect.any(Number)),
+    );
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, 'claimed-paused')).get()?.status).toBe(
+      'paused',
+    );
+  });
+
   it('leaves a claimed resume whose run is no longer terminal ambiguous and untouched', async () => {
     const nodeRunId = persistTerminalResume('claimed-running');
     const queued = await controller.enqueueTerminalResume({

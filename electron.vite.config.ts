@@ -3,16 +3,11 @@ import { resolve } from 'node:path';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import react from '@vitejs/plugin-react';
-import { defineConfig, externalizeDepsPlugin, loadEnv } from 'electron-vite';
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 
-const mode = process.env.MODE ?? process.env.NODE_ENV ?? 'development';
-// Side effect: load main/renderer/preload-prefixed values into process.env.
-loadEnv(mode);
-
-// Build-time env vars that don't have a MAIN_VITE_/RENDERER_VITE_ prefix
-// (SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT) aren't picked up by
-// electron-vite's loadEnv — load them ourselves from .env / .env.local.
-// Existing process.env values win (CI secrets take precedence over files).
+// Vite exposes .env values only as import.meta.env, never process.env, so load
+// .env / .env.local here for the SENTRY_* vars sentryPlugins() reads. Existing
+// process.env values win (CI secrets take precedence over files).
 for (const file of ['.env', '.env.local']) {
   try {
     for (const line of readFileSync(file, 'utf-8').split('\n')) {

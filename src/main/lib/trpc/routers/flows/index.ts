@@ -294,10 +294,6 @@ export const flowsRouter = router({
       return patchBatchStageDepsLocal(input.batch_id, input.stages);
     }),
 
-  getBriefings: publicProcedureRaw
-    .input(z.object({ projectId: z.string().min(1).nullable().optional() }).optional())
-    .query((): Array<{ id: string; name: string; briefing: string }> => []),
-
   listStashes: publicProcedureRaw.query(async () => {
     const db = getDatabase();
     const rows = await listBriefingStashesLocal(db);

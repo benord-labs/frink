@@ -477,6 +477,20 @@ export function getLiveStreamSeed(subChatId: string): {
   return { streams, terminals };
 }
 
+/** Every unfinished stream with its newest part, uncloned: callers only read the part. */
+export function listLiveStreamActivity() {
+  return [...records.values()]
+    .filter((record) => ['active', 'held', 'settling'].includes(record.status))
+    .map(({ chatId, subChatId, status, finalParts, parts }) => {
+      return {
+        chatId,
+        subChatId,
+        held: status === 'held',
+        lastPart: (finalParts ?? parts)?.at(-1),
+      };
+    });
+}
+
 export function _clearLiveStreamRegistryForTests(): void {
   records.clear();
   currentRecordKeys.clear();

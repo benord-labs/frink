@@ -33,6 +33,7 @@ describe('MODEL_ID_MAP edge cases', () => {
       expect(MODEL_ID_MAP['opus-4.8']).toBe('claude-opus-4-8');
       expect(MODEL_ID_MAP['opus-5.5']).toBe('claude-opus-5-5');
       expect(MODEL_ID_MAP['opus-5']).toBe('claude-opus-5');
+      expect(MODEL_ID_MAP['fable-5.2']).toBe('claude-fable-5-2');
       expect(MODEL_ID_MAP['fable-5.1']).toBe('claude-fable-5-1');
       expect(MODEL_ID_MAP.sonnet).toBe('sonnet');
       expect(MODEL_ID_MAP.haiku).toBe('claude-haiku-4-5');

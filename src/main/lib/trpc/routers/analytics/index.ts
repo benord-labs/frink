@@ -6,5 +6,5 @@ import { publicProcedure, router } from '../../index';
 export const analyticsRouter = router({
   messageSent: publicProcedure
     .input(messageSentEventSchema)
-    .mutation(({ input }) => trackMessageSent(input)),
+    .mutation(({ input }) => trackMessageSent({ ...input, startsChat: false })),
 });

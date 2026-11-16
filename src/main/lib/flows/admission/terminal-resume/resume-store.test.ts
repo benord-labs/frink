@@ -12,7 +12,7 @@ import {
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from '../controller';
 import './dispatcher';
-import { promoteTerminalResumeRun } from './resume-store';
+import { promoteTerminalResumeRun, terminalFlowResumeIntent } from './resume-store';
 
 type TerminalStatus = 'completed' | 'failed' | 'cancelled';
 
@@ -103,6 +103,29 @@ describe('terminal Flow resume admission store', () => {
     await expect(
       controller.enqueueTerminalResume({ flowRunId: 'dedupe', nodeRunId: 'node-1', kind: 'retry' }),
     ).rejects.toThrow(/different live admission/);
+  });
+
+  // The action is replayed at claim: a click of another action must not merge into it, and a row
+  // carrying an action this build does not know is never dispatched.
+  it('keeps a paused resume action on its ticket, distinct from a plain continue', async () => {
+    const db = freshDb();
+    seedRun(db, 'actions');
+    seedNode(db, 'actions', 'node-1');
+    const controller = admissionController(db);
+    const skip = await controller.enqueueTerminalResume({
+      flowRunId: 'actions',
+      nodeRunId: 'node-1',
+      action: 'skip',
+    });
+
+    expect(terminalFlowResumeIntent(skip.admission.intentJson)).toMatchObject({
+      resume_action: 'skip',
+    });
+    await expect(
+      controller.enqueueTerminalResume({ flowRunId: 'actions', nodeRunId: 'node-1' }),
+    ).rejects.toThrow(/different live admission/);
+    const intent = terminalFlowResumeIntent(skip.admission.intentJson);
+    expect(terminalFlowResumeIntent({ ...intent, resume_action: 'delete' })).toBeNull();
   });
 
   it.each(['completed', 'failed', 'cancelled'] as const)(

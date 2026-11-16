@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { carryUndeliveredMessages, clearUndeliveredMessagesForTests } from './undelivered-messages';
+import {
+  carryUndeliveredMessages,
+  clearUndeliveredMessagesForTests,
+  forgetUndeliveredOnClear,
+} from './undelivered-messages';
 
 const send = (message: string, personAuthored = true, chat = 'sub-1') =>
-  carryUndeliveredMessages(chat, message, personAuthored);
+  carryUndeliveredMessages(chat, { raw: message, prompt: message }, personAuthored);
 
 describe('carryUndeliveredMessages', () => {
   beforeEach(() => clearUndeliveredMessagesForTests());
@@ -65,6 +69,45 @@ describe('carryUndeliveredMessages', () => {
     expect(next.prompt).not.toContain('/compact');
   });
 
+  it('sends any slash command bare and never owes it, as a local command is never taken', () => {
+    send('restart the hub');
+    expect(send('/review the diff').prompt).toBe('/review the diff');
+    send('/context');
+
+    const next = send('continue');
+    expect(next.prompt).toContain('Human: restart the hub');
+    expect(next.prompt).not.toContain('/review');
+    expect(next.prompt).not.toContain('/context');
+  });
+
+  it('carries nothing from before a clear the CLI ran, and keeps what is owed otherwise', () => {
+    const ran = { type: 'result', is_error: false };
+    send('restart the hub');
+    forgetUndeliveredOnClear('sub-1', '/compact', ran);
+    forgetUndeliveredOnClear('sub-1', '/reset', { type: 'system' });
+    forgetUndeliveredOnClear('sub-1', '/reset', { type: 'result', is_error: true });
+    expect(send('status?').prompt).toContain('Human: restart the hub');
+
+    forgetUndeliveredOnClear('sub-1', '/reset', ran);
+    expect(send('hi').prompt).toBe('hi');
+  });
+
+  it('forgets only the cleared chat', () => {
+    send('restart the hub', true, 'sub-1');
+    send('deploy it', true, 'sub-2');
+    forgetUndeliveredOnClear('sub-1', '/clear', { type: 'result', is_error: false });
+
+    expect(send('hi', true, 'sub-1').prompt).toBe('hi');
+    expect(send('hi', true, 'sub-2').prompt).toContain('Human: deploy it');
+  });
+
+  it('owes a message that only starts with a path, as the provider sends it to the model', () => {
+    send('restart the hub');
+    expect(send('/src/a.ts is broken').prompt).toContain('Human: restart the hub');
+
+    expect(send('continue').prompt).toContain('Human: /src/a.ts is broken');
+  });
+
   it('keeps a newer send owed when an older turn is taken late', () => {
     const older = send('first');
     send('second');
@@ -82,6 +125,30 @@ describe('carryUndeliveredMessages', () => {
     first.accepted();
 
     expect(send('next').prompt).toContain('Human: ok');
+  });
+
+  it('keeps an owed message as typed and carries its tokens as a recap', () => {
+    carryUndeliveredMessages(
+      'sub-1',
+      { raw: 'look at @[file:local:src/a.ts]', prompt: 'look at src/a.ts' },
+      true,
+    );
+    const next = carryUndeliveredMessages(
+      'sub-1',
+      { raw: 'and @[skill:deploy] it', prompt: 'and deploy it' },
+      true,
+    );
+
+    expect(next.prompt).toContain('Human: look at src/a.ts\n');
+    expect(next.prompt.endsWith("The user's latest message is:\nand deploy it")).toBe(true);
+    // A retry sends the raw text again, which still matches what is owed.
+    expect(
+      carryUndeliveredMessages(
+        'sub-1',
+        { raw: 'look at @[file:local:src/a.ts]', prompt: 'look at src/a.ts' },
+        true,
+      ).prompt,
+    ).not.toContain('Human: look at');
   });
 
   it('keeps chats apart', () => {

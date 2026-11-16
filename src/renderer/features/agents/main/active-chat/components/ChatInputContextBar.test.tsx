@@ -298,8 +298,6 @@ describe('ChatInputContextBar', () => {
 
       const timer = screen.getByRole('img', { name: /^Prompt cache stays warm/ });
       expect(screen.getByLabelText('Folder: owners-web').nextElementSibling).toBe(timer);
-      // Reference only: narrow rows (split panes) shed it rather than crowd the git chips.
-      expect(timer.className).toContain('@max-[26rem]/context-row:hidden');
     });
 
     it('renders an empty row when there is no project context', () => {
@@ -902,8 +900,9 @@ describe('ChatInputContextBar', () => {
     let layout: ReturnType<typeof stubLayout>;
     afterEach(() => layout.restore());
 
-    it('moves the worktree behind an ellipsis before the branch, keeping the branch picker inline', () => {
+    it('moves worktree and branch behind one ellipsis together, keeping the cache timer inline', () => {
       mockWorktrees = LINKED;
+      // Room for the branch alone, so only the all-or-nothing rule hides it too.
       layout = stubLayout(200, 150);
       renderBar(
         <ChatInputContextBar
@@ -911,17 +910,19 @@ describe('ChatInputContextBar', () => {
           currentBranch="feat"
           workspaceFolderName="app"
           chatId="chat-1"
+          promptCacheExpiresAt={Date.now() + 5 * 60_000}
         />,
       );
 
       expect(screen.getByLabelText('Folder: app')).toBeInTheDocument();
-      expect(screen.getByTestId('branch-selector')).toBeInTheDocument();
+      expect(screen.getByRole('img', { name: /^Prompt cache stays warm/ })).toBeInTheDocument();
+      expect(screen.queryByTestId('branch-selector')).toBeNull();
       expect(screen.queryByTestId('worktree-picker')).toBeNull();
 
-      fireEvent.click(screen.getByRole('button', { name: 'More: Worktree' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More: Worktree, Branch' }));
 
-      expect(screen.getByText('Worktree')).toBeInTheDocument();
       expect(screen.getByTestId('worktree-picker')).toBeInTheDocument();
+      expect(screen.getByTestId('branch-selector')).toBeInTheDocument();
     });
 
     it('re-measures a hidden control when content changes so it returns inline once it fits', () => {
@@ -963,7 +964,7 @@ describe('ChatInputContextBar', () => {
       layout.set(200, 150);
       rerender(bar('feature/very-long-branch-name'));
 
-      expect(screen.getByRole('button', { name: 'More: Worktree' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'More: Worktree, Branch' })).toBeInTheDocument();
     });
 
     it('brings the branch back inline when the worktree slot disappears', () => {
@@ -977,7 +978,7 @@ describe('ChatInputContextBar', () => {
           chatId="chat-1"
         />,
       );
-      expect(screen.getByRole('button', { name: 'More: Worktree' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'More: Worktree, Branch' })).toBeInTheDocument();
 
       mockWorktrees = [{ path: '/tmp/main', branch: 'main', isMain: true, prunable: false }];
       rerender(

@@ -35,6 +35,41 @@ async function* answers(): AsyncGenerator<UIMessageChunk, void, undefined> {
   yield { type: 'finish', messageMetadata: { sessionId: 'agent-session' } };
 }
 type Overrides = Parameters<OperatorReminderHarness['handleRemoteExecute']>[1];
+type Execution = ReturnType<OperatorReminderHarness['handleRemoteExecute']>;
+
+/** Runs each agent turn through the next script, keeping what the agent was sent. */
+function scriptAgentTurns(
+  runtime: AgentRuntime,
+  scripts: Script[],
+  execute: (message: string, overrides: Overrides) => Execution,
+) {
+  vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+    token: null,
+    isApiKey: false,
+    type: PROVIDER_TYPE[runtime],
+    label: runtime,
+    passthrough: true,
+  });
+  const sent: AgentTurn[] = [];
+  const next = (turn: AgentTurn) => {
+    sent.push(turn);
+    return scripts[sent.length - 1](turn);
+  };
+  // Only Codex reads these; one left queued would answer a later test's Codex turn.
+  if (runtime === 'codex') {
+    for (const _script of scripts) {
+      vi.mocked(runCodexAgent).mockImplementationOnce((params) =>
+        next({
+          prompt: params.prompt,
+          freshSessionFallbackPrompt: params.freshThreadFallbackPrompt,
+        }),
+      );
+    }
+  }
+  const overrides = { runtimeFor: () => runtime, startAcpTurn: next, startCopilotTurn: next };
+  const send = (message: string) => execute(message, overrides);
+  return { sent, send, overrides };
+}
 
 /** A message whose turn ends before the provider takes its prompt reaches the next turn that
  * resumes the provider's own transcript. Registered from executor.test.ts, whose mocks it uses. */
@@ -56,23 +91,28 @@ export function registerUndeliveredMessageTests({
     };
   });
 
-  /** One CLI that reads its prompt, takes it through the prompt hook and ends the turn. */
-  const mockClaudeTurn = () =>
+  /** One CLI that reads its prompt, takes it through the prompt hook and ends the turn. A local
+   * command, such as `/clear`, runs without the prompt hook ever firing. */
+  const mockClaudeTurn = (localCommand = false) =>
     claudeQueryMock.mockImplementationOnce(async function* (input: ClaudeQueryInput) {
       const queued = await input.prompt[Symbol.asyncIterator]().next();
       const text = String(queued.value?.message.content);
       prompts.push(text);
-      await userPromptSubmitReminder(input, text);
+      if (!localCommand) await userPromptSubmitReminder(input, text);
       yield* TURN_END;
     });
 
   /** A turn the user stops while Frink is still preparing it, before any agent sees the prompt. */
-  const stoppedWhilePreparing = async (turn: typeof payload, overrides?: Overrides) => {
+  const stoppedWhilePreparing = async (
+    turn: typeof payload,
+    overrides?: Overrides,
+    message = STOPPED,
+  ) => {
     vi.mocked(getMultiProjectContext).mockImplementationOnce(async () => {
       handleRemoteStop(turn);
       return { promptPrefix: '', dynamicChatMcpUrl: null };
     });
-    await handleRemoteExecute({ ...turn, message: STOPPED }, overrides);
+    await handleRemoteExecute({ ...turn, message }, overrides);
     expect(claudeQueryMock).not.toHaveBeenCalled();
     expect(runCodexAgent).not.toHaveBeenCalled();
   };
@@ -87,6 +127,34 @@ export function registerUndeliveredMessageTests({
     expect(prompts[0]).toContain(CARRIED);
     expect(prompts[0].endsWith('with latest code')).toBe(true);
     expect(prompts[1]).toBe('thanks');
+  });
+
+  it('Claude: a /clear, even after a mention, forgets a stopped message for the cleared session', async () => {
+    await stoppedWhilePreparing(payload);
+    mockClaudeTurn(true);
+    mockClaudeTurn();
+    await handleRemoteExecute({ ...payload, message: '@[file:editor:a.ts] /clear' });
+    await handleRemoteExecute({ ...payload, message: 'hi' });
+    expect(prompts).toEqual(['/clear', 'hi']);
+  });
+
+  it('Claude: a /clear stopped before the CLI ran it keeps the stopped message owed', async () => {
+    await stoppedWhilePreparing(payload);
+    await stoppedWhilePreparing(payload, undefined, '/clear');
+    mockClaudeTurn();
+    await handleRemoteExecute({ ...payload, message: 'hi' });
+    expect(prompts[0]).toContain(CARRIED);
+  });
+
+  it('Claude: a /clear behind a fresh transcript is text, so the stopped message stays owed', async () => {
+    await stoppedWhilePreparing(payload);
+    mockClaudeTurn();
+    mockClaudeTurn();
+    const fresh = { ...payload, sessionId: undefined, history: HISTORY };
+    await handleRemoteExecute({ ...fresh, message: '/clear' });
+    await handleRemoteExecute({ ...payload, message: 'hi' });
+    expect(prompts[0]).toContain('Continue the conversation');
+    expect(prompts[1]).toContain(CARRIED);
   });
 
   it('Claude: a wake firing the prompt hook is not the CLI taking the message', async () => {
@@ -119,39 +187,13 @@ export function registerUndeliveredMessageTests({
     expect(prompts).toEqual(['with latest code']);
   });
 
-  /** Runs each agent turn through the next script, keeping what the agent was sent. */
-  const agentScripts = (runtime: AgentRuntime, scripts: Script[]) => {
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
-      token: null,
-      isApiKey: false,
-      type: PROVIDER_TYPE[runtime],
-      label: runtime,
-      passthrough: true,
-    });
-    const sent: AgentTurn[] = [];
-    const next = (turn: AgentTurn) => {
-      sent.push(turn);
-      return scripts[sent.length - 1](turn);
-    };
-    // Only Codex reads these; one left queued would answer a later test's Codex turn.
-    if (runtime === 'codex') {
-      for (const _script of scripts) {
-        vi.mocked(runCodexAgent).mockImplementationOnce((params) =>
-          next({
-            prompt: params.prompt,
-            freshSessionFallbackPrompt: params.freshThreadFallbackPrompt,
-          }),
-        );
-      }
-    }
-    const overrides = { runtimeFor: () => runtime, startAcpTurn: next, startCopilotTurn: next };
-    const send = (message: string) =>
+  const agentScripts = (runtime: AgentRuntime, scripts: Script[]) =>
+    scriptAgentTurns(runtime, scripts, (message, overrides) =>
       handleRemoteExecute(
         { ...payload, message, history: HISTORY, sessionId: 'agent-session' },
         overrides,
-      );
-    return { sent, send, overrides };
-  };
+      ),
+    );
 
   it.each(AGENT_RUNTIMES)(
     '%s: a message stopped before the agent saw it reaches the next turn once',
@@ -171,6 +213,17 @@ export function registerUndeliveredMessageTests({
       expect(timesIn(sent[0].freshSessionFallbackPrompt, STOPPED)).toBe(1);
     },
   );
+
+  it('codex: /clear is an ordinary message there, so a stopped message is still carried', async () => {
+    const { sent, send, overrides } = agentScripts('codex', [answers, answers]);
+
+    await stoppedWhilePreparing({ ...payload, sessionId: 'agent-session' }, overrides);
+    await send('/clear');
+    await send('hi');
+
+    expect(sent[0].prompt).not.toContain(STOPPED);
+    expect(sent[1].prompt).toContain(CARRIED);
+  });
 
   it.each(AGENT_RUNTIMES)(
     '%s: a Stop before the agent answers keeps the message owed, a Stop mid-answer does not',

@@ -9,7 +9,8 @@ vi.mock('../../claude/ask-user-question-approval', () => ({
 }));
 vi.mock('../../trpc/routers/frink-task-signal', () => ({ agentUserQuestionsSchema: {} }));
 vi.mock('./context', () => ({ mobileCallers: {}, record: vi.fn(), text: vi.fn() }));
-import { mobilePermissions } from './questions';
+import * as context from './context';
+import { mobilePermissions, parkedQuestion } from './questions';
 
 beforeEach(() => {
   fixture.moves.mockReturnValue([]);
@@ -42,5 +43,22 @@ describe('mobile permission review', () => {
       { requestId: 'move', chatId: 'c', subChatId: 's', projectName: 'Site' },
     ]);
     expect(mobilePermissions()[0]).toMatchObject({ requestId: 'move', supported: false });
+  });
+});
+
+describe('parked questions on the phone', () => {
+  it('never offers a secret request, which only the desktop form may answer', () => {
+    // The context helpers are stubbed for this file; give them their pass-through behaviour here.
+    vi.mocked(context.record).mockImplementation((value) => Object(value));
+    vi.mocked(context.text).mockImplementation((value, fallback = '') => String(value ?? fallback));
+    const agentSignal = {
+      state: 'awaiting_input',
+      summary: 'Needs STRIPE_KEY',
+      secretRequest: { id: 'r', name: 'STRIPE_KEY' },
+    };
+
+    const task = { id: 't', status: 'needs_attention', result: { agentSignal } };
+
+    expect(parkedQuestion(task, 'c', 's')).toBeNull();
   });
 });

@@ -11,7 +11,6 @@ type PromptCacheTimerProps = {
   /** When the prompt cache goes cold at the latest (epoch ms). Null hides the timer: no TTL was
    *  reported, or a turn in flight is refreshing the cache. */
   expiresAt: number | null;
-  className?: string;
 };
 
 /** `M:SS`, rounding up so the display never reads 0:00 while the cache is still warm. */
@@ -41,7 +40,6 @@ function useRemainingMs(expiresAt: number | null): number {
  *  warm after the last turn. */
 export const PromptCacheTimer = memo(function PromptCacheTimer({
   expiresAt,
-  className,
 }: PromptCacheTimerProps) {
   const enabled = useAtomValue(promptCacheTimerEnabledAtom);
   const visible = enabled && expiresAt !== null;
@@ -67,7 +65,6 @@ export const PromptCacheTimer = memo(function PromptCacheTimer({
               : remainingMs <= WARNING_MS
                 ? 'text-warning'
                 : 'text-muted-foreground',
-            className,
           )}
         >
           <Timer aria-hidden="true" className="h-3 w-3 shrink-0" />

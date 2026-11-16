@@ -157,6 +157,28 @@ describe('claude-wake-hold — background Workflows and lost-work notices', () =
     }
   });
 
+  it('marks each burst stop with whether background work deferred a /goal check', async () => {
+    const { ch, io, stopHook } = await armWorkflow('lw9');
+    ch.emit(frame({ type: 'system', subtype: 'task_notification', task_id: 'b1' }));
+    await stopHook(stopListing([workflow]));
+    ch.emit(frame({ type: 'result', subtype: 'success' }));
+    await settle();
+    // The Workflow finished, so this burst's stop is the one Claude evaluates the goal at.
+    ch.emit(frame({ type: 'system', subtype: 'task_notification', task_id: 'w1' }));
+    await stopHook(stopListing([]));
+    ch.emit(frame({ type: 'result', subtype: 'success' }));
+    await settle();
+
+    const stops = vi
+      .mocked(io.streamChunk)
+      .mock.calls.flatMap(([, chunk]) => (chunk.type === 'data-goal' ? [chunk.data] : []));
+    expect(stops).toEqual([
+      { state: 'stopped', deferred: true },
+      { state: 'stopped', deferred: false },
+    ]);
+    ch.end();
+  });
+
   it('tells the chat, before retracting, when the CLI dies under a held Workflow', async () => {
     const { ch, io } = await armWorkflow('lw2');
     ch.end();

@@ -164,6 +164,14 @@ describe('startAcpTurn', () => {
     expect(runs[0]?.freshSessionFallbackPrompt).toBe(`${reminder}\n\nhistory\n\nfix the bug`);
   });
 
+  it('puts notes after a leading slash command, so the command stays first', async () => {
+    const { deps, runs } = fakeDeps();
+    const note = 'The user opened the file src/a.ts in the IDE.';
+    await collect(startAcpTurn(turnParams({ prompt: '/review', composerNotes: [note] }), deps));
+
+    expect(runs[0]?.prompt).toBe(`/review\n\n<system-reminder>\n${note}\n</system-reminder>`);
+  });
+
   it('leaves out a Claude or OpenAI model the chat kept from another provider', async () => {
     const { deps, runs } = fakeDeps();
     for (const model of ['sonnet', 'codex-gpt-6-astra-low']) {

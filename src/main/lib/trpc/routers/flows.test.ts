@@ -358,6 +358,8 @@ describe('flowsRouter (local)', () => {
           flowName: 'Release checks',
           priorityClass: 'start',
           projectName: 'Frink',
+          requestedAt: new Date('2026-10-20T09:00:00Z'),
+          runFirst: true,
           ticket: 12,
           triggerContext: { source: 'shortcut', fullContent: { primary_id: 7 } },
         },
@@ -366,6 +368,8 @@ describe('flowsRouter (local)', () => {
           flowName: 'Migrate repo',
           priorityClass: 'start',
           projectName: 'Frink',
+          requestedAt: new Date('2026-10-20T09:05:00Z'),
+          runFirst: false,
           ticket: 13,
           triggerContext: null,
         },
@@ -378,6 +382,8 @@ describe('flowsRouter (local)', () => {
           is_batch_member: false,
           priority_class: 'start',
           project_name: 'Frink',
+          requested_at: new Date('2026-10-20T09:00:00Z'),
+          run_first: true,
           ticket: 12,
           trigger_context: { source: 'shortcut', fullContent: { primary_id: 7 } },
         },
@@ -386,6 +392,8 @@ describe('flowsRouter (local)', () => {
           is_batch_member: true,
           priority_class: 'start',
           project_name: 'Frink',
+          requested_at: new Date('2026-10-20T09:05:00Z'),
+          run_first: false,
           ticket: 13,
           trigger_context: null,
         },
@@ -1235,20 +1243,6 @@ describe('flowsRouter (local)', () => {
 
       expect(await caller.pauseRun({ subChatId })).toEqual({ paused: false });
       expect(pauseActiveExecutionForSubChatMock).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('getBriefings', () => {
-    const projectId = '550e8400-e29b-41d4-a716-446655440099';
-
-    it('returns an empty array (cross-machine briefings deferred)', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await expect(caller.getBriefings({ projectId })).resolves.toEqual([]);
-    });
-
-    it('returns an empty array when called with no input', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await expect(caller.getBriefings()).resolves.toEqual([]);
     });
   });
 

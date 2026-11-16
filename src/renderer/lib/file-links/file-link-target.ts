@@ -1,5 +1,6 @@
 import path from 'path';
 import { buildOpenWorktreeFileInput } from '@/lib/worktree/open-worktree-file-in-editor';
+import { decodeUriPath } from '../../../shared/lib/path-normalization';
 
 // Adapted from T3 Code's markdownLinks.ts and fileLinks.ts (MIT).
 
@@ -30,6 +31,8 @@ const GENERIC_HOST =
 const COUNTRY_HOST =
   /^[^.].*\.(?:uk|de|fr|nl|se|no|fi|dk|pl|ch|at|be|es|it|pt|eu|us|ca|au|nz|jp|kr|cn|br|ru|mx|ie|cz|tr|sg|hk|cc)$/i;
 const EDGE_SLASHES = /^\.\/|\/+$/g;
+// A name with an extension and no folder, line, scheme or leading dot: `index.ts`, `package.json`.
+const BARE_NAME = /^[^\s/\\:.][^\s/\\:]*\.[\w-]+$/;
 
 function splitLine(raw: string): FileLinkTarget {
   const suffix = LINE_SUFFIX.exec(raw);
@@ -43,14 +46,6 @@ function looksLikeHostname(segment: string, hasLine: boolean): boolean {
     GENERIC_HOST.test(segment) ||
     (!hasLine && COUNTRY_HOST.test(segment))
   );
-}
-
-function decodePath(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
 }
 
 function fileUrlPath(url: string): string | null {
@@ -87,7 +82,7 @@ export function parseFileLinkTarget(url: string): FileLinkTarget | null {
   if (!local || !PATH_PREFIX.test(local)) return null;
   const anchor = HASH_LINE.exec(local);
   const file = anchor ? local.slice(0, anchor.index) : local;
-  return fileTarget(decodePath(file), Number(anchor?.[1]) || undefined);
+  return fileTarget(decodeUriPath(file), Number(anchor?.[1]) || undefined);
 }
 
 /** Reads path-shaped inline code such as `src/a.ts:42`; bare names, hosts, URLs and globs stay code. */
@@ -102,6 +97,19 @@ export function inlineCodeFileTarget(code: string): FileLinkTarget | null {
   // A colon in the first segment is a host with a port (`localhost:5173/src`).
   const isHost = first.includes(':') || looksLikeHostname(first, target.line !== undefined);
   return !isHost && FILE_EXTENSION.test(name) && !VERSION_SUFFIX.test(name) ? target : null;
+}
+
+/** Reads a bare file name in inline code, such as `index.ts`: a file only once the project has exactly one.
+ * Host-shaped names (`main.pl`, `example.com`) are looked up too: only a real project file matches. */
+export function bareFileNameTarget(code: string): FileLinkTarget | null {
+  const name = code.trim();
+  const isName = BARE_NAME.test(name) && !PLACEHOLDER.test(name) && !VERSION_SUFFIX.test(name);
+  return isName ? { path: name } : null;
+}
+
+/** True for a reference written as a name alone, which only a project lookup can place. */
+export function isBareFileName(file: string): boolean {
+  return !file.includes('/');
 }
 
 /** True when a reference's own text is just the file's name or path, so the badge alone says it. */
@@ -143,6 +151,7 @@ export function isBareRelativePath(file: string): boolean {
 
 /** The full path a shortened one stands for: the only project entry, file or folder, that ends with it. */
 export function findShortenedPath(file: string, entries: { path: string }[]): string | undefined {
-  const tails = entries.filter((entry) => entry.path.endsWith(`/${file}`));
+  // Windows lists project entries with `\`.
+  const tails = entries.filter((entry) => entry.path.replaceAll('\\', '/').endsWith(`/${file}`));
   return tails.length === 1 ? tails[0].path : undefined;
 }

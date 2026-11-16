@@ -6,7 +6,7 @@ type Chunk = {
   id?: string;
   delta?: string;
   transient?: boolean;
-  data?: { state: string; trigger?: string };
+  data?: { state: string; trigger?: string; objective?: string; lastCheck?: string };
 };
 
 const partsFor = (chunks: Chunk[]) => assistantPartsStateFromChunks(chunks).parts;
@@ -67,5 +67,26 @@ describe('compaction survives into the persisted parts', () => {
     ]);
 
     expect(parts.map((part) => part.type)).toEqual(['text', 'data-compact', 'text']);
+  });
+});
+
+describe('a goal survives into the persisted parts', () => {
+  it('settles each turn into one part, so a reloaded chat still shows the goal', () => {
+    const parts = partsFor([
+      { type: 'data-goal', id: 'g1', data: { state: 'active', objective: 'tests pass' } },
+      {
+        type: 'data-goal',
+        id: 'g1',
+        data: { state: 'active', objective: 'tests pass', lastCheck: '2 fail' },
+      },
+    ]);
+
+    expect(parts).toEqual([
+      {
+        type: 'data-goal',
+        id: 'g1',
+        data: { state: 'active', objective: 'tests pass', lastCheck: '2 fail' },
+      },
+    ]);
   });
 });

@@ -22,6 +22,14 @@ function placeCaret(el: HTMLElement): void {
   sel?.addRange(range);
 }
 
+// happy-dom has no editing commands: stand in for Chromium's insertHTML at the caret.
+const execCommand = vi.fn((_command: string, _showUI?: boolean, html = '') => {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  window.getSelection()?.getRangeAt(0).insertNode(template.content);
+  return true;
+});
+
 function pasteEvent(text: string, target: HTMLElement) {
   const preventDefault = vi.fn();
   const event = {
@@ -37,6 +45,8 @@ describe('handlePasteEvent', () => {
 
   beforeEach(() => {
     toastWarning.mockReset();
+    execCommand.mockClear();
+    document.execCommand = execCommand;
     document.body.innerHTML = '';
     input = editable();
     placeCaret(input);
@@ -54,6 +64,21 @@ describe('handlePasteEvent', () => {
 
     expect(add).not.toHaveBeenCalled();
     expect(input.textContent).toHaveLength(5000);
+  });
+
+  it('inserts through an undoable editing command, keeping pasted markup as literal text', () => {
+    const text = '<b>bold</b> & <img src=x>\nnext line';
+    const { event } = pasteEvent(text, input);
+
+    handlePasteEvent(event, vi.fn());
+
+    expect(execCommand).toHaveBeenCalledWith(
+      'insertHTML',
+      false,
+      '&lt;b&gt;bold&lt;/b&gt; &amp; &lt;img src=x&gt;\nnext line',
+    );
+    expect(input.textContent).toBe(text);
+    expect(input.querySelector('b, img')).toBeNull();
   });
 
   it('routes a 5,001-char paste to a file chip and inserts nothing inline', async () => {

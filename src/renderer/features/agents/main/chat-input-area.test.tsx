@@ -70,6 +70,7 @@ function composerProps(
     codeSelectionContext: null,
     onClearCodeSelection: vi.fn(),
     activeFileName: null,
+    activeFilePath: null,
     activeFileDismissed: false,
     onDismissActiveFile: vi.fn(),
     ...over,
@@ -78,17 +79,21 @@ function composerProps(
 
 function renderComposer(over: Partial<ComponentProps<typeof ChatInputArea>> = {}) {
   const props = composerProps(over);
+  const client = createIdleClient();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = render(
-    <trpc.Provider client={createIdleClient()} queryClient={queryClient}>
+  const tree = (p: ComponentProps<typeof ChatInputArea>) => (
+    <trpc.Provider client={client} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <ChatInputArea {...props} />
+          <ChatInputArea {...p} />
         </TooltipProvider>
       </QueryClientProvider>
-    </trpc.Provider>,
+    </trpc.Provider>
   );
-  return { props, ...view };
+  const view = render(tree(props));
+  const rerenderComposer = (next: Partial<ComponentProps<typeof ChatInputArea>>) =>
+    view.rerender(tree({ ...props, ...next }));
+  return { props, rerenderComposer, ...view };
 }
 
 /** The footer control row: Mode, Auto and Model sit in it, and the editor chip must not. */
@@ -109,6 +114,20 @@ describe('ChatInputArea editor context', () => {
 
     fireEvent.click(remove);
     expect(props.onDismissActiveFile).toHaveBeenCalledOnce();
+  });
+
+  it("shows the open file's full path, and follows a switch to a same-named file", () => {
+    const { rerenderComposer } = renderComposer({
+      activeFileName: 'index.ts',
+      activeFilePath: '/repo/src/a/index.ts',
+    });
+
+    fireEvent.focus(screen.getByText('index.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/repo/src/a/index.ts');
+
+    rerenderComposer({ activeFileName: 'index.ts', activeFilePath: '/repo/src/b/index.ts' });
+    fireEvent.focus(screen.getByText('index.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/repo/src/b/index.ts');
   });
 
   it('shows nothing for a file the user removed, matching what the send path attaches', () => {

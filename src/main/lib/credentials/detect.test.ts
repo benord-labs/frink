@@ -103,15 +103,14 @@ describe('detectClaudeAccount on linux — credentials file only', () => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 
-  it('returns available=false with a claude auth login hint when the file is missing, even if the keyring has a login', () => {
+  it('returns available=false with a plain hint when the file is missing, even if the keyring has a login', () => {
     existsSyncMock.mockReturnValue(false);
 
     const result = detectClaudeAccount();
 
     expect(result.available).toBe(false);
     expect(result.sourcePath).toBeUndefined();
-    expect(result.hint).toMatch(/claude auth login/);
-    expect(result.hint).toContain('~/.claude/.credentials.json');
+    expect(result.hint).toBe("Frink didn't find a Claude login on this computer.");
     // Don't point users at a store the CLI can't read.
     expect(result.hint).not.toMatch(/keyring/i);
     expect(JSON.stringify(result)).not.toContain(LEAKED);
@@ -206,7 +205,7 @@ describe('detectClaudeAccount on macOS', () => {
     const result = detectClaudeAccount();
 
     expect(result.available).toBe(false);
-    expect(result.hint).toMatch(/denied|allow|permission/i);
+    expect(result.hint).toBe('macOS blocked Frink from your Claude login. Sign in again here.');
 
     // Most importantly: no dump-keychain (which would precede TCC-prompting
     // every workspace entry).
@@ -228,7 +227,7 @@ describe('detectClaudeAccount on macOS', () => {
     // A user with only workspace-scoped `Claude Code-credentials-<hash>` sub-credentials has
     // nothing frink can connect: the spawned CLI resolves the unsuffixed service name, so a
     // workspace entry would probe fine here and then fail at spawn as "Not logged in".
-    // `claude auth login` is the only real fix, so say that instead of offering a dead source.
+    // Signing in again is the only real fix, so say that instead of offering a dead source.
     const NOT_FOUND_ERROR = Object.assign(new Error('SecKeychainSearchCopyNext: not found'), {
       status: 44,
     });
@@ -242,7 +241,7 @@ describe('detectClaudeAccount on macOS', () => {
 
     expect(result.available).toBe(false);
     expect(result.sourcePath).toBeUndefined();
-    expect(result.hint).toMatch(/claude auth login/i);
+    expect(result.hint).toBe("Frink didn't find a Claude login on this Mac.");
     // No dump-keychain, and no probe of anything but the canonical service.
     expect(execFileSyncMock.mock.calls.filter(isWorkspaceDump)).toHaveLength(0);
     expect(execFileSyncMock.mock.calls.every(isCanonicalProbe)).toBe(true);

@@ -718,6 +718,7 @@ describe('a stage waits for a member whose Retry is still queued', () => {
   it('settles from the run row when the delivered event names a different outcome', async () => {
     setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });

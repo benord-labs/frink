@@ -4,7 +4,7 @@
 import { readFile, readlink, realpath } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { dirHashOf, fileMap } from './skill-fs';
+import { dirHashOf, fileMap, hashFile, readBaseline } from './skill-fs';
 
 type FileHashes = Record<string, string>;
 
@@ -40,6 +40,29 @@ export async function readProvenance(markerPath: string): Promise<Provenance | n
   } catch {
     return null;
   }
+}
+
+/** Baseline for a shipped copy that has no marker, taken from the copy's own `.baseline.json`,
+ *  which is recorded as unedited too so it follows the source. */
+export async function adoptedProvenance(target: string): Promise<Provenance> {
+  const shipped = Object.entries((await readBaseline(target))?.files ?? {});
+  const baselinePath = join(target, '.baseline.json');
+  // A file without a recorded hash would read as edited and stay stale for good.
+  if (
+    shipped.length === 0 ||
+    !shipped.every(([, file]) => hashSchema.safeParse(file?.sha256).success)
+  ) {
+    throw new Error(`${baselinePath} does not record a hash for every file`);
+  }
+  const files = fileMap(shipped.map(([rel, file]) => [rel, file.sha256]));
+  files['.baseline.json'] = await hashFile(baselinePath);
+  return { hash: dirHashOf(files), files };
+}
+
+/** True when both paths are one folder, as through a tool's skills folder linked to the source. */
+export async function sameDir(a: string, b: string): Promise<boolean> {
+  const [x, y] = await Promise.all([realpath(a), realpath(b)]);
+  return x === y;
 }
 
 /** `taken`, except each `kept` file carries its `previous` entry (or none) so it stays edited. */
