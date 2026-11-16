@@ -84,6 +84,8 @@ describe('ProjectPicker', () => {
         { id: 'macros', name: 'macros', path: '/tools/macros' },
         { id: 'ros', name: 'ros-service', path: '/code/microservices/ros-service' },
       ],
+      // Even mentioned, a folder-only match stays below the name matches.
+      mentionedIds: ['billing'],
     });
 
     await user.click(trigger());
@@ -96,6 +98,29 @@ describe('ProjectPicker', () => {
     ]);
     await user.keyboard('{Enter}');
     expect(onPick).toHaveBeenCalledExactlyOnceWith('ros');
+  });
+
+  it.each([
+    ['before the others, which keep their order', '', ['/forks/api', '/work/api', '/side/web']],
+    ['before equally good matches', 'api', ['/forks/api', '/work/api']],
+    ['only when the search matches it', 'web', ['/side/web']],
+  ])('lists a project the chat mentions %s', async (_, query, expected) => {
+    const { user } = renderPicker({ mentionedIds: ['api-fork'] });
+
+    await user.click(trigger());
+    if (query) await user.type(screen.getByRole('textbox', { name: 'Search projects' }), query);
+
+    expect(rowPaths()).toEqual(expected);
+  });
+
+  it("names a mentioned project's row with its hint, and only that row", async () => {
+    const { user } = renderPicker({ mentionedIds: ['web'] });
+
+    await user.click(trigger());
+    const [web, ...others] = screen.getAllByRole('menuitem');
+
+    expect(web).toHaveAccessibleName('Web Mentioned in this chat');
+    expect(others.map((row) => row.textContent)).toEqual(['apiwork', 'apiforks']);
   });
 
   it.each([

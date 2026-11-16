@@ -111,6 +111,8 @@ type PaneFileTreeProps = {
   isWorktree?: boolean;
   /** Collapses the file tree in split view (header close control). */
   onClose?: () => void;
+  /** The chat's loaded message texts, for listing the projects they name first in Add project */
+  getMentionTexts?: () => string[];
 };
 
 /** Imperative API exposed to parent via ref for shortcut integration. */
@@ -140,7 +142,7 @@ export type PaneFileTreeHandle = {
 };
 
 export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(function PaneFileTree(
-  { projectPath, chatId, paneIndex, isWorktree, onClose },
+  { projectPath, chatId, paneIndex, isWorktree, onClose, getMentionTexts },
   ref,
 ) {
   const openFile = useSetAtom(openFileAtom);
@@ -754,7 +756,11 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
           closeTooltipLabel="Close files"
           closeShortcutId="toggle-files"
           showClearInInput
-          searchAccessory={treeProjects.canAdd ? <AddProjectButton chatId={chatId} /> : undefined}
+          searchAccessory={
+            treeProjects.canAdd ? (
+              <AddProjectButton chatId={chatId} getMentionTexts={getMentionTexts} />
+            ) : undefined
+          }
           searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
           className="@container/files-header pt-3! px-2 pb-0"
         />

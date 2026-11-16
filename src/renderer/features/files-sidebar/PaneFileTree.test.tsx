@@ -929,10 +929,16 @@ describe('PaneFileTree with another project in the tree', () => {
   it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
     const user = userEvent.setup();
     treeState.candidates = [api];
-    const { rerender } = render(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" />);
+    const { rerender } = render(
+      <PaneFileTree
+        projectPath="/tmp/proj"
+        chatId="chat-1"
+        getMentionTexts={() => ['Read /w/api/a.ts']}
+      />,
+    );
 
     await user.click(screen.getByRole('button', { name: 'Add project' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'api' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
     expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
 
     // What the real hook does once the project is in the chat's list.

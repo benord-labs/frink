@@ -37,7 +37,7 @@ import { appStore } from '../../lib/jotai-store';
 import { trpc, trpcClient } from '../../lib/trpc';
 import { focusedChatOwnsShortcuts } from '../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { useWorkQueueDestination } from '../../lib/work-queue/use-work-queue-destination';
-import { useAgentRequestMoveChat } from '../agents';
+import { readLoadedChatTexts, useAgentRequestMoveChat } from '../agents';
 import {
   fileSearchDialogOpenAtom,
   isFillablePane,
@@ -432,6 +432,7 @@ export function AgentsLayout() {
                     <FilesSidebar
                       chatId={selectedChatId ?? undefined}
                       worktreePath={selectedChatWorktreePath}
+                      getMentionTexts={() => readLoadedChatTexts(selectedChatId ?? '')}
                     />
                   </AddToChatProvider>
                 </div>

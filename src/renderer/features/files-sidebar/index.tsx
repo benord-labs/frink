@@ -72,9 +72,16 @@ type Props = {
   chatId?: string;
   /** Current chat worktree path (when chat is running in a worktree). */
   worktreePath?: string;
+  /** The chat's loaded message texts, for listing the projects they name first in Add project */
+  getMentionTexts?: () => string[];
 };
 
-export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): ReactElement | null {
+export function FilesSidebar({
+  onFileSelect,
+  chatId,
+  worktreePath,
+  getMentionTexts,
+}: Props): ReactElement | null {
   const [isOpen, setIsOpen] = useAtom(filesSidebarOpenAtom);
   const [activeTab, setActiveTab] = useAtom(filesSidebarActiveTabAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
@@ -685,7 +692,11 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
             closeTooltipLabel="Close files"
             closeShortcutId="toggle-files"
             showClearInInput
-            searchAccessory={treeProjects.canAdd ? <AddProjectButton chatId={chatId} /> : undefined}
+            searchAccessory={
+              treeProjects.canAdd ? (
+                <AddProjectButton chatId={chatId} getMentionTexts={getMentionTexts} />
+              ) : undefined
+            }
             searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
             className="@container/files-header"
           />

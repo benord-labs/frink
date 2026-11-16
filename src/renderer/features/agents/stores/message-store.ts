@@ -10,6 +10,7 @@ import {
 } from '../../../../shared/types/plan';
 import { appStore } from '../../../lib/jotai-store';
 import { approvedPlanIdsAtomFamily } from '../atoms';
+import { selectSubChatsForChat, useAgentSubChatStore } from './sub-chat-store';
 
 // Types
 export type MessageMetadata = {
@@ -201,6 +202,26 @@ const perSubChatMessageRolesAtomFamily = atomFamily((subChatId: string) =>
 
 // Per-subChat chat status
 export const perSubChatStatusAtomFamily = atomFamily((_subChatId: string) => atom<string>('ready'));
+
+/**
+ * The text of a chat's messages held in memory now: each text part, and each tool call's input as
+ * JSON. Read once on demand, not subscribed. A sub-chat's messages stay in memory only while it is
+ * on screen, or when it was still streaming as it closed (useCacheCleanup clears the rest), so this
+ * is normally the open sub-chat's newest page plus any older pages it has loaded.
+ */
+export function readLoadedChatTexts(chatId: string): string[] {
+  const subChats = selectSubChatsForChat(useAgentSubChatStore.getState().subChatsById, chatId);
+  return subChats.flatMap((subChat) => {
+    // Nothing loaded: reading its atoms would create entries that nothing removes again.
+    if (!activeMessageIdsByChat.has(subChat.id)) return [];
+    return appStore.get(perSubChatMessageIdsAtomFamily(subChat.id)).flatMap((id) =>
+      (appStore.get(messageAtomFamily(id))?.parts ?? []).flatMap((part) => {
+        if (part.type === 'text') return part.text ? [part.text] : [];
+        return part.input ? [JSON.stringify(part.input)] : [];
+      }),
+    );
+  });
+}
 
 // Derived: per-subChat last message ID
 const lastMessageIdForSubChatAtomFamily = atomFamily((subChatId: string) =>

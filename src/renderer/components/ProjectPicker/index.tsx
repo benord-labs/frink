@@ -24,6 +24,10 @@ type Props = {
   /** Names of projects shown elsewhere, such as those already in the tree; a candidate sharing
    *  one shows its parent folder too */
   takenNames?: string[];
+  /** Candidates the chat mentions: listed before the others that match as well, with a hint */
+  mentionedIds?: string[];
+  /** Called as the picker opens and closes */
+  onOpenChange?: (open: boolean) => void;
   /** Whether the list of projects is still loading or failed, rather than empty */
   status?: 'pending' | 'error' | 'success';
   /** A note below the list */
@@ -53,12 +57,14 @@ function matchRank(project: PickerProject, needle: string): number | null {
   return project.path.toLowerCase().includes(needle) ? 2 : null;
 }
 
-/** The projects matching the search, best matches first and otherwise in the given order. */
-function matching(projects: PickerProject[], needle: string): PickerProject[] {
+/** The projects matching the search, best matches first, mentioned ones first among equally good
+ *  matches, and otherwise in the given order. With no search, all match equally well. */
+function matching(projects: PickerProject[], needle: string, mentioned: string[]): PickerProject[] {
   return projects
     .flatMap((project) => {
       const rank = matchRank(project, needle);
-      return rank === null ? [] : [{ project, rank }];
+      if (rank === null) return [];
+      return [{ project, rank: rank * 2 + (mentioned.includes(project.id) ? 0 : 1) }];
     })
     .sort((a, b) => a.rank - b.rank)
     .map(({ project }) => project);
@@ -78,6 +84,8 @@ export function ProjectPicker({
   tooltip,
   candidates,
   takenNames = [],
+  mentionedIds = [],
+  onOpenChange,
   status = 'success',
   footer,
   onPick,
@@ -85,12 +93,13 @@ export function ProjectPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const needle = query.trim().toLowerCase();
-  const shown = matching(candidates, needle);
+  const shown = matching(candidates, needle, mentionedIds);
   const parents = parentFolders(candidates, takenNames);
 
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) setQuery('');
+    onOpenChange?.(next);
   };
 
   const button = <PopoverTrigger asChild>{trigger}</PopoverTrigger>;
@@ -139,7 +148,15 @@ export function ProjectPicker({
                       gitProvider={project.gitProvider}
                       isBuild={isBuildProjectPath(project.path)}
                     />
-                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    {/* The hint sits under the name, so the name keeps the row's width */}
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{project.name}</span>
+                      {mentionedIds.includes(project.id) && (
+                        <span className="truncate text-xs text-muted-foreground">
+                          Mentioned in this chat
+                        </span>
+                      )}
+                    </div>
                     {parent && (
                       <span className="shrink-0 text-xs text-muted-foreground">{parent}</span>
                     )}

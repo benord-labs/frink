@@ -77,7 +77,7 @@ Browsed projects are read-only in the tree: you can't create, rename, move, past
 
 Browsing doesn't change the chat, its agent, its branch or what the agent can read. The list belongs to the chat, so it shows wherever the chat's file tree does, and it's cleared when Frink restarts.
 
-The picker lists your other projects, except the ones already in the tree and any project inside the chat's folder or holding it. **Add project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
+The picker lists your other projects, except the ones already in the tree and any project inside the chat's folder or holding it. If the messages in the sub-chat you have open name a project's folder by its full path, that project is marked **Mentioned in this chat** and listed first. When you search, it comes first among the projects that match equally well. Only messages Frink has loaded are checked, so older messages you haven't scrolled back to don't count. **Add project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
 
 ## Find a file
 
