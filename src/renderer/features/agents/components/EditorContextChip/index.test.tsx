@@ -44,6 +44,7 @@ describe('EditorContextChip', () => {
         <EditorContextChip
           selection={selection}
           fileName="notes.md"
+          filePath="/repo/notes.md"
           onRemoveSelection={onRemoveSelection}
           onRemoveFile={onRemoveFile}
         />
@@ -61,6 +62,23 @@ describe('EditorContextChip', () => {
     );
     expect(onRemoveSelection).toHaveBeenCalledOnce();
     expect(onRemoveFile).toHaveBeenCalledOnce();
+  });
+
+  it("shows the open file's full path in its tooltip", () => {
+    render(
+      <TooltipProvider>
+        <EditorContextChip
+          selection={null}
+          fileName="index.ts"
+          filePath="/repo/src/a/index.ts"
+          onRemoveSelection={vi.fn()}
+          onRemoveFile={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    fireEvent.focus(screen.getByText('index.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/repo/src/a/index.ts');
   });
 
   it('renders nothing when the editor adds nothing to the message', () => {

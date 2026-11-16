@@ -1,6 +1,13 @@
 import type { UIMessage } from 'ai';
+import { z } from 'zod';
+import { stripHiddenWakeMarker } from '../../../../../shared/lib/message-markers/hidden-wake-marker';
+import {
+  dispatchMetadataSchema,
+  isPersonAuthoredMessage,
+} from '../../../../../shared/lib/message-markers/person-authored';
 import { stripMessageMarkers } from '../../../../../shared/lib/message-markers/strip-message-markers';
 import { NARRATION_PART_TYPES } from '../../../../../shared/subagent-parts';
+import type { ConversationTurn } from '../../../../../shared/types/execution';
 import { isFrinkPlanMessagePartType, stripPlanFrontmatter } from '../../../../../shared/types/plan';
 
 /**
@@ -71,7 +78,6 @@ export function dataImageSrc(
   return data?.url || '';
 }
 
-type HistoryTurn = { role: 'user' | 'assistant'; content: string };
 type ToolPartLike = { type: string; input?: unknown };
 
 const TOOL_PART_PREFIX = 'tool-';
@@ -116,14 +122,50 @@ function findCompactBoundary(messages: UIMessage[], current?: UIMessage) {
   return null;
 }
 
+const STEER_PART_TYPE = 'tool-Steer';
+const steerInputSchema = z.object({ text: z.string().trim().min(1) });
+
+/** A steer is a person's message the running turn took in, stored inside the assistant message. */
+function steerTurn(part: HistoryPart): ConversationTurn[] {
+  const input = steerInputSchema.safeParse(part.input);
+  return input.success ? [{ role: 'user', content: input.data.text, personAuthored: true }] : [];
+}
+
+/** One stored message as replayed turns, flagged when a person wrote them; none when empty. Each
+ * steer splits an assistant message and replays as the person's own turn. */
+function historyTurn(
+  role: 'user' | 'assistant',
+  message: UIMessage,
+  parts: HistoryPart[],
+): ConversationTurn[] {
+  const steerAt = role === 'assistant' ? parts.findIndex((p) => p.type === STEER_PART_TYPE) : -1;
+  if (steerAt >= 0) {
+    return [
+      ...historyTurn(role, message, parts.slice(0, steerAt)),
+      ...steerTurn(parts[steerAt]),
+      ...historyTurn(role, message, parts.slice(steerAt + 1)),
+    ];
+  }
+  const raw = parts.flatMap((part) => partHistoryText(part) ?? []).join('\n');
+  const content = stripMessageMarkers(stripHiddenWakeMarker(raw));
+  if (!content) return [];
+  // Read before the markers go: they are what tell a person's turn from Frink's own. Metadata of
+  // an unexpected shape counts as not a person's.
+  const metadata = dispatchMetadataSchema.safeParse(message.metadata);
+  const person =
+    metadata.success && isPersonAuthoredMessage({ role, metadata: metadata.data, text: raw });
+  return [person ? { role, content, personAuthored: true as const } : { role, content }];
+}
+
 /**
  * The transcript a fresh session is seeded with (every message but the one being sent): text, any
- * plan in full, and one line per tool call, so a handoff keeps what was planned and done.
+ * plan in full, one line per tool call, and each steer as the person's turn, so a handoff keeps
+ * what was planned and done.
  * A compacted chat starts from its newest compaction's summary instead of re-inflating (sc-2281).
  */
-export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): HistoryTurn[] {
+export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): ConversationTurn[] {
   const boundary = findCompactBoundary(messages, current);
-  const head: HistoryTurn[] = boundary
+  const head: ConversationTurn[] = boundary
     ? [
         {
           role: 'user',
@@ -132,14 +174,12 @@ export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): Hi
       ]
     : [];
   const tail = messages.slice(boundary?.messageIndex ?? 0).flatMap((m, offset) => {
-    if (m === current || (m.role !== 'user' && m.role !== 'assistant')) return [];
+    const { role } = m;
+    if (m === current || (role !== 'user' && role !== 'assistant')) return [];
     const parts = (m.parts ?? []) as HistoryPart[];
     // The boundary's own message keeps only what followed it (an auto-compact mid-turn).
     const kept = boundary && offset === 0 ? parts.slice(boundary.partIndex + 1) : parts;
-    const content = stripMessageMarkers(
-      kept.flatMap((part) => partHistoryText(part) ?? []).join('\n'),
-    );
-    return content ? [{ role: m.role, content }] : [];
+    return historyTurn(role, m, kept);
   });
   return [...head, ...tail];
 }

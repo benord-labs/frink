@@ -153,13 +153,25 @@ describe('resumeParkedTaskInPlace — follow-up message', () => {
     });
   });
 
-  it('keeps the task running and reports it when the flow cannot follow', async () => {
+  it('leaves the task parked when its paused run gave its slot up, so a resume can take it back', async () => {
     const task = await seedParkedTask('needs_attention', { slot: false });
 
     expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
     expect(await statuses(task.id)).toEqual({
       run: 'paused',
       node: 'awaiting_input',
+      task: 'needs_attention',
+    });
+    expect(holder.capture).not.toHaveBeenCalled();
+  });
+
+  it('keeps the task running and reports it when the flow cannot follow', async () => {
+    const task = await seedParkedTask('failed', { slot: false });
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
+    expect(await statuses(task.id)).toEqual({
+      run: 'failed',
+      node: 'failed',
       task: 'running',
     });
     expect(holder.capture).toHaveBeenCalledWith(

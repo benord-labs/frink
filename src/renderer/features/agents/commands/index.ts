@@ -1,6 +1,6 @@
 import { lazy } from 'react';
 
-export { COMMAND_PROMPTS } from '@/lib/commands/builtin-commands';
+export { insertPickedCommand } from '@/lib/commands/builtin-commands';
 export type { SlashCommandOption } from '@/lib/commands/types';
 export { AgentsSlashCommand, SLASH_COMMAND_LISTBOX_ID } from './agents-slash-command';
 

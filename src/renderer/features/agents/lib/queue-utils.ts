@@ -3,8 +3,10 @@
  * Adapted from canvas chat queue implementation
  */
 
+import { FLOW_DISPATCH_SOURCE } from '../../../../shared/lib/message-markers/person-authored';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
 import type { UploadedFile, UploadedImage } from '../hooks/use-agents-file-upload';
+import { createTextPreview } from '@/lib/mentions/queued-message-text';
 
 type QueuedImage = {
   id: string;
@@ -103,13 +105,7 @@ type QueuedCodeSelectionContext = {
   endLine: number;
 };
 
-/**
- * Marks prompts enqueued by the flow/task pipeline rather than typed by the user. Carried into the
- * outgoing UIMessage `metadata` so the send path can tell a flow-dispatched node prompt from a
- * manual chat reply (a manual reply to a parked flow plan means approve-then-execute; a flow
- * prompt never does — see decision `flow-agent-node-mode`).
- */
-export const FLOW_DISPATCH_SOURCE = 'flow-dispatch' as const;
+export { createTextPreview, FLOW_DISPATCH_SOURCE };
 
 export type AgentQueueItem = {
   id: string;
@@ -260,11 +256,4 @@ export function toQueuedCodeSelectionContext(
     startLine: ctx.startLine,
     endLine: ctx.endLine,
   };
-}
-
-// Helper to create a truncated preview from text
-export function createTextPreview(text: string, maxLength: number = 50): string {
-  const trimmed = text.trim().replace(/\s+/g, ' ');
-  if (trimmed.length <= maxLength) return trimmed;
-  return `${trimmed.slice(0, maxLength)}...`;
 }

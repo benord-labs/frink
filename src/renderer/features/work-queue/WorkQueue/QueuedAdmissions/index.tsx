@@ -1,6 +1,10 @@
 import { memo, type ReactElement, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '../../../../lib/trpc';
+import {
+  ADMISSION_GROUP_LABELS,
+  admissionGroup,
+} from '../../../../lib/work-queue/admission-wait-copy';
 import { useQueuePause } from '../../../../lib/work-queue/use-queue-pause';
 import { admissionSubject, admissionTrigger } from '../../utils/admission-subject';
 import { type QueuedAdmission, QueuedAdmissionsView } from '../QueuedAdmissionsView';
@@ -32,6 +36,8 @@ export const QueuedAdmissions = memo(function QueuedAdmissions(): ReactElement |
         isBatchMember: row.is_batch_member,
         priorityClass: row.priority_class,
         projectName: row.project_name,
+        requestedAt: row.requested_at,
+        runFirst: row.run_first,
         subject: admissionSubject(row.trigger_context, row.is_batch_member),
         ticket: row.ticket,
         triggerContext: admissionTrigger(row.trigger_context, row.is_batch_member),
@@ -69,7 +75,7 @@ export const QueuedAdmissions = memo(function QueuedAdmissions(): ReactElement |
       await refreshQueueViews();
       if (result.status === 'moved') {
         const item = rows.find((row) => row.ticket === ticket);
-        const group = item?.priorityClass === 'resume' ? 'Resuming' : 'Starting';
+        const group = item ? ADMISSION_GROUP_LABELS[admissionGroup(item)] : 'the queue';
         setAnnouncement(
           `${item?.flowName ?? 'Queued flow'} moved to position ${targetPosition + 1} in ${group}.`,
         );

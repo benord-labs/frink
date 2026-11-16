@@ -53,6 +53,20 @@ describe('parseMention', () => {
       });
     });
 
+    it.each([
+      ['file', 'src\\components\\Button.tsx', 'Button.tsx'],
+      ['folder', 'src\\lib', 'lib'],
+      ['folder', 'src\\lib\\', 'src\\lib\\'],
+    ] as const)('labels a Windows %s path %j as %j', (type, path, label) => {
+      expect(parseMention(`${type}:local:${path}`)).toStrictEqual({
+        id: `${type}:local:${path}`,
+        label,
+        path,
+        repository: 'local',
+        type,
+      });
+    });
+
     it('accepts an empty repository and path once both separators are present', () => {
       expect(parseMention('file::')).toStrictEqual({
         id: 'file::',
@@ -221,6 +235,35 @@ describe('parseMention', () => {
       });
     });
 
+    it.each([
+      ['12', 'b.ts:12', 12],
+      ['0', 'b.ts', undefined],
+    ])('labels a Windows path on line %s by its file name', (line, label, lineNumber) => {
+      const id = `diff:src\\a\\b.ts:${line}:preview`;
+      expect(parseMention(id)).toStrictEqual({
+        id,
+        label,
+        path: 'src\\a\\b.ts',
+        repository: '',
+        type: 'diff',
+        fullText: 'preview',
+        lineNumber,
+      });
+    });
+
+    it('decodes a URI-encoded path', () => {
+      const id = `diff:app%2F%5Bid%5D%2Fpage.tsx:3:preview:${encodeForMentionToken('x')}`;
+      expect(parseMention(id)).toMatchObject({ path: 'app/[id]/page.tsx', label: 'page.tsx:3' });
+    });
+
+    it.each([
+      ['src/50%.ts', 'src/50%.ts', '50%.ts:3'],
+      ['docs/100%25.md', 'docs/100%.md', '100%.md:3'],
+    ])('reads a raw path from before paths were encoded: %s', (raw, path, label) => {
+      const id = `diff:${raw}:3:preview:${encodeForMentionToken('x')}`;
+      expect(parseMention(id)).toMatchObject({ path, label });
+    });
+
     it('treats a line that is not a number as no line', () => {
       expect(parseMention('diff:README.md:abc:preview')).toStrictEqual({
         id: 'diff:README.md:abc:preview',
@@ -377,60 +420,16 @@ describe('parseMention', () => {
     );
   });
 
-  describe('briefing tokens', () => {
-    it('decodes the flow name into the label and the briefing into the full text', () => {
-      const briefing = '# Spec\n\nAlways use TypeScript.';
-      const id = `briefing:flow-1:${encodeForMentionToken('My Flow')}:${encodeForMentionToken(briefing)}`;
-      expect(parseMention(id)).toStrictEqual({
-        id,
-        label: 'My Flow',
-        path: '',
-        repository: '',
-        type: 'briefing',
-        fullText: briefing,
-      });
-    });
-
-    it.each([
-      `briefing:flow-1:not-valid!!!:${encodeForMentionToken('text')}`,
-      `briefing:flow-1::${encodeForMentionToken('text')}`,
-    ])('labels %j "Briefing", as its name part does not decode', (id) => {
-      expect(parseMention(id)).toStrictEqual({
-        id,
-        label: 'Briefing',
-        path: '',
-        repository: '',
-        type: 'briefing',
-        fullText: 'text',
-      });
-    });
-
-    it('leaves the full text empty when the briefing part does not decode', () => {
-      const id = `briefing:flow-1:${encodeForMentionToken('My Flow')}:not-valid!!!`;
-      expect(parseMention(id)).toStrictEqual({
-        id,
-        label: 'My Flow',
-        path: '',
-        repository: '',
-        type: 'briefing',
-        fullText: '',
-      });
-    });
-
-    it.each(['briefing:flow-1:TXkgRmxvdw==', 'briefing:flow-1', 'briefing:'])(
-      'rejects %j, which is missing a name or briefing part',
-      (id) => {
-        expect(parseMention(id)).toBeNull();
-      },
-    );
-  });
-
   describe('unknown kinds', () => {
-    it.each(['image:local:a.png', 'FILE:local:a.ts', ' file:local:a.ts', 'file', ''])(
-      'rejects %j',
-      (id) => {
-        expect(parseMention(id)).toBeNull();
-      },
-    );
+    it.each([
+      'image:local:a.png',
+      'briefing:flow-1:TQ==:Qg==',
+      'FILE:local:a.ts',
+      ' file:local:a.ts',
+      'file',
+      '',
+    ])('rejects %j', (id) => {
+      expect(parseMention(id)).toBeNull();
+    });
   });
 });

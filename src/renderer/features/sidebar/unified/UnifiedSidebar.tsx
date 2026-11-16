@@ -87,6 +87,7 @@ import {
   refetchListCountsAndSyncFolderSnapshots,
   removeChatIdsFromSidebarMaps,
   resolveSidebarFolderKeyForProjectId,
+  shouldShowFlowChatsFilter,
   SIDEBAR_GENERAL_COUNT_KEY,
 } from './hooks/use-sidebar-chat-cache';
 import { useSidebarNavigation } from './hooks/use-sidebar-navigation';
@@ -908,6 +909,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     );
     const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
     const [showArchived, setShowArchived] = useState(false);
+    const showFlowChatsFilter = shouldShowFlowChatsFilter({
+      hideFlowChats,
+      showArchived,
+      chatCounts: rawChatCounts,
+      archivedChats: rawArchivedChats,
+    });
 
     // Archive-mode toggle from the `toggle-archived` hotkey; the footer button flips the same state.
     useWindowEvent('sidebar:toggle-archived', () => setShowArchived((shown) => !shown));
@@ -1652,6 +1659,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           onSearchChange={setSearchQuery}
           searchInputRef={searchInputRef}
           showArchived={showArchived}
+          showFlowChatsFilter={showFlowChatsFilter}
           onToggleSidebar={onToggleSidebar}
         />
         {/* Top nav — actions + flag-gated destinations as one borderless vertical list */}

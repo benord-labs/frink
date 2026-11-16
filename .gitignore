@@ -7,10 +7,11 @@ out-qa
 dist
 release
 
-# Downloaded runtime binaries; only resources/custom-nodes/ and resources/cursor/ are tracked
+# Downloaded runtime binaries; only resources/custom-nodes/, resources/cursor/ and resources/tray/ are tracked
 resources/*
 !resources/custom-nodes/
 !resources/cursor/
+!resources/tray/
 
 # Secrets
 .env

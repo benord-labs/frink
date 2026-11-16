@@ -287,7 +287,7 @@ export function AvailableVariables({
   const triggerFieldsMapped = triggerFields.fields.map((f) => ({
     variable: `{{trigger.${f.key}}}`,
     description: f.description,
-    guaranteed: true,
+    guaranteed: f.guaranteed !== false,
   }));
 
   const showDynamicCurrentItemNote =

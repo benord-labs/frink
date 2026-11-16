@@ -130,6 +130,41 @@ describe('staged continuation resume', () => {
   );
 
   // A slot mid-release still refuses a second admission, so the click waits for its settle too.
+  // The ticket path refuses another action on a live resume; the staged path must not swallow one.
+  it('keeps a staged Runs-panel action, refusing a click of another one', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState.mockResolvedValue('releasing');
+    await expect(stageBehindHeldAdmission({ ...PENDING, action: 'skip' }, ops)).resolves.toBe(true);
+
+    await expect(stageBehindHeldAdmission(PENDING, ops)).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'This run is already resuming.',
+    });
+    // A typed reply staged by the executor keeps the earlier action too, and says it was not taken.
+    const emitCorrective = vi.fn();
+    expect(stageContinuationResume(PENDING, emitCorrective)).toBeNull();
+    expect(emitCorrective).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry'));
+    ops.getLiveAdmissionState.mockResolvedValue(null);
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'skip' }),
+    );
+  });
+
+  // A paused run's resume waits only on a release: behind an active slot it would fire on a later park.
+  it('refuses a paused-run resume behind an active slot, before or after it stages', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState.mockResolvedValue('active');
+    await expect(stageBehindHeldAdmission(PENDING, ops, true)).rejects.toMatchObject({
+      message: 'This run is already resuming.',
+    });
+    ops.getLiveAdmissionState.mockResolvedValueOnce('releasing').mockResolvedValueOnce('active');
+    await expect(stageBehindHeldAdmission(PENDING, ops, true)).rejects.toMatchObject({
+      message: 'This run is already resuming.',
+    });
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+  });
+
   it('stages behind a slot that is releasing rather than enqueueing into it', async () => {
     const ops = makeOps();
     ops.getLiveAdmissionState.mockResolvedValue('releasing');
@@ -396,6 +431,34 @@ describe('staged continuation resume', () => {
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("stays silent once a paused run's own parked task is picked back up", async () => {
+    dbMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    dbMocks.getLatestFlowTaskForRun
+      .mockResolvedValueOnce({ id: 'task-parked', status: 'needs_attention' })
+      .mockResolvedValue({ id: 'task-parked', status: 'pending' });
+    const ops = makeOps();
+    const emit = vi.fn();
+    stageContinuationResume(PENDING, emit, FAST_WATCH);
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('emits the corrective when a paused run lost its resume and its task is still parked', async () => {
+    dbMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    dbMocks.getLatestFlowTaskForRun.mockResolvedValue({
+      id: 'task-parked',
+      status: 'needs_attention',
+    });
+    const ops = makeOps();
+    const emit = vi.fn();
+    stageContinuationResume(PENDING, emit, FAST_WATCH);
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    await vi.waitFor(() =>
+      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry')),
+    );
   });
 
   it('stays silent while the run keeps running without settling (bounded watch expires)', async () => {

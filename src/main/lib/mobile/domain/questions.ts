@@ -46,6 +46,8 @@ export function parkedQuestion(
   if (task.status !== 'needs_attention') return null;
   const signal = record(record(task.result).agentSignal);
   if (!['awaiting_input', 'blocked', 'partial'].includes(text(signal.state))) return null;
+  // A secret is entered only in Frink's desktop form; a phone reply would land in the chat.
+  if (signal.secretRequest) return null;
   const parsed = agentUserQuestionsSchema.safeParse(signal.questions);
   return {
     id: task.id,

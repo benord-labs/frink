@@ -101,6 +101,13 @@ describe('TextMentionBlocks', () => {
     expect(screen.getByText('socket.ts').nextElementSibling).toHaveTextContent('L7');
     expect(document.querySelectorAll('.lucide-square-dashed-text')).toHaveLength(2);
   });
+
+  it('names a diff in a Windows path by its file name', () => {
+    const mention = mentionFor(`diff:src\\main\\socket.ts:7:x:${encodeForMentionToken('x')}`);
+    renderInApp(<TextMentionBlocks mentions={[mention]} />);
+
+    expect(screen.getByText('socket.ts').nextElementSibling).toHaveTextContent('L7');
+  });
 });
 
 describe('RenderFileMentions', () => {

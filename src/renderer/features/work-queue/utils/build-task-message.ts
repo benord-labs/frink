@@ -1,3 +1,4 @@
+import { WORK_QUEUE_SOURCE } from '../../../../shared/lib/message-markers/person-authored';
 import { buildTriggerBubbleMessage } from '../../../../shared/lib/trigger-bubble-marker';
 import { buildTriggerSummary } from '../../../../shared/lib/trigger-summary';
 import type { TriggerContext } from '../../../../shared/types/trigger-context';
@@ -21,4 +22,10 @@ export function buildTaskMessage(task: {
   const marker = buildTriggerBubbleMessage(buildTriggerSummary(triggerContext), triggerContext);
   const description = task.description?.trim();
   return description ? `${marker}${description}` : marker;
+}
+
+/** A task chat's opening message for `chats.create`, stamped as the Work Queue's: its text came
+ * from outside, so it is never read as a person's. */
+export function buildTaskOpening(task: Parameters<typeof buildTaskMessage>[0]) {
+  return { initialMessage: buildTaskMessage(task), initialMessageSource: WORK_QUEUE_SOURCE };
 }

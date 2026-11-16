@@ -47,7 +47,7 @@ describe('provider catalog', () => {
       shortcut.filter_fields
         .filter((field) => field.value_source === 'text')
         .map((field) => field.id),
-    ).toEqual(['labels', 'projectId', 'epicId']);
+    ).toEqual(['storyName', 'labels', 'projectId', 'epicId']);
   });
 
   it('declares ClickUp raw signed events and optional automatic API-token setup', () => {

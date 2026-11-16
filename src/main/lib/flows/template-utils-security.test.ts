@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +41,49 @@ describe('renderTemplateForShell security', () => {
     );
     expect(result.output).toContain('payload$(touch');
     expect(existsSync(result.target)).toBe(false);
+  });
+
+  it.each([
+    [
+      'inside a comment, broken out of by a newline',
+      '# note: {{trigger.value}}\necho done',
+      (target: string) => `x\ntouch ${target}\n`,
+    ],
+    [
+      'after a comment holding a ) inside $( )',
+      'out="$(\n# 1) fetch\necho "id={{trigger.value}}"\n)"\necho "$out"',
+      (target: string) => `$(touch ${target})`,
+    ],
+    [
+      'in quotes that follow a # inside a word',
+      "echo `echo x`#'`echo y` {{trigger.value}}'",
+      (target: string) => `$(touch ${target})`,
+    ],
+    [
+      'in quotes after a backtick in a comment',
+      "# x `\necho 'q `; echo {{trigger.value}}'",
+      (target: string) => `$(touch ${target})`,
+    ],
+    [
+      'right after a backslash',
+      'echo \\{{trigger.value}}',
+      (target: string) => `x\ntouch ${target}\n`,
+    ],
+    [
+      'right after a backslash inside double quotes',
+      'echo "\\{{trigger.value}}"',
+      (target: string) => `$(touch ${target})`,
+    ],
+  ])('keeps a value inert when the placeholder sits %s', (_name, template, valueForTarget) => {
+    const result = executeQuotedPayload(template, valueForTarget);
+    expect(existsSync(result.target)).toBe(false);
+  });
+
+  it('leaves a placeholder right after $ literal, so the value cannot open an ANSI-C string', () => {
+    const template = 'echo ${{trigger.value}}';
+    expect(renderTemplateForShell(template, { trigger: { value: "a\\'; touch x; #" } })).toBe(
+      template,
+    );
   });
 
   it('leaves placeholders literal when nested shell syntax makes context uncertain', () => {
@@ -100,4 +143,77 @@ describe('renderTemplateForShell security', () => {
     expect(rendered).toContain('rendered command exceeded');
     expect(() => execFileSync('/bin/sh', ['-c', rendered])).toThrow();
   });
+});
+
+const GENERATED_TOKENS = [
+  '`',
+  '#',
+  "'",
+  '"',
+  '\\',
+  '$(',
+  ')',
+  '(',
+  "$'",
+  '\n',
+  ' ',
+  '<<',
+  ';',
+  'echo ',
+  'x',
+  '$',
+  '{{trigger.a}}',
+];
+
+/** Each prints PWN only if it runs as shell syntax: printing the text itself never spells it. */
+const INJECTION_PAYLOADS = [
+  'x\nprintf P%sN W\n',
+  '$(printf P%sN W)`printf P%sN W`',
+  "';printf P%sN W;'",
+  '";printf P%sN W;"',
+  "\\';printf P%sN W;'",
+];
+
+/** A seeded generator, so every run checks the same templates. */
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), state | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A short run of shell-significant tokens holding at least one placeholder. */
+function generatedTemplate(next: () => number): string {
+  let template = '';
+  const length = 2 + Math.floor(next() * 14);
+  for (let i = 0; i < length; i++) {
+    template += GENERATED_TOKENS[Math.floor(next() * GENERATED_TOKENS.length)];
+  }
+  return template.includes('{{trigger.a}}') ? template : `${template} {{trigger.a}}`;
+}
+
+describe('renderTemplateForShell against a real shell', () => {
+  it('never lets a value run as shell syntax in generated templates', () => {
+    const next = seededRandom(20_261_025);
+    const directory = mkdtempSync(join(tmpdir(), 'frink-shell-oracle-'));
+    temporaryDirectories.push(directory);
+    const injected: string[] = [];
+    for (let n = 0; n < 150; n++) {
+      const template = generatedTemplate(next);
+      for (const value of INJECTION_PAYLOADS) {
+        const command = renderTemplateForShell(template, { trigger: { a: value } });
+        const result = spawnSync('/bin/sh', ['-c', command], {
+          cwd: directory,
+          input: '',
+          encoding: 'utf8',
+          timeout: 2_000,
+        });
+        if (`${result.stdout}${result.stderr}`.includes('PWN')) injected.push(template);
+      }
+    }
+    expect(injected).toEqual([]);
+  }, 60_000);
 });

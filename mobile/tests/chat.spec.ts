@@ -168,6 +168,65 @@ test.describe('reading a chat', () => {
     ).toBe(true);
     expect(images).toEqual([]);
   });
+
+  test('files, folders and selections read as the desktop’s badges', async ({ page }) => {
+    const sentence = 'Why does checkout.spec.ts wait? Compare frames.ts in helpers';
+    await openApp(page, {
+      data: {
+        chat: conversation({
+          messages: [
+            {
+              id: 'mine',
+              role: 'user',
+              text: sentence,
+              parts: [
+                { type: 'attachment', kind: 'file', name: 'checkout.spec.ts', detail: 'L12-13' },
+                { type: 'attachment', kind: 'text', name: 'waits for the Pay button' },
+                {
+                  type: 'text',
+                  text: sentence,
+                  runs: [
+                    { text: 'Why does ' },
+                    { text: 'checkout.spec.ts', mention: 'file' },
+                    { text: ' wait? Compare ' },
+                    { text: 'frames.ts', mention: 'file' },
+                    { text: ' in ' },
+                    { text: 'helpers', mention: 'folder' },
+                  ],
+                },
+              ],
+            },
+            {
+              id: 'reply',
+              role: 'assistant',
+              text: 'The wait uses a fixed timeout.',
+              parts: [
+                { type: 'text', text: 'The wait uses a fixed timeout.' },
+                {
+                  type: 'steer',
+                  text: 'Use frames.ts instead',
+                  runs: [
+                    { text: 'Use ' },
+                    { text: 'frames.ts', mention: 'file' },
+                    { text: ' instead' },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+    await openChat(page);
+    const mine = page.getByTestId('message-mine');
+    await expect(mine.getByLabel('File: checkout.spec.ts L12-13')).toBeVisible();
+    await expect(mine.getByLabel('Selected text: waits for the Pay button')).toBeVisible();
+    // Badges sit inside the sentence, which still reads whole to assistive tech.
+    await expect(mine.getByLabel(sentence)).toBeVisible();
+    await expect(mine.getByText('helpers', { exact: true })).toBeVisible();
+    await expect(page.getByText('@[')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/chat-mention-badges.png' });
+  });
 });
 
 test.describe('scrolling', () => {

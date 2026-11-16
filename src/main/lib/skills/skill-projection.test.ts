@@ -5,7 +5,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dirHash } from './skill-fs';
+import { dirHash, sha256 } from './skill-fs';
+import * as guardedWrite from './skill-guarded-write';
 import { copyUserSkill, PROVENANCE_MARKER, projectSkill } from './skill-projection';
 
 const { mockHome } = vi.hoisted(() => ({ mockHome: { value: '' } }));
@@ -891,6 +892,140 @@ describe('projectSkill (PCH-2)', () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
       const siblings = await fs.readdir(path.dirname(claudeTarget()));
       expect(siblings.some((n) => n.includes('.staging-') || n.includes('.old-'))).toBe(false);
+    });
+  });
+
+  describe('adopting a shipped copy left without a marker', () => {
+    const SOURCE_BASELINE = '{"version":"new"}\n';
+    const OLD = { 'SKILL.md': 'old skill\n', 'ref.md': 'old ref\n', 'retired.md': 'gone\n' };
+    const read = (rel: string) => fs.readFile(path.join(claudeTarget(), rel), 'utf8');
+    /** A copy holding `files` and a `.baseline.json` recording them, but no projection marker. */
+    const writeOrphan = async (files: Record<string, string>) => {
+      for (const [rel, body] of Object.entries(files)) {
+        await fs.mkdir(path.dirname(path.join(claudeTarget(), rel)), { recursive: true });
+        await fs.writeFile(path.join(claudeTarget(), rel), body);
+      }
+      const entries = Object.entries(files).map(([rel, body]) => [
+        rel,
+        { sha256: sha256(body), bytes: Buffer.byteLength(body) },
+      ]);
+      const baseline = { generatedAt: 'old', version: 'old', files: Object.fromEntries(entries) };
+      await fs.writeFile(path.join(claudeTarget(), '.baseline.json'), JSON.stringify(baseline));
+    };
+
+    beforeEach(async () => {
+      warnSpy.mockClear();
+      await fs.writeFile(path.join(srcSkill, '.baseline.json'), SOURCE_BASELINE);
+    });
+
+    it('refreshes every unedited file, drops retired ones and marks the copy', async () => {
+      await writeOrphan(OLD);
+      await projectSkill('reviewer', srcSkill);
+      expect(await read('SKILL.md')).toBe(SKILL);
+      expect(await read('ref.md')).toBe('reference\n');
+      expect(await read('.baseline.json')).toBe(SOURCE_BASELINE);
+      expect(existsSync(path.join(claudeTarget(), 'retired.md'))).toBe(false);
+      expect(existsSync(path.join(claudeTarget(), PROVENANCE_MARKER))).toBe(true);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps an edited file and a user-added file while the rest refresh', async () => {
+      await writeOrphan(OLD);
+      await fs.writeFile(path.join(claudeTarget(), 'SKILL.md'), 'MY EDIT\n');
+      await fs.writeFile(path.join(claudeTarget(), 'notes.md'), 'mine\n');
+      await projectSkill('reviewer', srcSkill);
+      expect(await read('SKILL.md')).toBe('MY EDIT\n');
+      expect(await read('notes.md')).toBe('mine\n');
+      expect(await read('ref.md')).toBe('reference\n');
+      expect(await read('.baseline.json')).toBe(SOURCE_BASELINE);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain('SKILL.md, notes.md');
+    });
+
+    it('rewrites nothing when projected again after adoption', async () => {
+      await writeOrphan(OLD);
+      await projectSkill('reviewer', srcSkill);
+      const mtimes = async () =>
+        Promise.all(
+          ['SKILL.md', 'ref.md', '.baseline.json'].map(
+            async (rel) => (await fs.stat(path.join(claudeTarget(), rel))).mtimeMs,
+          ),
+        );
+      const before = await mtimes();
+      await projectSkill('reviewer', srcSkill);
+      expect(await mtimes()).toEqual(before);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it.skipIf(!canHideContent)('finishes an adoption that stopped part way', async () => {
+      await fs.mkdir(path.join(srcSkill, 'sub'));
+      await fs.writeFile(path.join(srcSkill, 'sub', 'b.md'), 'b v2\n');
+      await writeOrphan({ ...OLD, 'sub/b.md': 'b\n' });
+      await fs.chmod(path.join(claudeTarget(), 'sub'), 0o500);
+      await projectSkill('reviewer', srcSkill);
+      await fs.chmod(path.join(claudeTarget(), 'sub'), 0o755);
+      const marker = JSON.parse(await read(PROVENANCE_MARKER));
+      expect(marker.hash).toMatch(/^[0-9a-f]{64}$/);
+      warnSpy.mockClear();
+      await projectSkill('reviewer', srcSkill);
+      expect(await read('sub/b.md')).toBe('b v2\n');
+      expect(await read('SKILL.md')).toBe(SKILL);
+      expect(await read('.baseline.json')).toBe(SOURCE_BASELINE);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    // A kill mid-update skips `finally`, so the copy's old hashes must be on disk before a file moves.
+    it('records the shipped hashes before it replaces any file', async () => {
+      await writeOrphan(OLD);
+      let release = () => {};
+      let reached = () => {};
+      const atFirstWrite = new Promise<void>((resolve) => (reached = resolve));
+      vi.spyOn(guardedWrite, 'replaceFile').mockImplementationOnce(async () => {
+        reached();
+        await new Promise<void>((resolve) => (release = resolve));
+        return null;
+      });
+      const run = projectSkill('reviewer', srcSkill);
+      await atFirstWrite;
+      const marker = JSON.parse(await read(PROVENANCE_MARKER));
+      expect(marker.files['SKILL.md']).toBe(sha256(OLD['SKILL.md']));
+      release();
+      await run;
+    });
+
+    it('leaves a copy alone when its .baseline.json cannot be parsed', async () => {
+      await writeOrphan(OLD);
+      await fs.writeFile(path.join(claudeTarget(), '.baseline.json'), '{not json');
+      await projectSkill('reviewer', srcSkill);
+      expect(await read('SKILL.md')).toBe('old skill\n');
+      expect(await read('.baseline.json')).toBe('{not json');
+      expect(existsSync(path.join(claudeTarget(), PROVENANCE_MARKER))).toBe(false);
+      for (const t of allTargets().filter((t) => t !== claudeTarget())) {
+        expect(await fs.readFile(path.join(t, 'SKILL.md'), 'utf8')).toBe(SKILL);
+      }
+    });
+
+    // Adopting without a hash for every shipped file would keep the unhashed files forever.
+    it.each([
+      ['no files key', '{"version":"old"}'],
+      ['an empty file list', '{"version":"old","files":{}}'],
+      ['an entry without a hash', '{"files":{"SKILL.md":{"bytes":1}}}'],
+      ['a null manifest', 'null'],
+    ])('leaves a copy alone when its .baseline.json has %s', async (_, manifest) => {
+      await writeOrphan(OLD);
+      await fs.writeFile(path.join(claudeTarget(), '.baseline.json'), manifest);
+      await projectSkill('reviewer', srcSkill);
+      expect(await read('SKILL.md')).toBe('old skill\n');
+      expect(existsSync(path.join(claudeTarget(), PROVENANCE_MARKER))).toBe(false);
+    });
+
+    // A tool's skills folder linked to the source folder must not mark the source as a copy.
+    it('never marks the source itself when a target folder resolves to it', async () => {
+      await fs.mkdir(path.join(tmp, '.claude'), { recursive: true });
+      await fs.symlink(path.dirname(srcSkill), path.join(tmp, '.claude', 'skills'), 'dir');
+      await projectSkill('reviewer', srcSkill);
+      expect(existsSync(path.join(srcSkill, PROVENANCE_MARKER))).toBe(false);
+      expect(await fs.readFile(path.join(srcSkill, 'SKILL.md'), 'utf8')).toBe(SKILL);
     });
   });
 

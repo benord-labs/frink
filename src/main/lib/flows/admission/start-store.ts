@@ -4,6 +4,12 @@ import {
   type FlowAdmissionIntentV1,
   isFlowAdmissionIntentV1,
 } from '../../../../shared/lib/flow-admission';
+import {
+  priorityQueueMode,
+  readyRunFirstRule,
+  runFirstRuleMatches,
+} from '../../../../shared/lib/flow-admission/run-first-rule';
+import { runFirstRowSchema } from '../../../../shared/types/flow-settings-schema';
 import type { getDatabase } from '../../db';
 import {
   type BatchStageRun,
@@ -11,8 +17,11 @@ import {
   batchStages,
   type FlowRun,
   flowRuns,
+  flowVersions,
   type NewFlowRun,
 } from '../../db/schema';
+import { buildVariables } from '../block-context';
+import { resolveScalarText } from '../template-utils';
 import { assertStageHasSlot, StageRunMovedError } from './batch-promotion';
 import { enqueueFlowAdmission, type FlowRunAdmission, liveAdmissionForRun } from './store';
 
@@ -60,6 +69,27 @@ function isProvenUnstarted(run: FlowRun): boolean {
 }
 
 const memberAttachmentsSchema = z.object({ attachments: z.array(z.unknown()) });
+const runFirstGraphSchema = z.object({
+  settings: z.object({
+    runFirst: z.boolean().optional().catch(undefined),
+    runFirstWhen: z.array(runFirstRowSchema).optional().catch(undefined),
+  }),
+});
+
+/** Judged once, from the version the run is pinned to and the run's own saved trigger details. */
+function startRunsFirst(db: Db, run: FlowRun): boolean {
+  const version = db
+    .select({ graph: flowVersions.graph })
+    .from(flowVersions)
+    .where(eq(flowVersions.id, run.flowVersionId))
+    .get();
+  const settings = runFirstGraphSchema.safeParse(version?.graph).data?.settings;
+  const mode = priorityQueueMode(settings);
+  const rule = mode === 'match' ? readyRunFirstRule(settings?.runFirstWhen ?? []) : null;
+  if (!rule) return mode === 'every';
+  const scope = buildVariables({ triggerContext: run.triggerContext, previousOutput: undefined });
+  return runFirstRuleMatches(rule, (path) => resolveScalarText(scope, path));
+}
 
 /** Uploads append only while the member is pending, so this read is final for its run. */
 function withMemberAttachments(
@@ -170,6 +200,10 @@ export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueF
     flow_run_id: run.id,
     ...(batchStageRunId ? { batch_stage_run_id: batchStageRunId } : {}),
   };
-  const { admission } = enqueueFlowAdmission(db, { intent, requestedAt });
+  const { admission } = enqueueFlowAdmission(db, {
+    intent,
+    requestedAt,
+    runFirst: startRunsFirst(db, run),
+  });
   return { run, isReplay, admission };
 }

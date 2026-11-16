@@ -14,6 +14,7 @@ export {
   focusAgentChatAtom,
   leaveOverlayStackForChatSurfaceAtom,
   navigateToAgentChatAtom,
+  openDestinationAtom,
   openFlowRunAtom,
 } from './agent-navigation-atoms';
 // ============================================

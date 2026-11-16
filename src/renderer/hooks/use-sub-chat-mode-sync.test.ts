@@ -45,7 +45,7 @@ afterEach(() => {
 });
 
 describe('useSubChatModeSync', () => {
-  it('mirrors an ACTIVE sub-chat broadcast into the chat-mode atom and sub-chat store', () => {
+  it('mirrors a broadcast into the chat-mode atom and sub-chat store', () => {
     mountHook();
     useAgentSubChatStore.setState({ activeSubChatId: 's1' });
     act(() => handler?.({ chatId: 'c1', subChatId: 's1', mode: 'plan' }));
@@ -53,15 +53,13 @@ describe('useSubChatModeSync', () => {
     expect(useAgentSubChatStore.getState().subChatsById.s1?.mode).toBe('plan');
   });
 
-  it("keeps the footer atom untouched for a background SIBLING's broadcast", () => {
-    // A sibling tab's flip must not move the active tab's footer: useChatMode's reactive
-    // persist would then write the sibling's mode onto the active row.
+  it('flips the footer of a chat with no active sub-chat (split view, background chat)', () => {
     mountHook();
-    useAgentSubChatStore.setState({ activeSubChatId: 's1' });
-    appStore.set(chatModeAtomFamily('c1'), 'agent');
-    act(() => handler?.({ chatId: 'c1', subChatId: 's-sibling', mode: 'plan' }));
-    expect(appStore.get(chatModeAtomFamily('c1'))).toBe('agent');
-    expect(useAgentSubChatStore.getState().subChatsById['s-sibling']?.mode).toBe('plan');
+    useAgentSubChatStore.setState({ activeSubChatId: null });
+    appStore.set(chatModeAtomFamily('c3'), 'agent');
+    act(() => handler?.({ chatId: 'c3', subChatId: 's3', mode: 'plan' }));
+    expect(appStore.get(chatModeAtomFamily('c3'))).toBe('plan');
+    expect(useAgentSubChatStore.getState().subChatsById.s3?.mode).toBe('plan');
   });
 
   it('never touches the pending intent — an echo cannot tell whose write it announces', () => {

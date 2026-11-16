@@ -24,6 +24,7 @@ import {
 import { createElement, memo, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { ActionMenu, type ActionMenuProps } from '@/features/work-queue/WorkQueue/ActionMenu';
 import { buildTriggerSummary } from '../../../../../shared/lib/trigger-summary';
+import { formatWaitingSince } from '../../../../lib/utils/format-time';
 import type {
   ApprovalActions,
   AwaitingApproval,
@@ -246,15 +247,6 @@ export const APPROVAL_COPY = {
 export function getApprovalTitle(gate: AwaitingApproval): string {
   if (gate.nodeRunId === null) return `${gate.gateCount} approvals waiting`;
   return gate.message ?? gate.flowName;
-}
-
-/** An absolute time stays true between renders, so the live region never re-announces it. */
-function formatWaitingSince(since: Date): string {
-  const today = since.toDateString() === new Date().toDateString();
-  return since.toLocaleString(
-    undefined,
-    today ? { timeStyle: 'short' } : { dateStyle: 'medium', timeStyle: 'short' },
-  );
 }
 
 type Spotlight = {

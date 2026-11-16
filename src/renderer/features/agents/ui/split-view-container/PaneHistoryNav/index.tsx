@@ -1,10 +1,8 @@
-import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { type PaneNavDirection, paneHistoryAtom } from '@/lib/atoms/pane-history';
 import { trpc } from '@/lib/trpc';
-import { cn } from '@/lib/utils';
 import { splitViewChatIdsAtom } from '../../../atoms';
 import { showChatInPaneAtom } from '../../../hooks/use-split-view-actions';
 
@@ -23,7 +21,7 @@ export function PaneHistoryNav({ chatId, paneIndex }: PaneHistoryNavProps) {
   const chatIds = useAtomValue(splitViewChatIdsAtom);
   if (!entry) return null;
   return (
-    <HistoryButtons
+    <HistoryItems
       back={notShownIn(entry.back, chatIds)}
       forward={notShownIn(entry.forward, chatIds)}
       paneIndex={paneIndex}
@@ -39,7 +37,7 @@ function nearestLiveChat(chats: readonly NavChat[], ids: readonly string[]): Nav
   return ids.flatMap((id) => chats.find((chat) => chat.id === id) ?? []).at(-1) ?? null;
 }
 
-function HistoryButtons({
+function HistoryItems({
   back,
   forward,
   paneIndex,
@@ -60,13 +58,14 @@ function HistoryButtons({
   if (!targets?.back && !targets?.forward) return null;
   return (
     <>
-      <HistoryButton direction="back" target={targets.back} paneIndex={paneIndex} />
-      <HistoryButton direction="forward" target={targets.forward} paneIndex={paneIndex} />
+      <HistoryItem direction="back" target={targets.back} paneIndex={paneIndex} />
+      <HistoryItem direction="forward" target={targets.forward} paneIndex={paneIndex} />
+      <DropdownMenuSeparator />
     </>
   );
 }
 
-function HistoryButton({
+function HistoryItem({
   direction,
   target,
   paneIndex,
@@ -77,31 +76,18 @@ function HistoryButton({
 }) {
   const showChatInPane = useSetAtom(showChatInPaneAtom);
   const { icon: Icon, verb } = NAV[direction];
-  const label = target ? `${verb} to “${target.name || 'Untitled chat'}”` : verb;
-  const button = (
-    <Button
-      variant="ghost"
-      size="sm"
+  return (
+    <DropdownMenuItem
       disabled={!target}
-      onClick={(e) => {
-        e.stopPropagation();
+      onClick={(e) => e.stopPropagation()}
+      onSelect={() => {
         if (target) showChatInPane({ chatId: target.id, paneIndex, direction });
       }}
-      className={cn(
-        'text-xs p-2 rounded motion-reduce:transition-none',
-        !target && 'text-muted-foreground/60 cursor-not-allowed',
-      )}
-      aria-label={label}
-      iconOnly
     >
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-    </Button>
-  );
-  if (!target) return button;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
-    </Tooltip>
+      <Icon className="h-4 w-4 mr-2" aria-hidden="true" />
+      <span className="truncate">
+        {target ? `${verb} to “${target.name || 'Untitled chat'}”` : verb}
+      </span>
+    </DropdownMenuItem>
   );
 }

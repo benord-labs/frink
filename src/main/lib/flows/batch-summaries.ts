@@ -23,7 +23,7 @@ import { CHAT_LINK_SOURCES } from '../db/repos/flow-runs';
 import { isSupersededAttempt } from '../db/repos/task-queries/flow-collapse';
 import { chatLinkId } from '../db/repos/task-queries/linked-flow-runs';
 import { chats, flowRuns, flows, flowVersions, nodeRuns, tasks } from '../db/schema';
-import { isPastFanOutLane, opensFanOutItemChat } from './fan-out-state';
+import { isPastFanOutLane, opensFanOutItemChat } from './fan-out/sql';
 
 const { triggerChatId, nodeChatId, taskChatId } = CHAT_LINK_SOURCES;
 

@@ -508,6 +508,31 @@ describe('runCodexAgent', () => {
     await drain(gen);
   });
 
+  it('sends operator reminders in the same native context as the composer notes', async () => {
+    const fake = startedFakeClient({
+      'config/read': { config: {} },
+      'thread/start': { thread: { id: 'th1' } },
+      'turn/start': { turn: { id: 'tn1' } },
+    });
+    const composerContext = {
+      frink_open_file_1: { kind: 'application', value: 'The user opened the file a.ts' },
+    } as const;
+    const operatorReminders = {
+      frink_plan_mode_exit: { kind: 'application', value: 'Plan mode is not active.' },
+    } as const;
+    const gen = runCodexAgent(params({ composerContext, operatorReminders }));
+    await gen.next();
+    await gen.next();
+    expect(fake.sent.find((s) => s.method === 'turn/start')?.params).toEqual(
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'do it' }],
+        additionalContext: { ...composerContext, ...operatorReminders },
+      }),
+    );
+    fake.fire('turn/completed', { turn: { status: 'completed' } });
+    await drain(gen);
+  });
+
   it('yields a binary-missing error when codex is not installed', async () => {
     vi.mocked(resolveCodexBinary).mockReturnValue(null);
     const chunks = await drain(runCodexAgent(params()));

@@ -16,4 +16,5 @@ export const BUILTIN_COMMAND_NAMES = [
   'security-review',
   'commit',
   'worktree-setup',
+  // Not `goal`: a Flow node keeps refusing `/goal` as an unknown command until Flows run goals.
 ] as const;

@@ -41,6 +41,27 @@ export async function hashFile(abs: string): Promise<string> {
   return hash.digest('hex');
 }
 
+type BaselineFile = { sha256: string; bytes: number };
+/** A frink-shipped skill's `.baseline.json`: the shipped hash of every file. */
+export type Baseline = {
+  generatedAt: string;
+  version: string;
+  files: Record<string, BaselineFile>;
+};
+
+/** The `.baseline.json` in `dir`, or null when there is none. */
+export async function readBaseline(dir: string): Promise<Baseline | null> {
+  try {
+    const raw = await readFile(join(dir, '.baseline.json'), 'utf8');
+    // SAFETY: the skill build and the provisioner write it in this shape.
+    return JSON.parse(raw) as Baseline;
+  } catch (err) {
+    // SAFETY: fs.promises rejects with a NodeJS.ErrnoException.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
 /** Copy `relPaths` from `from` into `into`, creating parent dirs; `dereference` copies what
  *  a symlink points to, and `overwrite: false` leaves anything already at a destination alone. */
 export async function copyFiles(

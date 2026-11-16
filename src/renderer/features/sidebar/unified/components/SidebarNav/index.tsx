@@ -323,7 +323,10 @@ function DestinationNavRows({
               aria-label="Flows"
             />
           </TooltipTrigger>
-          <TooltipContent side="right">Flows</TooltipContent>
+          <TooltipContent side="right">
+            Flows
+            <Kbd shortcutId="open-flows" />
+          </TooltipContent>
         </Tooltip>
       )}
 
@@ -346,6 +349,7 @@ function DestinationNavRows({
               <div>Work Queue</div>
               <div className="text-muted-foreground">{workQueueAriaLabel(counts)}</div>
             </div>
+            <Kbd shortcutId="open-work-queue" />
           </TooltipContent>
         </Tooltip>
       )}

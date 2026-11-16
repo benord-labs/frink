@@ -83,6 +83,8 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     category: 'general',
     defaultKeys: ['cmd', 'shift', 'A'],
   },
+  { id: 'open-flows', label: 'Flows', category: 'general', defaultKeys: ['cmd', '1'] },
+  { id: 'open-work-queue', label: 'Work Queue', category: 'general', defaultKeys: ['cmd', '2'] },
 
   // ============================================
   // WORKSPACES
@@ -591,9 +593,7 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
 ];
 
-/**
- * Get shortcuts grouped by category
- */
+/** Get shortcuts grouped by category */
 export function getShortcutsByCategory(): Record<ShortcutCategory, ShortcutAction[]> {
   return {
     general: ALL_SHORTCUT_ACTIONS.filter((a) => a.category === 'general'),

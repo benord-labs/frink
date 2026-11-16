@@ -47,7 +47,7 @@ Registration is agent-mediated: the agent registers a simple node inline in one 
 
 ## Run history
 
-The **Run history** panel lists **executable steps**, not the trigger block — the trigger is what started the run; execution begins on the first connected block. Saving the flow stores **canvas positions** for every node (including auto-layout), so step order matches the diagram; older saved graphs without positions are ordered by walking **edges from the trigger** instead.
+The **Run history** panel lists **executable steps**, not the trigger block — the trigger is what started the run; execution begins on the first connected block. Steps are listed in the order they started during the run, whatever their position on the canvas. If a step is retried, each attempt gets its own row where it started, and each parallel lane of a Fan Out is listed separately in the same way.
 
 Deleting a flow is permanent: Frink stops its active work and removes the flow, its run history, and its work-queue tasks. Stashed briefings remain available.
 
@@ -137,7 +137,7 @@ projects fails the step with a message naming the value. Custom nodes are unchan
 
 A **Chat Reply** block posts a templated message into an existing Frink chat. At run time the engine needs a **`chatId`**. The graph validator enforces one of:
 
-1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`), or  
+1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`) when that task ran in a chat of the same project. A Start Task on the path takes precedence, and a task with no chat needs one, or  
 2. **Upstream Start Task** on the same path — Start Task creates the flow chat before any Chat Reply on that branch.
 
 So **`manual_trigger → run_command → chat_reply`** is invalid unless you insert **Start Task** before the reply (or use a post-task flow). Use **End** or **HTTP Request** if you only need to stop or call an external URL without a chat.
@@ -253,14 +253,16 @@ What's available depends on the trigger type:
 | `trigger.taskId` | UUID of the completed task |
 | `trigger.taskTitle` | Title of the completed task |
 | `trigger.taskStatus` | Final status |
-| `trigger.result` | Result summary |
-| `trigger.branch` | Git branch the task ran on |
-| `trigger.baseBranch` | Base branch the task branched from |
-| `trigger.worktreePath` | Absolute path to the task worktree |
-| `trigger.projectId` | UUID of the project |
-| `trigger.chatId` | Chat session ID |
-| `trigger.projectPath` | Main project directory path |
 | `trigger.source` | How the task was created |
+| `trigger.projectId` | UUID of the project |
+| `trigger.taskCompletedAt` | ISO time the task finished |
+| `trigger.result` | Summary the task's agent reported when it finished (not always present) |
+| `trigger.branch` | Git branch the task ran on (not always present) |
+| `trigger.baseBranch` | Base branch the task branched from (not always present) |
+| `trigger.worktreePath` | Absolute path to the task worktree (not always present) |
+| `trigger.chatId` | Chat session ID (not always present) |
+| `trigger.subChatId` | Chat tab the task ran in (not always present) |
+| `trigger.projectPath` | Main project directory path (not always present) |
 
 ### schedule_trigger
 
@@ -411,13 +413,13 @@ Frink limits the number of top-level Flow runs using machine resources at once. 
 
 Changes to the limit toggle and maximum stay in the settings panel until you choose **Save**. Choose **Discard** to restore the latest saved settings. The live capacity counts keep refreshing while you edit. Saving changes preserves whether the Work Queue is paused, and disabling the limit keeps your numeric preference for later.
 
-When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. Paused runs and runs waiting for approval or a question continue to hold their slot in this release. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
+When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. A run paused on an agent step that is waiting for your reply keeps its slot for up to an hour, while the agent can still pick up quickly and cheaply, so a quick answer carries straight on. After that it gives the slot up; when you reply, continue or retry it, it takes a slot back, ahead of new runs, and carries on where it stopped. If every slot is busy, it waits under **Resuming** until one frees up. Runs waiting for an approval or a plan review keep their slot, and **Settings → Preferences → Flows** shows how many slots runs waiting on you still hold. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
 
-Open **Work Queue** to see waiting runs under **Queued to run**. Resumptions always stay ahead of fresh starts. Within either group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. Reordering queued work never interrupts an active run.
+Open **Work Queue** to see waiting runs under **Queued to run**, in the order they will start: **Resuming** first, then the **Priority queue** (new runs that the [priority queue](#runfirst) setting puts first), then **Starting**. Within each group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. While the priority queue has runs, the **Starting** group shows when its oldest run started waiting. Reordering queued work never interrupts an active run.
 
 To hold everything that is waiting, choose **Pause queue** in the Work Queue header. While the queue is paused, no queued run is admitted on this machine, resumptions included; each one stays in **Queued to run**, marked *On hold*, and you can still reorder or remove it. Runs that are already active keep going. The pause survives restarting Frink. A banner at the top of the Work Queue shows the queue is paused and holds the **Resume queue** button, which starts admitting queued runs again in their current order.
 
-Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
+Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** or **Priority queue** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
 
 This outer limit is separate from a Flow's `maxBatchConcurrency`, fan-out limits, and node dispatch behavior. Those controls can further restrict a batch, but cannot raise the machine-wide limit.
 
@@ -570,6 +572,32 @@ frink_flows_patch({
 ```
 
 **Use case:** Running multiple flows in parallel and you want each batch to submit fewer runs at once so others aren't starved.
+
+### runFirst
+
+**Priority queue** decides which new runs of this flow start ahead of other waiting new runs while your machine is running as many flows as it allows. Resuming runs still go first, nothing already running is stopped, and runs already waiting keep their place.
+
+- **Off:** new runs wait in the normal queue.
+- **Every new run:** every new run joins the priority queue. Useful for scheduled flows, such as a daily digest, that should not wait behind a long backlog.
+- **Only runs that match:** a run joins the priority queue when its own trigger details match every row you add, for example `trigger.story.title` *contains* `[Follow-up]`. A detail is a trigger variable, named as in the **Available variables** panel; the box suggests the ones your trigger has. Text, numbers and true/false values can be checked; *equals* and *not equals* compare exactly, *contains* ignores case. A run is checked once, when it joins the queue. Until every row has a detail and a value, runs keep their normal place, and a run without the detail never matches. Runs you start with **Run** carry no details, so they never match; a scheduled flow can choose **Every new run** or **Off**. Anyone who can change a checked detail, such as a story's title, can move that run ahead; this changes queue order only.
+
+**Where to set it:** Flow Editor → open **Settings** (toolbar) → **Priority queue**.
+
+You can also set it via MCP:
+
+```
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: { runFirst: true } }]
+})
+
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: {
+    runFirstWhen: [{ detail: "trigger.story.title", operator: "contains", value: "[Follow-up]" }]
+  } }]
+})
+```
 
 ### pauseOnFailure
 

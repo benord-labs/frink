@@ -1,3 +1,4 @@
+import { decodeUriPath } from '../path-normalization';
 import { MENTION_PREFIXES } from './mention-grammar';
 import { decodeFromMentionToken } from './mention-token-codec';
 
@@ -6,18 +7,8 @@ export type ParsedMention = {
   label: string;
   path: string;
   repository: string;
-  type:
-    | 'file'
-    | 'folder'
-    | 'skill'
-    | 'agent'
-    | 'tool'
-    | 'quote'
-    | 'diff'
-    | 'code'
-    | 'pasted'
-    | 'briefing';
-  // Extra data for quote/diff/code/pasted/briefing mentions
+  type: 'file' | 'folder' | 'skill' | 'agent' | 'tool' | 'quote' | 'diff' | 'code' | 'pasted';
+  // Extra data for quote/diff/code/pasted mentions
   fullText?: string;
   lineNumber?: number;
   /** For code: fileName and line range (e.g. "13-26") */
@@ -30,6 +21,12 @@ type MentionParser = (id: string) => ParsedMention | null;
 
 const UNDERSCORE_GLOBAL_REGEX = /_/g;
 const WORD_BOUNDARY_CAPITALIZE_REGEX = /\b\w/g;
+const PATH_SEPARATOR_REGEX = /[\\/]/;
+
+/** The last segment of a `/` or `\` path, or the whole path when it ends in a separator. */
+export function pathLabel(path: string): string {
+  return path.split(PATH_SEPARATOR_REGEX).pop() || path;
+}
 
 /** The decoded base64 part (empty when it does not decode), or the preview when there is none. */
 function decodeFullText(encodedText: string, preview: string): string {
@@ -41,7 +38,7 @@ function parseFileOrFolderMention(id: string, type: 'file' | 'folder'): ParsedMe
   const parts = id.split(':');
   if (parts.length < 3) return null;
   const path = parts.slice(2).join(':');
-  return { id, label: path.split('/').pop() || path, path, repository: parts[1], type };
+  return { id, label: pathLabel(path), path, repository: parts[1], type };
 }
 
 /** `skill:<name>` */
@@ -81,13 +78,15 @@ function parseQuoteMention(id: string): ParsedMention {
   return { id, label, path: '', repository: '', type: 'quote', fullText };
 }
 
-/** `diff:<file path>:<line, 0 for none>:<preview>:<base64 text>` */
+/** `diff:<URI-encoded file path>:<line, 0 for none>:<preview>:<base64 text>` — older tokens carry
+ * the path raw, kept as written unless it happens to be valid URI encoding (`docs/100%25.md`
+ * reads as `docs/100%.md`). */
 function parseDiffMention(id: string): ParsedMention | null {
   const parts = id.slice(MENTION_PREFIXES.DIFF.length).split(':');
   if (parts.length < 3) return null;
-  const path = parts[0];
+  const path = decodeUriPath(parts[0]);
   const lineNumber = parseInt(parts[1], 10) || undefined;
-  const fileName = path.split('/').pop() || path;
+  const fileName = pathLabel(path);
   const label = lineNumber ? `${fileName}:${lineNumber}` : fileName;
   const fullText = decodeFullText(parts.slice(3).join(':'), parts[2]);
   return { id, label, path, repository: '', type: 'diff', fullText, lineNumber };
@@ -98,12 +97,7 @@ function parseDiffMention(id: string): ParsedMention | null {
 function parseCodeMention(id: string): ParsedMention | null {
   const parts = id.slice(MENTION_PREFIXES.CODE.length).split(':');
   if (parts.length < 4) return null;
-  let path = parts[0];
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    // Not valid URI encoding: keep the name as written.
-  }
+  const path = decodeUriPath(parts[0]);
   const lineRange = parts[1];
   const fullText = decodeFullText(parts[parts.length - 1], parts.slice(2, -1).join(':'));
   const label = `${path} L${lineRange}`;
@@ -125,19 +119,6 @@ function parsePastedMention(id: string): ParsedMention | null {
   return { id, label, path, repository: '', type: 'pasted', fullText: label, size };
 }
 
-/** `briefing:<flowId>:<base64 name>:<base64 text>` */
-function parseBriefingMention(id: string): ParsedMention | null {
-  const content = id.slice(MENTION_PREFIXES.BRIEFING.length);
-  const colonIdx = content.indexOf(':');
-  if (colonIdx === -1) return null;
-  const afterFlowId = content.slice(colonIdx + 1);
-  const secondColonIdx = afterFlowId.indexOf(':');
-  if (secondColonIdx === -1) return null;
-  const label = decodeFromMentionToken(afterFlowId.slice(0, secondColonIdx)) || 'Briefing';
-  const fullText = decodeFromMentionToken(afterFlowId.slice(secondColonIdx + 1));
-  return { id, label, path: '', repository: '', type: 'briefing', fullText };
-}
-
 const MENTION_PARSERS: ReadonlyArray<readonly [prefix: string, parse: MentionParser]> = [
   [MENTION_PREFIXES.FILE, (id) => parseFileOrFolderMention(id, 'file')],
   [MENTION_PREFIXES.FOLDER, (id) => parseFileOrFolderMention(id, 'folder')],
@@ -148,7 +129,6 @@ const MENTION_PARSERS: ReadonlyArray<readonly [prefix: string, parse: MentionPar
   [MENTION_PREFIXES.DIFF, parseDiffMention],
   [MENTION_PREFIXES.CODE, parseCodeMention],
   [MENTION_PREFIXES.PASTED, parsePastedMention],
-  [MENTION_PREFIXES.BRIEFING, parseBriefingMention],
 ];
 
 /** Parses the id of an `@[id]` mention token; null when its kind or shape is not recognised. */

@@ -246,7 +246,11 @@ describe('stage advancement', () => {
 
   it('reconciles a standalone admission on its later terminal event', async () => {
     const reconcile = vi.fn(async () => {});
-    setFlowAdmissionLifecycleHooks({ reconcile, requestRelease: vi.fn(async () => {}) });
+    setFlowAdmissionLifecycleHooks({
+      reconcile,
+      reconcileTicket: vi.fn(async () => {}),
+      requestRelease: vi.fn(async () => {}),
+    });
     const { startBatchAdvanceListener } = await import('./batch-dispatch');
     const { flowEventBus } = await import('./events');
     const unsubscribe = startBatchAdvanceListener();
@@ -263,7 +267,11 @@ describe('stage advancement', () => {
 
   it('releases terminal activity cleanly when batch advancement fails', async () => {
     const reconcile = vi.fn(async () => {});
-    setFlowAdmissionLifecycleHooks({ reconcile, requestRelease: vi.fn(async () => {}) });
+    setFlowAdmissionLifecycleHooks({
+      reconcile,
+      reconcileTicket: vi.fn(async () => {}),
+      requestRelease: vi.fn(async () => {}),
+    });
     const { startBatchAdvanceListener } = await import('./batch-dispatch');
     const { flowEventBus } = await import('./events');
     const unsubscribe = startBatchAdvanceListener();

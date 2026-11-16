@@ -9,18 +9,14 @@
 </p>
 
 <p align="center">
-  <strong>Fine-tuned automation for everyone.</strong><br/>
-  A ticket arrives, an error fires or the clock hits 9am: your Flow runs the steps you chose and stops where it needs you.
+  <strong>Desktop-first app for parallel agents and triggered multi-step workflows.</strong><br/>
+  Workflows can include steps you write yourself in code, alongside agent, command and approval steps.
 </p>
 
 <p align="center">
-  Triggers from Linear, Jira, Shortcut, ClickUp, Sentry, PostHog, Vercel and more, plus any webhook or a schedule.<br/>
-  Stuck agents wait in the Work Queue for your yes, on your Mac or from your iPhone (beta).<br/>
-  It runs on your machine with your own Claude Code or Codex login, or your own OpenCode, GitHub Copilot or Cursor. No Frink account.
-</p>
-
-<p align="center">
-  A friendly AI development tool for everyone: start with a chat, save it as a Flow, run agents side by side.
+  Save a routine as a Flow and it starts by itself: on a schedule, from any webhook, or from an event in Linear, Shortcut, ClickUp, Sentry, PostHog or Vercel.<br/>
+  Finished work and agent questions wait for you in the Work Queue, on your computer or on your iPhone (beta).<br/>
+  It all runs on your computer while Frink is open, with the AI coding tool you already use. No Frink account.
 </p>
 
 <h3 align="center"><a href="https://frink.dev/download"><ins>Download Frink</ins></a></h3>
@@ -65,7 +61,7 @@ Type the routine the way you would say it: _"Every weekday at 9am, run the tests
 
 ### It starts when something happens
 
-A new ticket in Linear, Jira, Shortcut or ClickUp, an error in Sentry, an event in PostHog, any webhook, or a time of day. The Flow checks a condition to pick its path, and waits at an approval step until you say yes.
+A new ticket in Linear, Shortcut or ClickUp, an error in Sentry, an event in PostHog or Vercel, any webhook, or a time of day. The Flow checks a condition to pick its path, and waits at an approval step until you say yes.
 
 [Docs →](user-docs/plugins.md)
 
@@ -93,7 +89,7 @@ Every run from every project shows up in the Work Queue as running, ready for re
 
 ### Check the work and fix it yourself
 
-Every file the agent changes shows as a diff. Open it in the built-in editor, change a line and save, run a command in the terminal, or roll the chat back to an earlier checkpoint.
+Every file the agent changes shows as a diff. Open it in the built-in editor, change a line and save, run a command in the terminal, or roll the chat and its code back to an earlier point.
 
 [Docs →](user-docs/changes.md)
 
@@ -106,10 +102,10 @@ Every file the agent changes shows as a diff. Open it in the built-in editor, ch
 
 **Also in the box:**
 
-- **[Permissions](user-docs/permissions.md)** — every change and command passes a per-project gate first; `~/.ssh`, `~/.aws` and `.env` are blocked wherever Frink checks (the page lists what it doesn't cover yet).
+- **[Custom steps](user-docs/flows.md#custom-nodes-flow-editor)** — need a step Frink doesn't have? Ask the agent to write one in JavaScript, or write it yourself, and reuse it in any Flow. For another language, use a command step.
 - **[Plugins & MCP](user-docs/mcp-servers.md)** — connect Linear, Shortcut, ClickUp, GitHub, Notion, Slack, Sentry, PostHog and more, as chat tools and Flow steps.
-- **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login, the OpenCode or GitHub Copilot you installed, or your Cursor sign-in. Frink never stores the token.
-- **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed. Official builds send anonymous usage counts and crash reports: [everything Frink sends](user-docs/telemetry.md).
+- **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login, the OpenCode or GitHub Copilot you installed, or your Cursor sign-in. Frink only checks that you are signed in and leaves the login with the tool. If you paste an Anthropic API key instead, it is stored encrypted on your computer.
+- **Local-first** — chats, Flows and tasks live in SQLite on your machine. No account needed. Official builds send anonymous usage counts and crash reports: [everything Frink sends](user-docs/telemetry.md).
 
 ---
 

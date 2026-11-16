@@ -2,6 +2,7 @@
 import { renderHook } from '@testing-library/react';
 import { createRef, StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { diffMention, quoteMention } from '@/lib/mentions/queued-message-text';
 import { appStore } from '../../../../../lib/jotai-store';
 import { runLiveAtomFamily } from '../../../../../lib/stores/active-transport-registry';
 import type { AgentsMentionsEditorHandle } from '../../../mentions/agents-mentions-editor';
@@ -22,10 +23,6 @@ vi.mock('../../../../../lib/trpc', () => ({
 
 vi.mock('@/lib/commands/expand-slash-command', () => ({
   expandSlashCommand: vi.fn(async (text: string) => text),
-}));
-
-vi.mock('../utils', () => ({
-  utf8ToBase64: vi.fn((text: string) => Buffer.from(text).toString('base64')),
 }));
 
 /** An idle quick-comment host whose next submit would send directly. */
@@ -167,6 +164,37 @@ describe('useQuickComment', () => {
       });
 
       expect(send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('mention token', () => {
+    const selected = '  first line\n  second: [x]  ';
+
+    it.each([
+      [
+        'diff',
+        { type: 'diff', filePath: 'src/a.ts', lineNumber: 7 } as const,
+        diffMention({ text: selected, filePath: 'src/a.ts', lineNumber: 7 }),
+      ],
+      [
+        'tool-edit',
+        { type: 'tool-edit', filePath: 'src/b.ts', isWrite: false } as const,
+        diffMention({ text: selected, filePath: 'src/b.ts' }),
+      ],
+      [
+        'assistant-message',
+        { type: 'assistant-message', messageId: 'msg-1' } as const,
+        quoteMention({ text: selected }),
+      ],
+    ])('sends a %s selection as the shared builder token', async (_type, source, token) => {
+      const send = vi.fn();
+      const { result } = renderHook(() => useQuickComment(idleQuickCommentProps(send)));
+
+      await result.current.handleQuickCommentSubmit('fix this', selected, source);
+
+      expect(send.mock.calls[0][0].parts).toStrictEqual([
+        { type: 'text', text: `${token} fix this` },
+      ]);
     });
   });
 });

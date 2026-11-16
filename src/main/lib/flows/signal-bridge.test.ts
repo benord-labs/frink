@@ -240,3 +240,48 @@ describe('mapTaskToNodeOutput — converging-merge fields (start_task fallback)'
     expect(output.outputs?.mergeConflict).toBeUndefined();
   });
 });
+
+describe('mapTaskToNodeOutput — turn usage', () => {
+  const turnUsage = { contextTokens: 70_000, compactionsByMessage: { m1: 1, m2: 1 } };
+
+  const rows: [string, Partial<Task>][] = [
+    ['done signal', { status: 'done', result: { turnUsage, agentSignal: { state: 'done' } } }],
+    [
+      'agent park',
+      {
+        status: 'needs_attention',
+        result: { turnUsage, agentSignal: { state: 'awaiting_input' } },
+      },
+    ],
+    ['user pause', { status: 'needs_attention', result: { turnUsage, userPause: true } }],
+    ['cancel', { status: 'cancelled', result: { turnUsage, cancelled: true } }],
+    ['failure', { status: 'failed', result: { turnUsage, error: 'boom' } }],
+  ];
+  it.each(rows)('carries contextTokens and compactions on a %s', (_label, partial) => {
+    const output = mapTaskToNodeOutput(task(partial));
+    expect(output.outputs).toMatchObject({ contextTokens: 70_000, compactions: 2 });
+  });
+
+  it('keeps an unreported value as an explicit null', () => {
+    const output = mapTaskToNodeOutput(task({ status: 'done', result: { turnUsage: {} } }));
+    expect(output.outputs).toMatchObject({ contextTokens: null, compactions: null });
+  });
+
+  it('reports unknown usage for an agent turn that died before the executor stamped it', () => {
+    const output = mapTaskToNodeOutput(
+      task({
+        status: 'failed',
+        result: { error: 'provider crashed' },
+        triggerContext: { _config: { blockType: 'agent' } },
+      }),
+    );
+    expect(output.status).toBe('failed');
+    expect(output.outputs).toMatchObject({ contextTokens: null, compactions: null });
+  });
+
+  it('adds no usage keys to a task the executor never stamped (run_command, start_task)', () => {
+    const output = mapTaskToNodeOutput(task({ status: 'completed', result: { exitCode: 0 } }));
+    expect(output.outputs).not.toHaveProperty('contextTokens');
+    expect(output.outputs).not.toHaveProperty('compactions');
+  });
+});

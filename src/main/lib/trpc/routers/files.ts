@@ -30,6 +30,7 @@ import { captureMainException } from '../../sentry/init';
 import { publicProcedure, router } from '../index';
 import { findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
+import { resolveNamesProcedure } from './resolve-file-names';
 import { findSymlinkEscape } from './symlink-escape';
 
 // Active copy operations — allows cancellation by operationId
@@ -953,16 +954,12 @@ export const filesRouter = router({
     .query(async ({ input }) => {
       const { projectPath, query, limit } = input;
 
-      if (!projectPath) {
-        return [];
-      }
+      if (!projectPath) return [];
 
       try {
         // Verify the path exists and is a directory
         const pathStat = await stat(projectPath);
-        if (!pathStat.isDirectory()) {
-          return [];
-        }
+        if (!pathStat.isDirectory()) return [];
 
         // Get entry list (cached or fresh scan)
         const entries = await getEntryList(projectPath);
@@ -974,6 +971,8 @@ export const filesRouter = router({
         return [];
       }
     }),
+
+  resolveNames: resolveNamesProcedure(getEntryList),
 
   /**
    * Search inside local file contents (VS Code style find-in-files).

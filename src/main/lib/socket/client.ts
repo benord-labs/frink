@@ -11,7 +11,7 @@ import type {
   TranscriptTerminalDurability,
 } from '../../../shared/types/assistant-message';
 import type { ChatMode } from '../../../shared/types/chat-mode';
-import type { ExecutionSettings } from '../../../shared/types/execution';
+import type { ConversationTurn, ExecutionSettings } from '../../../shared/types/execution';
 import type {
   SocketPermissionProjection as PermissionRequestPayload,
   SocketPermissionResponsePayload as PermissionResponsePayload,
@@ -71,7 +71,7 @@ export type MessageSendPayload = {
    * left (decision `sub-chat-mode-ownership`).
    */
   mode?: ChatMode;
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   settings?: ExecutionSettings;
   /**
    * Approved plan context — injected into execution turns so the executor knows
@@ -154,7 +154,7 @@ type ExecuteRequestPayload = {
   /** Full user message parts (text + file/image) so executor can send images to Claude SDK */
   userMessageParts?: MessagePart[];
   mode: ChatMode;
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   settings?: ExecutionSettings;
   assistantMessageId?: string;
   streamId?: string;

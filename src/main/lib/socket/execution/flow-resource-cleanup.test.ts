@@ -60,6 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   setFlowAdmissionLifecycleHooks({
     reconcile: reconcileFlowAdmission,
+    reconcileTicket: vi.fn(async () => {}),
     requestRelease: vi.fn(async () => {}),
   });
 });

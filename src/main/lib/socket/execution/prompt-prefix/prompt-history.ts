@@ -1,4 +1,6 @@
 import { isCompactCommand } from '../../../../../shared/commands/expand-slash-command';
+import type { ConversationTurn } from '../../../../../shared/types/execution';
+import { recapComposerTokens } from './composer-context';
 
 /** ≈50k tokens at ~4 chars/token: a quarter of the smallest target window leaves room to work. */
 const HISTORY_BUDGET_CHARS = 200_000;
@@ -23,10 +25,13 @@ function keepRecentHistory(historyText: string): string {
  * A `/compact` prompt is returned bare: it only dispatches at position 0 (see isCompactCommand),
  * and it acts on the session rather than on prompt content, so the transcript it would carry is
  * exactly what compaction is about to discard.
+ *
+ * A person's turns carry their composer tokens as recaps, before the budget cut; every other turn
+ * is replayed exactly as stored.
  */
 export function formatPromptWithHistory(
   currentPrompt: string,
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  history?: ConversationTurn[],
 ): string {
   if (!history || history.length === 0 || isCompactCommand(currentPrompt)) {
     return currentPrompt;
@@ -36,7 +41,7 @@ export function formatPromptWithHistory(
     history
       .map((msg) => {
         const role = msg.role === 'user' ? 'Human' : 'Assistant';
-        return `${role}: ${msg.content}`;
+        return `${role}: ${msg.personAuthored ? recapComposerTokens(msg.content) : msg.content}`;
       })
       .join('\n\n'),
   );
@@ -55,7 +60,7 @@ export function replaceCarriedWithHistory(
   prompt: string,
   carried: string,
   message: string,
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  history?: ConversationTurn[],
 ): string {
   if (!history?.length || !prompt.endsWith(carried)) return prompt;
   return `${prompt.slice(0, prompt.length - carried.length)}${formatPromptWithHistory(message, history)}`;

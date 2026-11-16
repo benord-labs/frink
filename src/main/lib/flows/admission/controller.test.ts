@@ -584,7 +584,7 @@ describe('FlowAdmissionController', () => {
     await controller.beginRelease(claimed[0].ticket);
     await controller.beginDispatch(claimed[1].ticket);
     db.update(flowRunAdmissions)
-      .set({ queueOrder: 1 })
+      .set({ queueOrder: 1, runFirst: true })
       .where(eq(flowRunAdmissions.ticket, claimed[2].ticket))
       .run();
     db.update(flowRuns)
@@ -595,9 +595,11 @@ describe('FlowAdmissionController', () => {
     const recovery = await controller.recoverySnapshot();
 
     expect(recovery.autoDrainable.map((row) => row.state)).toEqual(['queued', 'queued']);
-    expect(
-      recovery.autoDrainable.find((row) => row.ticket === claimed[2].ticket)?.queueOrder,
-    ).toBeNull();
+    // Recovery forgets a manual position but keeps the run-first lane the start was queued in.
+    expect(recovery.autoDrainable.find((row) => row.ticket === claimed[2].ticket)).toMatchObject({
+      queueOrder: null,
+      runFirst: true,
+    });
     expect(recovery.ambiguous.map((row) => row.state).sort()).toEqual([
       'active',
       'claimed',

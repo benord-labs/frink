@@ -10,12 +10,10 @@ function renderSection(field: string, value: string | string[] = '') {
   render(
     <ConditionFiltersSection
       filters={[{ id: 'f1', field, operator: 'equals', value }]}
-      showFilters={true}
       availableFilterFields={[
         { id: 'repo_full_name', label: 'Repository' },
         { id: 'title', label: 'Title contains' },
       ]}
-      onShowFiltersToggle={vi.fn()}
       onAddFilter={vi.fn()}
       onUpdateFilter={onUpdateFilter}
       onRemoveFilter={vi.fn()}
@@ -59,5 +57,31 @@ describe('ConditionFiltersSection value input', () => {
 
     expect(screen.getByPlaceholderText('Value...')).toBeInTheDocument();
     expect(screen.getAllByRole('combobox')).toHaveLength(2);
+  });
+});
+
+describe('ConditionFiltersSection with field suggestions', () => {
+  it('names each field as free text with the suggestions, and has no add button unless asked', () => {
+    const onUpdateFilter = vi.fn();
+    render(
+      <ConditionFiltersSection
+        filters={[{ id: '0', field: '', operator: 'contains', value: '' }]}
+        availableFilterFields={[]}
+        fieldSuggestions={[{ value: 'trigger.story.title', label: 'Story title' }]}
+        onUpdateFilter={onUpdateFilter}
+        onRemoveFilter={vi.fn()}
+      />,
+    );
+    const detail = screen.getByRole('combobox', { name: 'Detail' });
+
+    fireEvent.change(detail, { target: { value: 'trigger.story.title' } });
+
+    expect(onUpdateFilter).toHaveBeenCalledWith('0', { field: 'trigger.story.title' });
+    expect(detail).toHaveAttribute('placeholder', 'e.g. trigger.story.title');
+    expect(document.querySelector('option[value="trigger.story.title"]')).toHaveAttribute(
+      'label',
+      'Story title',
+    );
+    expect(screen.queryByRole('button', { name: /Add/ })).toBeNull();
   });
 });

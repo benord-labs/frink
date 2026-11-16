@@ -21,6 +21,16 @@ export interface StopPendingWork {
   sessionCrons: NonNullable<StopHookInput['session_crons']>;
 }
 
+/** Claude Code's Stop-input labels for the tasks that make it skip a `/goal` check: background
+ * shells (Monitor included), subagents, Workflows, teammates and cloud sessions. */
+const GOAL_DEFERRING_TASK_TYPES = new Set([
+  'shell',
+  'subagent',
+  'workflow',
+  'teammate',
+  'cloud session',
+]);
+
 const TAIL_COMMAND = /\btail\b/;
 const FOLLOW_FLAG = /(?:\s-[a-zA-Z]*[fF]\b|\s--follow\b)/;
 /**
@@ -212,6 +222,9 @@ export type TaskStopHook = ((input: StopHookInput) => Promise<StopHookResult>) &
   droppedFollower?: boolean;
   /** A Stop ran since the hook was built or last reset, so its snapshot is the current turn's. */
   stoppedSinceReset?: boolean;
+  /** The last Stop listed work that makes Claude Code defer a `/goal` check (raw input, so a
+   * finished follower still counts: the CLI does). */
+  defersGoalCheck?: boolean;
 };
 
 export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
@@ -230,6 +243,9 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
   const hook = (async (input: StopHookInput): Promise<StopHookResult> => {
     hook.stoppedSinceReset = true;
     hook.lastPendingWork = readPendingWork(input);
+    hook.defersGoalCheck = (input.background_tasks ?? []).some((task) =>
+      GOAL_DEFERRING_TASK_TYPES.has(task.type),
+    );
     const kept = new Set(hook.lastPendingWork?.backgroundTasks.map((task) => task.id));
     const dropped = new Set(
       (input.background_tasks ?? []).map((task) => task.id).filter((id) => !kept.has(id)),
@@ -282,6 +298,7 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
     hook.lastPendingWork = null;
     hook.droppedFollower = false;
     hook.stoppedSinceReset = false;
+    hook.defersGoalCheck = false;
   };
   return hook;
 }

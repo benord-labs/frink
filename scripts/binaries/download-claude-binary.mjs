@@ -4,9 +4,11 @@
  * Downloads Claude Code native binaries for bundling with the Electron app.
  *
  * Usage:
- *   node scripts/binaries/download-claude-binary.mjs  # Download for current platform
- *   node scripts/binaries/download-claude-binary.mjs --all  # Download all platforms
- *   node scripts/binaries/download-claude-binary.mjs --version 2.1.5  # Specific version
+ *   node scripts/binaries/download-claude-binary.mjs  # Pinned version, current platform
+ *   node scripts/binaries/download-claude-binary.mjs --all  # Pinned version, all platforms
+ *   node scripts/binaries/download-claude-binary.mjs --version=2.1.5  # Manual trial only
+ *
+ * The pin lives in claude-cli-version.json; a CLI bump is a one-line change there.
  */
 
 import fs from 'node:fs';
@@ -20,6 +22,7 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(SCRIPT_PATH);
 const ROOT_DIR = path.join(__dirname, '..', '..');
 const BIN_DIR = path.join(ROOT_DIR, 'resources', 'bin');
+const PIN_PATH = path.join(__dirname, 'claude-cli-version.json');
 
 // Claude Code distribution base URL
 const DIST_BASE =
@@ -55,29 +58,13 @@ function downloadFile(url, destPath) {
 /** SHA-256 hex of a file (see ./http-download). */
 const calculateSha256 = sha256File;
 
-/**
- * Get latest version from GCS bucket
- */
-async function getLatestVersion() {
-  console.log('Fetching latest Claude Code version...');
-
-  try {
-    // Fetch from the same endpoint that install.sh uses
-    const response = await fetch(
-      'https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest',
-    );
-    if (response.ok) {
-      const version = await response.text();
-      return version.trim();
-    }
-  } catch (error) {
-    console.warn(`Failed to fetch latest version: ${error.message}`);
+/** The committed Claude CLI version every release and CI build ships. */
+export function readPinnedVersion(pinPath = PIN_PATH) {
+  const { version } = JSON.parse(fs.readFileSync(pinPath, 'utf8'));
+  if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) {
+    throw new Error(`${pinPath} must pin a plain X.Y.Z version, got ${JSON.stringify(version)}`);
   }
-
-  // Fallback floor: must support provider-native Auto Mode for SDK/non-Anthropic gateway use,
-  // every `--effort` level in the catalog, and every catalog model. Auto's gateway opt-in is
-  // reliable from 2.1.207, xhigh from 2.1.173; `claude-haiku-5-5` first ships in 2.1.293.
-  return '2.1.293';
+  return version;
 }
 
 /**
@@ -189,75 +176,49 @@ function rejectIfMissingCapability(targetPath) {
     console.error(`    agent's Bash commands and MCP servers never inherit them in their env.`);
     console.error(`    Without it an api-key or setup-token account cannot authenticate.`);
   }
-  console.error(`    Pin a known-good version with --version= and open an issue.`);
+  console.error(`    Pin a known-good version in claude-cli-version.json and open an issue.`);
   fs.unlinkSync(targetPath);
   return false;
 }
 
-/**
- * Main entry point
- */
-async function main() {
-  const args = process.argv.slice(2);
-  const downloadAll = args.includes('--all');
-  const versionArg = args.find((a) => a.startsWith('--version='));
-  const specifiedVersion = versionArg?.split('=')[1];
+/** The version and platforms one run downloads, from its arguments and the machine it runs on. */
+export function downloadPlan(args, currentPlatform = `${process.platform}-${process.arch}`) {
+  const trialVersion = args.find((arg) => arg.startsWith('--version='))?.split('=')[1];
+  const version = trialVersion || readPinnedVersion();
+  if (args.includes('--all')) return { version, platforms: Object.keys(PLATFORMS) };
+  if (!PLATFORMS[currentPlatform]) {
+    const supported = Object.keys(PLATFORMS).join(', ');
+    throw new Error(`Unsupported platform: ${currentPlatform} (supported: ${supported})`);
+  }
+  return { version, platforms: [currentPlatform] };
+}
 
+async function main() {
   console.log('Claude Code Binary Downloader');
   console.log('=============================\n');
-
-  // Get version
-  const version = specifiedVersion || (await getLatestVersion());
+  const { version, platforms } = downloadPlan(process.argv.slice(2));
   console.log(`Version: ${version}`);
 
-  // Fetch manifest
   const manifestUrl = `${DIST_BASE}/${version}/manifest.json`;
   console.log(`Fetching manifest: ${manifestUrl}`);
+  const manifest = await fetchJson(manifestUrl).catch((error) => {
+    throw new Error(`Failed to fetch manifest: ${error.message}`);
+  });
 
-  let manifest;
-  try {
-    manifest = await fetchJson(manifestUrl);
-  } catch (error) {
-    console.error(`Failed to fetch manifest: ${error.message}`);
-    process.exit(1);
-  }
-
-  // Determine which platforms to download
-  let platformsToDownload;
-  if (downloadAll) {
-    platformsToDownload = Object.keys(PLATFORMS);
-  } else {
-    // Current platform only
-    const currentPlatform = `${process.platform}-${process.arch}`;
-    if (!PLATFORMS[currentPlatform]) {
-      console.error(`Unsupported platform: ${currentPlatform}`);
-      console.log(`Supported platforms: ${Object.keys(PLATFORMS).join(', ')}`);
-      process.exit(1);
-    }
-    platformsToDownload = [currentPlatform];
-  }
-
-  console.log(`\nPlatforms to download: ${platformsToDownload.join(', ')}`);
-
-  // Create bin directory
+  console.log(`\nPlatforms to download: ${platforms.join(', ')}`);
   fs.mkdirSync(BIN_DIR, { recursive: true });
-
-  // Download each platform
   let success = true;
-  for (const platform of platformsToDownload) {
-    const result = await downloadPlatform(version, platform, manifest);
-    if (!result) success = false;
+  for (const platform of platforms) {
+    if (!(await downloadPlatform(version, platform, manifest))) success = false;
   }
-
-  if (success) {
-    // Written last, and only when every binary landed: the app reads VERSION at runtime to gate
-    // CLI flags, so it must never describe a binary that is not there.
-    writeFileAtomic(path.join(BIN_DIR, 'VERSION'), `${version}\n${new Date().toISOString()}\n`);
-    console.log('\n✓ All downloads completed successfully!');
-  } else {
+  if (!success) {
     console.error('\n✗ Some downloads failed');
     process.exit(1);
   }
+  // Written last, and only when every binary landed: the app reads VERSION at runtime to gate
+  // CLI flags, so it must never describe a binary that is not there.
+  writeFileAtomic(path.join(BIN_DIR, 'VERSION'), `${version}\n${new Date().toISOString()}\n`);
+  console.log('\n✓ All downloads completed successfully!');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {

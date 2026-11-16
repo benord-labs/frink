@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { activeOverlayAtom } from '@/lib/atoms';
 import { getEditorTabCycleDirection } from '@/lib/code-editor/tabs';
 import type { CustomHotkeysConfig } from '@/lib/hotkeys';
 import { matchesHotkey, useAgentsHotkeys } from './agents-hotkeys-manager';
@@ -30,6 +32,28 @@ describe('useAgentsHotkeys', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', metaKey: true, shiftKey: true }));
     expect(activateFilesSidebarSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens Flows with Cmd+1 and Work Queue with Cmd+2, even while typing', async () => {
+    const store = createStore();
+    render(
+      <Provider store={store}>
+        <input id="typing" />
+        <HotkeysHarness />
+      </Provider>,
+    );
+    const input = screen.getByRole('textbox');
+    input.focus();
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '1', code: 'Digit1', metaKey: true, bubbles: true }),
+    );
+    await waitFor(() => expect(store.get(activeOverlayAtom)).toBe('flows'));
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '2', code: 'Digit2', metaKey: true, bubbles: true }),
+    );
+    await waitFor(() => expect(store.get(activeOverlayAtom)).toBe('workqueue'));
   });
 
   it('still triggers find-in-files while typing in an input', () => {

@@ -5,6 +5,8 @@
       "name": "@frink/mobile",
       "dependencies": {
         "@expo/ui": "~57.0.14",
+        "@iconify-icons/simple-icons": "2.0.4",
+        "@iconify-icons/vscode-icons": "2.0.6",
         "@react-navigation/elements": "2.9.43",
         "@react-navigation/native": "7.4.1",
         "@react-navigation/native-stack": "7.19.2",
@@ -247,6 +249,12 @@
     "@expo/ws-tunnel": ["@expo/ws-tunnel@2.0.0", "", { "peerDependencies": { "ws": "^8.0.0" } }, "sha512-j+JfTRdCk820J9dU0sA2SqshQIKFOMo7ED84w9MJFcebfbNQgsLztEY/SABDkGnjatrW4xGqnUhVRxSBVyCkXw=="],
 
     "@expo/xcpretty": ["@expo/xcpretty@4.4.5", "", { "dependencies": { "@babel/code-frame": "^7.20.0", "chalk": "^4.1.0", "js-yaml": "^4.1.0" }, "bin": { "excpretty": "build/cli.js" } }, "sha512-J3eL4n4h5QTwfD0SIz8OIk6/+sOL/hFZAMacgCM07UNlxBQfJipEpIC2AQxvGkbYeStByJ0TVhQAJo+DeNgaSQ=="],
+
+    "@iconify-icons/simple-icons": ["@iconify-icons/simple-icons@2.0.4", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-DPYzfEyqyOvOJkWg9sS6CQ1mSFIVG+J6Pmj4LaKLBv1wP9+lCPfIV8Vk+Rdua0AOn8kgqgLA+nHnQKEPzHAI5Q=="],
+
+    "@iconify-icons/vscode-icons": ["@iconify-icons/vscode-icons@2.0.6", "", { "dependencies": { "@iconify/types": "*" } }, "sha512-q5kHkHEyoiTyeoU4Q6AvtXuhbKPLYk/6JbrMUIOHC+34rXyU6OTbe+R6n/2aIoEqoBeIBKH5jJWoyHAPxzN7aA=="],
+
+    "@iconify/types": ["@iconify/types@2.0.0", "", {}, "sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg=="],
 
     "@isaacs/ttlcache": ["@isaacs/ttlcache@1.4.1", "", {}, "sha512-RQgQ4uQ+pLbqXfOmieB91ejmLwvSgv9nLx6sT6sD83s7umBypgg+OIBOBbEUiJXrfpnp9j0mRhYYdzp9uqq3lA=="],
 

@@ -15,12 +15,12 @@ vi.hoisted(() => {
 
 afterEach(cleanup);
 
-function renderWithMention() {
+function renderWithMention(path = 'src/a.ts') {
   const ref = createRef<AgentsMentionsEditorHandle>();
   const { container } = render(
     <AgentsMentionsEditor ref={ref} onTrigger={vi.fn()} onCloseTrigger={vi.fn()} />,
   );
-  ref.current?.setValue('see @[file:local:src/a.ts] now');
+  ref.current?.setValue(`see @[file:local:${path}] now`);
   const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
   const chip = container.querySelector<HTMLElement>('[data-mention-id]');
   if (!editor || !chip) throw new Error('The editor did not draw the mention');
@@ -56,7 +56,6 @@ describe('composer mention chip restored inside an effect', () => {
   it.each([
     ['folder', '@[folder:local:src/lib]', 'lucide-folder-open'],
     ['agent', '@[agent:reviewer]', 'lucide-bot'],
-    ['briefing', '@[briefing:flow1:QQ==:QQ==]', 'lucide-file-text'],
     ['unknown file type', '@[file:local:LICENSE]', 'lucide-files'],
   ])('draws the %s icon', (_kind, token, iconClass) => {
     const [icon] = iconsRestoredInEffect(token);
@@ -86,6 +85,14 @@ describe('composer mention chip', () => {
     expect(chip).toHaveTextContent('a.ts');
     expect(chip).toHaveAttribute('title', 'src/a.ts');
     expect(chip.querySelector('svg')).not.toBeNull();
+  });
+
+  it('names a Windows path by its file name', () => {
+    const { chip } = renderWithMention('src\\a.ts');
+
+    expect(chip).toHaveTextContent('a.ts');
+    expect(chip).not.toHaveTextContent('src');
+    expect(chip).toHaveAttribute('title', 'src\\a.ts');
   });
 
   it('takes the selected look while a selection covers it and drops it when cleared', async () => {

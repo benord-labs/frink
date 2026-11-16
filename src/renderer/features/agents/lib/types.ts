@@ -16,6 +16,7 @@ export type AgentActionContext = {
   setFilesSidebarOpen?: (open: boolean | ((prev: boolean) => boolean)) => void;
   setSettingsDialogOpen?: (open: boolean) => void;
   setSettingsActiveTab?: (tab: SettingsTab) => void;
+  openDestination?: (destination: 'flows' | 'workqueue') => void;
   setFileSearchDialogOpen?: (open: boolean) => void;
   activateFilesSidebarSearch?: () => void;
   activateActivePaneFileSearch?: () => void;
