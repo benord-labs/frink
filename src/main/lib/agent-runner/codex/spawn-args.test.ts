@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
+import configSurface from '../../../../../patches/codex/config-surface.json';
 import {
   buildCodexDynamicChatMcpUrl,
   buildSpawnArgs,
@@ -30,6 +31,16 @@ describe('buildSpawnArgs', () => {
     '--disable',
     'multi_agent_v2',
   ];
+
+  it('disables exactly the features the pinned Codex config surface routes as disabled', () => {
+    const args = buildSpawnArgs();
+    const disabled = args.filter((_, index) => args[index - 1] === '--disable').sort();
+    const routed = Object.entries(configSurface.features)
+      .filter(([, feature]) => feature.route === 'disabled-by-frink')
+      .map(([key]) => key)
+      .sort();
+    expect(disabled).toEqual(routed);
+  });
 
   it('disables every unrouted execution surface before appending config args', () => {
     expect(buildSpawnArgs(['--config', 'x=1'])).toEqual([

@@ -1536,3 +1536,41 @@ describe('validateGraph webhook trigger event id', () => {
     expect(validateGraph(webhookGraph('story_deleted')).warnings ?? []).toEqual([]);
   });
 });
+
+describe('validateGraph webhook trigger filters', () => {
+  function filteredGraph(filters: object[]) {
+    return linearFlowGraph([
+      {
+        id: 't',
+        blockType: 'webhook_trigger',
+        label: 'W',
+        config: { integrationId: 'i', eventType: 'story_assigned', conditions: { filters } },
+      },
+      { id: 'a', blockType: 'run_command', config: { ...TEST_RUN_STEP } },
+    ]);
+  }
+
+  it('warns first, in save and run mode, without a provider, and still saves', () => {
+    const graph = filteredGraph([{ field: 'storyName', operator: 'regex', value: 'x' }]);
+    graph.nodes.push({
+      id: 'orphan',
+      blockType: 'run_command',
+      position: { x: 0, y: 0 },
+      config: { ...TEST_RUN_STEP },
+    });
+    for (const mode of ['save', 'run'] as const) {
+      const r = validateGraph(graph, { mode });
+      expect(r.valid).toBe(true);
+      expect(r.warnings?.[0]).toBe(
+        `Webhook trigger "W" filter 1 (unknown operator 'regex') can't match any event, so this trigger will never start. Fix or remove it.`,
+      );
+    }
+  });
+
+  it('stays silent for filters the matcher can read', () => {
+    const r = validateGraph(
+      filteredGraph([{ field: 'labels', operator: 'in_list', value: ['bug'] }]),
+    );
+    expect(r.warnings ?? []).toEqual([]);
+  });
+});

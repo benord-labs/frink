@@ -29,9 +29,11 @@ import {
   throughLink,
 } from './skill-guarded-write';
 import {
+  adoptedProvenance,
   clashesWithKept,
   contentHash,
   leftoverLinks,
+  sameDir,
   splitLeftovers,
   withKeptEntries,
   type Provenance,
@@ -391,6 +393,16 @@ async function projectToTarget(
   // copy in full and only then swaps the link out.
   if (lst?.isSymbolicLink()) {
     // fall through to a fresh copy
+  } else if (
+    lst &&
+    !isFrinkProjection(target) &&
+    isFrinkShipped(target) &&
+    !(await sameDir(target, sourceDir))
+  ) {
+    // A shipped copy left without a marker. Its baseline is recorded first: the update replaces it.
+    const adopted = await adoptedProvenance(target);
+    await writeProvenance(target, adopted);
+    return updateProjection(skillName, sourceDir, target, adopted);
   } else if (lst && !isFrinkProjection(target)) {
     // User-authored real dir — never clobber.
     log.info(`[skill-projection] ${skillName}: non-frink skill dir at ${target}; skipping`);

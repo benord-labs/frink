@@ -3,18 +3,17 @@ import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
 import { keepPreviousData } from '@tanstack/react-query';
 import { useAtomValue } from 'jotai';
-import { ChevronRight, FileText, Bot, Files, Loader2, ToolCase, FolderOpen } from 'lucide-react';
+import { ChevronRight, Bot, Files, Loader2, ToolCase, FolderOpen } from 'lucide-react';
 import { createElement, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
 import {
   isGlobalSearchNonFileSubpage as checkGlobalSearchNonFileSubpage,
-  computeBriefingsHookLoading,
+  showsEmptyMentionList,
 } from '@/lib/mentions/agents-file-mention-search-helpers';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
 import { MENTION_PREFIXES } from '../../../../shared/lib/mentions/mention-grammar';
-import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 import {
   Tooltip,
   TooltipContent,
@@ -57,15 +56,12 @@ type AgentsFileMentionProps = {
   repository?: string;
   branch?: string; // For fetching files from specific branch via GitHub API
   projectPath?: string; // For fetching files from local project directory (desktop)
-  /** UUID of the project this chat is associated with (used for briefing queries) */
-  projectId?: string;
   changedFiles?: ChangedFile[]; // Files changed in current sub-chat (shown at top)
   // Subpage navigation state
   showingFilesList?: boolean;
   showingSkillsList?: boolean;
   showingAgentsList?: boolean;
   showingToolsList?: boolean;
-  showingBriefingsList?: boolean;
 };
 
 // Category navigation options (shown on root view)
@@ -74,7 +70,6 @@ const CATEGORY_OPTIONS: FileMentionOption[] = [
   { id: 'skills', label: 'Skills', type: 'category', path: '', repository: '' },
   { id: 'agents', label: 'Agents', type: 'category', path: '', repository: '' },
   { id: 'tools', label: 'MCP Tools', type: 'category', path: '', repository: '' },
-  { id: 'briefings', label: 'Briefings', type: 'category', path: '', repository: '' },
 ];
 
 // Tool icon component (MCP icon) - slightly larger for visibility
@@ -102,7 +97,7 @@ function formatToolName(toolName: string): string {
 // Create SVG icon element in DOM based on file extension or type
 export function createFileIconElement(
   filename: string,
-  type?: 'file' | 'folder' | 'skill' | 'agent' | 'category' | 'tool' | 'briefing',
+  type?: FileMentionOption['type'],
 ): SVGSVGElement {
   // biome-ignore lint/style/useNamingConvention: component type variable
   const IconComponent =
@@ -112,11 +107,9 @@ export function createFileIconElement(
         ? Bot
         : type === 'tool'
           ? ToolIcon
-          : type === 'briefing'
-            ? FileText
-            : type === 'folder'
-              ? FolderOpen
-              : (getFileIconByExtension(filename) ?? Files);
+          : type === 'folder'
+            ? FolderOpen
+            : (getFileIconByExtension(filename) ?? Files);
   // Note: "category" type will use the default file icon based on filename, which is fine since
   // categories won't be inserted as mentions in the editor (they navigate to subpages)
 
@@ -210,47 +203,27 @@ function CategoryIcon({ className, categoryId }: { className?: string; categoryI
       className;
     return <OriginalMCPIcon className={sizeClass} />;
   }
-  if (categoryId === 'briefings') {
-    return <FileText className={className} />;
-  }
   return <Files className={className} />;
 }
 
-// Briefing icon wrapper for option icon
-function BriefingIconWrapper({ className }: { className?: string }) {
-  return <FileText className={className} />;
-}
+const OPTION_TYPE_ICONS = new Map<FileMentionOption['type'], typeof FolderIcon>([
+  ['skill', SkillIconWrapper],
+  ['agent', CustomAgentIconWrapper],
+  ['tool', ToolIcon],
+  ['folder', FolderIcon],
+]);
 
 /**
- * Get icon component for a file, folder, skill, agent, tool, briefing, or category option
+ * Get icon component for a file, folder, skill, agent, tool, or category option
  */
-function getOptionIcon(option: {
-  id?: string;
-  label: string;
-  type?: 'file' | 'folder' | 'skill' | 'agent' | 'category' | 'tool' | 'briefing';
-}) {
+function getOptionIcon(option: Pick<FileMentionOption, 'label' | 'type'> & { id?: string }) {
   if (option.type === 'category') {
     // Return a wrapper component for categories
     return function CategoryIconWrapper({ className }: { className?: string }) {
       return <CategoryIcon className={className} categoryId={option.id || ''} />;
     };
   }
-  if (option.type === 'skill') {
-    return SkillIconWrapper;
-  }
-  if (option.type === 'agent') {
-    return CustomAgentIconWrapper;
-  }
-  if (option.type === 'tool') {
-    return ToolIcon;
-  }
-  if (option.type === 'briefing') {
-    return BriefingIconWrapper;
-  }
-  if (option.type === 'folder') {
-    return FolderIcon;
-  }
-  return getFileIconByExtension(option.label) ?? Files;
+  return OPTION_TYPE_ICONS.get(option.type) ?? getFileIconByExtension(option.label) ?? Files;
 }
 
 /**
@@ -440,13 +413,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   repository,
   branch,
   projectPath,
-  projectId,
   changedFiles = [],
   showingFilesList = false,
   showingSkillsList = false,
   showingAgentsList = false,
   showingToolsList = false,
-  showingBriefingsList = false,
 }: AgentsFileMentionProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -477,22 +448,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     },
   );
   const customAgents = Array.isArray(rawCustomAgents) ? rawCustomAgents : [];
-
-  // Fetch flow briefings for this project — prefetch as soon as projectId is known
-  const {
-    data: rawBriefings,
-    isPending: briefingsPending,
-    isLoading: briefingsLoading,
-    isFetching: briefingsFetching,
-    error: briefingsError,
-  } = trpc.flows.getBriefings.useQuery(
-    { projectId: projectId ?? undefined },
-    {
-      enabled: !!projectId,
-      staleTime: 60 * 1000, // 1 minute
-    },
-  );
-  const briefings = Array.isArray(rawBriefings) ? rawBriefings : [];
 
   // Debounce search text (300ms to match canvas implementation).
   // Clearing applies immediately so subpage navigation doesn't flash stale "no matches".
@@ -706,49 +661,16 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     });
   }, [allToolOptions, debouncedSearchText]);
 
-  // Build briefing options with briefing text embedded in the token ID at construction time.
-  // Format: briefing:<flowId>:<base64Name>:<base64Text>
-  // This matches the quote/code pattern: content embedded at selection time, no async at send.
-  const allBriefingOptions: FileMentionOption[] = useMemo(() => {
-    return briefings.map((b) => {
-      const base64Name = encodeForMentionToken(b.name);
-      const base64Text = encodeForMentionToken(b.briefing);
-      return {
-        id: `${MENTION_PREFIXES.BRIEFING}${b.id}:${base64Name}:${base64Text}`,
-        label: b.name,
-        path: '',
-        repository: '',
-        truncatedPath: '',
-        type: 'briefing' as const,
-      };
-    });
-  }, [briefings]);
-
-  // Filtered briefing options based on search
-  const briefingOptions: FileMentionOption[] = useMemo(() => {
-    if (!debouncedSearchText) return allBriefingOptions;
-    const searchLower = debouncedSearchText.toLowerCase();
-    return allBriefingOptions.filter((b) => matchesMultiWordSearch(b.label, searchLower));
-  }, [allBriefingOptions, debouncedSearchText]);
-
   // Check if we have skills, agents, or tools
   // Use base data (not search-filtered) for stable category display
   const hasSkills = skills.length > 0;
   const hasAgents = customAgents.length > 0;
   const hasTools = allToolOptions.length > 0;
-  const hasBriefings = allBriefingOptions.length > 0;
-  // In a project-scoped chat, never collapse to file-only: Briefings category is always listed and
-  // API may return 0 rows (flow on another project id, draft-only briefing, etc.).
-  const hasOnlyFiles = !projectId && !hasSkills && !hasAgents && !hasTools && !hasBriefings;
+  const hasOnlyFiles = !hasSkills && !hasAgents && !hasTools;
 
   // Determine if we're in a subpage view (or showing files directly when no skills/agents/tools)
   const isInSubpage =
-    showingFilesList ||
-    showingSkillsList ||
-    showingAgentsList ||
-    showingToolsList ||
-    showingBriefingsList ||
-    hasOnlyFiles;
+    showingFilesList || showingSkillsList || showingAgentsList || showingToolsList || hasOnlyFiles;
 
   // Filter category options based on available data
   const availableCategoryOptions = useMemo(() => {
@@ -757,9 +679,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       if (category.id === 'skills') return hasSkills;
       if (category.id === 'agents') return hasAgents;
       if (category.id === 'tools') return hasTools;
-      // Always show Briefings so root search can match "brief" and users reach the subpage
-      // (empty API still yields an explicit empty state; hiding the row caused 0 global-search hits).
-      if (category.id === 'briefings') return true;
       return true;
     });
   }, [hasSkills, hasAgents, hasTools]);
@@ -768,9 +687,9 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // Subpage views show only that category's items
   // Root view shows changed files + category navigation options
   // Search filters globally in root view, within category in subpage
-  // If no skills, agents, tools, or briefings, skip root view and show files directly
+  // If no skills, agents, or tools, skip root view and show files directly
   const options: FileMentionOption[] = useMemo(() => {
-    // SUBPAGE: Files (or if no skills/agents/tools/briefings, show files directly)
+    // SUBPAGE: Files (or if no skills/agents/tools, show files directly)
     if (showingFilesList || hasOnlyFiles) {
       const allFiles = [...changedFileOptions, ...repoFileOptions];
       if (debouncedSearchText) {
@@ -794,14 +713,9 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       return toolOptions; // already filtered by search in toolOptions memo
     }
 
-    // SUBPAGE: Briefings
-    if (showingBriefingsList) {
-      return briefingOptions; // already filtered by search in briefingOptions memo
-    }
-
     // ROOT VIEW
     if (debouncedSearchText) {
-      // Global search: search across changed files + categories + skills + agents + tools + briefings + repo files
+      // Global search: search across changed files + categories + skills + agents + tools + repo files
       const searchLower = debouncedSearchText.toLowerCase();
       const filteredCategories = availableCategoryOptions.filter((c) =>
         c.label.toLowerCase().includes(searchLower),
@@ -812,7 +726,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
         ...skillOptions,
         ...agentOptions,
         ...toolOptions,
-        ...briefingOptions,
         ...repoFileOptions,
       ];
       return sortFilesByRelevance(allItems, debouncedSearchText);
@@ -825,14 +738,12 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     showingSkillsList,
     showingAgentsList,
     showingToolsList,
-    showingBriefingsList,
     debouncedSearchText,
     changedFileOptions,
     repoFileOptions,
     skillOptions,
     agentOptions,
     toolOptions,
-    briefingOptions,
     hasOnlyFiles,
     availableCategoryOptions,
   ]);
@@ -844,7 +755,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const prevShowingSkillsListRef = useRef(showingSkillsList);
   const prevShowingAgentsListRef = useRef(showingAgentsList);
   const prevShowingToolsListRef = useRef(showingToolsList);
-  const prevShowingBriefingsListRef = useRef(showingBriefingsList);
 
   // CONSOLIDATED: Single useLayoutEffect for selection management (was 3 separate)
   useLayoutEffect(() => {
@@ -854,8 +764,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       showingFilesList !== prevShowingFilesListRef.current ||
       showingSkillsList !== prevShowingSkillsListRef.current ||
       showingAgentsList !== prevShowingAgentsListRef.current ||
-      showingToolsList !== prevShowingToolsListRef.current ||
-      showingBriefingsList !== prevShowingBriefingsListRef.current;
+      showingToolsList !== prevShowingToolsListRef.current;
 
     // Reset to 0 when opening, search changes, or subpage changes
     if (didJustOpen || didSearchChange || didSubpageChange) {
@@ -873,7 +782,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     prevShowingSkillsListRef.current = showingSkillsList;
     prevShowingAgentsListRef.current = showingAgentsList;
     prevShowingToolsListRef.current = showingToolsList;
-    prevShowingBriefingsListRef.current = showingBriefingsList;
   }, [
     isOpen,
     debouncedSearchText,
@@ -883,7 +791,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     showingSkillsList,
     showingAgentsList,
     showingToolsList,
-    showingBriefingsList,
   ]);
 
   // Reset placement when closed
@@ -975,88 +882,53 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     !showingSkillsList &&
     !showingAgentsList &&
     !showingToolsList &&
-    !showingBriefingsList &&
     !hasOnlyFiles;
 
   const fileHeavyView = showingFilesList || hasOnlyFiles;
   const showFullPanelLoadingFiles = filesLoading && options.length === 0 && fileHeavyView;
-  // TanStack Query v5: treat pending/loading/fetching together so we never flash empty while the
-  // briefings query is in flight (isPending alone can miss edge frames vs isFetching/isLoading).
-  const briefingsHookLoading = computeBriefingsHookLoading({
-    projectId,
-    briefingsError,
-    briefingsPending,
-    briefingsLoading,
-    briefingsFetching,
-  });
-  const showBriefingsPanelLoading =
-    showingBriefingsList && briefingsHookLoading && options.length === 0;
-  // Root global search merges file + briefing results; suppress empty until both sources settle.
+  // Root global search merges file results; suppress empty until they settle.
   const isGlobalSearchNonFileSubpage = checkGlobalSearchNonFileSubpage({
     debouncedSearchText,
     fileHeavyView,
-    showingBriefingsList,
     showingSkillsList,
     showingAgentsList,
     showingToolsList,
   });
   const globalSearchAwaitingData =
-    isGlobalSearchNonFileSubpage &&
-    options.length === 0 &&
-    (filesLoading || filesFetching || briefingsHookLoading);
-  // Still show while briefings resolve even if file search already errored (avoids a blank panel).
+    isGlobalSearchNonFileSubpage && options.length === 0 && (filesLoading || filesFetching);
   const showGlobalSearchPanelLoading = globalSearchAwaitingData;
   const showFullPanelFileError = !!filesError && fileHeavyView;
-  const showBriefingsErrorRow = showingBriefingsList && !!briefingsError;
-  /** Root @ search merges briefings; surface failure without requiring Briefings subpage */
-  const showInlineRootBriefingsError =
-    isGlobalSearchNonFileSubpage && !!projectId && !!briefingsError;
-  const showMainList =
-    options.length > 0 &&
-    !(filesError && fileHeavyView) &&
-    !(showingBriefingsList && briefingsError);
+  const showMainList = options.length > 0 && !(filesError && fileHeavyView);
 
-  /** File search + briefings (root search) participate in Results; other subpages stay spinner-free on background refetch */
+  /** File search (root search) participates in Results; other subpages stay spinner-free on background refetch */
   const showHeaderSpinner =
-    (showingBriefingsList && briefingsFetching && !briefingsLoading) ||
     (fileHeavyView && filesFetching && !filesLoading) ||
-    (isRootView &&
-      !!debouncedSearchText &&
-      ((filesFetching && !filesLoading) ||
-        (!!projectId && briefingsFetching && !briefingsLoading)));
+    (isRootView && !!debouncedSearchText && filesFetching && !filesLoading);
 
   const showInlineRootFileError =
     !!filesError && isRootView && !!debouncedSearchText && !fileHeavyView;
 
-  const showEmptyState = (() => {
-    if (options.length > 0) return false;
-    if (showFullPanelLoadingFiles || showBriefingsPanelLoading || showGlobalSearchPanelLoading) {
-      return false;
-    }
-    if (showFullPanelFileError || showBriefingsErrorRow || showInlineRootBriefingsError) {
-      return false;
-    }
-    if (showingBriefingsList) {
-      return !briefingsHookLoading;
-    }
-    if (showingSkillsList || showingAgentsList || showingToolsList) return true;
-    if (fileHeavyView) {
-      return !filesLoading && !filesFetching && !filesError;
-    }
-    if (debouncedSearchText) {
-      return !filesLoading && !filesFetching && !briefingsHookLoading;
-    }
-    return false;
-  })();
+  const showEmptyState = showsEmptyMentionList({
+    optionCount: options.length,
+    showFullPanelLoadingFiles,
+    showGlobalSearchPanelLoading,
+    showFullPanelFileError,
+    showingSkillsList,
+    showingAgentsList,
+    showingToolsList,
+    fileHeavyView,
+    debouncedSearchText,
+    filesLoading,
+    filesFetching,
+  });
 
-  // Narrow dropdown for root view (categories only) and skills/agents/tools/briefings subpages
+  // Narrow dropdown for root view (categories only) and skills/agents/tools subpages
   // Wide dropdown for files (showingFilesList or hasOnlyFiles)
   const useNarrowWidth =
     (isRootView && !hasChangedFiles && !debouncedSearchText) ||
     showingSkillsList ||
     showingAgentsList ||
-    showingToolsList ||
-    showingBriefingsList;
+    showingToolsList;
   const dropdownWidth = useNarrowWidth ? 200 : 320;
   const itemHeight = 28;
   const headerHeight = 28; // header with py-1.5 and text-xs
@@ -1131,13 +1003,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
           </div>
         )}
 
-        {showBriefingsPanelLoading && (
-          <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>Loading briefings...</span>
-          </div>
-        )}
-
         {showGlobalSearchPanelLoading && (
           <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1152,31 +1017,17 @@ export const AgentsFileMention = memo(function AgentsFileMention({
           </div>
         )}
 
-        {showBriefingsErrorRow && (
-          <div className="h-7 px-1.5 mx-1 flex items-center text-xs text-muted-foreground">
-            Error loading briefings
-          </div>
-        )}
-
-        {showInlineRootBriefingsError && (
-          <div className="px-2.5 py-1 mx-1 text-[10px] text-muted-foreground/90 leading-snug">
-            Could not load briefings — other results may be incomplete.
-          </div>
-        )}
-
         {/* Empty state — scoped per subpage / query */}
         {showEmptyState && (
           <div className="h-7 px-1.5 mx-1 flex items-center text-xs text-muted-foreground">
             {(() => {
-              const noun = showingBriefingsList
-                ? 'briefings'
-                : showingSkillsList
-                  ? 'skills'
-                  : showingAgentsList
-                    ? 'agents'
-                    : showingToolsList
-                      ? 'tools'
-                      : 'files';
+              const noun = showingSkillsList
+                ? 'skills'
+                : showingAgentsList
+                  ? 'agents'
+                  : showingToolsList
+                    ? 'tools'
+                    : 'files';
               return debouncedSearchText
                 ? `No ${noun} matching "${debouncedSearchText}"`
                 : `No ${noun} found`;
@@ -1184,7 +1035,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
           </div>
         )}
 
-        {/* Options list — not blocked by unrelated file `isLoading`; briefings error uses row above */}
+        {/* Options list — not blocked by unrelated file `isLoading` */}
         {showMainList && (
           <>
             {/* Flat list sorted by relevance */}
@@ -1207,9 +1058,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                         ? 'Agents'
                         : showingToolsList
                           ? 'MCP Tools'
-                          : showingBriefingsList
-                            ? 'Briefings'
-                            : 'Results'}
+                          : 'Results'}
                 </span>
                 {showHeaderSpinner && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
               </div>

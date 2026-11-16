@@ -3,6 +3,7 @@ export {
   beginLiveStreamCompletion,
   finishHeldLiveStreams,
   getLiveStreamSeed,
+  listLiveStreamActivity,
   listLiveStreamHeaders,
   markLiveStreamCompletionFinalized,
   recordLiveStreamStart,

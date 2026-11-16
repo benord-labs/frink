@@ -5,7 +5,6 @@
 import { createExecutionSenders } from './streaming/live-stream/execution-senders';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { eq } from 'drizzle-orm';
 import { app } from 'electron';
@@ -17,7 +16,7 @@ import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidde
 import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-message-markers';
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
 import type { ChatMode } from '../../../shared/types/chat-mode';
-import type { ExecutionSettings } from '../../../shared/types/execution';
+import type { ConversationTurn, ExecutionSettings } from '../../../shared/types/execution';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
@@ -120,13 +119,14 @@ import { deliverProviderConfig } from './execution/provider-delivery';
 import { startAcpTurn } from './execution/acp-turn';
 import { startCopilotTurn } from './execution/copilot-turn';
 import { startCursorTurn } from './execution/cursor-turn';
+import { lastFinishMetadata, stampTurnUsage } from './execution/turn-usage';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
-
 import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
   carryUndeliveredMessages,
   codexComposerContext,
+  forgetUndeliveredOnClear,
   isPersonAuthored,
   projectComposerContext,
   replaceCarriedWithHistory,
@@ -207,8 +207,7 @@ export const executionAbortSources = new Map<string, string>();
  * out of plan mode while resuming the SDK session, the persisted transcript still contains the
  * SDK's `<system-reminder>Plan mode is active</system-reminder>`. Without an exit reminder the
  * model parrots that stale state. We mirror Claude Code TUI's `plan_mode_exit` attachment by
- * detecting the transition here and delivering a one-shot exit reminder — via the UserPromptSubmit
- * hook on the Claude path, or a prompt prepend on Codex (see `operator-reminders.ts`).
+ * detecting the transition here and delivering a one-shot exit reminder (`operator-reminders.ts`).
  */
 const lastExecutedModeBySubChat = new Map<string, ChatMode>();
 
@@ -278,7 +277,7 @@ type ExecuteRequestPayload = {
   userMessageParts?: MessagePart[];
   mode: ChatMode;
   /** Conversation history for context */
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   /** Execution settings from the requesting machine (validated by socket server) */
   settings?: ExecutionSettings;
   /** Assistant message ID (provided by server for new architecture) */
@@ -355,7 +354,7 @@ export async function handleRemoteExecute(
 
   // Markers persist for the renderer (hide the bubble, or draw it as a card) — never for the model.
   const unmarked = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
-  const composer = isPersonAuthored(payload.delivery)
+  const composer = isPersonAuthored(payload.delivery, rawMessage)
     ? projectComposerContext(unmarked)
     : { text: unmarked, notes: [] };
   const message = composer.text;
@@ -542,8 +541,8 @@ export async function handleRemoteExecute(
     // Owed from registration on: only a registered run can be stopped before its prompt is taken.
     const undelivered = carryUndeliveredMessages(
       subChatId,
-      message,
-      isPersonAuthored(payload.delivery),
+      { raw: unmarked, prompt: message },
+      isPersonAuthored(payload.delivery, rawMessage),
     );
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');
@@ -933,6 +932,7 @@ export async function handleRemoteExecute(
             prompt: codexFullPrompt,
             messageProvenance: provenance,
             composerContext: codexComposerContext(composer.notes),
+            operatorReminders: turnReminders.codexContext,
             freshThreadFallbackPrompt: codexFreshFallbackPrompt,
             ...(flowRunEnded && {
               flowRunEnded: {
@@ -1003,14 +1003,17 @@ export async function handleRemoteExecute(
         if (isCodex && codexSessionId) {
           setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
         }
+        const codexFinalParts = buildFinalPartsForPersist(mode, codexChunks);
         sendExecuteCompleteDeferred({
           chatId,
           subChatId,
           assistantMessageId: msgId,
           sessionId: codexSessionId,
           metadata: codexMetadata,
-          finalParts: buildFinalPartsForPersist(mode, codexChunks),
+          finalParts: codexFinalParts,
         });
+        // No provider on this path reports compactions to Frink yet.
+        await stampTurnUsage(linkedTaskSignalTaskId, msgId, codexMetadata, codexFinalParts, false);
         log.info(`[Socket Executor] ${agentLabel} execution complete for ${subChatId}`);
       } catch (err) {
         if (abortController.signal.aborted) throw err;
@@ -1164,7 +1167,7 @@ export async function handleRemoteExecute(
       claimed = false,
     ): Promise<void> => {
       // Create transformer for SDK messages -> UI chunks
-      const transform = createTransformer();
+      const transform = createTransformer(() => session.stopHook?.defersGoalCheck === true);
 
       // Stream messages as they come
       const toolNameByCallId = new Map<string, string>();
@@ -1319,6 +1322,7 @@ export async function handleRemoteExecute(
         // An aborted turn's session is already closing (bindTurnAbort); its late frames are dropped.
         if (abortController.signal.aborted) return;
         if (sdkMessage.type === 'result') claudeResultErrored = sdkMessage.is_error;
+        forgetUndeliveredOnClear(subChatId, fullPrompt, sdkMessage);
 
         // First live frame of a plan-auto turn: arm the during-plan reviewer (plan→default→plan flip)
         // before the model emits any tool. The query stays in 'plan' throughout — never 'auto'.
@@ -1658,6 +1662,7 @@ export async function handleRemoteExecute(
               flowPlanAutoApprove && mode === 'plan' ? { projectId, settings, signalTaskId } : null,
             nextMessageIndex: turn.nextMessageIndex,
             buildFinalParts: (chunks) => buildFinalPartsForPersist(mode, chunks),
+            usageTaskId: signalTaskId,
             // Injected, not imported there: see the wake-hold-io module doc (import cycle).
             send: {
               sendStreamChunkDirect: sendRunStreamChunkDirect,
@@ -1799,22 +1804,14 @@ export async function handleRemoteExecute(
     delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
 
     // 5. Extract metadata from finish chunk if present (use last: failed resume can leave an earlier `finish` before retry succeeds)
-    let finishChunk: UIMessageChunk | undefined;
-    for (let i = collectedChunks.length - 1; i >= 0; i--) {
-      const c = collectedChunks[i];
-      if (c.type === 'finish') {
-        finishChunk = c;
-        break;
-      }
-    }
-    const metadata =
-      finishChunk && 'messageMetadata' in finishChunk ? finishChunk.messageMetadata : undefined;
+    const metadata = lastFinishMetadata(collectedChunks);
 
     // 6a. Clean-stream park (usage limit / API error as the final text part) — awaited before any
     // IPC emit so the renderer's completion refetch reads the parked status.
     const finalParts = buildFinalPartsForPersist(mode, collectedChunks);
     completionHasProviderError =
       (await disposeCleanStreamEnd(subChatId, finalParts)) || claudeResultErrored;
+    await stampTurnUsage(linkedTaskSignalTaskId, msgId, metadata, finalParts, true);
     // Finalize the linked signal before session disposition, then snapshot the resulting hold state.
     // Reading hasWakeHold before this await races the async wake-pump arm and can publish a terminal
     // completion for an epoch that is about to stream another burst.

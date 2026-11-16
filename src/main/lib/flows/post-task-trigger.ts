@@ -14,8 +14,17 @@ import { and, eq, exists, gte, inArray, isNotNull, notExists, sql } from 'drizzl
 import log from 'electron-log';
 import { getDatabase } from '../db';
 import { isBlankProjectId, listActiveForType } from '../db/repos/flow-trigger-bindings';
+import { chatLinkId } from '../db/repos/task-queries/linked-flow-runs';
 import type { FlowTriggerBinding, Task } from '../db/schema';
-import { flowRuns, flows, flowTriggerBindings, flowVersions, tasks } from '../db/schema';
+import {
+  chats,
+  flowRuns,
+  flows,
+  flowTriggerBindings,
+  flowVersions,
+  projects,
+  tasks,
+} from '../db/schema';
 import { type StartFlowRunInput, startFlowRun } from './start';
 
 const POLL_INTERVAL_MS = 2_000;
@@ -46,6 +55,11 @@ export type PostTaskTriggerDeps = {
 };
 const realDeps = (): PostTaskTriggerDeps => ({ db: getDatabase(), startFlowRun });
 
+/** The summary the task's agent reported when it finished; any other result shape has none. */
+const agentSummary = sql<
+  string | null
+>`(CASE WHEN json_valid(${tasks.result}) AND json_type(${tasks.result}, '$.agentSignal.summary') = 'text' THEN json_extract(${tasks.result}, '$.agentSignal.summary') END)`;
+
 /** (task, binding) pairs that should fire now: active binding, startable flow, unfired key. */
 export function selectPendingPairs(db: ReturnType<typeof getDatabase>) {
   return db
@@ -54,11 +68,24 @@ export function selectPendingPairs(db: ReturnType<typeof getDatabase>) {
       projectId: tasks.projectId,
       status: tasks.status,
       title: tasks.title,
+      source: tasks.source,
+      result: agentSummary,
       completedAt: tasks.completedAt,
+      projectPath: projects.path,
+      chatId: chats.id,
+      subChatId: chatLinkId(tasks.result, '$.subChatId'),
+      branch: chats.branch,
+      baseBranch: chats.baseBranch,
+      worktreePath: chats.worktreePath,
       bindingId: flowTriggerBindings.id,
       flowId: flowTriggerBindings.flowId,
     })
     .from(tasks)
+    .leftJoin(projects, eq(projects.id, tasks.projectId))
+    .leftJoin(
+      chats,
+      and(eq(chats.id, chatLinkId(tasks.result, '$.chatId')), eq(chats.projectId, tasks.projectId)),
+    )
     .innerJoin(
       flowTriggerBindings,
       and(
@@ -89,6 +116,32 @@ export function selectPendingPairs(db: ReturnType<typeof getDatabase>) {
     );
 }
 
+type PendingPair = Awaited<ReturnType<typeof selectPendingPairs>>[number];
+
+function buildPostTaskTriggerContext(pair: PendingPair) {
+  const optional = {
+    result: pair.result,
+    projectPath: pair.projectPath,
+    chatId: pair.chatId,
+    // Only beside the chat it belongs to — never pair a sub-chat with a chat that did not resolve.
+    subChatId: pair.chatId ? pair.subChatId : null,
+    branch: pair.branch,
+    baseBranch: pair.baseBranch,
+    worktreePath: pair.worktreePath,
+  };
+  return {
+    _frinkTrigger: 'post_task_trigger',
+    bindingId: pair.bindingId,
+    taskId: pair.taskId,
+    projectId: pair.projectId,
+    taskStatus: pair.status,
+    taskTitle: pair.title,
+    source: pair.source,
+    taskCompletedAt: pair.completedAt?.toISOString() ?? null,
+    ...Object.fromEntries(Object.entries(optional).filter(([, value]) => value)),
+  };
+}
+
 function warnUnscopedBindingsOnce(bindings: readonly FlowTriggerBinding[]): void {
   for (const binding of bindings) {
     if (!isBlankProjectId(binding.projectId) || warnedUnscopedBindings.has(binding.id)) continue;
@@ -114,15 +167,7 @@ export async function runPostTaskTriggerTick(
     try {
       await deps.startFlowRun({
         flowId: pair.flowId,
-        triggerContext: {
-          _frinkTrigger: 'post_task_trigger',
-          bindingId: pair.bindingId,
-          taskId: pair.taskId,
-          projectId: pair.projectId,
-          taskStatus: pair.status,
-          taskTitle: pair.title,
-          taskCompletedAt: pair.completedAt?.toISOString() ?? null,
-        },
+        triggerContext: buildPostTaskTriggerContext(pair),
         idempotencyKey,
       });
       fired += 1;

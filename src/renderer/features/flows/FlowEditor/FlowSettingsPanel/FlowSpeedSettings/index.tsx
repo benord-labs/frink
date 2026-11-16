@@ -8,10 +8,9 @@ import {
 import type { CodexSpeed } from '../../../../../../shared/types/execution';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../../shared/types/flow';
-import { Label } from '../../../../../components/ui/label';
-import { Switch } from '../../../../../components/ui/switch';
 import { useCodexAccountCatalog } from '../../../../../lib/codex/use-codex-account-catalog';
 import { patch } from '../patch';
+import { SettingSwitchRow } from '../SettingSwitchRow';
 
 /** Copy for the Flow-level Fast switch; keeps speed and ChatGPT credit use as separate axes. */
 export function fastModeDescription(defaultModelId: string | undefined): string {
@@ -69,7 +68,7 @@ export function FlowSpeedSettings({
   return (
     <>
       {(offersFast || speed === 'fast') && (
-        <SpeedRow
+        <SettingSwitchRow
           id="flow-settings-codex-fast"
           label="Fast mode"
           description={fastModeDescription(modelId)}
@@ -78,7 +77,7 @@ export function FlowSpeedSettings({
         />
       )}
       {(ultrafastCredits !== null || speed === 'ultrafast') && (
-        <SpeedRow
+        <SettingSwitchRow
           id="flow-settings-codex-ultrafast"
           label="Ultrafast mode"
           description={ultrafastDescription(ultrafastCredits)}
@@ -87,31 +86,5 @@ export function FlowSpeedSettings({
         />
       )}
     </>
-  );
-}
-
-function SpeedRow({
-  id,
-  label,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  id: string;
-  label: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}): ReactElement {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="grid min-w-0 flex-1 gap-0.5">
-        <Label htmlFor={id} className="text-xs font-medium">
-          {label}
-        </Label>
-        <p className="text-[11px] text-muted-foreground">{description}</p>
-      </div>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
   );
 }

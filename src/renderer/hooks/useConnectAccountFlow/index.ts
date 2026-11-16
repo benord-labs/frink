@@ -50,7 +50,7 @@ export type ConnectAccountFlow<TDetection> = {
   setAccountLabel: (value: string) => void;
   handleBack: () => void;
   handleRefresh: () => Promise<void>;
-  handleConnect: () => Promise<void>;
+  handleConnect: (fresh?: TDetection) => Promise<void>;
   dismissError: () => void;
 };
 
@@ -114,8 +114,9 @@ export function useConnectAccountFlow<TDetection, TInput>({
     setIsRefreshing(false);
   };
 
-  const handleConnect = async () => {
-    const label = accountLabel.trim();
+  /** `fresh` is a detection read just now, before a render could give this hook its label. */
+  const handleConnect = async (fresh?: TDetection) => {
+    const label = accountLabel.trim() || (fresh ? deriveLabel(fresh) : null) || '';
     if (!label) {
       setErrorMessage('Please enter an account label.');
       setFlowState('error');
@@ -126,7 +127,9 @@ export function useConnectAccountFlow<TDetection, TInput>({
     setErrorMessage(null);
 
     try {
-      await connectMutation.mutateAsync(buildConnectInput(label, { detection, isReauthFlow }));
+      await connectMutation.mutateAsync(
+        buildConnectInput(label, { detection: fresh ?? detection, isReauthFlow }),
+      );
       await Promise.all([
         trpcUtils.claudeCode.listAccounts.invalidate(),
         trpcUtils.claudeCode.getResolvedAccount.invalidate(),

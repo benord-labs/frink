@@ -56,6 +56,22 @@ describe('openWorkQueueTaskChat', () => {
     expect(fresh.navigate).toHaveBeenCalledWith('chat-1', 'sub-1');
     expect(stale.navigate).not.toHaveBeenCalled();
   });
+
+  it('stamps the seeded task prompt as the Work Queue’s, not a person’s', async () => {
+    const seeded = actions();
+
+    await openWorkQueueTaskChat({ taskId: 'task-1', prompt: 'prompt', chatId: 'chat-1' }, seeded);
+
+    expect(seeded.seedUserMessageIfEmpty).toHaveBeenCalledWith({
+      id: 'sub-1',
+      message: {
+        id: 'msg-task-task-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'prompt' }],
+        metadata: { source: 'work-queue' },
+      },
+    });
+  });
 });
 
 describe('startWorkQueuePlanExecution', () => {

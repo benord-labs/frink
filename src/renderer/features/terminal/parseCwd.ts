@@ -1,3 +1,5 @@
+import { decodeUriPath } from '../../../shared/lib/path-normalization';
+
 /**
  * Parse current working directory from terminal output.
  * Shells can report the cwd via OSC 7 escape sequences.
@@ -23,12 +25,7 @@ export function parseCwd(data: string): string | null {
   let match: RegExpExecArray | null = OSC7_PATTERN_REGEX.exec(data);
   while (match !== null) {
     if (match[1]) {
-      try {
-        lastCwd = decodeURIComponent(match[1]);
-      } catch {
-        // Invalid URL encoding, use as-is
-        lastCwd = match[1];
-      }
+      lastCwd = decodeUriPath(match[1]);
     }
     match = OSC7_PATTERN_REGEX.exec(data);
   }

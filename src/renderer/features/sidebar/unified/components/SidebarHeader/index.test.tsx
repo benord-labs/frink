@@ -3,24 +3,28 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createStore, Provider } from 'jotai';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { floatingBadgeActiveAtom } from '@/hooks/use-easter-eggs';
 
 import { SidebarHeader } from './index';
 
 // The outer shell pulls in tooltip/input/kbd plumbing that's irrelevant to the
-// long-press × dodge wiring. Render the titleIcon plus a bare input carrying the
-// placeholder, which is the only other prop this suite asserts on.
+// long-press × dodge wiring. Render the titleIcon, a bare input carrying the
+// placeholder, and the search accessory slot.
 vi.mock('../../../components/SidebarHeaderWithSearch', () => ({
   SidebarHeaderWithSearch: ({
     titleIcon,
     searchPlaceholder,
+    searchAccessory,
   }: {
     titleIcon: ReactNode;
     searchPlaceholder: string;
+    searchAccessory?: ReactNode;
   }) => (
     <>
       {titleIcon}
       <input placeholder={searchPlaceholder} />
+      {searchAccessory}
     </>
   ),
 }));
@@ -35,11 +39,19 @@ class ResizeObserverStub {
 
 function storeWrapper(store: ReturnType<typeof createStore>) {
   return function Wrapper({ children }: { children: ReactNode }) {
-    return <Provider store={store}>{children}</Provider>;
+    return (
+      <Provider store={store}>
+        <TooltipProvider>{children}</TooltipProvider>
+      </Provider>
+    );
   };
 }
 
-function renderHeader(store: ReturnType<typeof createStore>, showArchived = false) {
+function renderHeader(
+  store: ReturnType<typeof createStore>,
+  showArchived = false,
+  showFlowChatsFilter = false,
+) {
   const Wrapper = storeWrapper(store);
   const searchInputRef = { current: null };
   return render(
@@ -49,6 +61,7 @@ function renderHeader(store: ReturnType<typeof createStore>, showArchived = fals
         onSearchChange={() => {}}
         searchInputRef={searchInputRef}
         showArchived={showArchived}
+        showFlowChatsFilter={showFlowChatsFilter}
       />
     </Wrapper>,
   );
@@ -101,6 +114,17 @@ describe('SidebarHeader — search placeholder scope', () => {
 
     renderHeader(createStore(), false);
     expect(screen.getByPlaceholderText('Search...')).toBeTruthy();
+  });
+});
+
+describe('SidebarHeader — Flow-chat filter button', () => {
+  it('renders the filter button only when asked to', () => {
+    renderHeader(createStore(), false, true);
+    expect(screen.getByRole('button', { name: 'Hide Flow chats' })).toBeTruthy();
+    cleanup();
+
+    renderHeader(createStore(), false, false);
+    expect(screen.queryByRole('button', { name: 'Hide Flow chats' })).toBeNull();
   });
 });
 

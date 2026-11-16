@@ -24,7 +24,7 @@ import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboar
 import { lastSelectedModelIdAtomFamily, splitViewAtom } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
+  insertPickedCommand,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
@@ -71,6 +71,7 @@ type ChatInputAreaProps = ComposerForwardedProps & {
   onClearCodeSelection?: () => void;
   // Active file context (auto-included current file being viewed). Click to remove from context.
   activeFileName?: string | null;
+  activeFilePath?: string | null;
   /** When true, user clicked to remove — don't show indicator or include in send */
   activeFileDismissed?: boolean;
   onDismissActiveFile?: () => void;
@@ -91,53 +92,44 @@ type ChatInputAreaProps = ComposerForwardedProps & {
  * Custom comparison for memo to prevent re-renders from unstable array references.
  * Compares messages by length and last message id, changedFiles by length and paths.
  */
+/** Props compared by identity: primitives, refs (stable) and callbacks (memoized in the parent). */
+const IDENTITY_COMPARED_PROPS = [
+  'isStreaming',
+  'isCompacting',
+  'isUploading',
+  'subChatId',
+  'parentChatId',
+  'teamId',
+  'repository',
+  'projectPath',
+  'projectId',
+  'isMobile',
+  'queueLength',
+  'firstQueueItemId',
+  'activeFileDismissed',
+  'activeFileName',
+  'activeFilePath',
+  'editorRef',
+  'fileInputRef',
+  'onSend',
+  'onForceSend',
+  'onStop',
+  'onCompact',
+  'onAddAttachments',
+  'onRemoveImage',
+  'onRemoveFile',
+  'onRemoveTextContext',
+  'onAddPastedText',
+  'onRemovePastedText',
+  'onInputContentChange',
+  'onSendFromQueue',
+  'onDismissActiveFile',
+  'onClearCodeSelection',
+  'onRemoveDiffTextContext',
+] as const satisfies readonly (keyof ChatInputAreaProps)[];
+
 function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaProps): boolean {
-  // Compare primitives and stable references first (fast path)
-  if (
-    prevProps.isStreaming !== nextProps.isStreaming ||
-    prevProps.isCompacting !== nextProps.isCompacting ||
-    prevProps.isUploading !== nextProps.isUploading ||
-    prevProps.subChatId !== nextProps.subChatId ||
-    prevProps.parentChatId !== nextProps.parentChatId ||
-    prevProps.teamId !== nextProps.teamId ||
-    prevProps.repository !== nextProps.repository ||
-    prevProps.projectPath !== nextProps.projectPath ||
-    prevProps.projectId !== nextProps.projectId ||
-    prevProps.isMobile !== nextProps.isMobile ||
-    prevProps.queueLength !== nextProps.queueLength ||
-    prevProps.firstQueueItemId !== nextProps.firstQueueItemId ||
-    prevProps.activeFileDismissed !== nextProps.activeFileDismissed ||
-    prevProps.activeFileName !== nextProps.activeFileName
-  ) {
-    return false;
-  }
-
-  // Compare refs by identity (they should be stable)
-  if (
-    prevProps.editorRef !== nextProps.editorRef ||
-    prevProps.fileInputRef !== nextProps.fileInputRef
-  ) {
-    return false;
-  }
-
-  // Compare callbacks by identity (they should be memoized in parent)
-  if (
-    prevProps.onSend !== nextProps.onSend ||
-    prevProps.onForceSend !== nextProps.onForceSend ||
-    prevProps.onStop !== nextProps.onStop ||
-    prevProps.onCompact !== nextProps.onCompact ||
-    prevProps.onAddAttachments !== nextProps.onAddAttachments ||
-    prevProps.onRemoveImage !== nextProps.onRemoveImage ||
-    prevProps.onRemoveFile !== nextProps.onRemoveFile ||
-    prevProps.onRemoveTextContext !== nextProps.onRemoveTextContext ||
-    prevProps.onAddPastedText !== nextProps.onAddPastedText ||
-    prevProps.onRemovePastedText !== nextProps.onRemovePastedText ||
-    prevProps.onInputContentChange !== nextProps.onInputContentChange ||
-    prevProps.onSendFromQueue !== nextProps.onSendFromQueue ||
-    prevProps.onDismissActiveFile !== nextProps.onDismissActiveFile ||
-    prevProps.onClearCodeSelection !== nextProps.onClearCodeSelection ||
-    prevProps.onRemoveDiffTextContext !== nextProps.onRemoveDiffTextContext
-  ) {
+  if (IDENTITY_COMPARED_PROPS.some((key) => prevProps[key] !== nextProps[key])) {
     return false;
   }
 
@@ -267,6 +259,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   codeSelectionContext,
   onClearCodeSelection,
   activeFileName,
+  activeFilePath,
   activeFileDismissed = false,
   onDismissActiveFile,
   pastedTexts = [],
@@ -307,7 +300,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [showingSkillsList, setShowingSkillsList] = useState(false);
   const [showingAgentsList, setShowingAgentsList] = useState(false);
   const [showingToolsList, setShowingToolsList] = useState(false);
-  const [showingBriefingsList, setShowingBriefingsList] = useState(false);
 
   // Slash command dropdown state
   const [showSlashDropdown, setShowSlashDropdown] = useState(false);
@@ -509,10 +501,6 @@ export const ChatInputArea = memo(function ChatInputArea({
           setShowingToolsList(true);
           return;
         }
-        if (mention.id === 'briefings') {
-          setShowingBriefingsList(true);
-          return;
-        }
       }
 
       // Otherwise: insert mention as normal
@@ -523,7 +511,6 @@ export const ChatInputArea = memo(function ChatInputArea({
       setShowingSkillsList(false);
       setShowingAgentsList(false);
       setShowingToolsList(false);
-      setShowingBriefingsList(false);
     },
     [editorRef],
   );
@@ -559,7 +546,6 @@ export const ChatInputArea = memo(function ChatInputArea({
     setShowingSkillsList(false);
     setShowingAgentsList(false);
     setShowingToolsList(false);
-    setShowingBriefingsList(false);
   }, []);
 
   const handleEditorShiftTab = useCallback(() => {
@@ -574,42 +560,24 @@ export const ChatInputArea = memo(function ChatInputArea({
       editorRef.current?.clearSlashCommand();
       setShowSlashDropdown(false);
 
-      // Handle builtin commands
+      // Mode switches and compaction act here; every other pick is written into the composer
       if (command.category === 'builtin') {
         switch (command.name) {
           case 'plan':
             commitModeChange('plan');
-            break;
+            return;
           case 'agent':
             commitModeChange('agent');
-            break;
+            return;
           case 'debug':
             if (projectId) commitModeChange('debug');
-            break;
+            return;
           case 'compact':
-            // Trigger context compaction
             onCompact();
-            break;
-          // Prompt-based commands - insert into editor for user to review/send
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
+            return;
         }
-        return;
       }
-
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      insertPickedCommand(editorRef.current, command);
     },
     [commitModeChange, onCompact, editorRef, projectId],
   );
@@ -770,6 +738,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         <EditorContextChip
                           selection={codeSelectionContext}
                           fileName={attachedFileName}
+                          filePath={attachedFileName ? activeFilePath : null}
                           onRemoveSelection={() => onClearCodeSelection?.()}
                           onRemoveFile={() => onDismissActiveFile?.()}
                         />
@@ -930,7 +899,6 @@ export const ChatInputArea = memo(function ChatInputArea({
           setShowingSkillsList(false);
           setShowingAgentsList(false);
           setShowingToolsList(false);
-          setShowingBriefingsList(false);
         }}
         onSelect={handleMentionSelect}
         searchText={mentionSearchText}
@@ -938,14 +906,12 @@ export const ChatInputArea = memo(function ChatInputArea({
         teamId={teamId}
         repository={repository}
         projectPath={projectPath}
-        projectId={projectId ?? undefined}
         changedFiles={changedFiles}
         // Subpage navigation state
         showingFilesList={showingFilesList}
         showingSkillsList={showingSkillsList}
         showingAgentsList={showingAgentsList}
         showingToolsList={showingToolsList}
-        showingBriefingsList={showingBriefingsList}
       />
 
       {/* Slash command dropdown */}

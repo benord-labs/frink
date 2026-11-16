@@ -2,6 +2,7 @@ import '../start';
 import { captureFlowAdmissionException } from './activity';
 import { recoverFlowAdmissions } from './runtime';
 import './terminal-resume/dispatcher';
+import './terminal-resume/parked-dispatch';
 
 export async function recoverFlowAdmissionsAtStartup(): Promise<void> {
   try {

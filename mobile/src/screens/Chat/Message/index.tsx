@@ -1,14 +1,16 @@
 import * as Clipboard from 'expo-clipboard';
 import { useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
-import { Check, Copy, CornerDownRight, FileText, Image as ImageIcon } from 'lucide-react-native';
-import type { MobileMessage } from '@frink/shared/types/remote/mobile';
+import { Check, Copy, CornerDownRight } from 'lucide-react-native';
+import type { MobileMessage, MobileTextRun } from '@frink/shared/types/remote/mobile';
 import { GlassSurface } from '../../../ui/material';
 import { Markdown } from '../../../ui/Markdown';
 import { Text } from '../../../ui/text';
 import { radius, space, useTheme } from '../../../ui/theme';
 import { Note } from '../note';
 import { PlanCard, type PendingPlan } from '../plan';
+import { AttachmentIcon } from './mention-icon';
+import { MentionText } from './mention-text';
 import { attachmentsOf, contentGroups, copyText, type Attachment, type Group } from './parts';
 import { ToolRun } from './tool-run';
 
@@ -29,7 +31,7 @@ function Bubble({ children, compact = false }: { children: ReactNode; compact?: 
 }
 
 /** A note steered into a running turn: the user's words, tagged so it reads as mid-turn. */
-function SteerBubble({ text }: { text: string }) {
+function SteerBubble({ text, runs }: { text: string; runs?: MobileTextRun[] }) {
   const t = useTheme();
   return (
     <View
@@ -43,15 +45,21 @@ function SteerBubble({ text }: { text: string }) {
         </Text>
       </View>
       <Bubble compact>
-        <Text variant="secondary" selectable>
-          {text}
-        </Text>
+        <MentionText variant="secondary" text={text} runs={runs} />
       </Bubble>
     </View>
   );
 }
 
-/** What was attached to a message; the files themselves stay on the computer. */
+type Prose = Extract<Group, { type: 'text' }>;
+
+const ATTACHMENT_WORD = {
+  image: 'Image',
+  file: 'File',
+  text: 'Selected text',
+} satisfies Record<Attachment['kind'], string>;
+
+/** What was attached to a message, as the desktop's badges; the files stay on the computer. */
 function AttachmentChips({ items, end }: { items: Attachment[]; end: boolean }) {
   const t = useTheme();
   if (!items.length) return null;
@@ -64,32 +72,32 @@ function AttachmentChips({ items, end }: { items: Attachment[]; end: boolean }) 
         justifyContent: end ? 'flex-end' : 'flex-start',
       }}
     >
-      {items.map((item, index) => {
-        const Icon = item.kind === 'image' ? ImageIcon : FileText;
-        return (
-          <View
-            key={`${item.name}-${index}`}
-            accessibilityLabel={`${item.kind === 'image' ? 'Image' : 'File'}: ${item.name}`}
-            style={{
-              maxWidth: 240,
-              height: 32,
-              paddingHorizontal: space.md,
-              borderRadius: radius.pill,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              backgroundColor: t.fill,
-              borderWidth: 1,
-              borderColor: t.borderSubtle,
-            }}
-          >
-            <Icon size={14} color={t.muted} />
-            <Text variant="secondary" color="secondary" numberOfLines={1} style={{ flexShrink: 1 }}>
-              {item.name}
+      {items.map((item, index) => (
+        <View
+          key={`${item.name}-${index}`}
+          accessibilityLabel={`${ATTACHMENT_WORD[item.kind]}: ${[item.name, item.detail].filter(Boolean).join(' ')}`}
+          style={{
+            maxWidth: 240,
+            height: 28,
+            paddingHorizontal: space.sm,
+            borderRadius: 6,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 5,
+            backgroundColor: t.accentSoft,
+          }}
+        >
+          <AttachmentIcon item={item} />
+          <Text variant="secondary" numberOfLines={1} style={{ flexShrink: 1, fontWeight: '500' }}>
+            {item.name}
+          </Text>
+          {!!item.detail && (
+            <Text variant="secondary" color="secondary">
+              · {item.detail}
             </Text>
-          </View>
-        );
-      })}
+          )}
+        </View>
+      ))}
     </View>
   );
 }
@@ -142,7 +150,7 @@ function CopyAction({ text }: { text: string }) {
 
 function AssistantGroup({ group, plan }: { group: Group; plan?: PendingPlan }) {
   if (group.type === 'tools') return <ToolRun tools={group.tools} />;
-  if (group.type === 'steer') return <SteerBubble text={group.text} />;
+  if (group.type === 'steer') return <SteerBubble text={group.text} runs={group.runs} />;
   if (group.type === 'plan')
     return <PlanCard text={group.text} pending={plan?.id === group.id ? plan : undefined} />;
   return <Markdown content={group.text} />;
@@ -166,17 +174,23 @@ export function Message({
   const lastText = latest
     ? groups.findLastIndex((group) => group.type === 'text' || group.type === 'plan')
     : -1;
-  if (message.role === 'user')
+  if (message.role === 'user') {
+    const prose = groups.filter((group): group is Prose => group.type === 'text');
     return (
       <View testID={`message-${message.id}`} style={{ alignItems: 'flex-end', gap: 6 }}>
         <AttachmentChips items={attachments} end />
-        {!!text && (
+        {prose.length > 0 && (
           <Bubble>
-            <Text selectable>{text}</Text>
+            <View style={{ gap: space.sm }}>
+              {prose.map((group, index) => (
+                <MentionText key={`${index}-${group.text}`} text={group.text} runs={group.runs} />
+              ))}
+            </View>
           </Bubble>
         )}
       </View>
     );
+  }
   return (
     <View testID={`message-${message.id}`} style={{ alignSelf: 'stretch', gap: space.sm }}>
       {message.role === 'system' && (

@@ -1,5 +1,6 @@
 import path from 'path';
 import { buildOpenWorktreeFileInput } from '@/lib/worktree/open-worktree-file-in-editor';
+import { decodeUriPath } from '../../../shared/lib/path-normalization';
 
 // Adapted from T3 Code's markdownLinks.ts and fileLinks.ts (MIT).
 
@@ -45,14 +46,6 @@ function looksLikeHostname(segment: string, hasLine: boolean): boolean {
   );
 }
 
-function decodePath(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 function fileUrlPath(url: string): string | null {
   try {
     const parsed = new URL(url);
@@ -87,7 +80,7 @@ export function parseFileLinkTarget(url: string): FileLinkTarget | null {
   if (!local || !PATH_PREFIX.test(local)) return null;
   const anchor = HASH_LINE.exec(local);
   const file = anchor ? local.slice(0, anchor.index) : local;
-  return fileTarget(decodePath(file), Number(anchor?.[1]) || undefined);
+  return fileTarget(decodeUriPath(file), Number(anchor?.[1]) || undefined);
 }
 
 /** Reads path-shaped inline code such as `src/a.ts:42`; bare names, hosts, URLs and globs stay code. */

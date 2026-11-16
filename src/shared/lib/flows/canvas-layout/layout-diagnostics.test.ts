@@ -59,6 +59,25 @@ describe('diagnoseLayout', () => {
     expect(diagnoseLayout(graph).overlaps).toEqual({ count: 1, sample: [['fan', 'stray']] });
   });
 
+  it('measures a resized container at its author size, so it can overlap a neighbour', () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 'fan', blockType: 'fan_out', position: { x: 0, y: 0 } },
+        { id: 'body-a', blockType: 'agent', parentId: 'fan' },
+        { id: 'below', blockType: 'agent', position: { x: 0, y: 2000 } },
+      ],
+      edges: [{ id: 'e1', source: 'fan', target: 'body-a' }],
+    };
+    expect(diagnoseLayout(graph).overlaps.count).toBe(0);
+    const resized: FlowGraph = {
+      ...graph,
+      nodes: graph.nodes.map((node) =>
+        node.id === 'fan' ? { ...node, size: { width: 900, height: 2400 } } : node,
+      ),
+    };
+    expect(diagnoseLayout(resized).overlaps).toEqual({ count: 1, sample: [['fan', 'below']] });
+  });
+
   it('reports an unplaced node that lands on a placed one', () => {
     const graph: FlowGraph = {
       nodes: [

@@ -24,6 +24,7 @@ describe('parseFileLinkTarget', () => {
     ['</Users/x/My Project/My Report.md:3>', { path: '/Users/x/My Project/My Report.md', line: 3 }],
     ['/Users/x/My Project/My Report.md', { path: '/Users/x/My Project/My Report.md' }],
     ['/Users/x/My%20Project/a.ts', { path: '/Users/x/My Project/a.ts' }],
+    ['/Users/x/100%.md:4', { path: '/Users/x/100%.md', line: 4 }],
     ['file:///Users/x/a.ts', { path: '/Users/x/a.ts' }],
     ['file:///Users/x/My%20Project/a.ts#L4', { path: '/Users/x/My Project/a.ts', line: 4 }],
     ['~/notes/a.md', { path: '~/notes/a.md' }],

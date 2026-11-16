@@ -1,6 +1,6 @@
 import { and, eq, inArray, not, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { type AnySQLiteColumn, union } from 'drizzle-orm/sqlite-core';
-import { isPastFanOutLane } from '../../../flows/fan-out-state';
+import { isPastFanOutLane } from '../../../flows/fan-out/sql';
 import type { getDatabase } from '../../index';
 import { flowRuns, nodeRuns, tasks } from '../../schema';
 
@@ -15,6 +15,10 @@ export function chatLinkId(column: AnySQLiteColumn, path: ChatLinkPath): SQL<str
     string | null
   >`(CASE WHEN json_valid(${column}) THEN json_extract(${column}, ${sql.raw(`'${path}'`)}) END)`;
 }
+
+/** A post-task run's trigger names the finished task's chat for `{{trigger.chatId}}`; that chat does
+ * not own the run. The run links to it only once a step (e.g. Chat Reply) outputs the chat. */
+export const triggerChatOwnsRun = sql`(CASE WHEN json_valid(${flowRuns.triggerContext}) THEN json_extract(${flowRuns.triggerContext}, '$._frinkTrigger') END) IS NOT 'post_task_trigger'`;
 
 /** With `currentLanesOnly`, a link made inside a finished Fan Out item no longer counts. */
 function currentLaneFilter(currentLanesOnly: boolean, nodeRunId: SQLWrapper): SQL | undefined {
@@ -35,7 +39,7 @@ export function linkedFlowRunIds(
     db
       .select({ id: flowRuns.id })
       .from(flowRuns)
-      .where(matches(chatLinkId(flowRuns.triggerContext, `$.${key}`))),
+      .where(and(matches(chatLinkId(flowRuns.triggerContext, `$.${key}`)), triggerChatOwnsRun)),
     db
       .select({ id: sql<string>`${nodeRuns.flowRunId}` })
       .from(nodeRuns)

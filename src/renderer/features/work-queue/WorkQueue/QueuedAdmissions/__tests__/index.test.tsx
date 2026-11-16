@@ -5,6 +5,7 @@ import type { ComponentProps } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TriggerContext } from '../../../../../../shared/types/trigger-context';
 import { TooltipProvider } from '../../../../../components/ui/tooltip';
+import { formatWaitingSince } from '../../../../../lib/utils/format-time';
 import {
   type QueuedAdmission,
   QueuedAdmissionsView,
@@ -35,6 +36,8 @@ const queuedRows = [
     isBatchMember: false,
     priorityClass: 'resume',
     projectName: 'Frink',
+    requestedAt: new Date('2026-10-14T09:00:00Z'),
+    runFirst: false,
     subject: 'Un-ignore the atoms barrel',
     ticket: 1,
     triggerContext: shortcutTrigger,
@@ -44,6 +47,8 @@ const queuedRows = [
     isBatchMember: false,
     priorityClass: 'resume',
     projectName: null,
+    requestedAt: new Date('2026-10-14T09:05:00Z'),
+    runFirst: false,
     subject: null,
     ticket: 2,
     triggerContext: null,
@@ -53,6 +58,8 @@ const queuedRows = [
     isBatchMember: true,
     priorityClass: 'start',
     projectName: 'Frink',
+    requestedAt: new Date('2026-10-14T09:10:00Z'),
+    runFirst: false,
     subject: '#3377 atoms/index.ts',
     ticket: 3,
     triggerContext: null,
@@ -116,6 +123,49 @@ describe('QueuedAdmissions', () => {
       expect.stringContaining('Resume docs'),
       expect.stringContaining('Start checks'),
     ]);
+  });
+
+  it('puts run-first starts in their own group between resumes and other starts', () => {
+    const olderStart = {
+      ...queuedRows[2],
+      flowName: 'Nightly sweep',
+      isBatchMember: false,
+      requestedAt: new Date('2026-10-13T08:00:00Z'),
+      ticket: 4,
+    };
+    const runFirst = {
+      ...queuedRows[2],
+      flowName: 'Daily digest',
+      isBatchMember: false,
+      requestedAt: new Date('2026-10-15T07:00:00Z'),
+      runFirst: true,
+      subject: null,
+      ticket: 5,
+    };
+    renderQueue({ rows: [...queuedRows, olderStart, runFirst] });
+    const section = screen.getByRole('region', { name: 'Queued to run' });
+
+    expect(
+      within(section)
+        .getAllByRole('heading', { level: 4 })
+        .map((h) => h.textContent),
+    ).toEqual(['Resuming', 'Priority queue', 'Starting']);
+    expect(screen.getByText('Waiting in the priority queue')).toBeInTheDocument();
+    // Reorder stays inside the group, so the lone run-first row cannot move into the starts below.
+    expect(
+      screen.getByRole('button', { name: 'Move Daily digest down, Priority queue 1 of 1' }),
+    ).toBeDisabled();
+    // The oldest start, not the first row, is the one held back longest.
+    expect(section).toHaveTextContent(
+      `Oldest waiting since ${formatWaitingSince(olderStart.requestedAt)}`,
+    );
+  });
+
+  it('shows no waiting note while the priority queue is empty', () => {
+    renderQueue();
+
+    expect(screen.queryByRole('heading', { name: 'Priority queue' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Oldest waiting since/)).not.toBeInTheDocument();
   });
 
   it('requests an arrow move and keeps focus', async () => {

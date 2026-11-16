@@ -10,6 +10,7 @@ import { getDefaultClaudeCodeToken } from '../../../credentials';
 import { getChatWithProjectAccount } from '../../../db/repos/chats';
 import { getNewestFlowRunForSubChat } from '../../../db/repos/flow-runs';
 import { FLOW_RUN_ENDED_NOTICE } from '../../flow-signal/flow-run-ended';
+import { PLAN_MODE_EXIT_REMINDER, TASK_SIGNAL_DISARMED_REMINDER } from '../../operator-reminders';
 import {
   getFlowDriveInfoForSubChat,
   getLatestFlowTaskForSubChat,
@@ -217,6 +218,79 @@ function registerDisarmedTests({
     expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toContain(
       'intentionally not available',
     );
+  });
+
+  it('delivers the disarmed reminder to Codex as host context, never as prompt text', async () => {
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'codex',
+      label: 'codex-test',
+      passthrough: true,
+    });
+    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
+    mockPinnedTaskChat('task-dead-codex', 'done');
+    vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+      yield {
+        type: 'finish',
+        messageMetadata: { sessionId: 'sess-codex-reminder' },
+      } satisfies UIMessageChunk;
+    });
+
+    await handleRemoteExecute({
+      ...basePayload,
+      message: 'codex follow-up on dead chat',
+      history: [
+        { role: 'user', content: 'do the task' },
+        { role: 'assistant', content: 'done' },
+      ],
+    });
+
+    const params = vi.mocked(runCodexAgent).mock.calls[0]?.[0];
+    expect(params?.operatorReminders).toEqual({
+      frink_task_signal_disarmed: { kind: 'application', value: TASK_SIGNAL_DISARMED_REMINDER },
+    });
+    expect(params?.prompt).toContain('codex follow-up on dead chat');
+    expect(params?.prompt).not.toContain('<system-reminder>');
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+  });
+
+  // The fresh-thread fallback is built from the prompt after reminders are applied, so it carried
+  // them too; the fresh thread now gets them from the same host context instead.
+  it('keeps reminder text out of the Codex fresh-thread fallback on a resumed turn', async () => {
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'codex',
+      label: 'codex-test',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+      yield {
+        type: 'finish',
+        messageMetadata: { sessionId: 'codex-thread-resumed' },
+      } satisfies UIMessageChunk;
+    });
+
+    await handleRemoteExecute({
+      ...basePayload,
+      // A sub-chat no earlier test ran, so its last mode is unknown, as after an app restart.
+      subChatId: '72237223-7223-4223-8223-722372237223',
+      sessionId: 'codex-thread-resumed',
+      message: 'resumed after restart',
+      history: [
+        { role: 'user', content: 'earlier ask' },
+        { role: 'assistant', content: 'earlier answer' },
+      ],
+    });
+
+    const params = vi.mocked(runCodexAgent).mock.calls[0]?.[0];
+    expect(params?.operatorReminders).toEqual({
+      frink_plan_mode_exit: { kind: 'application', value: PLAN_MODE_EXIT_REMINDER },
+    });
+    expect(params?.freshThreadFallbackPrompt).toContain('resumed after restart');
+    expect(params?.freshThreadFallbackPrompt).not.toContain('<system-reminder>');
+    expect(params?.prompt).not.toContain('<system-reminder>');
   });
 }
 

@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
+import type { FlowResumeTicketAction } from '../../../../../shared/lib/flow-admission';
 import type { RecoveryKind } from '../../../../../shared/types/flow-run/resume';
 import { getDatabase } from '../../../db';
 import { getFlowRun } from '../../../db/repos/flow-runs';
@@ -14,6 +15,8 @@ export type PendingContinuationResume = {
   nodeRunId: string;
   /** The label the user clicked; unset for a typed reply or boot carry-on (the claim decides). */
   kind?: RecoveryKind;
+  /** A paused run only: the Runs-panel action its claim replays. */
+  action?: FlowResumeTicketAction;
   /** Checked inside the enqueue transaction, so a Cancel that lands first wins by construction. */
   admit?: (db: Db) => boolean;
 };
@@ -42,6 +45,7 @@ type StagedContinuation = {
 const CONTINUATION_CORRECTIVE_MESSAGE =
   'Use Continue or Retry above the composer to pick this flow back up.';
 
+const LIVE_TASK_STATUSES = ['pending', 'running'];
 const staged = new Map<string, StagedContinuation>();
 const dropGenerations = new Map<string, number>();
 
@@ -55,23 +59,31 @@ export function stageContinuationResume(
   pending: PendingContinuationResume,
   emitCorrective: (message: string) => void,
   watch: ContinuationWatch = {},
-): void {
+): StagedContinuation | null {
+  const earlier = staged.get(pending.flowRunId)?.pending;
+  // A staged Runs-panel action is the user's explicit choice: a later stage never replaces it, and
+  // says so rather than dropping silently.
+  if (earlier?.action && earlier.action !== pending.action) {
+    emitCorrective(CONTINUATION_CORRECTIVE_MESSAGE);
+    return null;
+  }
   // A later stage for the same run (a typed reply or Continue after boot carry-on) must keep the
   // earlier abandon guard beside its own.
-  const earlierAdmit = staged.get(pending.flowRunId)?.pending.admit;
+  const earlierAdmit = earlier?.admit;
   const ownAdmit = pending.admit;
   const admit =
     ownAdmit && earlierAdmit
       ? (db: Db) => ownAdmit(db) && earlierAdmit(db)
       : (ownAdmit ?? earlierAdmit);
   const generation = dropGenerations.get(pending.flowRunId) ?? 0;
-  staged.set(pending.flowRunId, {
-    pending: { ...pending, admit },
-    emitCorrective,
-    watch,
-    generation,
-  });
+  const entry = { pending: { ...pending, admit }, emitCorrective, watch, generation };
+  staged.set(pending.flowRunId, entry);
+  return entry;
 }
+
+export const ALREADY_RESUMING_MESSAGE = 'This run is already resuming.';
+const alreadyResuming = () =>
+  new TRPCError({ code: 'PRECONDITION_FAILED', message: ALREADY_RESUMING_MESSAGE });
 
 const RETAINED_RELEASE_MESSAGE =
   'This run is still holding its slot after a failed cleanup — restart Frink to recover it.';
@@ -79,27 +91,38 @@ const RETAINED_RELEASE_MESSAGE =
 const holdsSlot = (state: string | null) => state === 'active' || state === 'releasing';
 
 /** A click on a run still holding its slot (active, or releasing it) would be refused as a second
- * admission, so it is staged for that slot's settle to enqueue. False when no slot is held: enqueue directly. */
+ * admission, so it is staged for that slot's settle to enqueue. False when no slot is held: enqueue directly.
+ * `behindRelease`: a paused run's resume waits only on a release; an active slot means one already won. */
 export async function stageBehindHeldAdmission(
   pending: PendingContinuationResume,
   ops: ContinuationAdmissionOps,
+  behindRelease = false,
 ): Promise<boolean> {
   const { flowRunId } = pending;
   const held = await ops.getLiveAdmissionState(flowRunId);
   if (held === 'retained') {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: RETAINED_RELEASE_MESSAGE });
   }
+  if (behindRelease && held === 'active') throw alreadyResuming();
   if (!holdsSlot(held)) {
     // An entry the settle missed has no admission left to fire it: drop it, so it cannot fire
     // after the run this click re-admits.
     if (held === null && staged.has(flowRunId)) dropStagedContinuation(flowRunId);
     return false;
   }
-  stageContinuationResume(pending, (message) => {
+  // A click of another action than the one already staged is refused, as a live ticket refuses it.
+  const earlier = staged.get(flowRunId)?.pending;
+  if (earlier && earlier.action !== pending.action) throw alreadyResuming();
+  const entry = stageContinuationResume(pending, (message) => {
     log.warn('[Flow Admission] staged recovery failed', { flowRunId, message });
     captureFlowAdmissionException(new Error(message), 'recovery-stage');
   });
   const after = await ops.getLiveAdmissionState(flowRunId);
+  // Another resume claimed the slot while this one staged: it would only fire on a later park.
+  if (behindRelease && after === 'active' && staged.get(flowRunId) === entry) {
+    staged.delete(flowRunId);
+    throw alreadyResuming();
+  }
   if (after === 'retained') {
     // The release kept a cleanup error after the probe: its cleanup fire may already have run, so
     // nothing would fire this stage — refuse the click as the up-front check does.
@@ -117,6 +140,9 @@ export async function stageBehindHeldAdmission(
   }
   return true;
 }
+
+/** The Runs-panel action staged for this run, which a typed reply must not stand in for. */
+export const stagedResumeAction = (flowRunId: string) => staged.get(flowRunId)?.pending.action;
 
 /** A continuation waits in memory for the run's held admission to settle; the row reads it as queued. */
 export function hasStagedContinuation(flowRunId: string): boolean {
@@ -284,6 +310,17 @@ async function fireStaged(flowRunId: string, ops: ContinuationAdmissionOps): Pro
   );
 }
 
+type WatchedTask = { id: string; status: string } | null | undefined;
+
+const reachedAgent = (latest: WatchedTask, before: WatchedTask): boolean =>
+  !!latest && (latest.id !== before?.id || LIVE_TASK_STATUSES.includes(latest.status));
+
+/** No admission left to dispatch it: the run settled, or a paused run's task is still parked. */
+function continuationLost(run: { status: string } | null | undefined, latest: WatchedTask) {
+  if (!run || ['failed', 'cancelled', 'completed'].includes(run.status)) return true;
+  return run.status === 'paused' && latest?.status === 'needs_attention';
+}
+
 async function watchContinuationDispatch(
   entry: StagedContinuation,
   ops: ContinuationAdmissionOps,
@@ -304,13 +341,12 @@ async function watchContinuationDispatch(
   for (; misses < attempts && ticks < liveCeiling; ticks++) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const latest = await getLatestFlowTaskForRun(db, flowRunId);
-    // A NEW task means the dispatch reached the agent — from here its turn has the
-    // normal surfaces (start chunk clears the toast; a later failure parks visibly).
-    if (latest && latest.id !== before?.id) return;
+    // A NEW task, or a paused run's own task picked back up, means the dispatch reached the agent;
+    // its turn owns the surfaces from here (start chunk clears the toast, a failure parks).
+    if (reachedAgent(latest, before)) return;
     if (await ops.hasLiveFlowAdmission(flowRunId)) continue;
     misses++;
-    const run = await getFlowRun(db, flowRunId);
-    if (!run || ['failed', 'cancelled', 'completed'].includes(run.status)) {
+    if (continuationLost(await getFlowRun(db, flowRunId), latest)) {
       // A Cancel that dropped the queued continuation ended it on purpose.
       if (droppedSinceStaged(entry)) return;
       captureFlowAdmissionException(

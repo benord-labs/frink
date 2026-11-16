@@ -24,7 +24,7 @@ type Props = {
   repository?: string;
   isMobileFullscreen: boolean;
   projectPath?: string | null;
-  /** UUID for @briefing mentions — prefer local equivalent when set (matches flow rows + execution routing) */
+  /** Project UUID — prefer local equivalent when set (matches flow rows + execution routing) */
   projectId?: string | null;
   /** Current git branch (from getBranches) for context bar under input */
   currentBranch?: string | null;

@@ -4,11 +4,14 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chatContextFileAtomFamily } from '@/lib/code-editor/state';
 import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
 import { ChatInputSection } from './ChatInputSection';
 
 vi.mock('../../chat-input-area', () => ({
-  ChatInputArea: () => <div data-testid="chat-input-area" />,
+  ChatInputArea: ({ activeFilePath }: { activeFilePath?: string | null }) => (
+    <div data-testid="chat-input-area" data-active-file-path={activeFilePath ?? 'none'} />
+  ),
 }));
 
 vi.mock('../../../components/no-accounts-empty-state', () => ({
@@ -101,6 +104,32 @@ describe('ChatInputSection', () => {
     render(<ChatInputSection {...props} />);
 
     expect(screen.getByTestId('chat-input-area')).toBeInTheDocument();
+  });
+
+  it.each([
+    { state: 'ready', ready: true, loading: false },
+    { state: 'account loading', ready: false, loading: true },
+  ])("gives the composer its chat's open-file path when the account is $state", (c) => {
+    const store = createStore();
+    store.set(chatContextFileAtomFamily('other-chat'), { name: 'b.ts', path: '/repo/b.ts' });
+    store.set(chatContextFileAtomFamily('chat-1'), {
+      name: 'index.ts',
+      path: '/repo/src/a/index.ts',
+    });
+    const props = createProps();
+    props.isResolvedExecutionAccountReady = c.ready;
+    props.isLoadingResolvedAccount = c.loading;
+
+    render(
+      <Provider store={store}>
+        <ChatInputSection {...props} />
+      </Provider>,
+    );
+
+    expect(screen.getByTestId('chat-input-area')).toHaveAttribute(
+      'data-active-file-path',
+      '/repo/src/a/index.ts',
+    );
   });
 
   it('does not render chat retry controls in input section', () => {

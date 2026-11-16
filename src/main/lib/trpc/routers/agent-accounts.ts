@@ -10,6 +10,7 @@ import { findAcpAgent } from '../../agent-runner/acp';
 import { rememberedAgentModels } from '../../agent-runner/agent-models';
 import { findCopilotAgent } from '../../agent-runner/copilot';
 import { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
+import { cancelClaudeSignIn, signInToClaude } from '../../claude/login';
 import { detectCodexAccount } from '../../credentials/detect-codex';
 import { claudeCodeCredentials, getDatabase } from '../../db';
 import { createId } from '../../db/utils';
@@ -21,6 +22,8 @@ type AgentAccountsDeps = {
   findCopilot: typeof findCopilotAgent;
   findCursor: typeof findCursorAgent;
   signInCursor: typeof signInToCursor;
+  signInClaude: typeof signInToClaude;
+  cancelClaude: typeof cancelClaudeSignIn;
   detectCodex: typeof detectCodexAccount;
   rememberedModels: typeof rememberedAgentModels;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
@@ -29,7 +32,7 @@ type AgentAccountsDeps = {
 
 const NOT_AVAILABLE = "Frink can't connect this agent yet.";
 const NO_CODEX_LOGIN = 'No Codex login found. Run `codex login` and try again.';
-const SIGN_IN_UNFINISHED = "Cursor's sign-in didn't finish. Try again.";
+const signInUnfinished = (name: string) => `${name}'s sign-in didn't finish. Try again.`;
 const typeInput = z.object({ type: z.string() });
 
 type Detection =
@@ -78,6 +81,8 @@ export function createAgentAccountsRouter(
     findCopilot: findCopilotAgent,
     findCursor: findCursorAgent,
     signInCursor: signInToCursor,
+    signInClaude: signInToClaude,
+    cancelClaude: cancelClaudeSignIn,
     detectCodex: detectCodexAccount,
     rememberedModels: rememberedAgentModels,
     flags: LAUNCH_FLAGS,
@@ -90,10 +95,19 @@ export function createAgentAccountsRouter(
       return row ? detectAgent(row, deps) : { available: false, reason: NOT_AVAILABLE };
     }),
 
-    /** Starts Cursor's own sign-in in the browser; Cursor keeps the key it makes. */
+    /** Starts Claude's or Cursor's own sign-in in the browser; the provider keeps what it makes. */
     signIn: publicProcedure.input(typeInput).mutation(async ({ input }) => {
+      if (input.type === 'claude-code' && deps.platform !== 'win32') {
+        if (!(await deps.signInClaude())) throw new Error(signInUnfinished('Claude'));
+        return;
+      }
       if (connectableAgent(input.type, deps)?.runtime !== 'cursor') throw new Error(NOT_AVAILABLE);
-      if (!(await deps.signInCursor())) throw new Error(SIGN_IN_UNFINISHED);
+      if (!(await deps.signInCursor())) throw new Error(signInUnfinished('Cursor'));
+    }),
+
+    /** Stops a sign-in still waiting on the browser. */
+    cancelSignIn: publicProcedure.input(typeInput).mutation(({ input }) => {
+      if (input.type === 'claude-code') deps.cancelClaude();
     }),
 
     /** The models the agent last reported on this computer; none before its first session. */

@@ -10,4 +10,4 @@
 export { applyApprovedPlanContextToPrompt } from './approved-plan-prompt';
 export { codexComposerContext, isPersonAuthored, projectComposerContext } from './composer-context';
 export { formatPromptWithHistory, replaceCarriedWithHistory } from './prompt-history';
-export { carryUndeliveredMessages } from './undelivered-messages';
+export { carryUndeliveredMessages, forgetUndeliveredOnClear } from './undelivered-messages';

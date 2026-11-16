@@ -1,5 +1,7 @@
 import type { UIMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
+import { HIDDEN_WAKE_MARKER } from '../../../../../shared/lib/message-markers/hidden-wake-marker';
+import { TRIGGER_BUBBLE_MARKER } from '../../../../../shared/lib/trigger-bubble-marker';
 import { buildTurnHistory, dataImageSrc } from './index';
 
 function message(id: string, role: UIMessage['role'], parts: unknown[]): UIMessage {
@@ -26,7 +28,7 @@ describe('buildTurnHistory', () => {
     ]);
 
     expect(history).toEqual([
-      { role: 'user', content: 'Plan the auth refactor' },
+      { role: 'user', content: 'Plan the auth refactor', personAuthored: true },
       {
         role: 'assistant',
         content: [
@@ -56,7 +58,94 @@ describe('buildTurnHistory', () => {
       current,
     );
 
-    expect(history).toEqual([{ role: 'user', content: 'do it' }]);
+    expect(history).toEqual([{ role: 'user', content: 'do it', personAuthored: true }]);
+  });
+});
+
+describe('buildTurnHistory: who wrote each turn', () => {
+  const user = (
+    id: string,
+    text: string,
+    metadata?: { source?: string; dispatchTaskId?: string },
+  ): UIMessage => ({
+    ...message(id, 'user', [{ type: 'text', text }]),
+    metadata,
+  });
+
+  it('marks only the turns a person wrote, and strips the wake marker', () => {
+    const history = buildTurnHistory([
+      user('u1', 'look at @[file:local:a.ts]'),
+      user('u2', 'Flow step @[file:local:b.ts]', { source: 'flow-dispatch' }),
+      user('u3', 'Task run', { dispatchTaskId: 'task-1' }),
+      user('u4', `${HIDDEN_WAKE_MARKER}Continue`),
+      user('u5', `${TRIGGER_BUBBLE_MARKER}{"uiData":{}}-->\n\nTriggered task`),
+      user('u6', 'Story: fix @[file:local:c.ts]', { source: 'work-queue' }),
+      message('a1', 'assistant', [{ type: 'text', text: 'done' }]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'user', content: 'look at @[file:local:a.ts]', personAuthored: true },
+      { role: 'user', content: 'Flow step @[file:local:b.ts]' },
+      { role: 'user', content: 'Task run' },
+      { role: 'user', content: 'Continue' },
+      { role: 'user', content: 'Triggered task' },
+      { role: 'user', content: 'Story: fix @[file:local:c.ts]' },
+      { role: 'assistant', content: 'done' },
+    ]);
+  });
+});
+
+describe('buildTurnHistory: steers', () => {
+  const steer = (text: string) => ({ type: 'tool-Steer', input: { text } });
+  const steerText = 'look at @[file:local:a.ts] @[skill:deploy]\nand @[code:a.ts:3-4:preview:YQ==]';
+
+  it('replays a steer whole as the person’s turn, splitting the assistant message around it', () => {
+    const history = buildTurnHistory([
+      message('a1', 'assistant', [
+        { type: 'text', text: 'working' },
+        { type: 'tool-Read', input: { file_path: 'src/auth.ts' } },
+        steer(steerText),
+        { type: 'text', text: 'switching to a.ts' },
+      ]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'assistant', content: 'working\n[Read] src/auth.ts' },
+      { role: 'user', content: steerText, personAuthored: true },
+      { role: 'assistant', content: 'switching to a.ts' },
+    ]);
+  });
+
+  it('splits every steer, and leaves no empty turn around one', () => {
+    const history = buildTurnHistory([
+      message('a1', 'assistant', [steer('first'), { type: 'text', text: 'ok' }, steer('second')]),
+      message('a2', 'assistant', [
+        steer('  '),
+        { type: 'tool-Steer' },
+        { type: 'tool-Steer', input: { text: 42 } },
+      ]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'user', content: 'first', personAuthored: true },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'second', personAuthored: true },
+    ]);
+  });
+
+  it('splits a steer that follows a compaction boundary in the same message', () => {
+    const history = buildTurnHistory([
+      message('a1', 'assistant', [
+        { type: 'text', text: 'before' },
+        { type: 'data-compact', id: 'c', data: { state: 'output-available', summary: 'S' } },
+        steer('after the compaction'),
+      ]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'user', content: '[Earlier conversation was compacted. Summary:]\n\nS' },
+      { role: 'user', content: 'after the compaction', personAuthored: true },
+    ]);
   });
 });
 
@@ -89,7 +178,7 @@ describe('buildTurnHistory after compaction', () => {
     expect(history).toEqual([
       summaryTurn('we discussed X'),
       { role: 'assistant', content: 'carried on after' },
-      { role: 'user', content: 'new question' },
+      { role: 'user', content: 'new question', personAuthored: true },
     ]);
   });
 
@@ -101,7 +190,10 @@ describe('buildTurnHistory after compaction', () => {
       message('a3', 'assistant', [compact({}, 'c2')]),
     ]);
 
-    expect(history).toEqual([summaryTurn('older summary'), { role: 'user', content: 'between' }]);
+    expect(history).toEqual([
+      summaryTurn('older summary'),
+      { role: 'user', content: 'between', personAuthored: true },
+    ]);
   });
 
   it.each([

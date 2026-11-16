@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { REQUIRED_CLAUDE_BINARY_ENV } from './binary-capabilities.mjs';
-import { downloadPlatform } from './download-claude-binary.mjs';
+import { downloadPlan, downloadPlatform, readPinnedVersion } from './download-claude-binary.mjs';
 
 const PLATFORM = 'darwin-arm64';
 const GOOD = `bin ${REQUIRED_CLAUDE_BINARY_ENV.join(' ')} bin`;
@@ -162,5 +162,40 @@ describe('downloadPlatform', () => {
     });
 
     expect(fs.existsSync(stale)).toBe(false);
+  });
+});
+
+describe('readPinnedVersion', () => {
+  it('reads the committed pin as a plain X.Y.Z', () => {
+    expect(readPinnedVersion()).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('refuses a pin that is not a plain version, so `latest` can never sneak back in', () => {
+    const { binDir } = binDirWith();
+    const pin = path.join(binDir, 'pin.json');
+    fs.writeFileSync(pin, JSON.stringify({ version: 'latest' }));
+    expect(() => readPinnedVersion(pin)).toThrow('must pin a plain X.Y.Z version, got "latest"');
+  });
+});
+
+describe('downloadPlan', () => {
+  it('downloads the pinned version for this machine by default', () => {
+    expect(downloadPlan([], 'linux-x64')).toEqual({
+      version: readPinnedVersion(),
+      platforms: ['linux-x64'],
+    });
+  });
+
+  it('takes --version= as a manual trial and --all for every packaged platform', () => {
+    expect(downloadPlan(['--version=2.1.5', '--all'], 'linux-x64')).toEqual({
+      version: '2.1.5',
+      platforms: ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-x64'],
+    });
+  });
+
+  it('names the supported platforms when this machine is not one of them', () => {
+    expect(() => downloadPlan([], 'freebsd-x64')).toThrow(
+      'Unsupported platform: freebsd-x64 (supported: darwin-arm64',
+    );
   });
 });

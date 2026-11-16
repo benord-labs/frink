@@ -27,6 +27,23 @@ export function isCompactCommand(text: string): boolean {
   return text.match(SLASH_COMMAND_REGEX)?.[1] === 'compact';
 }
 
+/** The Claude CLI's `/clear` and its aliases, which start a new conversation; same rules as above. */
+const CLEAR_COMMAND_NAMES = new Set(['clear', 'reset', 'new']);
+
+/** True when `text` starts with a Claude command that clears the conversation. */
+export function isClearCommand(text: string): boolean {
+  return CLEAR_COMMAND_NAMES.has(text.match(SLASH_COMMAND_REGEX)?.[1] ?? '');
+}
+
+/** The Claude CLI's own test for a command name; `/src/a.ts is broken` goes to the model. */
+const COMMAND_NAME_REGEX = /^[a-zA-Z0-9_][a-zA-Z0-9:_-]*$/;
+
+/** True when `text` starts with something the provider would run as a slash command. */
+export function startsWithCommand(text: string): boolean {
+  const name = text.match(SLASH_COMMAND_REGEX)?.[1];
+  return name !== undefined && COMMAND_NAME_REGEX.test(name);
+}
+
 export type CommandEntry = { name: string; path: string };
 
 export type CommandFetcher = {

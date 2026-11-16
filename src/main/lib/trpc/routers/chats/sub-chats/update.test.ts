@@ -63,11 +63,45 @@ describe('subChatUpdateRouter.seedUserMessageIfEmpty', () => {
     expect(result).toMatchObject({ seeded: true, subChat: { id: 's1', messages: '[]' } });
   });
 
+  it('keeps the Work Queue stamp on a seeded task prompt', async () => {
+    seedUserMessageIfEmptyLocalMock.mockResolvedValue({ seeded: true, subChat: null });
+    const { subChatUpdateRouter } = await import('./update');
+    const caller = subChatUpdateRouter.createCaller({ getWindow: () => null });
+    const message = {
+      id: 'msg-task-1',
+      role: 'user' as const,
+      parts: [{ type: 'text' as const, text: 'Prompt' }],
+      metadata: { source: 'work-queue' as const },
+    };
+
+    await caller.seedUserMessageIfEmpty({ id: 's1', message });
+
+    expect(seedUserMessageIfEmptyLocalMock).toHaveBeenCalledWith(expect.anything(), 's1', message);
+  });
+
   it.each([
     ['assistant role', { id: 'm', role: 'assistant', parts: [{ type: 'text', text: 'x' }] }],
     [
       'extra metadata',
       { id: 'm', role: 'user', parts: [{ type: 'text', text: 'x' }], metadata: {} },
+    ],
+    [
+      'another source',
+      {
+        id: 'm',
+        role: 'user',
+        parts: [{ type: 'text', text: 'x' }],
+        metadata: { source: 'flow-dispatch' },
+      },
+    ],
+    [
+      'a dispatch id beside the stamp',
+      {
+        id: 'm',
+        role: 'user',
+        parts: [{ type: 'text', text: 'x' }],
+        metadata: { source: 'work-queue', dispatchTaskId: 'task-1' },
+      },
     ],
     ['blank text', { id: 'm', role: 'user', parts: [{ type: 'text', text: ' ' }] }],
   ])('rejects %s before reaching the repository', async (_name, message) => {

@@ -56,6 +56,8 @@ describe('agentAccounts', () => {
   const detectCodex = vi.fn<() => Promise<DetectCodexAccountResult>>();
   const findCursor = vi.fn<typeof findCursorAgent>();
   const signInCursor = vi.fn<typeof signInToCursor>();
+  const signInClaude = vi.fn<() => Promise<boolean>>();
+  const cancelClaude = vi.fn();
 
   const caller = (flags: Record<string, boolean> = ON, platform = 'darwin') =>
     createAgentAccountsRouter({
@@ -64,6 +66,8 @@ describe('agentAccounts', () => {
       findCopilot: () => findCopilotAgent(env),
       findCursor,
       signInCursor,
+      signInClaude,
+      cancelClaude,
       detectCodex,
       rememberedModels: (type) => REMEMBERED.get(type) ?? [],
       flags,
@@ -82,6 +86,8 @@ describe('agentAccounts', () => {
     detectCodex.mockReset().mockResolvedValue(CODEX_LOGIN);
     findCursor.mockReset().mockResolvedValue({ status: 'ready' });
     signInCursor.mockReset().mockResolvedValue(true);
+    signInClaude.mockReset().mockResolvedValue(true);
+    cancelClaude.mockReset();
   });
   afterEach(() => rm(root, { recursive: true, force: true }));
 
@@ -261,6 +267,24 @@ describe('agentAccounts', () => {
     ).rejects.toThrow(NOT_AVAILABLE);
     await expect(caller().signIn({ type: 'cursor' })).rejects.toThrow(NOT_AVAILABLE);
     expect(signInCursor).toHaveBeenCalledTimes(2);
+  });
+
+  it("signs in through Claude's own sign-in on macOS and Linux, and cancels it", async () => {
+    await expect(caller().signIn({ type: 'claude-code' })).resolves.toBeUndefined();
+    signInClaude.mockResolvedValue(false);
+    await expect(caller({}, 'linux').signIn({ type: 'claude-code' })).rejects.toThrow(
+      "Claude's sign-in didn't finish. Try again.",
+    );
+    await expect(caller({}, 'win32').signIn({ type: 'claude-code' })).rejects.toThrow(
+      NOT_AVAILABLE,
+    );
+    expect(signInClaude).toHaveBeenCalledTimes(2);
+
+    await caller().cancelSignIn({ type: 'cursor' });
+    expect(cancelClaude).not.toHaveBeenCalled();
+    await caller().cancelSignIn({ type: 'claude-code' });
+    expect(cancelClaude).toHaveBeenCalledOnce();
+    expect(rows()).toEqual([]);
   });
 
   it('lists the models each agent last reported, or none before it has run', async () => {

@@ -34,6 +34,19 @@ const emit = (event: Partial<FlowExecutionEvent>) =>
     ...event,
   } as FlowExecutionEvent);
 
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+const failSelectCall = (n: number) => {
+  const select = db.select.bind(db);
+  let calls = 0;
+  // SAFETY: passes every argument through to the real select, whose overloads one signature can't name
+  vi.spyOn(db, 'select').mockImplementation(((...args: Parameters<typeof select>) => {
+    calls += 1;
+    if (calls === n) throw new Error('read failed');
+    return select(...args);
+  }) as typeof select);
+};
+
 describe('flowTriggerKind / countFlowSteps', () => {
   it('names how a Flow starts, without the block suffix', () => {
     expect(flowTriggerKind(graphWith('manual_trigger'))).toBe('manual');
@@ -84,6 +97,58 @@ describe('startFlowRunTelemetry', () => {
     expect(track.mock.calls).toEqual([
       [{ flowId, outcome: 'failed', stepCount: 2, batchSize: 1 }],
       [{ flowId: other.flowId, outcome: 'cancelled', stepCount: 2, batchSize: 1 }],
+    ]);
+  });
+
+  it('counts a run whose read failed when it ends again', async () => {
+    const { flowId, flowRunId } = await seedFlowRun(db, graphWith('manual_trigger'));
+    failSelectCall(1);
+
+    emit({ eventType: 'run_failed', flowId, flowRunId, runStatus: 'failed', summary: 'boom' });
+    await settle();
+    emit({ eventType: 'run_completed', flowId, flowRunId });
+
+    await vi.waitFor(() => expect(track).toHaveBeenCalled());
+    await settle();
+    expect(track.mock.calls).toEqual([
+      [{ flowId, outcome: 'completed', stepCount: 2, batchSize: 1 }],
+    ]);
+  });
+
+  it('keeps a run counted when sending its count throws', async () => {
+    const { flowId, flowRunId } = await seedFlowRun(db, graphWith('manual_trigger'));
+    track.mockImplementationOnce(() => {
+      throw new Error('send failed');
+    });
+
+    emit({ eventType: 'run_failed', flowId, flowRunId, runStatus: 'failed', summary: 'boom' });
+    await vi.waitFor(() => expect(track).toHaveBeenCalled());
+    emit({ eventType: 'run_completed', flowId, flowRunId });
+    await settle();
+
+    expect(track).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['earliest run', 1],
+    ['member count', 2],
+    ['step count', 3],
+  ])('counts a batch whose %s read failed when it completes again', async (_read, call) => {
+    const { flowId, flowRunId, versionId } = await seedFlowRun(db, graphWith('manual_trigger'));
+    db.update(flowRuns).set({ batchId: 'batch-1' }).where(eq(flowRuns.id, flowRunId)).run();
+    db.insert(flowRuns)
+      .values({ flowVersionId: versionId, status: 'completed', batchId: 'batch-1' })
+      .run();
+    failSelectCall(call);
+
+    emit({ eventType: 'batch_completed', flowId, batchId: 'batch-1', runStatus: 'failed' });
+    await settle();
+    emit({ eventType: 'batch_completed', flowId, batchId: 'batch-1' });
+
+    await vi.waitFor(() => expect(track).toHaveBeenCalled());
+    await settle();
+    expect(track.mock.calls).toEqual([
+      [{ flowId, outcome: 'completed', stepCount: 2, batchSize: 2 }],
     ]);
   });
 
