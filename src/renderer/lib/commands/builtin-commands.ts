@@ -10,8 +10,6 @@ const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction['type'], string>> = {
   'release-notes': 'Generate release notes summarizing the changes in this codebase.',
   'security-review':
     'Perform a security audit of the code in the current context. Identify vulnerabilities, security risks, and suggest fixes.',
-  commit:
-    'Закоммить это аккуратно, не трогая больше ничего. Сделай коммит только для staged изменений, не добавляй никакие другие файлы и не вноси дополнительных изменений.',
   'worktree-setup': `Create a worktree setup script for this project.
 
 Your task:
@@ -112,13 +110,6 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: 'builtin',
   },
   {
-    id: 'builtin:commit',
-    name: 'commit',
-    command: '/commit',
-    description: 'Commit staged changes carefully without touching anything else',
-    category: 'builtin',
-  },
-  {
     id: 'builtin:worktree-setup',
     name: 'worktree-setup',
     command: '/worktree-setup',
@@ -132,7 +123,7 @@ const PROMPT_COMMANDS: BuiltinCommandAction['type'][] = [
   'pr-comments',
   'release-notes',
   'security-review',
-  'commit',
+  'worktree-setup',
 ];
 
 type CommandEditor = {
