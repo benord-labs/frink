@@ -125,12 +125,17 @@ describe('buildTestResult', () => {
 });
 
 describe('summarizeStderr: shell failures with no error keyword', () => {
-  // Captured on macOS (sh, dash, bash, cat); busybox and cmd.exe rows are their documented messages.
+  // Captured on macOS (sh, zsh, dash, bash, cat, python); busybox and cmd.exe rows are their documented messages.
   it.each([
     [
       'sh',
       'building\n/bin/sh: nosuchcmd: command not found\n',
       '/bin/sh: nosuchcmd: command not found',
+    ],
+    [
+      'zsh',
+      'building\nzsh:1: command not found: nosuchcmd\n',
+      'zsh:1: command not found: nosuchcmd',
     ],
     ['dash', 'building\ndash: 1: nosuchcmd: not found\n', 'dash: 1: nosuchcmd: not found'],
     ['busybox', 'building\n/bin/sh: nosuchcmd: not found\n', '/bin/sh: nosuchcmd: not found'],
@@ -145,6 +150,11 @@ describe('summarizeStderr: shell failures with no error keyword', () => {
       'cat: /tmp/missing: No such file or directory',
     ],
     [
+      'python',
+      "building\npython3: can't open file '/tmp/job.py': [Errno 2] No such file or directory\n",
+      "python3: can't open file '/tmp/job.py': [Errno 2] No such file or directory",
+    ],
+    [
       'cmd.exe unknown command',
       "building\r\n'nosuchcmd' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n",
       "'nosuchcmd' is not recognized as an internal or external command,",
@@ -153,6 +163,11 @@ describe('summarizeStderr: shell failures with no error keyword', () => {
       'cmd.exe missing path',
       'building\r\nThe system cannot find the path specified.\r\n',
       'The system cannot find the path specified.',
+    ],
+    [
+      'cmd.exe missing file',
+      'building\r\nThe system cannot find the file specified.\r\n',
+      'The system cannot find the file specified.',
     ],
     ['cmd.exe access denied', 'building\r\nAccess is denied.\r\n', 'Access is denied.'],
   ])('%s: leads with the failure line, not the progress line', (_shell, stderr, cause) => {
@@ -164,7 +179,16 @@ describe('summarizeStderr: shell failures with no error keyword', () => {
     expect(summarizeStderr(stderr)).toBe('Error: db connection refused');
   });
 
-  it('does not treat a progress line ending in "not found" as a shell failure', () => {
-    expect(summarizeStderr('building\nlookup cache: not found\nstep 2 done\n')).toBe('building');
+  it('leads with the first shell failure, not cleanup noise printed after it', () => {
+    const stderr =
+      'building\n/bin/sh: nosuchcmd: command not found\nrm: ./job.lock: No such file or directory\n';
+    expect(summarizeStderr(stderr)).toBe('/bin/sh: nosuchcmd: command not found — building');
+  });
+
+  it.each([
+    ['a phrase mid-line', 'warning: permission denied for cache, retrying'],
+    ['"not found" without a shell name', 'module: api: not found'],
+  ])('does not treat %s as a shell failure', (_case, line) => {
+    expect(summarizeStderr(`building\n${line}\nstep 2 done\n`)).toBe('building');
   });
 });

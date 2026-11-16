@@ -98,25 +98,26 @@ export function buildTestResult(
 
 // `KeyError: 'x'`, `Error [ERR_X]: …`, `fatal: …`, `error[E0425]: …`: the keyword followed by a colon.
 const CAUSE_LINE = /(error|exception|fatal)\b(\s*\[[^\]]*\])?:/i;
-// Failures that carry no keyword: bash/zsh, dash and busybox (`sh: 1: x: not found`), cmd.exe.
+// Keyword-free failures in their exact shell shape: `<program>: <target>: <reason>` (bash, sh, coreutils),
+// zsh's `command not found: x`, dash and busybox `sh: 1: x: not found`, and Command Prompt's messages.
 const SHELL_FAILURE_LINE =
-  /command not found|^\S+: (?:\d+: )?[^:]+: not found$|no such file or directory|permission denied|is not recognized as an internal or external command|the system cannot find the (?:file|path) specified|access is denied/i;
+  /[:\]] (?:command not found|no such file or directory|permission denied)$|: command not found: \S+$|^(?:\S*\/)?(?:a|ba|da)?sh: (?:\d+: )?[^:\s]+: not found$|^'[^']+' is not recognized as an internal or external command,$|^the system cannot find the (?:file|path) specified\.$|^access is denied\.$/i;
 const PYTHON_TRACEBACK_HEADER = 'Traceback (most recent call last):';
 const BARE_PYTHON_EXCEPTION = /^[\w.]*(Error|Exception)$/; // `raise ValueError` prints just `ValueError`
 
 const isCause = (line: string) => CAUSE_LINE.test(line) && !line.startsWith('at ');
 
 const indentOf = (line: string) => line.length - line.trimStart().length;
-const isShellFailure = (line: string) => SHELL_FAILURE_LINE.test(line);
-const lastOf = (lines: string[], test: (line: string) => boolean) =>
-  [...lines].reverse().find(test);
+const lastCause = (lines: string[]) => [...lines].reverse().find(isCause);
 
 /** Python prints the exception at its traceback header's margin, below the deeper-indented frames. */
 function findCause(rawLines: string[]): string | undefined {
   const trimmed = rawLines.map((line) => line.trim());
   const header = trimmed.lastIndexOf(PYTHON_TRACEBACK_HEADER);
-  // A keyword line outranks a shell failure, so cleanup noise after the real error never leads.
-  if (header < 0) return lastOf(trimmed, isCause) ?? lastOf(trimmed, isShellFailure);
+  // A keyword line outranks a shell failure; the first shell failure is the root, cleanup and cascades follow it.
+  if (header < 0) {
+    return lastCause(trimmed) ?? trimmed.find((line) => SHELL_FAILURE_LINE.test(line));
+  }
   const margin = indentOf(rawLines[header]);
   const atMargin = rawLines
     .slice(header + 1)
