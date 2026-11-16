@@ -7,6 +7,18 @@ import {
   insertPickedCommand,
 } from '@/lib/commands/builtin-commands';
 import type { SlashCommandOption } from '@/lib/commands/types';
+import { BUILTIN_COMMAND_NAMES } from '../../../shared/commands/builtin-command-names';
+
+describe('built-in command catalog', () => {
+  it('lists the names the command expanders skip, plus /goal', () => {
+    const skipped = BUILTIN_SLASH_COMMANDS.map((cmd) => cmd.name).filter((name) => name !== 'goal');
+    expect(skipped).toEqual([...BUILTIN_COMMAND_NAMES]);
+  });
+
+  it('has no /commit built-in', () => {
+    expect(filterBuiltinCommands('commit')).toEqual([]);
+  });
+});
 
 describe('filterBuiltinCommands', () => {
   it('returns all commands when search text is empty', () => {
@@ -117,9 +129,18 @@ describe('insertPickedCommand', () => {
     expect(editor.setCommandValue).toHaveBeenCalledWith('ship', 'Ship the branch');
   });
 
-  it('writes nothing for a built-in the composer acts on itself', () => {
+  it('writes the setup prompt for /worktree-setup as a command block', () => {
     const editor = editorWith('');
     insertPickedCommand(editor, builtin('worktree-setup'));
+    expect(editor.setCommandValue).toHaveBeenCalledWith(
+      'worktree-setup',
+      expect.stringContaining('Create a worktree setup script'),
+    );
+  });
+
+  it('writes nothing for a built-in the composer acts on itself', () => {
+    const editor = editorWith('');
+    insertPickedCommand(editor, builtin('plan'));
     expect(editor.setValue).not.toHaveBeenCalled();
     expect(editor.setCommandValue).not.toHaveBeenCalled();
   });
