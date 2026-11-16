@@ -8,6 +8,7 @@ import {
   MAX_RAW_FALLBACK_BYTES,
   MAX_STDOUT_PARSE_BYTES,
   parseStructuredStdout,
+  summarizeStderr,
 } from './parse-node-output';
 
 describe('parseStructuredStdout', () => {
@@ -120,5 +121,50 @@ describe('buildTestResult', () => {
     expect(smallJson.length).toBeLessThanOrEqual(MAX_PARSED_OUTPUT_CHARS);
     const result = buildTestResult({ stdout: smallJson, stderr: '', exitCode: 0 }, 50);
     expect(result.parsedOutput).toEqual({ count: 3, items: ['a', 'b', 'c'] });
+  });
+});
+
+describe('summarizeStderr: shell failures with no error keyword', () => {
+  // Captured on macOS (sh, dash, bash, cat); busybox and cmd.exe rows are their documented messages.
+  it.each([
+    [
+      'sh',
+      'building\n/bin/sh: nosuchcmd: command not found\n',
+      '/bin/sh: nosuchcmd: command not found',
+    ],
+    ['dash', 'building\ndash: 1: nosuchcmd: not found\n', 'dash: 1: nosuchcmd: not found'],
+    ['busybox', 'building\n/bin/sh: nosuchcmd: not found\n', '/bin/sh: nosuchcmd: not found'],
+    [
+      'bash',
+      'building\nbash: line 1: /tmp/job.sh: Permission denied\n',
+      'bash: line 1: /tmp/job.sh: Permission denied',
+    ],
+    [
+      'cat',
+      'building\ncat: /tmp/missing: No such file or directory\n',
+      'cat: /tmp/missing: No such file or directory',
+    ],
+    [
+      'cmd.exe unknown command',
+      "building\r\n'nosuchcmd' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n",
+      "'nosuchcmd' is not recognized as an internal or external command,",
+    ],
+    [
+      'cmd.exe missing path',
+      'building\r\nThe system cannot find the path specified.\r\n',
+      'The system cannot find the path specified.',
+    ],
+    ['cmd.exe access denied', 'building\r\nAccess is denied.\r\n', 'Access is denied.'],
+  ])('%s: leads with the failure line, not the progress line', (_shell, stderr, cause) => {
+    expect(summarizeStderr(stderr)).toBe(`${cause} — building`);
+  });
+
+  it('keeps a keyword cause ahead of later shell-failure cleanup noise', () => {
+    const stderr = 'Error: db connection refused\nrm: ./job.lock: No such file or directory\n';
+    expect(summarizeStderr(stderr)).toBe('Error: db connection refused');
+  });
+
+  it('does not treat a progress line ending in "not found" as a shell failure', () => {
+    expect(summarizeStderr('building\nlookup cache: not found\nstep 2 done\n')).toBe('building');
   });
 });
