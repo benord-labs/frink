@@ -1,6 +1,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { Code, Type, Check, Copy } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
+import type { BubbleRole } from '../../../hooks/use-chat-markdown-toggle';
 import { cn } from '../../../lib/utils';
 import { useHaptic } from '../hooks/use-haptic';
 
@@ -70,17 +71,25 @@ export const CopyButton = memo(function CopyButton({
 // ============================================================================
 
 type MarkdownToggleButtonProps = {
+  /** Whose bubbles the toggle governs — it flips that role's preference for every chat. */
+  forRole: BubbleRole;
   /** Whether the bubble is currently rendering markdown. */
   rendered: boolean;
   onToggle: () => void;
 };
 
+const MARKDOWN_TOGGLE_LABELS = {
+  assistant: { rendered: 'Show replies as plain text', raw: 'Format replies' },
+  user: { rendered: 'Show your messages as plain text', raw: 'Format your messages' },
+} satisfies Record<BubbleRole, { rendered: string; raw: string }>;
+
 export const MarkdownToggleButton = memo(function MarkdownToggleButton({
+  forRole,
   rendered,
   onToggle,
 }: MarkdownToggleButtonProps) {
   // Label/icon describe the NEXT action, not the current state.
-  const label = rendered ? 'View raw text' : 'Render markdown';
+  const label = MARKDOWN_TOGGLE_LABELS[forRole][rendered ? 'rendered' : 'raw'];
   return (
     <Button
       variant="ghost"

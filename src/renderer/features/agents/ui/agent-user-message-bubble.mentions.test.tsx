@@ -4,7 +4,7 @@ import { cleanup, render } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../components/ui/tooltip';
-import { chatMarkdownModeAtom } from '../atoms';
+import { chatMarkdownUserAtom } from '../../../lib/atoms';
 import { AgentUserMessageBubble } from './agent-user-message-bubble';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -21,7 +21,7 @@ function chipLabels(container: HTMLElement): (string | null)[] {
 
 function renderWithMarkdownOn(textContent: string) {
   const store = createStore();
-  store.set(chatMarkdownModeAtom, 'rendered');
+  store.set(chatMarkdownUserAtom, true);
   return render(
     <Provider store={store}>
       <TooltipProvider>

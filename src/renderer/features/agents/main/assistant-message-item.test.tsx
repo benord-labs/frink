@@ -5,6 +5,7 @@ import { getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import { COMPACTING_PENDING } from '../../../lib/agent-chat/planning/planning-status-message';
+import { chatMarkdownAssistantAtom, chatMarkdownUserAtom } from '../../../lib/atoms';
 import { compactingSubChatsAtom } from '../atoms';
 import { HtmlArtifactPaneProvider } from '../HtmlArtifactPane';
 import type { Message, MessagePart } from '../stores/message-store';
@@ -682,6 +683,40 @@ describe('AssistantMessageItem rendering', () => {
       screen.queryByRole('button', { name: APPROVE_AND_RUN_LABEL_REGEX }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('Awaiting your approval to proceed')).not.toBeInTheDocument();
+  });
+});
+
+describe('AssistantMessageItem markdown toggle', () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    getDefaultStore().set(chatMarkdownAssistantAtom, true);
+    getDefaultStore().set(chatMarkdownUserAtom, false);
+  });
+
+  // The footer flips one switch and the body reads it separately; a wiring slip shows as an
+  // icon that says "plain" over formatted text, or a second pane that never follows.
+  it('switches every reply body to plain text from one footer and leaves user messages alone', () => {
+    render(
+      <>
+        <AssistantMessageItem
+          {...baseProps}
+          message={buildAssistantMessage('msg-md-1', [textPart('**first** reply')])}
+        />
+        <AssistantMessageItem
+          {...baseProps}
+          message={buildAssistantMessage('msg-md-2', [textPart('**second** reply')])}
+        />
+      </>,
+    );
+    expect(screen.queryByText('**first** reply')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Show replies as plain text' })[0]);
+
+    expect(screen.getByText('**first** reply')).toBeInTheDocument();
+    expect(screen.getByText('**second** reply')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Format replies' })).toHaveLength(2);
+    expect(getDefaultStore().get(chatMarkdownUserAtom)).toBe(false);
   });
 });
 
