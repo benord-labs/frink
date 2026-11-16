@@ -34,6 +34,7 @@ import {
   getHistoryDeleteAllTarget,
   HISTORY_TASK_STATUSES,
 } from '../../../lib/work-queue/delete-all-target';
+import { useRecoverTaskMutation } from '../../../lib/work-queue/recovery/use-recover-task-mutation';
 import { assessRowRetry } from '../../../lib/work-queue/task-menu/task-menu-actions';
 import { useWorkQueueTaskNavigation } from '../../../lib/work-queue/use-work-queue-task-navigation';
 import {
@@ -49,7 +50,7 @@ import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';
 import { useWorkQueueOverviewCounts } from '../hooks/use-work-queue-overview-counts';
 import { useWorkQueueOverviewPages } from '../hooks/use-work-queue-overview-pages';
 import type { ConfirmedRecovery, Task } from '../types';
-import { buildTaskMessage } from '../utils/build-task-message';
+import { buildTaskMessage, buildTaskOpening } from '../utils/build-task-message';
 import { dedupeRowsById } from '../utils/dedupe-rows-by-id';
 import { getOverviewTaskChatId } from '../utils/overview-task-groups';
 import { parseTriggerContext } from '../utils/trigger-context';
@@ -261,7 +262,7 @@ export function WorkQueue({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
   });
   // tasks.recover re-resolves the kind server-side, so a stale row label is refused, never swapped.
-  const retryTaskMutation = trpc.tasks.recover.useMutation({
+  const retryTaskMutation = useRecoverTaskMutation({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
   });
   // tasks.complete also finalizes sibling done rows in a Flow.
@@ -470,7 +471,6 @@ export function WorkQueue({
     const task = allTaskRows.find((t) => t.id === taskId);
     if (!task) return;
 
-    const message = buildTaskMessage(task);
     const triggerContext = parseTriggerContext(task.triggerContext);
     const startMetadata = resolveTaskExecutionMetadata(triggerContext?._config, {
       overrideMode: mode,
@@ -482,7 +482,7 @@ export function WorkQueue({
     );
 
     createChatMutation.mutate({
-      initialMessage: message,
+      ...buildTaskOpening(task),
       taskId: task.id,
       projectId: task.projectId || undefined,
       useWorktree,

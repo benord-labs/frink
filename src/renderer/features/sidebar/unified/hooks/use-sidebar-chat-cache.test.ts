@@ -16,6 +16,7 @@ import {
   refetchListCountsAndSyncFolderSnapshots,
   removeChatIdsFromSidebarMaps,
   resolveSidebarFolderKeyForProjectId,
+  shouldShowFlowChatsFilter,
   SIDEBAR_GENERAL_COUNT_KEY,
 } from './use-sidebar-chat-cache';
 
@@ -117,6 +118,47 @@ describe('buildChatCountByProjectMap / computeChatCountByFolderKey', () => {
     expect(map.get('p1')).toBe(2);
     expect(map.get(SIDEBAR_GENERAL_COUNT_KEY)).toBe(0);
     expect(buildChatCountByProjectMap(raw).get('p1')).toBe(5);
+  });
+});
+
+describe('shouldShowFlowChatsFilter', () => {
+  const noFlows = [{ projectId: 'p1', count: 2, flowCount: 0 }];
+  const withFlows = [{ projectId: 'p1', count: 2, flowCount: 1 }];
+  const show = (input: Partial<Parameters<typeof shouldShowFlowChatsFilter>[0]>) =>
+    shouldShowFlowChatsFilter({
+      hideFlowChats: false,
+      showArchived: false,
+      chatCounts: undefined,
+      archivedChats: undefined,
+      ...input,
+    });
+
+  it('shows only when a non-archived Flow chat exists', () => {
+    expect(show({ chatCounts: noFlows })).toBe(false);
+    expect(show({ chatCounts: withFlows })).toBe(true);
+    expect(show({})).toBe(false);
+  });
+
+  it('treats non-array query data as no Flow chats instead of throwing', () => {
+    // tRPC hydration can briefly hand back a non-array value; the helper must survive it.
+    const hydrating: readonly [] = JSON.parse('{}');
+    expect(show({ chatCounts: hydrating })).toBe(false);
+    expect(show({ showArchived: true, archivedChats: hydrating })).toBe(false);
+  });
+
+  it('stays visible while the filter is on, so it can be turned off', () => {
+    expect(show({ hideFlowChats: true, chatCounts: noFlows })).toBe(true);
+    expect(show({ hideFlowChats: true, showArchived: true, archivedChats: [] })).toBe(true);
+  });
+
+  it('decides from archived chats in the Archived view', () => {
+    const archivedFlow = [{ taskId: null }, { taskId: 'task-1' }];
+    expect(show({ showArchived: true, chatCounts: noFlows, archivedChats: archivedFlow })).toBe(
+      true,
+    );
+    expect(
+      show({ showArchived: true, chatCounts: withFlows, archivedChats: [{ taskId: null }] }),
+    ).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+import type { GoalPartData } from '../../../shared/types/goal';
 import type { TaskSignalState } from '../../../shared/types/task-signal';
 
 // AI SDK UIMessageChunk format
@@ -94,6 +95,8 @@ export type UIMessageChunk =
         partial?: boolean;
       };
     }
+  /** Claude's `/goal` state for one turn, upserted by `id` like `data-compact`. */
+  | { type: 'data-goal'; id: string; data: GoalPartData }
   // Session initialization (MCP servers, plugins, tools)
   | {
       type: 'session-init';

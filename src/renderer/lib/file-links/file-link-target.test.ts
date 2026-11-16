@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bareFileNameTarget,
   type FileLinkTarget,
   fileLinkOpenInput,
   findShortenedPath,
   inlineCodeFileTarget,
+  isBareFileName,
   isBareRelativePath,
   isFileNameLabel,
   parseFileLinkTarget,
@@ -24,6 +26,7 @@ describe('parseFileLinkTarget', () => {
     ['</Users/x/My Project/My Report.md:3>', { path: '/Users/x/My Project/My Report.md', line: 3 }],
     ['/Users/x/My Project/My Report.md', { path: '/Users/x/My Project/My Report.md' }],
     ['/Users/x/My%20Project/a.ts', { path: '/Users/x/My Project/a.ts' }],
+    ['/Users/x/100%.md:4', { path: '/Users/x/100%.md', line: 4 }],
     ['file:///Users/x/a.ts', { path: '/Users/x/a.ts' }],
     ['file:///Users/x/My%20Project/a.ts#L4', { path: '/Users/x/My Project/a.ts', line: 4 }],
     ['~/notes/a.md', { path: '~/notes/a.md' }],
@@ -112,6 +115,49 @@ describe('inlineCodeFileTarget', () => {
     'apps/web/.next',
   ])('keeps %s as code', (code) => {
     expect(inlineCodeFileTarget(code)).toBeNull();
+  });
+});
+
+describe('bareFileNameTarget', () => {
+  it.each([
+    'index.ts',
+    ' package.json ',
+    'README.md',
+    'chat-markdown-renderer.tsx',
+    'vite.config.mts',
+    'main.pl',
+    'setup.cc',
+    // A host-shaped name is only looked up: no project file matches it, so it stays code.
+    'example.com',
+  ])('reads %j as a name a project lookup may place', (code) => {
+    expect(bareFileNameTarget(code)).toEqual({ path: code.trim() });
+  });
+
+  it.each([
+    'foo',
+    '.env',
+    '.eslintrc.json',
+    'a b.ts',
+    '*.ts',
+    '<name>.ts',
+    'glm-5.3',
+    'v1.2.3',
+    'localhost',
+    'src/a.ts',
+    'index.ts:12',
+    'https:x.ts',
+    'a\\b.ts',
+    'foo.',
+  ])('keeps %j as code', (code) => {
+    expect(bareFileNameTarget(code)).toBeNull();
+  });
+});
+
+describe('isBareFileName', () => {
+  it('tells a name alone from a path', () => {
+    expect(isBareFileName('index.ts')).toBe(true);
+    expect(isBareFileName('src/index.ts')).toBe(false);
+    expect(isBareFileName('/Users/x/index.ts')).toBe(false);
   });
 });
 
@@ -238,4 +284,9 @@ describe('findShortenedPath', () => {
       expect(findShortenedPath(file, entries)).toBeUndefined();
     },
   );
+
+  it('reads entries listed with Windows separators', () => {
+    const windows = [{ path: 'src\\main\\lib\\store.ts' }, { path: 'src\\renderer\\store.ts' }];
+    expect(findShortenedPath('lib/store.ts', windows)).toBe('src\\main\\lib\\store.ts');
+  });
 });

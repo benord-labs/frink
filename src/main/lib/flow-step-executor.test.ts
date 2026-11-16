@@ -1300,6 +1300,45 @@ describe('flow-step-executor', () => {
     expect(outputs.configured).toBe(true);
   });
 
+  it('reports a cancelled converging start_task as cancelled, not as a retryable failure', async () => {
+    const nodeRunId = nid();
+    let release: (() => void) | undefined;
+    createWorktreeWithMergedBasesMock.mockImplementationOnce(
+      (_path: string, _slug: string, _branches: string[], signal: AbortSignal) =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve(
+              signal.aborted
+                ? { success: false, error: 'Cancelled' }
+                : {
+                    success: true,
+                    worktreePath: '/wt',
+                    branch: 'b',
+                    baseBranch: 'feat/ticket-2',
+                    mergedBranches: ['feat/ticket-1'],
+                  },
+            );
+        }),
+    );
+
+    const driver = makeStepDriver();
+    const stepDone = driver._trigger('execute', {
+      nodeRunId,
+      flowRunId: 'fr-conv-cancel',
+      projectId: 'p1',
+      blockType: 'start_task',
+      baseBranches: ['feat/ticket-2', 'feat/ticket-1'],
+      timeoutMs: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    await driver._trigger('cancel', { nodeRunId });
+    release?.();
+    await stepDone;
+
+    expect(driver._emitted.find(([e]) => e === 'result')?.[1]?.status).toBe('cancelled');
+  });
+
   it('start_task with baseBranches: emits awaiting_input on merge conflict', async () => {
     createWorktreeWithMergedBasesMock.mockResolvedValueOnce({
       success: false,
@@ -1543,6 +1582,7 @@ describe('flow-step-executor', () => {
     });
 
     // Wiring check: the real repo delete, not a mocked null, is what the next step must observe.
+    // Cold-importing the real repo module can pass the 5s default on a loaded machine.
     it('fails the next custom node step after deleteProject removes the row', async () => {
       const actual =
         await vi.importActual<typeof import('./db/repos/projects')>('./db/repos/projects');
@@ -1568,7 +1608,7 @@ describe('flow-step-executor', () => {
       expect(second.status).toBe('failed');
       expect(second.error).toBe(`Project ${project.id} not found locally`);
       expect(runCustomNodeProcessMock).toHaveBeenCalledOnce();
-    });
+    }, 30_000);
 
     it('fails the step without throwing when the project lookup rejects', async () => {
       const projectId = 'p-lookup-throws';

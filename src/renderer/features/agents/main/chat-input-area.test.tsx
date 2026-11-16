@@ -70,6 +70,7 @@ function composerProps(
     codeSelectionContext: null,
     onClearCodeSelection: vi.fn(),
     activeFileName: null,
+    activeFilePath: null,
     activeFileDismissed: false,
     onDismissActiveFile: vi.fn(),
     ...over,
@@ -78,17 +79,21 @@ function composerProps(
 
 function renderComposer(over: Partial<ComponentProps<typeof ChatInputArea>> = {}) {
   const props = composerProps(over);
+  const client = createIdleClient();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = render(
-    <trpc.Provider client={createIdleClient()} queryClient={queryClient}>
+  const tree = (p: ComponentProps<typeof ChatInputArea>) => (
+    <trpc.Provider client={client} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <ChatInputArea {...props} />
+          <ChatInputArea {...p} />
         </TooltipProvider>
       </QueryClientProvider>
-    </trpc.Provider>,
+    </trpc.Provider>
   );
-  return { props, ...view };
+  const view = render(tree(props));
+  const rerenderComposer = (next: Partial<ComponentProps<typeof ChatInputArea>>) =>
+    view.rerender(tree({ ...props, ...next }));
+  return { props, rerenderComposer, ...view };
 }
 
 /** The footer control row: Mode, Auto and Model sit in it, and the editor chip must not. */
@@ -109,6 +114,20 @@ describe('ChatInputArea editor context', () => {
 
     fireEvent.click(remove);
     expect(props.onDismissActiveFile).toHaveBeenCalledOnce();
+  });
+
+  it("shows the open file's full path, and follows a switch to a same-named file", () => {
+    const { rerenderComposer } = renderComposer({
+      activeFileName: 'index.ts',
+      activeFilePath: '/repo/src/a/index.ts',
+    });
+
+    fireEvent.focus(screen.getByText('index.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/repo/src/a/index.ts');
+
+    rerenderComposer({ activeFileName: 'index.ts', activeFilePath: '/repo/src/b/index.ts' });
+    fireEvent.focus(screen.getByText('index.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/repo/src/b/index.ts');
   });
 
   it('shows nothing for a file the user removed, matching what the send path attaches', () => {
@@ -181,26 +200,26 @@ describe('ChatInputArea on a free Codex account (its model/list has no GPT-6 Ast
   });
 });
 
+/** Places the caret after the editor's last text, as a typed `/` leaves it. */
+function caretAtEnd(root: HTMLElement) {
+  const range = document.createRange();
+  range.selectNodeContents(root.lastChild ?? root);
+  range.collapse(false);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
+}
+
+async function openSlashMenu(props: ComponentProps<typeof ChatInputArea>, container: Element) {
+  const root = container.querySelector<HTMLElement>('[contenteditable="true"]');
+  if (!root) throw new Error('composer editor not found');
+  root.focus();
+  act(() => props.editorRef.current?.setValue('/'));
+  caretAtEnd(root);
+  fireEvent.input(root);
+  return screen.findByRole('listbox', { name: 'Slash commands' });
+}
+
 describe('ChatInputArea hides what the chat agent cannot do', () => {
-  /** Places the caret after the editor's last text, as a typed `/` leaves it. */
-  function caretAtEnd(root: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(root.lastChild ?? root);
-    range.collapse(false);
-    window.getSelection()?.removeAllRanges();
-    window.getSelection()?.addRange(range);
-  }
-
-  async function openSlashMenu(props: ComponentProps<typeof ChatInputArea>, container: Element) {
-    const root = container.querySelector<HTMLElement>('[contenteditable="true"]');
-    if (!root) throw new Error('composer editor not found');
-    root.focus();
-    act(() => props.editorRef.current?.setValue('/'));
-    caretAtEnd(root);
-    fireEvent.input(root);
-    return screen.findByRole('listbox', { name: 'Slash commands' });
-  }
-
   it.each([
     { type: 'claude-code', supportsAll: true },
     { type: 'opencode', supportsAll: false },
@@ -270,5 +289,41 @@ describe('ChatInputArea hides what the chat agent cannot do', () => {
     await waitFor(() => expect(saves).toBe(1));
     await waitFor(() => expect(appStore.get(chatModeAtomFamily('chat-failing'))).toBe('debug'));
     expect(saves).toBe(1);
+  });
+});
+
+describe('ChatInputArea slash-menu picks', () => {
+  function renderClaudeComposer() {
+    const props = composerProps({ projectId: 'project-1' });
+    const account = { type: 'claude-code', label: 'Claude Code', isAuthenticated: true };
+    const view = renderWithTrpc(
+      <Provider store={appStore}>
+        <TooltipProvider>
+          <ChatInputArea {...props} />
+        </TooltipProvider>
+      </Provider>,
+      ({ path }) =>
+        path === 'claudeCode.getResolvedAccount' ? Promise.resolve(account) : new Promise(() => {}),
+    );
+    return { props, ...view };
+  }
+
+  it('inserts a prompt-based built-in as a command block', async () => {
+    const { props, container } = renderClaudeComposer();
+    const menu = await openSlashMenu(props, container);
+
+    fireEvent.mouseDown(within(menu).getByText('/review'));
+
+    expect(props.editorRef.current?.getValue()).toContain('[/cmd:review]\nPlease review the code');
+  });
+
+  it('switches mode for a mode built-in without inserting any text', async () => {
+    const { props, container } = renderClaudeComposer();
+    const menu = await openSlashMenu(props, container);
+
+    fireEvent.mouseDown(within(menu).getByText('/plan'));
+
+    await waitFor(() => expect(appStore.get(chatModeAtomFamily('chat-1'))).toBe('plan'));
+    expect(props.editorRef.current?.getValue()).not.toContain('[/cmd:');
   });
 });

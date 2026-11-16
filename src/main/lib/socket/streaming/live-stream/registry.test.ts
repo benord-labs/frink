@@ -18,6 +18,7 @@ import {
   beginLiveStreamCompletion,
   finishHeldLiveStreams,
   getLiveStreamSeed,
+  listLiveStreamActivity,
   listLiveStreamHeaders,
   markLiveStreamCompletionFinalized,
   recordLiveStreamChunk,
@@ -45,6 +46,34 @@ describe('live stream recovery registry', () => {
     replaceActiveExecutionController('sub', new AbortController());
 
     expect(getExecutionStreamEpoch('sub', 'assistant')).toBe(before);
+  });
+
+  it('lists unfinished streams with the newest part of each', () => {
+    setActiveExecution('sub', new AbortController(), 7, {
+      chatId: 'chat',
+      assistantMessageId: 'assistant',
+    });
+    const streamEpoch = resolveLiveStreamEpoch('sub', 'assistant');
+    recordLiveStreamStart({
+      chatId: 'chat',
+      subChatId: 'sub',
+      assistantMessageId: 'assistant',
+      streamEpoch,
+    });
+    const toolPart = { type: 'tool-Bash', input: { command: 'bun test' } };
+    recordLiveStreamChunk({
+      chatId: 'chat',
+      subChatId: 'sub',
+      assistantMessageId: 'assistant',
+      streamEpoch,
+      messageIndex: 0,
+      parts: [{ type: 'text', text: 'Running it' }, toolPart],
+      chunk: { type: 'tool-input-available' },
+    });
+
+    const [stream] = listLiveStreamActivity();
+    expect(stream).toMatchObject({ chatId: 'chat', subChatId: 'sub', held: false });
+    expect(stream.lastPart).toEqual(toolPart);
   });
 
   it('returns a bounded seed and transfers paint ownership after renderer loss', () => {

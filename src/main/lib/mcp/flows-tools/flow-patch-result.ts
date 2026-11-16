@@ -170,13 +170,13 @@ function sessionFootprintNote(graph: FlowGraph): string | null {
   return `This flow has ${startTasks.length} Start Tasks: ${names.join(', ')}. Each one that runs opens its own sidebar chat; add one only for a separate project, a separate branch/PR, isolated per-item context, or when the user asked for separate chats (frink-flows skill → Sessions).`;
 }
 
-/** True when a patch places nodes itself or resets the layout. */
+/** True when a patch places or sizes nodes itself, or resets the layout. */
 export function operationsTouchPositions(operations: PatchOperation[]): boolean {
   return operations.some(
     (op) =>
       op.op === 'auto_layout' ||
-      (op.op === 'update_node' && op.position !== undefined) ||
-      (op.op === 'add_node' && op.node.position !== undefined),
+      (op.op === 'update_node' && (op.position !== undefined || op.size !== undefined)) ||
+      (op.op === 'add_node' && (op.node.position !== undefined || op.node.size !== undefined)),
   );
 }
 

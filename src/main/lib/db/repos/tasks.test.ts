@@ -1562,3 +1562,35 @@ describe('getPendingTaskIds + claimTask — what the task poller may claim', () 
     expect(await getPendingTaskIds(db)).toEqual([]);
   });
 });
+
+describe('updateTaskResult and a secret request parked on the row', () => {
+  let db: TestDb;
+  const park = {
+    agentSignal: { state: 'awaiting_input', summary: 'Needs K', secretRequest: { id: 'r' } },
+  };
+  const done = { agentSignal: { state: 'done', summary: 'Done' } };
+
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  // Enforced by the UPDATE itself, so no check-then-write gap can let a mid-turn signal land.
+  it('does not let a write that keeps secret parks replace one', async () => {
+    const task = await createTask(db, { description: 't', source: 'manual' });
+    updateTaskStatus(db, task.id, 'running', { result: park });
+
+    const written = await updateTaskResult(db, task.id, done, { keepSecretPark: true });
+
+    expect(written).toBeNull();
+    expect((await getTaskById(db, task.id))?.result).toEqual(park);
+  });
+
+  it('writes as before when the row holds no secret park', async () => {
+    const task = await createTask(db, { description: 't', source: 'manual' });
+    updateTaskStatus(db, task.id, 'running', { result: { agentSignal: { state: 'partial' } } });
+
+    await updateTaskResult(db, task.id, done, { keepSecretPark: true });
+
+    expect((await getTaskById(db, task.id))?.result).toEqual(done);
+  });
+});

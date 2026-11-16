@@ -1,11 +1,15 @@
-import type { MobileMessage, MobileMessagePart } from '@frink/shared/types/remote/mobile';
+import type {
+  MobileMessage,
+  MobileMessagePart,
+  MobileTextRun,
+} from '@frink/shared/types/remote/mobile';
 
 export type Tool = Extract<MobileMessagePart, { type: 'tool' }>;
 export type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
 export type Group =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; runs?: MobileTextRun[] }
   | { type: 'tools'; tools: Tool[] }
-  | { type: 'steer'; text: string }
+  | { type: 'steer'; text: string; runs?: MobileTextRun[] }
   | Extract<MobileMessagePart, { type: 'plan' }>;
 
 /** A message's body in reading order: prose, runs of tool steps (merged), steered notes, plans. */
@@ -21,7 +25,7 @@ export function contentGroups(message: MobileMessage): Group[] {
       else groups.push({ type: 'tools', tools: [part] });
     } else if (part.type === 'plan') groups.push(part);
     else if ((part.type === 'text' || part.type === 'steer') && part.text.trim())
-      groups.push({ type: part.type, text: part.text });
+      groups.push({ type: part.type, text: part.text, runs: part.runs });
   }
   return groups;
 }

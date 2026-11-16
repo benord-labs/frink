@@ -2,7 +2,7 @@
   "name": "frink",
   "version": "0.4.0",
   "private": true,
-  "description": "Fine-tuned automation for everyone: chat with your own coding agents and run them as Flows",
+  "description": "Desktop-first, open-source (MIT) application for running parallel agents, and multi-step custom workflows triggered by schedules, webhooks or events from tools like Linear and Sentry, across your already-used providers.",
   "license": "MIT",
   "author": {
     "name": "Benji Norval"
@@ -59,7 +59,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.7.0",
     "@ai-sdk/react": "^4.0.112",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.278",
+    "@anthropic-ai/claude-agent-sdk": "0.3.316",
     "@anthropic-ai/sdk": "^0.127.0",
     "@benord-labs/frink-primitives": "^0.10.8",
     "@cursor/sdk": "1.0.37",
@@ -117,6 +117,7 @@
     "culori": "^4.0.2",
     "date-fns": "4.4.0",
     "diff": "^9.0.0",
+    "dotenv": "17.4.2",
     "drizzle-orm": "^0.45.3",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
@@ -196,6 +197,7 @@
     "node-abi": "^4.35.0",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
+    "playwright-core": "^1.64.0",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "tw-animate-css": "^1.4.0",
@@ -297,7 +299,8 @@
           "0110_chat_run_link_indexes.sql",
           "0111_sub_chat_messages.sql",
           "0112_resume_intent_continuation.sql",
-          "0113_tasks_project_status_completed_idx.sql"
+          "0113_tasks_project_status_completed_idx.sql",
+          "0114_flow_admission_run_first.sql"
         ]
       },
       {
@@ -318,6 +321,10 @@
       {
         "from": "resources/cursor/cursor-host.mjs",
         "to": "cursor/cursor-host.mjs"
+      },
+      {
+        "from": "resources/tray",
+        "to": "tray"
       },
       {
         "from": "assets/skills",

@@ -1,9 +1,11 @@
 import { aiProviderMark } from '@/components/AiProviderMark';
+import { cn } from '@/lib/utils';
 /**
- * The read-only mode / model / auto-review readout carried by both flow bottom surfaces — what the
- * composer's selectors showed, restored now that a running or paused flow replaces the composer.
+ * The mode / model readout and the live Auto switch carried by the flow bottom surfaces — what the
+ * composer's controls showed, restored now that a running or paused flow replaces the composer.
  */
-import { Rocket, Zap, Sparkles } from 'lucide-react';
+import { useAtom, useAtomValue } from 'jotai';
+import { Rocket, ToggleLeft, ToggleRight, Zap } from 'lucide-react';
 import type { ComponentType } from 'react';
 import {
   CODEX_FAST_SPEED_MULTIPLIER,
@@ -16,6 +18,8 @@ import {
 } from '../../../../../../../../shared/lib/model-picker-label';
 import type { ChatMode } from '../../../../../../../../shared/types/chat-mode';
 import type { CodexSpeed } from '../../../../../../../../shared/types/execution';
+import { autoModePerChatAtomFamily, lastSelectedModelIdAtomFamily } from '../../../../../atoms';
+import { getAutoModeTogglePresentation } from '../../../../../components/auto-mode-toggle';
 import { MODE_CONFIG } from '../../../../../components/mode-selector';
 import { supportsNativeAutoReview } from '../../../../../lib/resolve-execution-model-cli';
 import { HIDE_CONTEXT_PILLS, HIDE_MODEL_TEXT, HIDE_PILL_TEXT } from '../FlowSurfaceCard';
@@ -24,38 +28,57 @@ const META_PILL_CLASS =
   'inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground';
 const HIDE_FAST_PILL_TEXT = '@max-[22rem]:sr-only';
 
-/**
- * Whether provider-native auto-review can apply to this node AT ALL — the question the card must
- * answer before it can honestly say "on" or "off".
- *
- * The flow's `autoReviewTools` is a REQUEST, not the effective value: the executor still refuses it
- * for a provider without a native reviewer. (Plan mode no longer refuses it — Auto reviews the
- * planning phase too.) This mirrors that gate from data the surface already carries — the picker id
- * encodes the provider, and `allowClaudeSdkDefault` covers a node that inherits its model instead of
- * overriding one (the executor passes the same flag).
- *
- * Deliberately NOT `shouldEnableNativeAutoReview`: that folds eligibility and consent into a single
- * boolean, and the whole point here is to tell "auto is off" apart from "auto cannot apply".
- *
- * "No model" and "a model id we cannot resolve" are kept APART. They look identical downstream —
- * both yield no variant — but they mean opposite things: no override inherits the Claude SDK
- * default and is eligible, whereas a stale or foreign id tells us nothing about the provider.
- * Treating the latter as Claude would feed the raw id to the Claude version check, which returns
- * true for any string that is not `haiku`, and paint an Auto pill onto a node that can never
- * auto-review. The model pill already hides for an unresolved id; this hides with it.
- */
-function isAutoReviewEligible(modelId: string | undefined): boolean {
-  if (!modelId) return supportsNativeAutoReview('claude-code', '', { allowClaudeSdkDefault: true });
+/** Whether Auto can apply to the chat's next turn: judged on the model that turn sends. An id it
+ * cannot resolve hides the switch rather than passing the Claude check for anything but haiku. */
+function isAutoReviewEligible(modelId: string): boolean {
   const variant = resolveModelPickerItemById(modelId)?.variant;
   if (!variant) return false;
   return supportsNativeAutoReview(variant === 'claude' ? 'claude-code' : variant, modelId);
 }
 
+const AUTO_SWITCH_TIMING =
+  'Applies from your next message; the Flow sets it again at its next step.';
+
+/** The chat's own Auto setting, editable mid-run because the composer that owns it is hidden. A flip
+ * reaches the next message only, so callers mount it only where a next message can follow. */
+export function FlowAutoSwitch({ chatId }: { chatId: string }) {
+  const [checked, setChecked] = useAtom(autoModePerChatAtomFamily(chatId));
+  const modelId = useAtomValue(lastSelectedModelIdAtomFamily(chatId));
+  if (!isAutoReviewEligible(modelId)) return null;
+  const { label, text, className } = getAutoModeTogglePresentation({
+    checked,
+    available: true,
+    unavailableReason: '',
+  });
+  const description = `${label}. ${AUTO_SWITCH_TIMING}`;
+  return (
+    <button
+      type="button"
+      aria-pressed={checked}
+      aria-label={description}
+      title={description}
+      onClick={() => setChecked(!checked)}
+      className={cn(
+        META_PILL_CLASS,
+        'cursor-pointer hover:bg-muted hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring/70',
+        className,
+      )}
+    >
+      {checked ? (
+        <ToggleRight className="h-3 w-3" aria-hidden />
+      ) : (
+        <ToggleLeft className="h-3 w-3" aria-hidden />
+      )}
+      <span className={HIDE_PILL_TEXT}>{text}</span>
+    </button>
+  );
+}
+
 type FlowRunMetaProps = {
   modelId?: string;
   mode?: ChatMode;
-  /** The flow's `settings.autoReviewTools`, snapshotted onto the task's `_config` at dispatch. */
-  autoReviewTools?: boolean;
+  /** The chat whose Auto switch to show; omitted where no next message can follow. */
+  autoChatId?: string | null;
   /** The flow's `settings.codexSpeed`, snapshotted onto the task's `_config` at dispatch. */
   codexSpeed?: CodexSpeed;
   /** While Stop is armed the whole readout steps aside — the row becomes the question. */
@@ -75,29 +98,6 @@ type PillSpec = {
   /** Width tier at which the chip keeps its glyph but drops its words. */
   labelTier: string;
 };
-
-/**
- * One builder per chip, each returning its spec or null, so the readout is assembled as data rather
- * than as three branches inside one function. Every chip is independently absent when its value is:
- * a taskless window between nodes, an unknown or stale model id, a node where auto cannot apply.
- *
- * Auto carries no `pillTier` while the other two do. Mode and model are context you chose and can
- * re-read in the flow editor, so they drop out first on a narrow card; Auto is permission state that
- * is not inferable from anywhere else, so it survives one width tier longer.
- */
-function autoPill(modelId: string | undefined, requested?: boolean) {
-  if (requested === undefined || !isAutoReviewEligible(modelId)) return null;
-  return {
-    key: 'auto',
-    icon: Sparkles,
-    label: requested ? 'Auto on' : 'Auto off',
-    title: requested
-      ? 'Auto Mode on — your provider reviews eligible approval requests'
-      : 'Auto Mode off — eligible approval requests ask you',
-    tint: requested ? 'bg-accent/60 text-foreground' : '',
-    labelTier: HIDE_PILL_TEXT,
-  } satisfies PillSpec;
-}
 
 /**
  * Fast is shown ONLY when it is on, unlike Auto's on/off pair. A "Fast off" chip would be noise on
@@ -159,15 +159,11 @@ function modelPill(modelId: string | undefined) {
 function readoutPills(
   modelId: string | undefined,
   mode: ChatMode | undefined,
-  autoReviewTools: boolean | undefined,
   codexSpeed: CodexSpeed | undefined,
 ): PillSpec[] {
-  return [
-    speedPill(modelId, codexSpeed),
-    autoPill(modelId, autoReviewTools),
-    modePill(mode),
-    modelPill(modelId),
-  ].filter((pill) => pill !== null);
+  return [speedPill(modelId, codexSpeed), modePill(mode), modelPill(modelId)].filter(
+    (pill) => pill !== null,
+  );
 }
 
 function MetaPill({
@@ -191,29 +187,22 @@ function MetaPill({
 /**
  * Reuses the composer's own MODE_CONFIG (icon/label/tooltip), picker-label formatter and Auto Mode
  * copy, so every string here matches what the composer showed before the run replaced it.
- *
- * The Auto chip reads on/off only where auto-review is a live axis. Where it can never apply (a
- * model with no provider reviewer) it renders nothing rather than spending scarce width to say
- * "this control does not apply here". Plan mode is now a live axis — Auto reviews the planning phase.
- *
- * That is a display-only narrowing of auto-mode-tool-approval's "on, off, or unavailable" presentation
- * (the pill hides the "unavailable" state for a run surface where width is scarce); the reviewer
- * posture itself is unchanged.
  */
 export function FlowRunMeta({
   modelId,
   mode,
-  autoReviewTools,
+  autoChatId,
   codexSpeed,
   confirming,
 }: FlowRunMetaProps) {
-  const pills = readoutPills(modelId, mode, autoReviewTools, codexSpeed);
-  if (pills.length === 0) return null;
+  const pills = readoutPills(modelId, mode, codexSpeed);
+  if (pills.length === 0 && !autoChatId) return null;
   return (
     // The chips own their line, so they never compete with the status sentence for width and never
     // need to shrink. They still step aside entirely while Stop is armed: at a 300px pane the armed
     // row needs every pixel for two confirm verbs that must keep their full wording.
     <div className={`flex shrink-0 items-center gap-1.5 ${confirming ? 'sr-only' : ''}`}>
+      {autoChatId ? <FlowAutoSwitch chatId={autoChatId} /> : null}
       {pills.map(({ key, ...pill }) => (
         <MetaPill key={key} {...pill} />
       ))}

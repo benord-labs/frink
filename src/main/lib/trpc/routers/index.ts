@@ -22,10 +22,12 @@ import { permissionsRouter } from './permissions';
 import { pluginsRouter } from './plugins';
 import { powerRouter } from './power';
 import { projectsRouter } from './projects';
+import { secretRequestsRouter } from './secret-requests';
 import { skillsRouter } from './skills';
 import { socketRouter } from './socket';
 import { tasksRouter } from './tasks';
 import { terminalRouter } from './terminal';
+import { trayRouter } from './tray';
 import { triggerBindingsRouter } from './trigger-bindings';
 import { triggerRulesRouter } from './trigger-rules';
 import { triggerSetupRouter } from './trigger-setup';
@@ -62,11 +64,13 @@ export function createAppRouter(_getWindow: () => BrowserWindow | null) {
     permissions: permissionsRouter,
     plugins: pluginsRouter,
     power: powerRouter,
+    tray: trayRouter,
     tasks: tasksRouter,
     integrations: integrationsRouter,
     triggerRules: triggerRulesRouter,
     triggerSetup: triggerSetupRouter,
     triggerBindings: triggerBindingsRouter,
+    secretRequests: secretRequestsRouter,
     socket: socketRouter,
     usage: usageRouter,
     usageHistory: usageHistoryRouter,

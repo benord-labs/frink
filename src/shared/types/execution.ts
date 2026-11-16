@@ -1,6 +1,15 @@
 /**
- * Agent execution settings and filesystem permission types shared by main, preload and renderer.
+ * Agent execution settings, replayed history and filesystem permission types shared by main,
+ * preload and renderer.
  */
+
+/** One earlier turn of a chat, replayed to a session that starts without it. `personAuthored` is
+ * set only when a person wrote the turn; a turn without it is replayed exactly as stored. */
+export type ConversationTurn = {
+  role: 'user' | 'assistant';
+  content: string;
+  personAuthored?: true;
+};
 
 // ============================================================================
 // Execution Settings (shared across socket client/executor)
@@ -26,6 +35,7 @@ const VALID_MODELS = [
   'haiku',
   'sonnet',
   'opus',
+  'claude-fable-5-2',
   'claude-fable-5-1',
   'claude-fable-5',
   'claude-opus-5-5',
@@ -54,7 +64,7 @@ export function parseClaudeModel(input: unknown): string | null {
 /**
  * Claude Agent SDK `effort` — guides adaptive thinking depth (see `build-with-claude/effort`).
  * Matches the bundled Claude Code CLI `--effort` accepted set (`low|medium|high|xhigh|max`). `xhigh`
- * is only meaningful on Fable 5.1 / Fable 5 / Opus 4.8 / Opus 4.7; the SDK silently downgrades it for models
+ * is only meaningful on Fable 5.2 / 5.1 / 5 / Opus 4.8 / Opus 4.7; the SDK silently downgrades it for models
  * that don't support it, so an over-spec'd selection never errors.
  * Requires bundled CLI ≥ 2.1.173 / `@anthropic-ai/claude-agent-sdk` ≥ 0.2.141, where `xhigh` landed —
  * an older binary rejects `--effort xhigh` and crashes the executor (the reason the prior guard existed).

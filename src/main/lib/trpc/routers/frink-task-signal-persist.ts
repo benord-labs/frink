@@ -367,6 +367,8 @@ export async function recordLinkedTaskSignal(params: {
   // Same CAS as persistLinkedTaskSignal: a park landing between read and write wins.
   const updated = await updateTaskResult(db, taskIdForExecution, transition.result, {
     expectStatuses: ['running', 'failed'],
+    // A mid-turn signal never replaces a secret park; the turn-end persist settles the row.
+    keepSecretPark: !signal.secretRequest,
   });
   return updated != null;
 }

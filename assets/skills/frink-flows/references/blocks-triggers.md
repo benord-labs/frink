@@ -26,12 +26,14 @@ Config `{}`; bound at flow level to a project, fires on task completion. Carries
 | `taskStatus` | string | Final status of the task |
 | `source` | string | How the task was created (e.g. manual, flow, slack) |
 | `projectId` | string | UUID of the project the task belonged to |
-| `result` | string | Result summary from the task signal |
-| `branch` | string | Git branch the task ran on |
-| `baseBranch` | string | Base branch the task branched from |
-| `worktreePath` | string | Absolute path to the task worktree |
-| `chatId` | string | Chat session ID of the triggering task |
-| `projectPath` | string | Main project directory path |
+| `taskCompletedAt` | string | ISO time the task finished |
+| `result` | string | Summary the task's agent reported when it finished (not always present) |
+| `branch` | string | Git branch the task ran on (not always present) |
+| `baseBranch` | string | Base branch the task branched from (not always present) |
+| `worktreePath` | string | Absolute path to the task worktree (not always present) |
+| `chatId` | string | Chat session ID of the completed task (not always present) |
+| `subChatId` | string | Chat tab the completed task ran in (not always present) |
+| `projectPath` | string | Main project directory path (not always present) |
 
 
 ## schedule_trigger
@@ -46,6 +48,7 @@ Config `{ cronExpression: string, timezone: string }`. Standard five-field cron,
 ## webhook_trigger
 
 Config `{ integrationId: string, eventType: string, conditions?: object }`.
+Optional `conditions.filters` is a list of `{ field, operator, value }`; operator is one of `equals`, `not_equals`, `contains`, `in_list`. Only `in_list` takes a list value; the others take text. A filter outside this shape blocks every event.
 First call `frink_flows_list_catalog({kind:"integrations"})`; choose a returned integration id and one of its `events[].id` values (not label). Those two fields are the complete binding; no separate trigger rule. Empty catalog/sign-out: ask the user to connect an integration, do not invent ids. The provider must deliver webhooks; endpoint generation/verification may still be needed in Settings → Plugins.
 
 Stored `eventType`/`fullContent` are aliased to `event`/`payload` at runtime. Prefer friendly provider aliases from `webhook-aliases.md`; unlisted providers use raw `trigger.payload.*`.

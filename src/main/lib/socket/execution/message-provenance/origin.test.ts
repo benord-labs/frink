@@ -59,4 +59,16 @@ describe('describeDelivery', () => {
       dispatchTaskId: 'task-9',
     });
   });
+
+  it('carries the stored message’s source stamp, and never a dispatch id from its metadata', () => {
+    const metadata = { sessionId: 'sess-1', source: 'work-queue', dispatchTaskId: 'spoofed' };
+    const retry = { ...typed, trigger: 'regenerate-message' as const };
+    expect(
+      describeDelivery({ ...retry, userMessage: { ...typed.userMessage, metadata } }, 'go'),
+    ).toEqual({
+      messageOrigin: { source: 'internal', kind: 'regenerate' },
+      dispatchTaskId: undefined,
+      messageSource: 'work-queue',
+    });
+  });
 });

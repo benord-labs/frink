@@ -1,7 +1,7 @@
 import os from 'node:os';
 import { expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
-import { listPendingPermissionRequests } from '../streaming/pending-permission';
+import { hasPendingPermissionRequest } from '../streaming/pending-permission/validate-tool-permission';
 import { registerCodexHookTests } from './codex';
 import { registerCustomNodePermissionTests } from './executor-custom-node-permissions';
 
@@ -310,34 +310,38 @@ function registerCodexBoundaryPermissionTests({
     expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it('preserves an explicit Frink deny when Codex Auto is on', async () => {
-    const { checkPermission } = await import('../../permissions/v2/check');
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'deny',
-      reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' },
-    });
-    let approval: unknown;
-    vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
-      approval = await options.checkApproval({
-        toolName: 'Bash',
-        input: { command: 'rm -rf /' },
+  it.each([
+    ['allow', { decision: 'allow' }, { allowed: true }],
+    [
+      'deny',
+      { decision: 'deny', reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' } },
+      { allowed: false, message: expect.stringMatching(BASH_DENY_MESSAGE_RE) },
+    ],
+  ] as const)(
+    'answers an explicit Frink %s itself when Codex Auto is on, so Guardian never sees it',
+    async (_kind, ruleResult, expected) => {
+      const { checkPermission } = await import('../../permissions/v2/check');
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      vi.mocked(checkPermission).mockResolvedValueOnce(ruleResult);
+      let approval: unknown;
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
+        approval = await options.checkApproval({
+          toolName: 'Bash',
+          input: { command: 'rm -rf /' },
+        });
+        yield { type: 'finish' } as UIMessageChunk;
       });
-      yield { type: 'finish' } as UIMessageChunk;
-    });
 
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'codex explicit deny',
-      settings: { autoReviewTools: true },
-    });
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'codex explicit rule',
+        settings: { autoReviewTools: true },
+      });
 
-    expect(approval).toEqual({
-      allowed: false,
-      message: expect.stringMatching(BASH_DENY_MESSAGE_RE),
-    });
-    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
-  });
+      expect(approval).toEqual(expected);
+      expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+    },
+  );
 }
 
 function registerCodexPathAndLifecycleTests({
@@ -463,7 +467,6 @@ function registerCodexPathAndLifecycleTests({
       decision: 'ask',
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce(() => {});
     let approval: Promise<unknown> | undefined;
     vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
       // SAFETY: the executor reads only type, id and delta from a text-delta chunk.
@@ -477,7 +480,7 @@ function registerCodexPathAndLifecycleTests({
 
     const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
     expect(card).toBeDefined();
-    expect(listPendingPermissionRequests()).not.toContainEqual(card);
+    expect(hasPendingPermissionRequest(basePayload.subChatId)).toBe(false);
     await expect(approval).resolves.toMatchObject({ allowed: false });
   });
 }

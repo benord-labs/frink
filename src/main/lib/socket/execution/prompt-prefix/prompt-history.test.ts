@@ -29,6 +29,48 @@ describe('formatPromptWithHistory', () => {
     );
   });
 
+  it('recaps the tokens of a person’s turns and replays every other turn as stored', () => {
+    const selection = `@[quote:p:${Buffer.from('x'.repeat(5000)).toString('base64')}]`;
+    const out = formatPromptWithHistory('next', [
+      { role: 'user', content: `${selection} why @[file:local:a.ts]?`, personAuthored: true },
+      { role: 'assistant', content: 'see @[file:local:b.ts]' },
+      { role: 'user', content: 'Flow step: read @[file:local:c.ts]' },
+    ]);
+    expect(out).toContain(
+      `Human: [quoted an earlier message:\n${'x'.repeat(2000)}\n... (truncated)] why a.ts?`,
+    );
+    expect(out).not.toContain(selection);
+    expect(out).toContain('Assistant: see @[file:local:b.ts]');
+    expect(out).toContain('Human: Flow step: read @[file:local:c.ts]');
+  });
+
+  it('recaps a steer replayed as the person’s turn between two assistant turns', () => {
+    const preview = Buffer.from('const a = 1;').toString('base64');
+    const out = formatPromptWithHistory('next', [
+      { role: 'assistant', content: 'working on @[file:local:b.ts]' },
+      {
+        role: 'user',
+        content: `look at @[code:a.ts:3-4:preview:${preview}] then @[skill:deploy]`,
+        personAuthored: true,
+      },
+      { role: 'assistant', content: 'switching' },
+    ]);
+    expect(out).toContain(
+      'Assistant: working on @[file:local:b.ts]\n\nHuman: look at [selected lines 3-4 of a.ts:\nconst a = 1;] then [skill deploy]\n\nAssistant: switching',
+    );
+    expect(out).not.toContain(preview);
+  });
+
+  it('recaps before the budget cut, so a large selection cannot push out earlier turns', () => {
+    const selection = `@[quote:p:${Buffer.from('x'.repeat(300_000)).toString('base64')}]`;
+    const out = formatPromptWithHistory('next', [
+      { role: 'user', content: 'the first question' },
+      { role: 'user', content: `${selection} explain`, personAuthored: true },
+    ]);
+    expect(out).toContain('Human: the first question');
+    expect(out).not.toContain('Earlier conversation omitted');
+  });
+
   it('returns the prompt unchanged when there is no history', () => {
     expect(formatPromptWithHistory('do the thing', [])).toBe('do the thing');
     expect(formatPromptWithHistory('do the thing', undefined)).toBe('do the thing');

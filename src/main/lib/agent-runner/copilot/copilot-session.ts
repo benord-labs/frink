@@ -11,6 +11,7 @@ import type {
 } from '@github/copilot-sdk';
 import log from 'electron-log';
 import type { createCopilotGate } from './copilot-gate';
+import sessionOptionRoutes from './copilot-session-options.json';
 import type { CopilotTools } from './copilot-tools';
 
 /** The parts of a Copilot session the checks read. */
@@ -56,6 +57,15 @@ const NEW_PROTOCOL =
 const FRINK_POLICY = {
   permissions: { disableBypassPermissionsMode: 'disable', disableAssistedPermissionsMode: true },
 };
+
+// Keyed by the SDK's session options, so an option Copilot adds or drops fails typecheck here.
+// Every option Frink leaves unset runs at Copilot's own default.
+type AssertNone<T extends never> = T;
+type RoutedOption = keyof typeof sessionOptionRoutes;
+type CopilotOption = keyof SessionConfig | keyof ResumeSessionConfig;
+type _Unrouted = AssertNone<Exclude<CopilotOption, RoutedOption>>;
+type _Dropped = AssertNone<Exclude<RoutedOption, CopilotOption>>;
+export const COPILOT_SESSION_OPTIONS = sessionOptionRoutes;
 
 /** The one set of options every Copilot session is opened or resumed with. */
 export function copilotSessionOptions(input: {

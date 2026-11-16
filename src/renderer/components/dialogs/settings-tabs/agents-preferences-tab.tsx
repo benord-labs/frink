@@ -18,6 +18,7 @@ import {
 import { trpc } from '../../../lib/trpc';
 import { Switch } from '../../ui/switch';
 import { FlowConcurrencySettings } from './FlowConcurrencySettings';
+import { MenuBarStatusSetting } from './MenuBarStatusSetting';
 import { SettingsTabHeader } from './SettingsTabHeader';
 import { SETTINGS_TAB_PAGE_CLASS } from './settings-tab-surface';
 
@@ -160,6 +161,7 @@ export function AgentsPreferencesTab() {
                 className="shrink-0"
               />
             </div>
+            <MenuBarStatusSetting />
           </div>
         </SettingsCard>
       </SettingsSection>

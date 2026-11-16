@@ -1,3 +1,4 @@
+import { REQUEST_SECRET_TOOL } from './secret-request';
 import { TASK_SIGNAL_TOOL } from '../trpc/routers/frink-task-signal';
 
 export const CODEX_TASK_STOP_GUARD_TOOL_NAME = 'frink_task_stop_guard';
@@ -21,6 +22,7 @@ const BASE_TOOLS = [
     inputSchema: { type: 'object' as const, properties: {} },
   },
   TASK_SIGNAL_TOOL,
+  REQUEST_SECRET_TOOL,
   {
     name: 'requestSwitchProject',
     description:

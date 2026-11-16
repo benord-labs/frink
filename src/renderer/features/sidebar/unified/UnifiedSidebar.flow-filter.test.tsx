@@ -150,4 +150,20 @@ describe('UnifiedSidebar Flow-chat filter', () => {
     const props = hoisted.capturedArchivedChatsSectionProps as { archivedChats: { id: string }[] };
     expect(props.archivedChats.map((chat) => chat.id)).toEqual(['mine']);
   });
+
+  it('shows the filter button once a Flow chat appears, per view, without a reload', () => {
+    setFolderCounts(null, 2, 0);
+    hoisted.archivedChatsData = [{ id: 'flow', name: 'Flow', taskId: 'task-1' }];
+    const { rerender } = render(<UnifiedSidebar />);
+    const filterShown = () => screen.getByTestId('sidebar-header').dataset.flowFilter;
+    expect(filterShown()).toBe('false');
+
+    setFolderCounts(null, 3, 1);
+    rerender(<UnifiedSidebar onChatSelect={() => {}} />);
+    expect(filterShown()).toBe('true');
+
+    setFolderCounts(null, 2, 0);
+    fireEvent.click(screen.getByTestId('toggle-archived'));
+    expect(filterShown()).toBe('true');
+  });
 });

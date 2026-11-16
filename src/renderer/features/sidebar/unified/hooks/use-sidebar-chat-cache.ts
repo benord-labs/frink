@@ -77,6 +77,20 @@ export function buildChatCountByProjectMap(
   return map;
 }
 
+/** The Flow-chat filter shows while it is on (so it can be turned off) or when the current view has Flow chats. */
+export function shouldShowFlowChatsFilter(input: {
+  hideFlowChats: boolean;
+  showArchived: boolean;
+  chatCounts: readonly ListCountsRow[] | undefined;
+  archivedChats: readonly { taskId?: string | null }[] | undefined;
+}): boolean {
+  if (input.hideFlowChats) return true;
+  if (input.showArchived) {
+    return Array.isArray(input.archivedChats) && input.archivedChats.some((chat) => chat.taskId);
+  }
+  return Array.isArray(input.chatCounts) && input.chatCounts.some((row) => row.flowCount > 0);
+}
+
 /**
  * Snapshot to record after a `reset` folder page fetch. The folder header count and the
  * folder rows read the same local `chats` table (same filter), so a divergence can only

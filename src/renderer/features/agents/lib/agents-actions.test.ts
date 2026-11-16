@@ -309,4 +309,21 @@ describe('agents-actions', () => {
       expect(zoomPaneOut).toHaveBeenCalledTimes(1);
     });
   });
+
+  it.each([
+    ['open-flows', 'flows'],
+    ['open-work-queue', 'workqueue'],
+  ] as const)('%s opens the %s destination', async (actionId, destination) => {
+    const openDestination = vi.fn();
+
+    const result = await executeAgentAction(actionId, { openDestination }, 'hotkey');
+
+    expect(result.success).toBe(true);
+    expect(openDestination).toHaveBeenCalledWith(destination);
+  });
+
+  it('leaves destination shortcuts unavailable until the layout wires navigation', async () => {
+    const result = await executeAgentAction('open-flows', {}, 'hotkey');
+    expect(result.success).toBe(false);
+  });
 });

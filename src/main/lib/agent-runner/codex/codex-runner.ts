@@ -91,6 +91,7 @@ export type CodexRunnerParams = {
   /** The Flow-run-ended notice for this turn's own prompt; `onAccepted` runs once turn/start does. */
   flowRunEnded?: { text: string; onAccepted: () => void };
   composerContext?: Parameters<typeof codexTurnContext>[0]['composerContext'];
+  operatorReminders?: Parameters<typeof codexTurnContext>[0]['operatorReminders'];
   cwd: string;
   /** Stable credential id -- part of the app-server registry key. */
   credentialId: string;

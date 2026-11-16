@@ -1,6 +1,8 @@
 import { Button } from '@benord-labs/frink-primitives';
 import type { ReactNode } from 'react';
+import { useAtomValue } from 'jotai';
 import { memo } from 'react';
+import { chatContextFileAtomFamily } from '@/lib/code-editor/state';
 import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
 import { NoAccountsEmptyState } from '../../../components/no-accounts-empty-state';
 import type { PastedTextFile, PastedTextOptions } from '../../../hooks/use-pasted-text-files';
@@ -86,6 +88,7 @@ export const ChatInputSection = memo(function ChatInputSection({
   unauthAccount = null,
 }: Props): ReactNode {
   useTerminalOutputIntake({ chatId: parentChatId, addPastedText: onAddPastedText, editorRef });
+  const activeFilePath = useAtomValue(chatContextFileAtomFamily(parentChatId))?.path ?? null;
 
   // Full composer width, like NoAccountsEmptyState's compact card: the transcript scrolls under it.
   const composerCardClass =
@@ -114,6 +117,7 @@ export const ChatInputSection = memo(function ChatInputSection({
       codeSelectionContext={codeSelectionContext}
       onClearCodeSelection={onClearCodeSelection}
       activeFileName={activeFileName}
+      activeFilePath={activeFilePath}
       activeFileDismissed={activeFileDismissed}
       onDismissActiveFile={onDismissActiveFile}
       pastedTexts={pastedTexts}
@@ -186,6 +190,7 @@ export const ChatInputSection = memo(function ChatInputSection({
       codeSelectionContext={codeSelectionContext}
       onClearCodeSelection={onClearCodeSelection}
       activeFileName={activeFileName}
+      activeFilePath={activeFilePath}
       activeFileDismissed={activeFileDismissed}
       onDismissActiveFile={onDismissActiveFile}
       pastedTexts={pastedTexts}

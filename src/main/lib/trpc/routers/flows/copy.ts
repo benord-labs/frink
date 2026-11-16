@@ -18,13 +18,9 @@ export function createFlowCopyProcedures() {
     copy: publicProcedureRaw
       .input(z.object({ id: z.string().min(1) }))
       .mutation(async ({ input }) => {
+        let copy: { id: string };
         try {
-          const db = getDatabase();
-          const copy = await copyFlow(db, { sourceFlowId: input.id });
-          const version = await getLatestVersion(db, copy.id);
-          const graph = version ? normalizeFlowGraph(version.graph) : null;
-          trackFlowCreated({ id: copy.id, triggerType: flowTriggerKind(graph), createdBy: 'copy' });
-          return copy;
+          copy = await copyFlow(getDatabase(), { sourceFlowId: input.id });
         } catch (error) {
           if (error instanceof FlowCopyNotFoundError) {
             throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow not found' });
@@ -41,6 +37,18 @@ export function createFlowCopyProcedures() {
           });
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Could not copy flow' });
         }
+        // The copy is already saved, so a failed count must not report the copy as failed
+        try {
+          const version = await getLatestVersion(getDatabase(), copy.id);
+          const graph = version ? normalizeFlowGraph(version.graph) : null;
+          trackFlowCreated({ id: copy.id, triggerType: flowTriggerKind(graph), createdBy: 'copy' });
+        } catch (error) {
+          log.warn('[Flows] Could not count flow copy', {
+            flowId: copy.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return copy;
       }),
   };
 }

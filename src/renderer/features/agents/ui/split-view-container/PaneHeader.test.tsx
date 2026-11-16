@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -32,15 +33,18 @@ vi.mock('../../../../components/ui/kbd', () => ({
 }));
 
 vi.mock('lucide-react', () => ({
-  ChevronDown: () => <span data-testid="chevron-down" />,
-  ChevronLeft: () => <span data-testid="chevron-left" />,
-  ChevronRight: () => <span data-testid="chevron-right" />,
-  ChevronUp: () => <span data-testid="chevron-up" />,
+  MoreHorizontal: () => <span data-testid="more-horizontal" />,
+  SquareArrowDown: () => <span data-testid="square-arrow-down" />,
+  SquareArrowLeft: () => <span data-testid="square-arrow-left" />,
+  SquareArrowRight: () => <span data-testid="square-arrow-right" />,
+  SquareArrowUp: () => <span data-testid="square-arrow-up" />,
   GripVertical: () => <span data-testid="grip-vertical" />,
 }));
 
 const FOCUS_PANE_1 = /focus pane 1/i;
 const FOCUS_PANE = /focus pane/i;
+const PANE_1_ACTIONS = 'Pane 1 actions';
+const MOVE_PANE = /^move/i;
 
 const baseProps = () => ({
   paneNumber: 1,
@@ -168,8 +172,8 @@ describe('PaneHeader', () => {
   describe('compact pane chrome', () => {
     const COMPACT_HIDDEN = '@max-[30rem]/pane:hidden';
 
-    it('sheds the reorder arrows, their separator and the Active chip below the Compact tier', () => {
-      const { container } = render(
+    it('sheds the Active chip below the Compact tier but keeps the pane menu', () => {
+      render(
         <PaneHeader
           {...baseProps()}
           isActive
@@ -179,11 +183,10 @@ describe('PaneHeader', () => {
         />,
       );
 
-      for (const arrow of screen.getAllByRole('button', { name: /^move pane 1/i })) {
-        expect(arrow.className).toContain(COMPACT_HIDDEN);
-      }
       expect(screen.getByText('Active').className).toContain(COMPACT_HIDDEN);
-      expect(container.querySelector('.w-px')?.className).toContain(COMPACT_HIDDEN);
+      expect(screen.getByRole('button', { name: PANE_1_ACTIONS }).className).not.toContain(
+        COMPACT_HIDDEN,
+      );
     });
 
     it('keeps the drag handle, label and close button in a Compact pane', () => {
@@ -197,6 +200,79 @@ describe('PaneHeader', () => {
       expect(
         screen.getAllByTestId('tooltip-trigger')[0].querySelector('.truncate')?.className,
       ).not.toContain(COMPACT_HIDDEN);
+    });
+  });
+
+  describe('pane menu', () => {
+    it('puts Back/Forward and the moves in one menu instead of header buttons', async () => {
+      render(
+        <PaneHeader
+          {...baseProps()}
+          canMoveLeft
+          canMoveRight
+          onMoveLeft={vi.fn()}
+          onMoveRight={vi.fn()}
+          historyMenuItems={<div role="menuitem">Back to “Old chat”</div>}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: MOVE_PANE })).toBeNull();
+      expect(screen.queryByText('Back to “Old chat”')).toBeNull();
+
+      await userEvent.click(screen.getByRole('button', { name: PANE_1_ACTIONS }));
+
+      const items = screen.getAllByRole('menuitem');
+      expect(items.map((item) => item.textContent)).toEqual([
+        'Back to “Old chat”',
+        'Move left',
+        'Move right',
+      ]);
+      expect(items[1].querySelector('[data-testid="square-arrow-left"]')).not.toBeNull();
+      expect(items[2].querySelector('[data-testid="square-arrow-right"]')).not.toBeNull();
+    });
+
+    it('moves the pane up and down from the menu in a stacked layout', async () => {
+      const onMoveLeft = vi.fn();
+      const onMoveRight = vi.fn();
+      render(
+        <PaneHeader
+          {...baseProps()}
+          isVertical
+          canMoveLeft
+          canMoveRight
+          onMoveLeft={onMoveLeft}
+          onMoveRight={onMoveRight}
+        />,
+      );
+      const openMenu = () => userEvent.click(screen.getByRole('button', { name: PANE_1_ACTIONS }));
+
+      await openMenu();
+      const up = screen.getByRole('menuitem', { name: 'Move up' });
+      expect(up.querySelector('[data-testid="square-arrow-up"]')).not.toBeNull();
+      await userEvent.click(up);
+      await openMenu();
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Move down' }));
+
+      expect(onMoveLeft).toHaveBeenCalledOnce();
+      expect(onMoveRight).toHaveBeenCalledOnce();
+    });
+
+    it('disables the move at the end of the row and keeps its shortcut hint', async () => {
+      const onMoveLeft = vi.fn();
+      render(<PaneHeader {...baseProps()} canMoveLeft={false} onMoveLeft={onMoveLeft} />);
+
+      await userEvent.click(screen.getByRole('button', { name: PANE_1_ACTIONS }));
+      const left = screen.getByRole('menuitem', { name: 'Move left' });
+      expect(left).toHaveAttribute('aria-disabled', 'true');
+      expect(left.querySelector('[data-testid="kbd-reorder-pane-left"]')).not.toBeNull();
+      await userEvent.click(left, { pointerEventsCheck: 0 });
+
+      expect(onMoveLeft).not.toHaveBeenCalled();
+    });
+
+    it('shows no menu when the pane cannot move', () => {
+      render(<PaneHeader {...baseProps()} />);
+
+      expect(screen.queryByRole('button', { name: PANE_1_ACTIONS })).toBeNull();
     });
   });
 
@@ -222,27 +298,6 @@ describe('PaneHeader', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Remove pane 1 from split' }));
 
       expect(props.onClose).toHaveBeenCalledOnce();
-    });
-
-    it('moves the pane with the reorder arrows, named for a stacked layout', async () => {
-      const onMoveLeft = vi.fn();
-      const onMoveRight = vi.fn();
-      render(
-        <PaneHeader
-          {...baseProps()}
-          isVertical
-          canMoveLeft
-          canMoveRight
-          onMoveLeft={onMoveLeft}
-          onMoveRight={onMoveRight}
-        />,
-      );
-
-      await userEvent.click(screen.getByRole('button', { name: 'Move pane 1 up' }));
-      await userEvent.click(screen.getByRole('button', { name: 'Move pane 1 down' }));
-
-      expect(onMoveLeft).toHaveBeenCalledOnce();
-      expect(onMoveRight).toHaveBeenCalledOnce();
     });
 
     it('shows a zoomed pane its zoom level and resets it on click', async () => {

@@ -18,13 +18,9 @@ export function useSubChatModeSync(): void {
 
     return window.desktopApi.onSubChatModeChanged(({ chatId, subChatId, mode }) => {
       // Mirrors ONLY — echoes never touch the pending intent (cleared solely by correlated CAS
-      // acks; see mode-intent.ts). The per-sub-chat store always follows; the CHAT-scoped footer
-      // atom follows only when the echo is for the chat's ACTIVE sub-chat — a background
-      // sibling's flip must not move the active tab's shared footer atom.
+      // acks; see mode-intent.ts). A chat has one sub-chat, so its footer atom always follows.
       useAgentSubChatStore.getState().updateSubChatMode(subChatId, mode, chatId);
-      if (useAgentSubChatStore.getState().activeSubChatId === subChatId) {
-        store.set(chatModeAtomFamily(chatId), mode);
-      }
+      store.set(chatModeAtomFamily(chatId), mode);
     });
   }, [store]);
 }

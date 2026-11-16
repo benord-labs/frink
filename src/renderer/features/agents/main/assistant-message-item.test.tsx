@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
@@ -16,8 +16,23 @@ vi.mock('../ui/agent-edit-tool', () => ({
   AgentEditTool: () => null,
 }));
 
+// The reply's file-link scope asks where the chat works and which file a bare name stands for.
+const { resolveNameInputs } = vi.hoisted(() => {
+  const inputs: Array<{ names: string[] }> = [];
+  return { resolveNameInputs: inputs };
+});
 vi.mock('../../../lib/trpc', () => ({
-  trpc: {},
+  trpc: {
+    chats: { get: { useQuery: () => ({ data: undefined }) } },
+    files: {
+      resolveNames: {
+        useQuery: (input: { names: string[] }) => {
+          resolveNameInputs.push(input);
+          return { data: undefined };
+        },
+      },
+    },
+  },
 }));
 
 vi.mock('../../../hooks/useFlowBaseSnapshot', () => ({
@@ -522,6 +537,20 @@ describe('AssistantMessageItem rendering', () => {
     expect(screen.getByRole('button', { name: 'Expand 2 steps' })).toBeInTheDocument();
     expect(screen.queryByText('Thought')).toBeNull();
     expect(screen.queryByText(UNKNOWN_TOOL_LABEL)).toBeNull();
+  });
+
+  // `isStreaming` is the chat's status; only the last message is the reply still being written.
+  it('looks up the bare file names of an earlier reply while a later one streams', async () => {
+    render(
+      <AssistantMessageItem
+        {...baseProps}
+        isStreaming
+        isLastMessage={false}
+        message={buildAssistantMessage('msg-earlier-reply', [textPart('Edit `socket.ts`.')])}
+      />,
+    );
+
+    await waitFor(() => expect(resolveNameInputs.at(-1)?.names).toEqual(['socket.ts']));
   });
 
   it('renders exploring-group inside collapsed steps for consecutive exploring tools', () => {

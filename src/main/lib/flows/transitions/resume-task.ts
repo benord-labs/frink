@@ -4,7 +4,8 @@ import { resumeQuietIdlePark } from '../../db/repos/task-parking/quiet-marker';
 import { scrubResumedResult } from '../../db/repos/task-parking/resume-scrub';
 import { parseResultRecord, updateTaskStatus } from '../../db/repos/tasks';
 import type { NodeRun, Task } from '../../db/schema';
-import { flowStillRunning, unparkFlowCommand } from './unpark';
+import { readRun } from './run-rows';
+import { flowStillRunning, hasActiveSlot, unparkFlowCommand } from './unpark';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -66,6 +67,12 @@ function resumeTaskThenFlow(
   now: Date,
 ): ResumedTask | null {
   if (isPlanApprovalResume(task, resumedBy)) return approvePlanThenFlow(db, task, now);
+  // A paused run that gave its slot up continues only once a resume ticket takes it back, so the
+  // task stays parked instead of running ahead of its flow.
+  const { flowRunId } = task;
+  if (flowRunId && readRun(db, flowRunId)?.status === 'paused' && !hasActiveSlot(db, flowRunId)) {
+    throw new ResumeDeclined();
+  }
   const result = resumedResult(task, resumedBy, now);
   // A wake holds only while the row is still the exact quiet-idle park it read.
   const resumed =

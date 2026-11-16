@@ -2,7 +2,7 @@ import { once } from 'node:events';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { SDKModel } from '@cursor/sdk';
+import type { SDKModel, SettingSource } from '@cursor/sdk';
 import { utilityProcess } from 'electron';
 import log from 'electron-log';
 import { createThinkingEmitter } from '../../claude/thinking-emitter';
@@ -40,6 +40,20 @@ const PLAIN_ERRORS = new Map([
 const NOT_STARTED = "Frink couldn't start Cursor, so this turn didn't run.";
 // Messages Cursor may send before it asks Frink's check about the prompt.
 const BEFORE_CANARY = new Set(['status', 'system']);
+
+// Keyed by the SDK's SettingSource, so a source Cursor adds or removes fails typecheck here.
+// Only the chat's private home loads: it holds the hook that asks Frink before every change.
+export const CURSOR_SETTING_SOURCES = {
+  user: 'loaded',
+  // A repo's own hooks and MCP servers could switch Frink's check off.
+  project: 'hidden-by-design',
+  // Cursor's team, device-management and plugin settings have never been tested inside Frink.
+  team: 'not-yet-delivered',
+  mdm: 'not-yet-delivered',
+  plugins: 'not-yet-delivered',
+  // Every source at once, the repo's included.
+  all: 'hidden-by-design',
+} as const satisfies Record<SettingSource, 'loaded' | 'hidden-by-design' | 'not-yet-delivered'>;
 
 /** Agent options the host passes to both create and resume; it opens the store from storeDir. */
 export type HostAgentOptions = {

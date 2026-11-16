@@ -11,13 +11,13 @@
  * Replaces the cloud queue's `flow/advance` job for single-machine local mode.
  */
 
-import { and, sql as drizzleSql, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, sql as drizzleSql, eq, getTableColumns, inArray, isNotNull } from 'drizzle-orm';
 import log from 'electron-log';
 import { z } from 'zod';
 import { getDatabase } from '../db';
 import { getTaskById, parseResultRecord } from '../db/repos/tasks';
 import type { Task } from '../db/schema';
-import { tasks } from '../db/schema';
+import { nodeRuns, tasks } from '../db/schema';
 import { captureMainException } from '../sentry/init';
 import { resolveTaskSignalTransition } from '../trpc/routers/frink-task-signal';
 import { advanceFlowRun } from './advance';
@@ -68,6 +68,9 @@ export async function unparkQuietIdleFlowRun(
   flowRunId: string,
 ): Promise<void> {
   forgetAdvancedTask(taskId);
+  // Without its slot the run stays paused: the next poll's advance takes one back first.
+  const { hasActiveFlowAdmission } = await import('./admission/runtime');
+  if (!(await hasActiveFlowAdmission(flowRunId))) return;
   const { setFlowRunStatus } = await import('../db/repos/flow-runs');
   await setFlowRunStatus(db, flowRunId, 'running', {}, 'paused');
 }
@@ -202,18 +205,36 @@ async function broadcastQuietParkUpdate(task: Task, status: string): Promise<voi
   });
 }
 
+/** A task that settled while its run held no slot (e.g. Mark complete): queue the run to take one
+ * back rather than advance without one; a resume already waiting advances it when claimed. */
+async function readmitReleasedPark(
+  db: ReturnType<typeof getDatabase>,
+  flowRunId: string,
+  nodeRunId: string,
+): Promise<boolean> {
+  const { slotlessPark } = await import('./admission/recovery-store');
+  const park = slotlessPark(db, flowRunId, nodeRunId);
+  if (park !== 'settled') return park === 'queued';
+  const { requestParkedFlowResume } = await import('./admission/terminal-resume/parked-resume');
+  await requestParkedFlowResume({ flowRunId, nodeRunId });
+  return true;
+}
+
 /** Exported for tests; production drives it via the interval in startTaskCompletionWatcher. */
 export async function tick(): Promise<void> {
   const db = getDatabase();
   await sweepQuietIdleTasks(db);
+  // Only a task whose node is still active can advance (advanceFlowRun's CAS), so each tick reads
+  // the few in-flight rows instead of every finished task's JSON.
   const rows: Task[] = await db
-    .select()
+    .select(getTableColumns(tasks))
     .from(tasks)
+    .innerJoin(nodeRuns, eq(nodeRuns.id, tasks.nodeRunId))
     .where(
       and(
         isNotNull(tasks.flowRunId),
-        isNotNull(tasks.nodeRunId),
         inArray(tasks.status, TERMINAL_STATUSES),
+        inArray(nodeRuns.status, [...ACTIVE_NODE_RUN_STATUSES]),
       ),
     );
 
@@ -225,12 +246,18 @@ export async function tick(): Promise<void> {
 }
 
 /** Advance one terminal task's node under the row guard; evict the dedup entry when the row moved
- * under the snapshot (resumed mid-park) so its next terminal row advances afresh. */
-async function advanceTerminalTask(db: ReturnType<typeof getDatabase>, task: Task): Promise<void> {
+ * under the snapshot (resumed mid-park) so its next terminal row advances afresh. A run that gave up
+ * its slot while it waited takes one back first; its claim advances the node through here again. */
+export async function advanceTerminalTask(
+  db: ReturnType<typeof getDatabase>,
+  task: Task,
+): Promise<void> {
   const flowRunId = task.flowRunId;
   const nodeRunId = task.nodeRunId;
   if (!flowRunId || !nodeRunId) return;
   try {
+    if (task.status !== 'needs_attention' && (await readmitReleasedPark(db, flowRunId, nodeRunId)))
+      return;
     const output = mapTaskToNodeOutput(task);
     const { withFlowResourceCleanup } = await import('./admission/activity');
     const guard = { id: task.id, status: task.status, result: task.result };

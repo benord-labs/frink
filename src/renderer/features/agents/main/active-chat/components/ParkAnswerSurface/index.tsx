@@ -16,6 +16,7 @@ import type { TaskResultRecord } from '../../../../../../../shared/types/task-re
 import { deriveParkSurfaceState } from '../../../../../../lib/agent-chat/flow-chat-surface-state';
 import { AgentUserQuestion, type AgentUserQuestionHandle } from '../../../../AgentUserQuestion';
 import { FlowReplyBox } from '../FlowReplyBox';
+import { FlowAutoSwitch } from '../FlowRunStrip/FlowRunMeta';
 
 type Props = {
   /**
@@ -29,6 +30,9 @@ type Props = {
   parentChatId: string | null;
   /** True while a live AskUserQuestion card is shown — suppress so the two cards never stack. */
   suppressed: boolean;
+  /** The chat whose Auto switch to show, so a step Auto blocked can be approved by hand. Null where
+   * the composer, which carries its own switch, is on screen. */
+  autoChatId?: string | null;
   /**
    * Sends the picked answer as a follow-up message; returns whether it actually sent. The optional
    * metadata is display-only (renders the answer card) and never reaches the model.
@@ -48,12 +52,14 @@ export const ParkAnswerSurface = memo(function ParkAnswerSurface({
   subChatId,
   parentChatId,
   suppressed,
+  autoChatId,
   onSubmitAnswer,
 }: Props) {
   const questionRef = useRef<AgentUserQuestionHandle | null>(null);
 
   const surface = deriveParkSurfaceState(task);
-  if (suppressed || surface.kind === 'none' || !task) {
+  // FlowChatBottomSurface renders the secret form in the composer slot itself.
+  if (suppressed || surface.kind === 'none' || surface.kind === 'secret' || !task) {
     return null;
   }
   // The free-text reply box is load-bearing only where the composer is hidden (flow chats — the
@@ -64,10 +70,15 @@ export const ParkAnswerSurface = memo(function ParkAnswerSurface({
     return null;
   }
 
+  const autoSwitch = autoChatId ? <FlowAutoSwitch chatId={autoChatId} /> : null;
+
   // Match UserQuestionsPanel: same composer-aligned slot styling for both variants.
   return (
     <div className="relative z-20 min-w-0 px-2 pb-2">
       <div className="mx-auto w-full max-w-2xl">
+        {surface.kind === 'questions' && autoSwitch ? (
+          <div className="mb-1.5 flex empty:hidden">{autoSwitch}</div>
+        ) : null}
         {surface.kind === 'questions' ? (
           <AgentUserQuestion
             ref={questionRef}
@@ -98,7 +109,12 @@ export const ParkAnswerSurface = memo(function ParkAnswerSurface({
           />
         ) : (
           // Key on the driving task so sequential parked nodes reset the draft between parks.
-          <FlowReplyBox key={task.id} summary={surface.summary} onSubmit={onSubmitAnswer} />
+          <FlowReplyBox
+            key={task.id}
+            meta={autoSwitch}
+            summary={surface.summary}
+            onSubmit={onSubmitAnswer}
+          />
         )}
       </div>
     </div>

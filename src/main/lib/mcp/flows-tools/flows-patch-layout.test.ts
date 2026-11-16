@@ -1,6 +1,6 @@
 /** frink_flows_patch × canvas layout. Split from index.test.ts, whose size is capped. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { expectMcpText } from './test-helpers';
+import { expectMcpErrorText, expectMcpText } from './test-helpers';
 
 const state = vi.hoisted(() => ({
   addStageRuns: vi.fn(),
@@ -162,5 +162,72 @@ describe('handleFlowsToolCall — frink_flows_patch canvas layout', () => {
       operations: [{ op: 'update_node', nodeId: 'n2', position: { x: 0, y: 900 } }],
     });
     expect(JSON.parse(expectMcpText(moved)).layout).toBeDefined();
+  });
+});
+
+/** A placed Fan Out with `after` 2000px below it: clear at the fit, covered once grown. */
+const FAN_GRAPH = {
+  nodes: [
+    { ...VALID_GRAPH.nodes[0], position: { x: -2000, y: 0 } },
+    { ...VALID_GRAPH.nodes[1], position: { x: -2000, y: 300 } },
+    { id: 'fan', blockType: 'fan_out', position: { x: 0, y: 0 } },
+    { id: 'body', blockType: 'agent', parentId: 'fan', config: { instructions: 'per item' } },
+    {
+      id: 'after',
+      blockType: 'agent',
+      config: { instructions: 'after' },
+      position: { x: 0, y: 2000 },
+    },
+  ],
+  edges: [
+    { id: 'e0', source: 'n1', target: 'nst' },
+    { id: 'e1', source: 'nst', target: 'fan' },
+    { id: 'e2', source: 'fan', target: 'body' },
+    { id: 'e3', source: 'body', target: 'after' },
+  ],
+};
+
+describe('handleFlowsToolCall — frink_flows_patch Fan Out size', () => {
+  beforeEach(() => {
+    state.getFlow.mockResolvedValue({
+      id: 'flow-fan',
+      name: 'Fan',
+      description: null,
+      version_number: 1,
+      graph: FAN_GRAPH,
+    });
+    state.createFlowVersion.mockResolvedValue({ id: 'ver-fan' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('saves a size-only update and reports the neighbour the grown container now covers', async () => {
+    const { handleFlowsToolCall } = await getModule();
+    const result = await handleFlowsToolCall('frink_flows_patch', {
+      flowId: 'flow-fan',
+      operations: [{ op: 'update_node', nodeId: 'fan', size: { width: 900, height: 2400 } }],
+    });
+    // SAFETY: createFlowVersion's second argument is the version payload the handler saves.
+    const saved = state.createFlowVersion.mock.calls[0]?.[1] as {
+      graph: { nodes: Array<{ id: string; size?: unknown }> };
+    };
+    expect(saved.graph.nodes.find((node) => node.id === 'fan')?.size).toEqual({
+      width: 900,
+      height: 2400,
+    });
+    const body = JSON.parse(expectMcpText(result));
+    expect(body.layout.overlaps).toEqual({ count: 1, sample: [['fan', 'after']] });
+  });
+
+  it('refuses size: null on add_node, which only update_node uses to clear, and saves nothing', async () => {
+    const { handleFlowsToolCall } = await getModule();
+    const result = await handleFlowsToolCall('frink_flows_patch', {
+      flowId: 'flow-fan',
+      operations: [{ op: 'add_node', node: { id: 'fan-2', blockType: 'fan_out', size: null } }],
+    });
+    expect(state.createFlowVersion).not.toHaveBeenCalled();
+    expect(expectMcpErrorText(result)).toContain('size');
   });
 });

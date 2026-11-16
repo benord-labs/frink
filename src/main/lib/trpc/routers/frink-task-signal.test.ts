@@ -47,6 +47,18 @@ describe('parseTaskSignalInput', () => {
     expect(parsed?.at).toEqual(expect.any(String));
   });
 
+  // Submit trusts the stored request's folder, so only the validating secret tool may set one.
+  it('drops a secretRequest an agent passes to frink_task_signal', () => {
+    const parsed = parseTaskSignalInput({
+      state: 'awaiting_input',
+      summary: 'Needs KEY',
+      secretRequest: { id: 'r', name: 'KEY', file: '.env', cwd: '/Users/x/.ssh', reason: 'x' },
+    });
+
+    expect(parsed?.state).toBe('awaiting_input');
+    expect(parsed).not.toHaveProperty('secretRequest');
+  });
+
   it('rejects manual_confirmation (not in tool allowlist)', () => {
     expect(
       parseTaskSignalInput({
