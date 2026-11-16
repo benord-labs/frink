@@ -1,103 +1,148 @@
+import { Badge } from '@benord-labs/frink-primitives';
 import { useAtom } from 'jotai';
 import type React from 'react';
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { getPaneColor } from '@/lib/pane-colors';
-import { trpc } from '@/lib/trpc';
+import { trpc, type trpcClient } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
+import { findProjectForPath } from '@/lib/workspace-context/project-paths';
+import type { QuickOpenRoot } from '@/lib/workspace-context/use-quick-open-roots';
 import { recentlyOpenedFilesAtom } from '../../agents/atoms';
 import { getFileSearchIcon } from '../utils/file-icon';
 import { SearchDialogShell } from './search-dialog-shell';
+import { SearchScopePills } from './SearchScopePills';
 import { useDialogSearchState } from './use-dialog-search-state';
 
 type FileSearchDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projectPath: string;
-  onSelectFile: (filePath: string) => void;
+  /** The folders searched: the chat's own first, then each other project in its file tree */
+  roots: QuickOpenRoot[];
+  onSelectFile: (filePath: string, root: QuickOpenRoot) => void;
   /** When defined (split view active), shows a colored pane indicator */
   activePaneIndex?: number;
 };
 
+type SearchEntry = Awaited<ReturnType<typeof trpcClient.files.search.query>>[number];
+/** A file by its path relative to the folder it was found in */
+type FileItem = { id: string; label: string; path: string; root: QuickOpenRoot };
+
+const absolutePathOf = (item: FileItem) => `${item.root.path}/${item.path}`;
+
+/**
+ * Searches each folder. useQueries starts a new observer for every new query, so `placeholderData`
+ * has no previous result of its own: each folder's last results come from a ref instead, and stay
+ * on screen while its next search loads.
+ */
+function useRootSearches(roots: QuickOpenRoot[], query: string, enabled: boolean) {
+  const lastResults = useRef(new Map<string, SearchEntry[]>());
+  const searches = trpc.useQueries((t) =>
+    roots.map((root) =>
+      t.files.search(
+        { projectPath: root.path, query, limit: 50 },
+        { enabled, placeholderData: () => lastResults.current.get(root.path) },
+      ),
+    ),
+  );
+  useEffect(() => {
+    searches.forEach(({ data, isPlaceholderData }, i) => {
+      const root = roots[i];
+      if (root && data && !isPlaceholderData) lastResults.current.set(root.path, data);
+    });
+  });
+  return searches.map((search) => search.data);
+}
+
 export const FileSearchDialog = memo(function FileSearchDialog({
   open,
   onOpenChange,
-  projectPath,
+  roots,
   onSelectFile,
   activePaneIndex,
 }: FileSearchDialogProps) {
+  // With nothing to search (a split pane with no project chat) the dialog stays shut and drops the
+  // open, which would otherwise pop it up by itself once a pane with files is active.
+  const isOpen = open && roots.length > 0;
+  useEffect(() => {
+    if (open && roots.length === 0) onOpenChange(false);
+  }, [open, roots.length, onOpenChange]);
   const {
     query,
     debouncedQuery,
     selectedIndex,
     setSelectedIndex,
+    scope,
+    handleScopeChange,
     inputRef,
     handleQueryChange,
     setItemRef,
-  } = useDialogSearchState({ open });
+  } = useDialogSearchState({ open: isOpen });
   const [recentlyOpenedFiles, setRecentlyOpenedFiles] = useAtom(recentlyOpenedFilesAtom);
-
-  const { data: results } = trpc.files.search.useQuery(
-    {
-      projectPath,
-      query: debouncedQuery,
-      limit: 50,
-    },
-    {
-      enabled: open && !!projectPath,
-      placeholderData: (prev) => prev,
-    },
+  // A chosen project that leaves the tree while the dialog is open widens the search to them all.
+  const activeScope = roots.some((root) => root.path === scope) ? scope : null;
+  const inScope = useMemo(
+    () => (activeScope === null ? roots : roots.filter((root) => root.path === activeScope)),
+    [roots, activeScope],
   );
+  const results = useRootSearches(inScope, debouncedQuery, isOpen);
 
   // Build recent file items directly from atom (independent of search results)
   const recentItems = useMemo(() => {
-    const prefix = `${projectPath}/`;
-    const items: { id: string; label: string; path: string }[] = [];
+    const items: FileItem[] = [];
     const queryLower = debouncedQuery.toLowerCase();
     for (const absPath of recentlyOpenedFiles) {
-      if (!absPath.startsWith(prefix)) continue;
-      const relPath = absPath.slice(prefix.length);
+      // The deepest folder holding the file, when one project in the tree lies inside another.
+      const root = findProjectForPath(absPath, inScope);
+      const relPath = root ? absPath.slice(root.path.length + 1) : '';
+      if (!root || !relPath) continue;
       const fileName = relPath.includes('/')
         ? relPath.slice(relPath.lastIndexOf('/') + 1)
         : relPath;
       // Filter by query if searching
       if (queryLower && !relPath.toLowerCase().includes(queryLower)) continue;
-      items.push({ id: `recent-${relPath}`, label: fileName, path: relPath });
+      items.push({ id: `recent-${absPath}`, label: fileName, path: relPath, root });
     }
     return items;
-  }, [recentlyOpenedFiles, projectPath, debouncedQuery]);
+  }, [recentlyOpenedFiles, inScope, debouncedQuery]);
 
-  const recentPathsSet = useMemo(() => new Set(recentItems.map((f) => f.path)), [recentItems]);
+  const recentPathsSet = useMemo(() => new Set(recentItems.map(absolutePathOf)), [recentItems]);
 
-  // Search results excluding recently opened files
-  const otherFiles = useMemo(() => {
-    const allFiles = (results ?? []).filter((item) => item.type === 'file');
-    return allFiles.filter((file) => !recentPathsSet.has(file.path));
-  }, [results, recentPathsSet]);
+  // Search results excluding recently opened files, the chat's folder first. Ids are unique only
+  // within a folder, so each is prefixed with its folder.
+  const otherFiles = useMemo(
+    () =>
+      inScope.flatMap((root, i) =>
+        (results[i] ?? [])
+          .map((item) => ({ ...item, id: `${root.path}:${item.id}`, root }))
+          .filter((file) => file.type === 'file' && !recentPathsSet.has(absolutePathOf(file))),
+      ),
+    [inScope, results, recentPathsSet],
+  );
 
   // Flat list for keyboard navigation: recent first, then rest
   const allItems = useMemo(() => [...recentItems, ...otherFiles], [recentItems, otherFiles]);
   const recentCount = recentItems.length;
 
   const handleSelect = useCallback(
-    (relativePath: string) => {
-      const absolutePath = `${projectPath}/${relativePath}`;
-      onSelectFile(absolutePath);
+    (item: FileItem) => {
+      onSelectFile(absolutePathOf(item), item.root);
       onOpenChange(false);
     },
-    [projectPath, onSelectFile, onOpenChange],
+    [onSelectFile, onOpenChange],
   );
 
   const handleRemoveRecent = useCallback(
-    (relativePath: string) => {
-      const absolutePath = `${projectPath}/${relativePath}`;
-      setRecentlyOpenedFiles((prev) => prev.filter((p) => p !== absolutePath));
+    (item: FileItem) => {
+      setRecentlyOpenedFiles((prev) => prev.filter((p) => p !== absolutePathOf(item)));
     },
-    [projectPath, setRecentlyOpenedFiles],
+    [setRecentlyOpenedFiles],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
+      // A scope pill handles its own keys: Enter and Space press it.
+      if (target instanceof HTMLButtonElement) return;
       const isEditableTarget =
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
@@ -115,14 +160,14 @@ export const FileSearchDialog = memo(function FileSearchDialog({
         e.preventDefault();
         const file = allItems[selectedIndex];
         if (file) {
-          handleSelect(file.path);
+          handleSelect(file);
         }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isEditableTarget) return;
         const file = allItems[selectedIndex];
         if (file && selectedIndex < recentCount) {
           e.preventDefault();
-          handleRemoveRecent(file.path);
+          handleRemoveRecent(file);
         }
       }
     },
@@ -134,7 +179,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 
   return (
     <SearchDialogShell
-      open={open}
+      open={isOpen}
       onOpenChange={onOpenChange}
       title="Search files"
       description="Search and open project files."
@@ -157,6 +202,11 @@ export const FileSearchDialog = memo(function FileSearchDialog({
       paneDotBorderClassName={paneColor?.badgeBorder}
       paneBorderClassName={paneColor?.border}
       contentWidthClassName="ml-[-300px] w-[600px]"
+      toolbar={
+        roots.length > 1 && (
+          <SearchScopePills roots={roots} scope={activeScope} onScopeChange={handleScopeChange} />
+        )
+      }
     >
       <div
         id={listboxId}
@@ -179,10 +229,11 @@ export const FileSearchDialog = memo(function FileSearchDialog({
                   key={item.id}
                   label={item.label}
                   dirPath={dirPath}
+                  project={item.root.isChat ? undefined : item.root.name}
                   index={i}
                   optionId={`file-search-option-${i}`}
                   isSelected={i === selectedIndex}
-                  onSelect={() => handleSelect(item.path)}
+                  onSelect={() => handleSelect(item)}
                   setRef={setItemRef}
                   recentLabel="recently opened"
                 />
@@ -201,10 +252,11 @@ export const FileSearchDialog = memo(function FileSearchDialog({
                     key={item.id}
                     label={item.label}
                     dirPath={dirPath}
+                    project={item.root.isChat ? undefined : item.root.name}
                     index={flatIndex}
                     optionId={`file-search-option-${flatIndex}`}
                     isSelected={flatIndex === selectedIndex}
-                    onSelect={() => handleSelect(item.path)}
+                    onSelect={() => handleSelect(item)}
                     setRef={setItemRef}
                   />
                 );
@@ -219,6 +271,8 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 type FileSearchItemProps = {
   label: string;
   dirPath: string;
+  /** The other project the file is in; nothing shows for the chat's own folder */
+  project?: string;
   index: number;
   optionId: string;
   isSelected: boolean;
@@ -230,6 +284,7 @@ type FileSearchItemProps = {
 const FileSearchItem = memo(function FileSearchItem({
   label,
   dirPath,
+  project,
   index,
   optionId,
   isSelected,
@@ -282,6 +337,15 @@ const FileSearchItem = memo(function FileSearchItem({
             </span>
           )}
         </span>
+        {project && (
+          <Badge
+            shape="tag"
+            title={project}
+            className="max-w-40 shrink-0 bg-foreground/5 text-muted-foreground"
+          >
+            <span className="truncate">{project}</span>
+          </Badge>
+        )}
         {recentLabel && (
           <span className="text-xs text-muted-foreground/60 ml-auto shrink-0">{recentLabel}</span>
         )}

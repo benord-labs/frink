@@ -9,6 +9,8 @@ type UseDialogSearchStateOptions = {
 export function useDialogSearchState({ open }: UseDialogSearchStateOptions) {
   const { searchQuery, debouncedQuery, setSearchQuery } = useSearchDebounce();
   const [selectedIndex, setSelectedIndex] = useState(0);
+  /** The one folder searched, or null for all of them */
+  const [scope, setScope] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<(HTMLElement | null)[]>([]);
 
@@ -16,6 +18,7 @@ export function useDialogSearchState({ open }: UseDialogSearchStateOptions) {
     if (!open) return;
     setSearchQuery('');
     setSelectedIndex(0);
+    setScope(null);
     itemRefs.current = [];
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [open, setSearchQuery]);
@@ -36,6 +39,14 @@ export function useDialogSearchState({ open }: UseDialogSearchStateOptions) {
     [setSearchQuery],
   );
 
+  const handleScopeChange = useCallback((next: string | null) => {
+    setScope(next);
+    setSelectedIndex(0);
+    itemRefs.current = [];
+    // Clicking a pill focuses it; typing, the arrow keys and Enter belong to the input.
+    inputRef.current?.focus();
+  }, []);
+
   const setItemRef = useCallback((index: number, el: HTMLElement | null) => {
     itemRefs.current[index] = el;
   }, []);
@@ -45,6 +56,8 @@ export function useDialogSearchState({ open }: UseDialogSearchStateOptions) {
     debouncedQuery,
     selectedIndex,
     setSelectedIndex,
+    scope,
+    handleScopeChange,
     inputRef,
     handleQueryChange,
     setItemRef,

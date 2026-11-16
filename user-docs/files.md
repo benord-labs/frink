@@ -78,3 +78,11 @@ Browsed projects are read-only in the tree: you can't create, rename, move, past
 Browsing doesn't change the chat, its agent, its branch or what the agent can read. The list belongs to the chat, so it shows wherever the chat's file tree does, and it's cleared when Frink restarts.
 
 The picker lists your other projects, except the ones already in the tree and any project inside the chat's folder or holding it. **Add project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
+
+## Find a file
+
+Press **Cmd+Shift+P / Ctrl+Shift+P** (**Search files**) and type part of a file's name. Pick a result with the mouse, or with the arrow keys and **Enter**, to open it in the editor. Files you opened recently come first, then the chat's own project's files, then each browsed project's.
+
+Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a project you're browsing shows that project's name. Search files starts with **All in this tree** each time you open it.
+
+In split view, Search files looks in the projects of the pane you're working in. It doesn't open for a pane with no project, such as a new chat that hasn't started yet.
