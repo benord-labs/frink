@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
 import { getDatabase } from '../../../../db';
+import { dropLinksOverlapping } from '../../../../db/repos/chat-linked-projects';
 import {
   findChatByWorktree as findChatByWorktreeLocal,
   getChatById as getChatByIdLocal,
@@ -71,6 +72,8 @@ export const switchWorktreeRouter = router({
       if (!updated) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Chat not found after update' });
       }
+      // A linked project the chat now works in, or around, is no longer a separate folder.
+      dropLinksOverlapping(db, input.chatId, [input.worktreePath]);
 
       if (oldWorktreePath) {
         gitCache.invalidateStatus(oldWorktreePath);

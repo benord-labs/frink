@@ -97,6 +97,9 @@ export function initDatabase() {
     ensureProjectsDescriptionColumn(sqlite);
     ensureProjectAccountRoutingTables(sqlite);
 
+    // Defensive: ensure chat_linked_projects exists (migration 0116), same skip risk.
+    ensureChatLinkedProjectsTable(sqlite);
+
     // One-shot sweep: classify legacy OAuth-snapshot rows vs API-key rows.
     // Idempotent (guarded by user_version). Aborts safely on no-keyring / decrypt errors.
     runCredentialMigrationSweep(sqlite);
@@ -210,6 +213,24 @@ function ensureProjectAccountRoutingTables(dbInstance: NodeSqliteDatabase): void
     );
     CREATE UNIQUE INDEX IF NOT EXISTS project_ai_accounts_project_idx
       ON project_ai_accounts (project_id);
+  `);
+}
+
+/** Mirrors migration 0116: a parallel migration with a later `when` landing first would make
+ * Drizzle skip it, and every chats.get reads this table. Idempotent. */
+export function ensureChatLinkedProjectsTable(dbInstance: NodeSqliteDatabase): void {
+  dbInstance.exec(`
+    CREATE TABLE IF NOT EXISTS chat_linked_projects (
+      chat_id text NOT NULL,
+      project_id text NOT NULL,
+      created_at integer,
+      FOREIGN KEY (chat_id) REFERENCES chats(id) ON UPDATE no action ON DELETE cascade,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON UPDATE no action ON DELETE cascade
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS chat_linked_projects_chat_project_idx
+      ON chat_linked_projects (chat_id, project_id);
+    CREATE INDEX IF NOT EXISTS chat_linked_projects_project_idx
+      ON chat_linked_projects (project_id);
   `);
 }
 

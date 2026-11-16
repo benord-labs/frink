@@ -1,10 +1,12 @@
 /** Phase 1 local-first migration: chat reads come from local SQLite. */
 
+import os from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeLocalChat } from './test-factories';
 
 const getChatByIdLocalMock = vi.fn();
 const listSubChatsByChatLocalMock = vi.fn();
+const listLinkedProjectsMock = vi.fn();
 
 // Mutable project row(s) the mocked `db.select()...limit()` resolves to (per-test).
 const dbState = vi.hoisted(() => ({ projectRows: [] as unknown[] }));
@@ -18,6 +20,9 @@ vi.mock('../../../db', () => ({
 }));
 vi.mock('../../../db/repos/chats', () => ({ getChatById: getChatByIdLocalMock }));
 vi.mock('../../../db/repos/sub-chats', () => ({ listSubChatsByChat: listSubChatsByChatLocalMock }));
+vi.mock('../../../db/repos/chat-linked-projects', () => ({
+  listLinkedProjects: listLinkedProjectsMock,
+}));
 
 const gitProjectRow = {
   id: 'p-1',
@@ -42,6 +47,7 @@ describe('chats.get (local-first) project projection', () => {
     vi.resetAllMocks();
     dbState.projectRows = [];
     listSubChatsByChatLocalMock.mockResolvedValue([]);
+    listLinkedProjectsMock.mockReturnValue([]);
   });
 
   it('returns null when the chat is missing', async () => {
@@ -102,5 +108,21 @@ describe('chats.get (local-first) project projection', () => {
     const result = await callGet('c1');
 
     expect(result?.project).toBeNull();
+    expect(result?.linkedProjects).toEqual([]);
+  });
+
+  it('returns linked projects in the project shape, flagging folders missing on disk', async () => {
+    getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', projectId: 'p-1' }));
+    const row = (id: string, path: string) => ({ ...gitProjectRow, id, path });
+    listLinkedProjectsMock.mockReturnValue([row('p-a', os.tmpdir()), row('p-b', '/no/such/dir')]);
+    const { description: _description, isCrossMachine: _isCrossMachine, ...shape } = gitProjectRow;
+
+    const result = await callGet('c1');
+
+    expect(listLinkedProjectsMock).toHaveBeenCalledWith(expect.anything(), 'c1');
+    expect(result?.linkedProjects).toEqual([
+      { ...shape, id: 'p-a', path: os.tmpdir(), missing: false },
+      { ...shape, id: 'p-b', path: '/no/such/dir', missing: true },
+    ]);
   });
 });

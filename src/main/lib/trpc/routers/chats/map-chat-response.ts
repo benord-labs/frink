@@ -15,6 +15,8 @@ export type ChatProjectResponse = {
  * the project's icon (GitHub avatar from gitOwner/gitProvider) — see `chat-project-sync.ts`.
  * Shared by `chats.get` and `getSubChat` so the projection lives in one place.
  */
+export function mapChatProject(project: Project): ChatProjectResponse;
+export function mapChatProject(project: Project | null | undefined): ChatProjectResponse | null;
 export function mapChatProject(project: Project | null | undefined): ChatProjectResponse | null {
   if (!project) return null;
   return {
