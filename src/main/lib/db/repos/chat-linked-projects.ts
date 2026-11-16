@@ -11,7 +11,7 @@ import { chatLinkedProjects, chats, type Project, projects } from '../schema';
 type Db = ReturnType<typeof getDatabase>;
 
 /** Why a project cannot be linked to a chat. */
-type LinkRefusal =
+export type LinkRefusal =
   | 'chat-not-found'
   | 'general-chat'
   | 'virtual-chat'
@@ -112,11 +112,13 @@ export function linkProjectToChat(db: Db, chatId: string, projectId: string): Li
   });
 }
 
-/** Unlinking a project that is not linked is a no-op. */
-export function unlinkProjectFromChat(db: Db, chatId: string, projectId: string): void {
-  db.delete(chatLinkedProjects)
+/** Unlinking a project that is not linked is a no-op. True when a link was removed. */
+export function unlinkProjectFromChat(db: Db, chatId: string, projectId: string): boolean {
+  const result = db
+    .delete(chatLinkedProjects)
     .where(and(ofChat(chatId), eq(chatLinkedProjects.projectId, projectId)))
     .run();
+  return result.changes > 0;
 }
 
 /** A fork links the same projects as its source, in the same order. Runs inside the fork. */

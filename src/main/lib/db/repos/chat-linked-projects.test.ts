@@ -71,8 +71,8 @@ describe('chat linked projects repo', () => {
     expect(linkProjectToChat(db, 'c1', 'a')).toEqual({ ok: true });
     expect(ids('c1')).toEqual(['b', 'a']);
 
-    unlinkProjectFromChat(db, 'c1', 'b');
-    unlinkProjectFromChat(db, 'c1', 'b');
+    expect(unlinkProjectFromChat(db, 'c1', 'b')).toBe(true);
+    expect(unlinkProjectFromChat(db, 'c1', 'b')).toBe(false);
 
     expect(listLinkedProjectRoots(db, 'c1')).toEqual([{ projectId: 'a', path: dir('a') }]);
   });

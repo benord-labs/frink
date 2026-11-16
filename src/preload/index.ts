@@ -31,6 +31,7 @@ type DesktopBroadcastChannel =
   | 'socket:error'
   | 'git:status-changed'
   | 'chats:name-updated'
+  | 'chats:linked-projects-changed'
   | 'projects:name-updated'
   | 'socket:wake-hold-changed'
   | 'socket:stream-settled'
