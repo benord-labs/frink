@@ -5,7 +5,7 @@ set -euo pipefail
 . "$(dirname "$0")/env.sh"
 cd "$(dirname "$0")/../.."
 
-OUT="$QA_HOME/smoke"
+OUT="$QA_HOME/smoke${FRINK_QA_PORT:+-$FRINK_QA_PORT}"
 STARTED=$(date +%s)
 summary() { echo "qa smoke: $1 ($(($(date +%s) - STARTED))s, logs in $OUT)"; }
 fail() {
@@ -33,6 +33,6 @@ done
 if [ "$(cat "$LOCK/pid" 2>/dev/null)" != "$BOOT" ]; then
   fail "boot.sh did not take the rig: $(tail -1 "$OUT/boot.log")"
 fi
-QA_BOOT_PID=$BOOT bun scripts/qa/smoke-check.ts "$OUT/main.log" "$QA_USER_DATA/data/agents.db" \
+QA_BOOT_PID=$BOOT FRINK_CDP_PORT="$QA_CDP_PORT" bun scripts/qa/smoke-check.ts "$OUT/main.log" "$QA_USER_DATA/data/agents.db" \
   > "$OUT/checks.log" 2>&1 || fail "$(head -1 "$OUT/checks.log") (all of it in checks.log)"
 summary "PASS"

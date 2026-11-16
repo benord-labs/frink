@@ -8,6 +8,12 @@ bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 bash scripts/qa/stop.sh    # from another shell: stops the app and frees the run lock
 ```
 
+Each worktree can run its own instance at the same time. Give every script the same free port, for
+example `FRINK_QA_PORT=40010 bash scripts/qa/seed.sh` and then `boot.sh`, `smoke.sh` or `stop.sh`
+with it: that instance gets DevTools on that port, its own profile (`Frink Dev-40010`) and its own
+run lock. Without it you get the default instance (port 9223). Run one instance per worktree,
+because they share its `out-qa` build.
+
 Check that the app boots healthy, in one command after `build.sh` (seeds, boots on the fake `claude`,
 checks, always stops; prints one `qa smoke: PASS|FAIL` line, logs in `~/.frink-qa/smoke/`):
 
