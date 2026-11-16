@@ -38,6 +38,13 @@ describe('checkSearch', () => {
     });
   });
 
+  it.each(['**/*.{ts,tsx}', '*.{bak,~}', '**/.*', 'Notes (2024)/*.md', '**/x,/y'])(
+    'keeps an in-project Glob pattern that stays in its root prompt-free: %s',
+    (pattern) => {
+      expect(checkSearch('Glob', { pattern }, EMPTY_DOCS, project)).toEqual({ decision: 'allow' });
+    },
+  );
+
   it('denies a protected folder, as Read does', () => {
     const r = checkSearch('Grep', { pattern: 'PRIVATE KEY', path: '~/.ssh' }, EMPTY_DOCS, project);
     expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
@@ -56,12 +63,20 @@ describe('checkSearch', () => {
     expect(r.decision).toBe('ask');
   });
 
-  it.each(['/etc/**', '~/.config/**', '../**/*.ts', 'src/../../*', '{src,..}/*'])(
-    'asks for a Glob pattern that escapes its root: %s',
-    (pattern) => {
-      expect(checkSearch('Glob', { pattern }, EMPTY_DOCS, project).decision).toBe('ask');
-    },
-  );
+  it.each([
+    '/etc/**',
+    '~/.config/**',
+    '../**/*.ts',
+    'src/../../*',
+    '{src,..}/*',
+    '{src,/etc}/*',
+    '.{.,x}/*',
+    '{,.}./*',
+    '@(src|/etc)/*',
+    '(src|..)/*',
+  ])('asks for a Glob pattern that escapes its root: %s', (pattern) => {
+    expect(checkSearch('Glob', { pattern }, EMPTY_DOCS, project).decision).toBe('ask');
+  });
 
   it('keeps an in-project Glob pattern with dots in names prompt-free', () => {
     const r = checkSearch('Glob', { pattern: 'src/**/*.test..ts' }, EMPTY_DOCS, project);

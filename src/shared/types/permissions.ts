@@ -122,6 +122,8 @@ export type PromptData = {
   reason: 'no-matching-rule' | 'over-50-subcommands' | 'rule:ask';
   matchedRule?: string;
   matchedTier?: PermissionTier;
+  /** Set when `matchedRule` is saved on a project linked to the chat, not the chat's own. */
+  matchedProjectId?: string;
   suggestedRules?: string[];
   pathLocation?: PathLocation;
   /** Trusted presentation built by Frink after validating the requested operation. */

@@ -1,7 +1,7 @@
 import * as nodeFs from 'node:fs';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import { checkPermission, resetDocsLoader, setDocsLoader } from './check';
 import { resolveScopes } from './scope-resolver';
@@ -339,6 +339,35 @@ describe('checkPermission — sessionDirRoot threading (ticket 15, widened)', ()
       }),
     );
     expect(r).toMatchObject({ decision: 'ask' });
+  });
+});
+
+describe('checkPermission — linkedRoots threading', () => {
+  let linked: string;
+  beforeAll(() => {
+    linked = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'linked-')));
+  });
+  afterAll(() => nodeFs.rmSync(linked, { recursive: true, force: true }));
+
+  // Each input reads `linked`; only Read, Glob and Grep may look at the links at all.
+  it.each([
+    ['Read', 'allow', (dir: string) => ({ file_path: nodePath.join(dir, 'a.ts') })],
+    ['Glob', 'allow', (dir: string) => ({ pattern: '*.ts', path: dir })],
+    ['Grep', 'allow', (dir: string) => ({ pattern: 'x', path: dir })],
+    ['Edit', 'ask', (dir: string) => ({ file_path: nodePath.join(dir, 'a.ts') })],
+    ['Bash', 'ask', (dir: string) => ({ command: `cat ${dir}/a.ts` })],
+    ['mcp__fs__read', 'ask', (dir: string) => ({ path: dir })],
+  ])('%s with a linked folder → %s', async (tool, expected, input) => {
+    let consulted = false;
+    const req = baseReq({ tool, input: input(linked) });
+    Object.defineProperty(req, 'linkedRoots', {
+      get: () => {
+        consulted = true;
+        return [{ projectId: 'p2', path: linked, doc: noRules }];
+      },
+    });
+    expect((await checkPermission(req)).decision).toBe(expected);
+    expect(consulted).toBe(expected === 'allow');
   });
 });
 

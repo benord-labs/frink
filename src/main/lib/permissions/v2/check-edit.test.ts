@@ -311,6 +311,32 @@ describe('checkEdit — project-scope tool-wide path-containment guardrail (tick
     }
   });
 
+  it.each([
+    [
+      'a user ask rule is still named',
+      { ask: ['Read'] },
+      { reason: 'rule:ask', matchedTier: 'user' },
+    ],
+    [
+      'a user ask rule for that path is still named',
+      { ask: ['Read(/elsewhere/**)'] },
+      { reason: 'rule:ask', matchedRule: 'Read(/elsewhere/**)', matchedTier: 'user' },
+    ],
+    [
+      'a user allow rule still asks, as before',
+      { allow: ['Read'] },
+      { reason: 'no-matching-rule' },
+    ],
+  ])('project-scope tool-wide `Read` + outside path: %s', (_, user, prompt) => {
+    const docs = {
+      policy: noRules,
+      project: { ...noRules, allow: ['Read'] },
+      user: { ...noRules, ...user },
+    };
+    const r = checkEdit({ file_path: '/elsewhere/x.txt' }, docs, root, 'Read');
+    expect(r).toMatchObject({ decision: 'ask', prompt: { ...prompt, suggestedRules: [] } });
+  });
+
   it('project-scope deny rule beats the downgrade (deny still wins)', () => {
     const docs = {
       policy: noRules,

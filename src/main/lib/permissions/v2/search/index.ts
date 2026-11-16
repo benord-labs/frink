@@ -2,6 +2,7 @@
  * prompt-free; anything else goes to rules, then the prompt or Auto. */
 
 import * as nodePath from 'node:path';
+import { braceSpellings } from '../../../agent-runner/env-file-reads';
 import { isPathWithinProject } from '../../path-check';
 import { expandTilde } from '../check-edit';
 import { combineScopes, evalScope, resultFromCombined, type ScopedDocs } from '../eval-rules';
@@ -10,13 +11,34 @@ import type { PermissionResult } from '../types';
 
 export type SearchInput = { path?: unknown; pattern?: unknown };
 
-/** A Glob pattern that is absolute, home-relative or climbs with `..` reads outside its root. */
-const ESCAPING_GLOB = /^(?:[/\\~]|[A-Za-z]:)|(?:^|[/\\{,])\.\.(?:[/\\},]|$)/;
+/** A brace-free Glob pattern that is absolute, home-relative or climbs with `..` reads outside its
+ * root. */
+const ESCAPING_GLOB = /^(?:[/\\~]|[A-Za-z]:)|(?:^|[/\\])\.\.(?:[/\\]|$)/;
+/** An extended group holding a folder break, `~` or `..` can name a folder outside the root. */
+const ESCAPING_GROUP = /\([^)]*(?:[/\\~]|\.\.)/;
+
+/** True when a Glob pattern can read outside its root. Braces are spelled out before a search
+ * walks, so each spelling is judged on its own (`{src,/etc}/*` and `.{.,x}/*` climb out; a
+ * backup suffix such as `*.{bak,~}` does not). Too many spellings to check counts as climbing. */
+function globEscapes(pattern: string): boolean {
+  if (ESCAPING_GROUP.test(pattern)) return true;
+  const spellings = braceSpellings(pattern);
+  return !spellings || spellings.some((spelling) => ESCAPING_GLOB.test(spelling));
+}
 
 /** The folder the search reads: its `path`, else the project root. */
 export function searchRoot(input: SearchInput, projectRoot: string): string {
   const raw = typeof input.path === 'string' && input.path ? input.path : projectRoot;
   return nodePath.resolve(projectRoot, expandTilde(raw));
+}
+
+/** True when a search of `root` reads only inside it: a Glob pattern can't climb out, and the
+ * folder holds no protected folder (a search of `~` would read inside `~/.ssh`). Any other tool
+ * counts as a search of `root` itself, as a Read of a folder is. */
+export function searchStaysInRoot(tool: string, input: SearchInput, root: string): boolean {
+  const escapes =
+    tool === 'Glob' && typeof input.pattern === 'string' && globEscapes(input.pattern);
+  return !escapes && !SYSTEM_DENIED_EXACT.some((entry) => isPathWithinProject(entry, root));
 }
 
 export function checkSearch(
@@ -36,12 +58,8 @@ export function checkSearch(
   const result = resultFromCombined(combineScopes(policy, project, user), tool, input);
   if (result.decision !== 'ask') return result;
 
-  // Same rule for every chat (general-chat-permission-parity); a folder holding a protected
-  // folder (a search of `~`) would read inside it, so that one asks.
-  const escapes =
-    tool === 'Glob' && typeof input.pattern === 'string' && ESCAPING_GLOB.test(input.pattern);
-  const spansProtected = SYSTEM_DENIED_EXACT.some((entry) => isPathWithinProject(entry, root));
-  if (!escapes && !spansProtected && isPathWithinProject(root, projectRoot)) {
+  // Same rule for every chat (general-chat-permission-parity).
+  if (searchStaysInRoot(tool, input, root) && isPathWithinProject(root, projectRoot)) {
     return { decision: 'allow' };
   }
   result.prompt.suggestedRules = [tool];

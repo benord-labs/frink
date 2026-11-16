@@ -27,9 +27,18 @@ export type { PermissionsDoc, PermissionTier, PromptData, RuleType };
 export type PermissionRule = string;
 
 export type DenyReason =
-  | { kind: 'rule:deny'; rule: string; tier: PermissionTier }
+  | {
+      kind: 'rule:deny';
+      rule: string;
+      tier: PermissionTier;
+      /** Set when the rule is saved on a project linked to the chat, not the chat's own. */
+      projectId?: string;
+    }
   | { kind: 'safety:path'; path: string }
   | { kind: 'db:unavailable' };
+
+/** A project linked to the chat: its registered folder and its own project rules. */
+export type LinkedRoot = { projectId: string; path: string; doc: PermissionsDoc | null };
 
 export type PermissionRequest = {
   tool: string;
@@ -61,6 +70,19 @@ export type PermissionRequest = {
    * for chat-isolation. Optional — when absent, no plan auto-allow runs.
    */
   planDirRoot?: string;
+  /**
+   * Folders of the projects linked to the active chat, each with that project's own
+   * rules (`doc` is null when they could not be loaded, and then nothing is granted).
+   * Read, Glob and Grep inside one run without asking (`linked-read`). Runs AFTER
+   * tier-1c system-denied and every policy, project and user rule, and only when the
+   * checker would ask with no rule to name (no rule matched, or the project's tool-wide
+   * grant was set aside outside the project). The chat's own rules are matched again at
+   * the path's real spelling, and the linked project's own deny and ask rules still
+   * apply. Env files, and search filters that can reach one, still ask. Edits, commands
+   * and every other tool are unchanged. Caller is responsible for chat-isolation (each
+   * chat passes only its own links). Optional — when absent, no linked read runs.
+   */
+  linkedRoots?: LinkedRoot[];
   /**
    * Provider-authenticated ownership for an MCP server whose name is otherwise
    * shared across provider config formats. Omit to retain the legacy name-based
