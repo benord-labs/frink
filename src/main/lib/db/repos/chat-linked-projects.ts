@@ -28,7 +28,7 @@ const linkOrder = sql`${chatLinkedProjects}.rowid`;
 const ofChat = (chatId: string) => eq(chatLinkedProjects.chatId, chatId);
 
 /** Either folder is, or holds, the other, by real path. */
-function overlapsAny(dir: string, mainFolders: Array<string | null | undefined>): boolean {
+export function overlapsAny(dir: string, mainFolders: Array<string | null | undefined>): boolean {
   return mainFolders.some(
     (main) => !!main && (isPathWithinProject(dir, main) || isPathWithinProject(main, dir)),
   );

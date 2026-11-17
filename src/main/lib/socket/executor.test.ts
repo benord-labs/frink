@@ -20,6 +20,7 @@ import {
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
   registerFlowRunEndedTests,
+  registerLinkedReadPermissionTests,
   registerOperatorReminderDeliveryTests,
   registerTurnUsageStampTests,
   registerUndeliveredMessageTests,
@@ -282,7 +283,9 @@ vi.mock('../permissions/v2/check', () => ({
   checkPermission: vi.fn(),
 }));
 
-vi.mock('../permissions/v2/store-local', () => ({
+// Rule reads stay real, so a linked project's saved rules reach the gate (linked-read-permission).
+vi.mock('../permissions/v2/store-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../permissions/v2/store-local')>()),
   addProjectRule: vi.fn(async () => undefined),
 }));
 
@@ -8067,3 +8070,4 @@ describe('Debug-mode + worktree-backed chat (log path follows worktree)', () => 
 });
 
 registerValidateToolPermissionTests({ clientPermissionBridge });
+registerLinkedReadPermissionTests({ clientPermissionBridge });

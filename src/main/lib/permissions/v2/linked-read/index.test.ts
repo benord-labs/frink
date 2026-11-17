@@ -178,6 +178,41 @@ describe('applyLinkedRead — env files ask, as in the chat folder', () => {
   });
 });
 
+// Ripgrep searches a file its glob names even when the file is hidden or ignored.
+describe("applyLinkedRead — a Grep's file filter", () => {
+  const grep = (filter: object) =>
+    checkPermission(request('Grep', { pattern: 'x', path: linked, ...filter }, [link(linked)]));
+
+  it.each(['.env', '**/*.key', 'certs/*.pem', '*.{ts,pem}', '*.ts .env', '*.ts,credentials.json'])(
+    'denies a search filtered to %j, which names files on the deny list',
+    async (glob) => {
+      expect(await grep({ glob })).toMatchObject(SAFETY);
+    },
+  );
+
+  it.each<[string, object]>([
+    ['a glob that can reach an env file', { glob: '*.env' }],
+    ['a glob for every env file', { glob: '**/.env*' }],
+    ['a file type, whose globs Frink cannot see', { type: 'sh' }],
+    ['a glob Frink cannot read', { glob: ['*.ts'] }],
+    ['a glob with too many spellings to check', { glob: '{a,b}'.repeat(7) }],
+  ])('asks for a search filtered by %s', async (_, filter) => {
+    expect(await grep(filter)).toMatchObject(NO_RULE);
+  });
+
+  it.each(['', '*.ts', '**/*.{ts,tsx}', '!*.key'])(
+    'lets a search filtered to %j run',
+    async (glob) => {
+      expect(await grep({ glob })).toEqual({ decision: 'allow' });
+    },
+  );
+
+  it('leaves a Glob for key files alone: it lists their names and opens none', async () => {
+    const req = request('Glob', { pattern: '**/*.key', path: linked }, [link(linked)]);
+    expect(await checkPermission(req)).toEqual({ decision: 'allow' });
+  });
+});
+
 describe('applyLinkedRead — asks', () => {
   it.each([
     ['a folder symlink that points out', 'out/b.txt'],

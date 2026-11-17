@@ -19,9 +19,10 @@ import {
 import { searchRoot, searchStaysInRoot, type SearchInput } from '../search';
 import { isSystemDeniedPath } from '../system-denied-patterns';
 import type { LinkedRoot, PermissionRequest, PermissionResult, PermissionsDoc } from '../types';
+import { type GrepFilterInput, grepFilterResult } from './grep-filter';
 import { isRootFolder } from './root-folder';
 
-type ReadInput = FileOpInput & SearchInput;
+type ReadInput = FileOpInput & SearchInput & GrepFilterInput;
 type Ask = Extract<PermissionResult, { decision: 'ask' }>;
 /** A linked folder holding the target, and the target's path relative to it (rule form). */
 type Holder = { root: LinkedRoot; rels: string[] };
@@ -193,8 +194,9 @@ function judge(
  * folder. Changes nothing unless the checker named no rule (`no-matching-rule`, which includes
  * the project tool-wide grant set aside outside the project), the target's real path is inside a
  * linked folder that is still not home or a drive, and a search neither climbs out nor spans a
- * protected folder. A path in a linked folder that leads to the deny list is denied. Env files and
- * search filters that can reach one still ask, as in the chat's own folder. The chat's own rules,
+ * protected folder. A path in a linked folder that leads to the deny list is denied, and so is a
+ * Grep whose file filter names a file on it. Env files and search filters that can reach one still
+ * ask, as in the chat's own folder, and so does a Grep filtered by file type. The chat's own rules,
  * matched again at the real path, and the linked project's own rules then decide, and a linked
  * project whose rules could not be loaded grants nothing.
  */
@@ -223,5 +225,7 @@ export function applyLinkedRead(
   if (!searchStaysInRoot(req.tool, input, target)) return result;
   const holders = holding.map((root) => ({ root, rels: relPaths(root.path, target, realTarget) }));
   if (req.tool === 'Read' && readsEnvFile(holders, target)) return result;
+  const filtered = req.tool === 'Grep' ? grepFilterResult(input, target, result) : undefined;
+  if (filtered) return filtered;
   return judge(result, req, docs, holders, [target, realTarget]);
 }

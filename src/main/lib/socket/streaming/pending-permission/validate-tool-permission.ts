@@ -27,6 +27,7 @@ import {
   sendPermissionRequest,
 } from '../../client';
 import { getActiveExecution } from '../execution-registry';
+import { loadLinkedRoots } from './linked-roots';
 import { createPendingPermissionRequestBroker, generatePermissionRequestId } from './request';
 
 const permissionRequests = createPendingPermissionRequestBroker({
@@ -109,9 +110,11 @@ export async function validateToolPermission(
   //
   // This read runs before checkPermission's own rule-store guard, so it carries the
   // same posture: a DB we cannot read denies instead of throwing past the gate.
+  let db: ReturnType<typeof getDatabase>;
   let project: Awaited<ReturnType<typeof getProjectByPath>>;
   try {
-    project = await getProjectByPath(getDatabase(), projectPath);
+    db = getDatabase();
+    project = await getProjectByPath(db, projectPath);
   } catch (err) {
     log.error('[executor] Could not read project for permission check — denying', err);
     return { allowed: false, message: formatDenyReason({ kind: 'db:unavailable' }) };
@@ -139,6 +142,8 @@ export async function validateToolPermission(
     projectPath,
     sessionDirRoot,
     planDirRoot,
+    // Read fresh on every call; links that cannot be read give none, so those reads ask.
+    linkedRoots: await loadLinkedRoots(db, chatId, projectPath),
     trustedFrinkOwnedMcp,
     mcpIdentity,
   });

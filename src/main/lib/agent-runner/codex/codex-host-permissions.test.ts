@@ -1,4 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { checkPermission } from '../../permissions/v2/check';
+import type { LinkedRoot } from '../../permissions/v2/types';
 import {
   CodexHostPermissionDeduper,
   mapFrinkHostPermissionRequests,
@@ -158,6 +163,30 @@ describe('Frink Codex host permission contract', () => {
         input: { command: '', session_id: 42 },
       }),
     ).toBeNull();
+  });
+
+  // Known gap: Codex reads files through shell commands, which the linked-read rule never sees.
+  it('judges a shell read of a linked file by the Bash rules alone, as before links', async () => {
+    const linked = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-linked-')));
+    const file = path.join(linked, 'a.ts');
+    fs.writeFileSync(file, 'x');
+    const parsed = parseFrinkHostToolPermissionRequest({
+      ...commandRequest,
+      input: { command: `cat ${file}` },
+    });
+    const [shell] = parsed ? mapFrinkHostPermissionRequests(parsed) : [];
+    const check = (tool: string, input: unknown, linkedRoots?: LinkedRoot[]) =>
+      checkPermission({ tool, input, projectId: 'p1', projectPath: '/repo', linkedRoots });
+    const roots = [{ projectId: 'p2', path: linked, doc: { allow: [], deny: [], ask: [] } }];
+    try {
+      expect(await check('Read', { file_path: file }, roots)).toEqual({ decision: 'allow' });
+      expect(shell?.toolName).toBe('Bash');
+      const viaShell = await check('Bash', shell?.input, roots);
+      expect(viaShell).toEqual(await check('Bash', shell?.input));
+      expect(viaShell).toMatchObject({ decision: 'ask' });
+    } finally {
+      fs.rmSync(linked, { recursive: true, force: true });
+    }
   });
 
   it('deduplicates a downstream MCP call once and only for exact identity and arguments', () => {
