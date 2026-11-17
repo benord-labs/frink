@@ -1,7 +1,6 @@
-import fs from 'node:fs';
 import log from 'electron-log';
 import type { getDatabase } from '../../../db';
-import { listLinkedProjectRoots, overlapsAny } from '../../../db/repos/chat-linked-projects';
+import { listLinkedProjectRoots, liveLinks } from '../../../db/repos/chat-linked-projects';
 import { getProjectDoc } from '../../../permissions/v2/store-local';
 import type { LinkedRoot, PermissionsDoc } from '../../../permissions/v2/types';
 
@@ -31,9 +30,7 @@ export async function loadLinkedRoots(
 ): Promise<LinkedRoot[]> {
   let links: ReturnType<typeof listLinkedProjectRoots>;
   try {
-    links = listLinkedProjectRoots(db, chatId).filter(
-      (link) => fs.existsSync(link.path) && !overlapsAny(link.path, [projectPath]),
-    );
+    links = liveLinks(listLinkedProjectRoots(db, chatId), [projectPath]);
   } catch (err) {
     log.warn("[permissions] Could not read the chat's linked projects — reads there will ask", err);
     return [];

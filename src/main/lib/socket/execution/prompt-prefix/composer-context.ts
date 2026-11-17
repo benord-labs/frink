@@ -25,7 +25,8 @@ type NoteKind =
   | 'attached_file'
   | 'skill'
   | 'agent'
-  | 'tool';
+  | 'tool'
+  | 'linked_projects';
 
 /** A sentence for the model. A selection's body is text the user picked, which Frink cannot vouch for. */
 export type ComposerNote = { kind: NoteKind; text: string };
@@ -45,7 +46,7 @@ function isPicked(mention: ParsedMention): boolean {
 }
 
 /** Claude Code escapes a path in a note, so the path cannot close the note's tag. */
-function notePath(path: string): string {
+export function notePath(path: string): string {
   return path.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
@@ -233,6 +234,7 @@ const CODEX_TRUST = {
   skill: 'application',
   agent: 'application',
   tool: 'application',
+  linked_projects: 'application',
 } satisfies Record<NoteKind, CodexContextEntry['kind']>;
 
 /** The notes as Codex host context. One entry each: Codex cuts every value at 1,000 tokens. */

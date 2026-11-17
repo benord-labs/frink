@@ -98,6 +98,7 @@ TOOLS:
 Project summaries above are intentionally brief to reduce context usage.
 Use searchProjects/fetchAllProjects when you need fuller project metadata.
 If a different project context is needed, explain why and then use requestSwitchProject.
+If a project is linked to this chat, read its files in place by full path instead of calling requestSwitchProject.
 When you need to return to a prior worktree, call frink_navigation_context() first and reuse the recorded worktree path.
 </multi_project_tools>`;
 }

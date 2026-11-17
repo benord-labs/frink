@@ -28,10 +28,16 @@ const linkOrder = sql`${chatLinkedProjects}.rowid`;
 const ofChat = (chatId: string) => eq(chatLinkedProjects.chatId, chatId);
 
 /** Either folder is, or holds, the other, by real path. */
-export function overlapsAny(dir: string, mainFolders: Array<string | null | undefined>): boolean {
+function overlapsAny(dir: string, mainFolders: Array<string | null | undefined>): boolean {
   return mainFolders.some(
     (main) => !!main && (isPathWithinProject(dir, main) || isPathWithinProject(main, dir)),
   );
+}
+
+/** The links the agent may read now: each folder on disk and apart from the chat's own folders.
+ * One rule for what the agent is told and what the permission gate lets it read. */
+export function liveLinks<T extends { path: string }>(links: T[], ownFolders: string[]): T[] {
+  return links.filter((link) => fs.existsSync(link.path) && !overlapsAny(link.path, ownFolders));
 }
 
 /** The chat's linked projects in the order they were linked. Virtual folders are never linked. */

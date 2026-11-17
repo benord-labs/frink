@@ -217,6 +217,12 @@ vi.mock('../db/repos/chats', () => ({
   getChatWithProjectAccount: vi.fn(),
 }));
 
+// The conformance grid and the warm-session suite seed a chat's links here; the rest stays real.
+vi.mock('../db/repos/chat-linked-projects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../db/repos/chat-linked-projects')>()),
+  listLinkedProjects: vi.fn(() => []),
+}));
+
 // Phase 1.5: bash perm reads/writes go through local SQLite repo + getDatabase().
 // Tests mock-stubbed cloud-client functions but production calls localPerms.* —
 // without these mocks, getDatabase() tries to spin up a real SQLite at /mock/userData/data

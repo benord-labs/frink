@@ -26,7 +26,12 @@ import { createThinkingEmitter } from '../../../claude/thinking-emitter';
 import { createTransformer as realTransformer } from '../../../claude/transform';
 import type { UIMessageChunk } from '../../../claude/types';
 import { getDefaultClaudeCodeToken } from '../../../credentials';
+import { listLinkedProjects } from '../../../db/repos/chat-linked-projects';
+import { getChatWithProjectAccount } from '../../../db/repos/chats';
+import * as toolValidation from '../../../permissions/tool-validation';
 import * as socketClient from '../../client';
+import type { MessageDelivery } from '../../execution/message-provenance/origin';
+import { userPromptSubmitReminder } from '../../test-utils';
 import { mockQuery, never } from '../claude-query-fake';
 import { credential } from '../composer-context/delivery';
 import type { OperatorReminderHarness } from '../operator-reminders/delivery';
@@ -35,10 +40,22 @@ import type { VendorTurns } from './fixtures';
 type ExecuteOverrides = NonNullable<Parameters<OperatorReminderHarness['handleRemoteExecute']>[1]>;
 type FileChanged = { filePath: string; type: string; subChatId: string };
 
-/** What one turn sent out: its stream, its editor-tab refreshes, and how it ended. */
+/** The chat's worktree and linked projects, and the message and how it was sent. By default: no
+ * worktree, no links, and a plain message with no origin. */
+export type TurnSetup = {
+  /** The worktree the chat runs in, and the main checkout its permissions are judged against. */
+  worktree?: { path: string; main: string };
+  links?: Array<{ name: string; path: string }>;
+  message?: string;
+  delivery?: MessageDelivery;
+};
+
+/** What one turn sent out: its stream, its notes, its editor-tab refreshes, and how it ended. */
 export type Observed = {
   subChatId: string;
   chunks: UIMessageChunk[];
+  /** What the runtime's context channel carried beside the prompt, as its own seam took it. */
+  notes: string[];
   fileChanged: FileChanged[];
   completed: boolean;
   errors: string[];
@@ -100,35 +117,77 @@ function cursorChunks(messages: VendorTurns['cursor']): UIMessageChunk[] {
   return messages.flatMap((message) => mapCursorMessage(message, state));
 }
 
-/** Claude's CLI plays the SDK frames through the real transformer, then stays open as it does. */
-function driveClaude(frames: VendorTurns['claude'], h: OperatorReminderHarness): ExecuteOverrides {
+/** Claude's CLI plays the SDK frames through the real transformer, then stays open as it does.
+ * Its prompt hook fires as the CLI reads the prompt, adding the turn's notes. */
+function driveClaude(
+  frames: VendorTurns['claude'],
+  h: OperatorReminderHarness,
+  notes: string[],
+): ExecuteOverrides {
   transformerMock.mockImplementation(realTransformer);
-  mockQuery(h.claudeQueryMock, async function* ({ prompt }) {
+  mockQuery(h.claudeQueryMock, async function* ({ prompt, options }) {
     await prompt.next();
+    const context = await userPromptSubmitReminder({ options });
+    if (context) notes.push(context);
     yield* frames;
     await never();
   });
   return {};
 }
 
-function driveCodex(notifications: VendorTurns['codex']): ExecuteOverrides {
+function driveCodex(
+  notifications: VendorTurns['codex'],
+  _h: OperatorReminderHarness,
+  notes: string[],
+): ExecuteOverrides {
   const chunks = notifications.flatMap((args) => mapNotificationToChunks(...args));
-  vi.mocked(runCodexAgent).mockImplementationOnce(() => runnerStream(chunks));
+  vi.mocked(runCodexAgent).mockImplementationOnce(({ composerContext = {} }) => {
+    notes.push(...Object.values(composerContext).map((entry) => entry.value));
+    return runnerStream(chunks);
+  });
   return {};
+}
+
+/** An ACP, Copilot or Cursor turn: it takes the notes with its other params. */
+function runnerTurn(chunks: UIMessageChunk[], notes: string[]) {
+  return ({ composerNotes }: { composerNotes: string[] }) => {
+    notes.push(...composerNotes);
+    return runnerStream(chunks);
+  };
 }
 
 /** How each runtime's translator output reaches the executor, through the seam it already has. */
 type Drivers = {
-  [R in AgentRuntime]: (turn: VendorTurns[R], h: OperatorReminderHarness) => ExecuteOverrides;
+  [R in AgentRuntime]: (
+    turn: VendorTurns[R],
+    h: OperatorReminderHarness,
+    notes: string[],
+  ) => ExecuteOverrides;
 };
 
 const DRIVERS: Drivers = {
   claude: driveClaude,
   codex: driveCodex,
-  acp: (turn) => ({ startAcpTurn: () => runnerStream(acpChunks(turn)) }),
-  copilot: (events) => ({ startCopilotTurn: () => runnerStream(copilotChunks(events)) }),
-  cursor: (messages) => ({ startCursorTurn: () => runnerStream(cursorChunks(messages)) }),
+  acp: (turn, _h, notes) => ({ startAcpTurn: runnerTurn(acpChunks(turn), notes) }),
+  copilot: (events, _h, notes) => ({ startCopilotTurn: runnerTurn(copilotChunks(events), notes) }),
+  cursor: (messages, _h, notes) => ({
+    startCursorTurn: runnerTurn(cursorChunks(messages), notes),
+  }),
 };
+
+/** The chat row the turn reads, its worktree, and the projects linked to it. */
+function seedChat(chatId: string, { worktree, links = [] }: TurnSetup): void {
+  // SAFETY: the executor reads only the chat's id, task, worktree and branch, and its account.
+  vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
+    chat: { id: chatId, worktreePath: worktree?.path },
+    account: null,
+  } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
+  if (worktree) {
+    vi.spyOn(toolValidation, 'resolvePermissionProjectPath').mockReturnValueOnce(worktree.main);
+  }
+  // SAFETY: the chat's workspace reads only each linked project's name and path.
+  vi.mocked(listLinkedProjects).mockReturnValueOnce(links as ReturnType<typeof listLinkedProjects>);
+}
 
 /** A window whose `webContents.send` is spied, standing in for an open editor. */
 function spyEditorWindow() {
@@ -143,15 +202,19 @@ export async function runConformanceTurn<R extends AgentRuntime>(
   h: OperatorReminderHarness,
   runtime: R,
   turn: VendorTurns[R],
+  setup: TurnSetup = {},
 ): Promise<Observed> {
   const subChatId = randomUUID();
   restoreSuiteMocksAfterTest();
   const send = spyEditorWindow();
   const provider = PROVIDER_FOR[runtime];
   if (provider) vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(credential(provider));
-  const overrides = DRIVERS[runtime](turn, h);
+  seedChat(h.basePayload.chatId, setup);
+  const notes: string[] = [];
+  const overrides = DRIVERS[runtime](turn, h, notes);
+  const { message = 'conformance turn', delivery } = setup;
   await h.handleRemoteExecute(
-    { ...h.basePayload, subChatId, message: 'conformance turn' },
+    { ...h.basePayload, subChatId, message, delivery },
     { ...overrides, runtimeFor: () => runtime },
   );
   // Non-Claude completions are sent on the next tick.
@@ -163,6 +226,7 @@ export async function runConformanceTurn<R extends AgentRuntime>(
     subChatId,
     // SAFETY: every turn loop in the executor streams UIMessageChunk values only.
     chunks: forSubChat(sent, subChatId).map((payload) => payload.chunk as UIMessageChunk),
+    notes,
     fileChanged: send.mock.calls.flatMap(([channel, payload]) =>
       channel === 'file-changed' ? [payload] : [],
     ),
