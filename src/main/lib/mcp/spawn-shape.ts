@@ -8,10 +8,8 @@
  *  - npx invocation without `-y`, which prompts under no-TTY stdio (RunPod)
  *  - args smushed into a single element (`["-y firecrawl-mcp"]`)
  *
- * This helper rewrites those into a runnable shape at the moment the SDK
- * payload is built — never persisted to disk. Stays alongside the existing
- * per-session rewrites in `executor.ts` (API_KEY arg filter, `z_` SDK-order
- * prefix, npm registry override).
+ * Rewrites those at spawn time (session payload and `tools-probe/transport.ts`),
+ * never on disk: the importer matches native entries by exact command/args.
  *
  * Safety: shell-quote tokenization rejects operators (|, &&, >, env-refs,
  * globs) and returns the input unchanged in those cases — never escalates a
@@ -38,7 +36,10 @@ export type NormalizedSpawnShape = {
  * into a spawn.
  */
 function parseShellTokens(input: string): string[] | null {
-  const parsed: ParseEntry[] = parse(input);
+  // win32: `\` is a path separator, not an escape (`C:\tools` → `C:tools`). An object
+  // token for `$VAR` trips the bail-out below instead of shell-quote expanding it to ''.
+  const source = process.platform === 'win32' ? input.replace(/\\/g, '\\\\') : input;
+  const parsed: (ParseEntry | object)[] = parse(source, (key) => ({ envRef: key }));
   const tokens: string[] = [];
   for (const entry of parsed) {
     if (typeof entry === 'string') tokens.push(entry);
@@ -65,10 +66,68 @@ function isExistingPath(raw: string, cwd?: string): boolean {
   return fs.existsSync(resolved);
 }
 
+function isNpxCommand(command: string): boolean {
+  const base = path.win32.basename(command).toLowerCase();
+  return base === 'npx' || base === 'npx.cmd';
+}
+
+/** Pin npx to the public registry unless the MCP env names one; shared by session and
+ * probe spawns so the Settings probe runs the same invocation a session does. */
+export function withNpxRegistryDefault(
+  command: string,
+  env: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const hasRegistry = Object.keys(env ?? {}).some((k) => k.toLowerCase() === 'npm_config_registry');
+  if (!isNpxCommand(command) || hasRegistry) return env;
+  return { ...(env ?? {}), npm_config_registry: 'https://registry.npmjs.org/' };
+}
+
+async function pathExists(raw: string, cwd?: string): Promise<boolean> {
+  const resolved = path.isAbsolute(raw) || !cwd ? raw : path.resolve(cwd, raw);
+  return fs.promises.access(resolved).then(
+    () => true,
+    () => false,
+  );
+}
+
 export function normalizeSpawnShape(
   rawCommand: string,
   rawArgs: readonly string[],
   cwd?: string,
+): NormalizedSpawnShape {
+  return normalizeWith(rawCommand, rawArgs, (raw) => isExistingPath(raw, cwd));
+}
+
+/** Same rewrite for main-process request paths (probe, tool call): no sync fs on the event loop. */
+export async function normalizeSpawnShapeAsync(
+  rawCommand: string,
+  rawArgs: readonly string[],
+  cwd?: string,
+): Promise<NormalizedSpawnShape> {
+  const candidates = [rawCommand.trim(), ...(rawArgs.length === 1 ? [rawArgs[0]] : [])].filter(
+    (candidate) => WHITESPACE_PATTERN.test(candidate),
+  );
+  const existing = new Set<string>();
+  await Promise.all(
+    candidates.map(async (candidate) => {
+      if (await pathExists(candidate, cwd)) existing.add(candidate);
+    }),
+  );
+  return normalizeWith(rawCommand, rawArgs, (raw) => existing.has(raw));
+}
+
+// A string with spaces is a shell line (`npx -y @railway/mcp-server`) or a path under a
+// spaced directory (`/Users/me/My Projects/server.js`); only one naming no file is tokenized.
+function splitShellLine(raw: string, exists: (raw: string) => boolean): string[] | null {
+  if (!WHITESPACE_PATTERN.test(raw) || exists(raw)) return null;
+  const tokens = parseShellTokens(raw);
+  return tokens && tokens.length > 1 ? tokens : null;
+}
+
+function normalizeWith(
+  rawCommand: string,
+  rawArgs: readonly string[],
+  exists: (raw: string) => boolean,
 ): NormalizedSpawnShape {
   const rewrites: SpawnShapeRewrite[] = [];
   // Trim leading/trailing whitespace before any whitespace-detection check.
@@ -78,34 +137,21 @@ export function normalizeSpawnShape(
   let command = rawCommand.trim();
   let args: string[] = [...rawArgs];
 
-  // Both branches face the same ambiguity — a string with spaces is either a
-  // whole shell line or a single path living under a directory with a space.
-  // `isExistingPath` is the tie-breaker; only a string that resolves to no file
-  // gets tokenized.
-  if (WHITESPACE_PATTERN.test(command) && args.length === 0) {
-    // Shell line (`npx -y @railway/mcp-server`) vs. self-executing script
-    // (`/Users/me/My Projects/mcp/dist/server.js` with a shebang, empty args).
-    if (!isExistingPath(command, cwd)) {
-      const tokens = parseShellTokens(command);
-      if (tokens && tokens.length > 1) {
-        command = tokens[0];
-        args = tokens.slice(1);
-        rewrites.push('command-split');
-      }
-    }
-  } else if (args.length === 1 && WHITESPACE_PATTERN.test(args[0])) {
-    // Smushed args (`["-y firecrawl-mcp"]`) vs. interpreter script
-    // (`node "/path with spaces/foo.js"`).
-    if (!isExistingPath(args[0], cwd)) {
-      const tokens = parseShellTokens(args[0]);
-      if (tokens && tokens.length > 1) {
-        args = tokens;
-        rewrites.push('args-split');
-      }
+  const commandTokens = splitShellLine(command, exists);
+  if (commandTokens) {
+    // Cursor appends `args` to the split line.
+    command = commandTokens[0];
+    args = [...commandTokens.slice(1), ...args];
+    rewrites.push('command-split');
+  } else if (args.length === 1) {
+    const argTokens = splitShellLine(args[0], exists);
+    if (argTokens) {
+      args = argTokens;
+      rewrites.push('args-split');
     }
   }
 
-  if ((command === 'npx' || command.endsWith('/npx')) && args[0] !== '-y' && args[0] !== '--yes') {
+  if (isNpxCommand(command) && args[0] !== '-y' && args[0] !== '--yes') {
     args = ['-y', ...args];
     rewrites.push('npx-auto-yes');
   }

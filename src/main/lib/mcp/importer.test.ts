@@ -757,4 +757,14 @@ describe('candidateToFrinkConfig (auth type derivation)', () => {
     const { config } = candidateToFrinkConfig(freshCandidate({}, { command: 'npx' }));
     expect(config.type).toBe('custom');
   });
+
+  // Kept verbatim because `candidateMatchesEntry` matches re-imports by exact
+  // command/args; spawn sites normalize it (`spawn-shape.ts`).
+  it('stores a Cursor whole-line command verbatim (split happens at spawn time)', () => {
+    const { config } = candidateToFrinkConfig(
+      freshCandidate({}, { command: 'npx -y @shortcut/mcp' }),
+    );
+    expect(config.command).toBe('npx -y @shortcut/mcp');
+    expect(config.args).toBeUndefined();
+  });
 });

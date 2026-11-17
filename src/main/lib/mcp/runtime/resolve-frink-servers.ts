@@ -5,7 +5,7 @@ import { captureMainMessage } from '../../sentry/init';
 import { refreshOAuthThroughSdk } from './oauth-refresh';
 import { buildSafeEnv } from '../../terminal/env';
 import { getGlobalMcpServers, getMcpCredentials, updateMcpCredentialsAtomic } from '../config';
-import { normalizeSpawnShape } from '../spawn-shape';
+import { normalizeSpawnShape, withNpxRegistryDefault } from '../spawn-shape';
 import type { FrinkMcpCredentials, FrinkMcpServerConfig } from '../types';
 
 type ResolvedFrinkMcpServer = {
@@ -283,9 +283,7 @@ function scopedStdioEnv(
   credentials: FrinkMcpCredentials | undefined,
 ): Record<string, string> | undefined {
   const mcpSpecificEnv = nonEmptyEnv(availability.resolvedEnv) ?? nonEmptyEnv(credentials?.env);
-  const isNpx = spawnCommand === 'npx' || spawnCommand.endsWith('/npx');
-  if (!isNpx || mcpSpecificEnv?.npm_config_registry) return mcpSpecificEnv;
-  return { ...(mcpSpecificEnv ?? {}), npm_config_registry: 'https://registry.npmjs.org/' };
+  return withNpxRegistryDefault(spawnCommand, mcpSpecificEnv);
 }
 
 function createStdioServer(
