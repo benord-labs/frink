@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -78,7 +79,6 @@ const baseInput = {
   chatId: 'c1',
   subChatId: 's1',
   projectId: null,
-  projectPath: null,
   rawUserMessage: 'Tell me a very long story please please please please please',
   isFirstSubChat: true,
 };
@@ -416,6 +416,8 @@ describe('maybeNameBuildProjectFromMessage', () => {
     });
     // Project naming keeps the stronger model so chit-chat abstention stays reliable.
     expect(mocks.sdkQuery.mock.calls[0]?.[0]?.options?.model).toBe('sonnet');
+    // Never the project folder, whose git log the CLI would hand the model.
+    expect(mocks.sdkQuery.mock.calls[0]?.[0]?.options?.cwd).toBe(tmpdir());
   });
 
   // A codex-assigned build keeps its placeholder rather than borrowing the default Claude account.
