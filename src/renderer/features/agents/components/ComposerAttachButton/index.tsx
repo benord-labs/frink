@@ -3,10 +3,10 @@ import { Plus } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
 import { HIDE_ATTACH_TIER } from '../../main/chat-composer-shell-classes';
 
-type Props = { label: string; onClick: () => void; disabled: boolean };
+type Props = { label: string; onClick: () => void; disabled?: boolean };
 
 /** The composer's attach control, shared by the new-chat and active-chat toolbars. */
-export function ComposerAttachButton({ label, onClick, disabled }: Props) {
+export function ComposerAttachButton({ label, onClick, disabled = false }: Props) {
   return (
     <Button
       variant="ghost"

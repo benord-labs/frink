@@ -811,7 +811,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                   <ComposerAttachButton
                     label="Attach files"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={false}
                   />
 
                   {/* Send/Stop button */}

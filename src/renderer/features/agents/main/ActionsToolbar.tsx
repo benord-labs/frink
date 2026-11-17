@@ -9,7 +9,6 @@ import { ComposerAttachButton } from '../components/ComposerAttachButton';
 import { ModeSelector } from '../components/mode-selector';
 import { type ModelItem, ModelSelector } from '../components/model-selector';
 import { COMPOSER_ACTION_ROW_CLASS } from './chat-composer-shell-classes';
-import { LIMITS } from './new-chat-form-constants';
 
 type Props = {
   /** Codex Fast staged by this New Chat form for the chat it creates. */
@@ -50,7 +49,6 @@ type Props = {
 
   // Attachment props
   fileInputRef: React.RefObject<HTMLInputElement | null>;
-  images: unknown[];
   onAttachClick: () => void;
   onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 
@@ -87,7 +85,6 @@ export function ActionsToolbar({
   onOpenModelSettings,
   modelHint,
   fileInputRef,
-  images,
   onAttachClick,
   onFileInputChange,
   hiddenModes,
@@ -131,11 +128,7 @@ export function ActionsToolbar({
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         <input type="file" ref={fileInputRef} hidden multiple onChange={onFileInputChange} />
-        <ComposerAttachButton
-          label="Attach files"
-          onClick={onAttachClick}
-          disabled={images.length >= LIMITS.MAX_IMAGES}
-        />
+        <ComposerAttachButton label="Attach files" onClick={onAttachClick} />
         <div className="ml-1">
           <AgentSendButton
             isStreaming={false}

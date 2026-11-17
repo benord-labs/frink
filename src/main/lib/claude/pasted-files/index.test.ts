@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
-import { copyIntoPasted, safeAttachmentName, writePastedText } from '.';
+import { copyIntoPasted, rehomePastedMentions, safeAttachmentName, writePastedText } from '.';
 
 const subChatId = 'mq7zk90vzeoypywd';
 
@@ -92,5 +92,36 @@ describe('pasted files', () => {
     expect(safeAttachmentName('<draft>*"final"')).toBe('_draft___final_');
     expect(safeAttachmentName('trailing. . ')).toBe('trailing');
     expect(safeAttachmentName('   ')).toBe('attachment');
+  });
+
+  it('copies the pastes a message names into a replacement chat folder and repoints them', async () => {
+    const pdf = await writePastedText(
+      { subChatId, text: '%PDF', filename: '1a2b3c4d-report.pdf' },
+      userData,
+    );
+    const elsewhere = join(source, 'notes.txt');
+    writeFileSync(elsewhere, 'mine');
+    const missing = join(dirname(pdf.filePath), '0f9e8d7c-gone.csv');
+    const to = 'fresh-sub-chat-id-01';
+    const text = `@[pasted:4:report.pdf|${pdf.filePath}] @[pasted:4:notes|${elsewhere}] @[pasted:1:gone.csv|${missing}] go`;
+
+    const out = await rehomePastedMentions(text, { from: subChatId, to }, userData);
+
+    const copy = join(userData, 'claude-sessions', to, 'pasted', '1a2b3c4d-report.pdf');
+    expect(readFileSync(copy, 'utf-8')).toBe('%PDF');
+    expect(out).toBe(
+      `@[pasted:4:report.pdf|${copy}] @[pasted:4:notes|${elsewhere}] @[pasted:1:gone.csv|${missing}] go`,
+    );
+  });
+
+  it('leaves a message alone when the old id could never have held pastes', async () => {
+    const text = `@[pasted:1:x|${join(userData, 'claude-sessions', '__new_chat_0__', 'pasted', 'x.txt')}]`;
+    expect(
+      await rehomePastedMentions(
+        text,
+        { from: '__new_chat_0__', to: 'fresh-sub-chat-id-01' },
+        userData,
+      ),
+    ).toBe(text);
   });
 });

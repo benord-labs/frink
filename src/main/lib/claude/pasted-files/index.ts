@@ -1,8 +1,10 @@
 /** A chat's agent-readable `pasted/` folder: large pastes and attached files, read by path. */
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { app } from 'electron';
+import { findMentionTokens } from '../../../../shared/lib/mentions/mention-grammar';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
 import { isValidSubChatIdForSessionPaths } from '../session-plan-paths';
 
@@ -87,4 +89,27 @@ export async function writePastedText(
   const filePath = join(await pastedDirFor(input.subChatId, userData), finalFilename);
   await writeFile(filePath, input.text, 'utf-8');
   return { filePath, filename: finalFilename, size: input.text.length };
+}
+
+/** Copies the pastes `text` names from one sub-chat's `pasted/` folder into another's and points
+ *  their mentions at the copies; a file that cannot be copied keeps its old path. */
+export async function rehomePastedMentions(
+  text: string,
+  ids: { from: string; to: string },
+  userData = app.getPath('userData'),
+): Promise<string> {
+  if (!isValidSubChatIdForSessionPaths(ids.from)) return text;
+  const fromDir = join(userData, 'claude-sessions', ids.from, 'pasted');
+  let out = text;
+  for (const token of findMentionTokens(text)) {
+    const mention = parseMention(token.id);
+    if (mention?.type !== 'pasted' || dirname(mention.path) !== fromDir) continue;
+    const copy = join(await pastedDirFor(ids.to, userData), basename(mention.path));
+    const copied = await copyFile(mention.path, copy).then(
+      () => true,
+      () => false,
+    );
+    if (copied) out = out.replaceAll(`|${mention.path}]`, `|${copy}]`);
+  }
+  return out;
 }

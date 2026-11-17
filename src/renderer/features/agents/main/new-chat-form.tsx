@@ -812,7 +812,6 @@ export function NewChatForm({
                           onModelDropdownOpenChange={setIsModelDropdownOpen}
                           onOpenModelSettings={handleOpenModelSettings}
                           fileInputRef={fileInputRef}
-                          images={images}
                           onAttachClick={() => fileInputRef.current?.click()}
                           onFileInputChange={(e) => {
                             const files = Array.from(e.target.files || []);

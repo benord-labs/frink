@@ -55,7 +55,6 @@ export const STRINGS = {
 } as const;
 
 export const LIMITS = {
-  MAX_IMAGES: 5,
   MAX_CHAT_NAME_LENGTH: 50,
   INPUT_MAX_HEIGHT: 240,
   INPUT_MIN_HEIGHT_MOBILE: 56,
