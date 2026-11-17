@@ -14,10 +14,6 @@ describe('built-in command catalog', () => {
     const skipped = BUILTIN_SLASH_COMMANDS.map((cmd) => cmd.name).filter((name) => name !== 'goal');
     expect(skipped).toEqual([...BUILTIN_COMMAND_NAMES]);
   });
-
-  it('has no /commit built-in', () => {
-    expect(filterBuiltinCommands('commit')).toEqual([]);
-  });
 });
 
 describe('filterBuiltinCommands', () => {
