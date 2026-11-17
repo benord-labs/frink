@@ -248,7 +248,7 @@ function toolNameForItem(item: Record<string, unknown>): string {
  * ThreadItem variants that are NOT jobs and must never render a tool card. Everything else IS one.
  *
  * Deliberately a denylist, not an allowlist. The codex ThreadItem union grows over time (19 variants
- * at the pinned rust-v0.155.1) and a closed allowlist fails SILENTLY — a new kind of long-running
+ * at the pinned rust-v0.162.1) and a closed allowlist fails SILENTLY — a new kind of long-running
  * work simply vanishes from the transcript, which is exactly how image generation and subagents came
  * to look like an idle conversation. A denylist fails VISIBLY: an unmapped variant still surfaces
  * under a synthetic `codex_<type>` name that a reader can act on.

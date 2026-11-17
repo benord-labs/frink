@@ -29,11 +29,11 @@ import {
 import { sha256File } from './http-download.mjs';
 
 const manifest = {
-  version: 'rust-v0.155.1',
-  tagObject: '4e21628f9ec9ee656650cd2b62ef92225725b5ac',
-  commit: 'be2951ea34f0d295ed0becf97079f92fa5f6950e',
-  sourceArchiveSha256: 'b9e18d40d322586913e94d6747f3f934922c4f5130eb5a349ba019c57b83dad8',
-  normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
+  version: 'rust-v0.162.1',
+  tagObject: '7a078f6bb4ce0dc2a81408b334ce52979d92c603',
+  commit: '092d3acd6bec3e3a14bdc7e7a2810ab628ab759d',
+  sourceArchiveSha256: 'e709bda93494c000a69d4c07a85a1975ce433f5541e737d1a5feddd399c97c60',
+  normalizedCargoLockSha256: '765110795bf3385d734bf1acfcae77660d29a6c678d5b77015d7ffe49f26e69f',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
   // Pinned once, in the manifest: the script and these tests read it rather than repeat it.
@@ -77,8 +77,8 @@ describe('permission-aware Codex source build', () => {
   });
 
   it('normalizes only Cargo local placeholder versions for locked builds', () => {
-    expect(normalizeWorkspaceVersions('version = "0.0.0"\nversion = "1.2.3"\n', '0.155.1')).toBe(
-      'version = "0.155.1"\nversion = "1.2.3"\n',
+    expect(normalizeWorkspaceVersions('version = "0.0.0"\nversion = "1.2.3"\n', '0.162.1')).toBe(
+      'version = "0.162.1"\nversion = "1.2.3"\n',
     );
   });
 
@@ -122,7 +122,7 @@ describe('permission-aware Codex source build', () => {
 
 describe('normalizeCargoLock', () => {
   const pristine = 'name = "codex-core"\nversion = "0.0.0"\n';
-  const normalized = 'name = "codex-core"\nversion = "0.155.1"\n';
+  const normalized = 'name = "codex-core"\nversion = "0.162.1"\n';
 
   function sourceWithLock(lock: string) {
     const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-lock-'));
@@ -197,10 +197,10 @@ describe('command lines', () => {
 describe('codexVersionStamp', () => {
   it('carries the patch identity so a stale bundled binary is detectable at runtime', () => {
     expect(codexVersionStamp(manifest)).toBe(
-      `rust-v0.155.1+frink.${pinnedManifest.patchSha256.slice(0, 12)}`,
+      `rust-v0.162.1+frink.${pinnedManifest.patchSha256.slice(0, 12)}`,
     );
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
-      'rust-v0.155.1+frink.aaaaaaaaaaaa',
+      'rust-v0.162.1+frink.aaaaaaaaaaaa',
     );
   });
 });
@@ -347,7 +347,7 @@ describe('pinned ThreadItem union', () => {
   it('rejects a fixture left behind on the previous pin', () => {
     const declared = { version: 'rust-v0.149.0', variants: [] };
     expect(() => assertPinnedThreadItems(manifest, declared, [])).toThrow(
-      'thread-item-variants.json pins rust-v0.149.0, manifest pins rust-v0.155.1',
+      'thread-item-variants.json pins rust-v0.149.0, manifest pins rust-v0.162.1',
     );
   });
 
@@ -362,7 +362,7 @@ describe('pinned ThreadItem union', () => {
 describe('built-binary handshake', () => {
   const good = {
     userAgent:
-      'frink-build-check/0.155.1 (Mac OS 26.5.1; arm64) ghostty/1.3.1 (frink-build-check; 0)',
+      'frink-build-check/0.162.1 (Mac OS 26.5.1; arm64) ghostty/1.3.1 (frink-build-check; 0)',
     capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
   };
 
@@ -401,15 +401,15 @@ describe('built-binary handshake', () => {
     expect(() =>
       assertHandshakeResult(manifest, {
         ...good,
-        userAgent: 'frink-build-check/0.149.0 (Mac OS) ghostty/1.3.1 (frink-build-check; 0.155.1)',
+        userAgent: 'frink-build-check/0.149.0 (Mac OS) ghostty/1.3.1 (frink-build-check; 0.162.1)',
       }),
-    ).toThrow('expected it to start "frink-build-check/0.155.1 "');
+    ).toThrow('expected it to start "frink-build-check/0.162.1 "');
   });
 
   it('rejects a binary reporting a version other than the pin (a stale copy under a fresh stamp)', () => {
     expect(() =>
       assertHandshakeResult(manifest, { ...good, userAgent: 'frink-build-check/0.149.0 (Mac OS)' }),
-    ).toThrow('expected it to start "frink-build-check/0.155.1 "');
+    ).toThrow('expected it to start "frink-build-check/0.162.1 "');
   });
 
   const reply = JSON.stringify(JSON.stringify({ id: 1, result: good }));
