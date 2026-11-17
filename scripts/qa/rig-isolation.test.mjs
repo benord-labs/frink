@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   accessSync,
   constants,
@@ -9,7 +9,9 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  lstatSync,
   statSync,
+  symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -153,10 +155,9 @@ describe('QA rig home isolation', () => {
     },
   );
 
-  it("puts the app's main log in the run's evidence bundle, and says when it could not", () => {
-    expect(boot).toContain('QA_LOG_DIR="${FRINK_QA_EVIDENCE_DIR:-$QA_USER_DATA/logs}"');
+  it("puts the app's main log under its own profile, and says where", () => {
+    expect(boot).toContain('QA_LOG_DIR="$QA_USER_DATA/logs"');
     expect(boot).toContain('FRINK_LOG_DIR="$QA_LOG_DIR"');
-    // Announced, so a run that silently fell back cannot pass for one that captured the log.
     expect(boot).toMatch(/echo .*FRINK_LOG_DIR=\$QA_LOG_DIR/);
   });
 });
@@ -205,7 +206,7 @@ describe.runIf(process.platform === 'darwin')('QA rig instances', () => {
   const instance = (port) => {
     const env = { PATH: process.env.PATH, HOME: '/h' };
     if (port !== undefined) env.FRINK_QA_PORT = port;
-    const print = 'printf "%s\\n" "$QA_CDP_PORT" "$QA_PROFILE_PORT" "$QA_USER_DATA" "$LOCK"';
+    const print = 'printf "%s\\n" "$QA_CDP_PORT" "$QA_PROFILE_PORT" "$QA_USER_DATA"';
     const run = spawnSync('bash', ['-c', `. "${join(qaDir, 'env.sh')}"; ${print}`], {
       env,
       encoding: 'utf-8',
@@ -214,25 +215,15 @@ describe.runIf(process.platform === 'darwin')('QA rig instances', () => {
   };
 
   it('is the one default instance when no port is named', () => {
-    const today = [
-      '9223',
-      '21399',
-      '/h/Library/Application Support/Frink Dev-21399',
-      '/h/.frink-qa/lock.d',
-    ];
+    const today = ['9223', '21399', '/h/Library/Application Support/Frink Dev-21399'];
     expect(instance(undefined).lines).toEqual(today);
     expect(instance('').lines).toEqual(today);
   });
 
-  it('gives a named port its own DevTools port, profile and lock', () => {
+  it('gives a named port its own DevTools port and profile', () => {
     expect(instance('40010')).toMatchObject({
       status: 0,
-      lines: [
-        '40010',
-        '40010',
-        '/h/Library/Application Support/Frink Dev-40010',
-        '/h/.frink-qa/lock-40010.d',
-      ],
+      lines: ['40010', '40010', '/h/Library/Application Support/Frink Dev-40010'],
     });
   });
 
@@ -256,13 +247,38 @@ describe.runIf(process.platform === 'darwin')('QA rig instances', () => {
     expect(refused.stderr).toContain('FRINK_QA_PORT');
   });
 
-  it('launches the app on its instance port and profile, and checks that same instance', () => {
+  it('refuses to re-seed an instance whose boot.sh is running, before wiping anything', () => {
+    const home = mkdtempSync(join(tmpdir(), 'qa seed running-'));
+    const profile = join(home, 'Library/Application Support/Frink Dev-40990');
+    mkdirSync(profile, { recursive: true });
+    const boot = spawn('sleep', ['30']);
+    // Written as boot.sh would, under the C locale, whatever the caller's own.
+    const claim = spawnSync(
+      'bash',
+      ['-c', `LC_ALL=C ps -o lstart= -p ${boot.pid} | awk '{$1=$1};1'`],
+      {
+        encoding: 'utf-8',
+      },
+    ).stdout.trim();
+    symlinkSync(`${boot.pid}:${claim}`, join(profile, 'boot.lock'));
+    try {
+      const run = spawnSync('bash', [join(qaDir, 'seed.sh')], {
+        env: { PATH: process.env.PATH, HOME: home, FRINK_QA_PORT: '40990' },
+        encoding: 'utf-8',
+      });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(`port 40990 is running (boot.sh pid ${boot.pid})`);
+      expect(lstatSync(join(profile, 'boot.lock')).isSymbolicLink()).toBe(true);
+    } finally {
+      boot.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('launches the app on its instance port and profile', () => {
     const boot = read('boot.sh');
     expect(boot).toContain('FRINK_CDP_PORT="$QA_CDP_PORT"');
     expect(boot).toContain('FRINK_AUTH_SERVER_PORT="$QA_PROFILE_PORT"');
     expect(boot).toContain('MAIN_VITE_AUTH_SERVER_PORT=21399');
-    expect(read('smoke.sh')).toContain(
-      'FRINK_CDP_PORT="$QA_CDP_PORT" bun scripts/qa/smoke-check.ts',
-    );
   });
 });

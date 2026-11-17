@@ -7,8 +7,7 @@
         "scripts/binaries/*.mjs",
         "scripts/perf/*.mjs",
         "scripts/publish/*.mjs",
-        "scripts/plugin-catalog/generate.ts",
-        "scripts/qa/component-shot.ts"
+        "scripts/plugin-catalog/generate.ts"
       ],
       "project": ["src/**/*.{ts,tsx,css}"],
       "ignoreDependencies": ["babel-plugin-react-compiler", "path-browserify"]

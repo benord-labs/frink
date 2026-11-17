@@ -1,28 +1,12 @@
 #!/bin/bash
-# Seeds the QA app's state: wipes its profile, then writes the fixture workspace.
-# Runs before EVERY boot (base baseline, head, compare relaunch) and is
-# idempotent: wipes the QA profile and seeds the deterministic fixture
-# workspace. A broken fixture fails HERE, in seconds, with the reason on
-# stderr — not after a full drive. Launch and the
-# run lock stay in boot.sh: the lock must span the app's lifetime, and a lock
-# taken in this short-lived script would release before boot.
+# Seeds the QA app's state: wipes its profile, then writes the fixture workspace. Runs before
+# every boot of an instance, so a broken fixture fails here in seconds, not after a full drive.
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
 
-mkdir -p "$QA_HOME"
-
-# Fail fast while another run holds the profile — wiping it mid-drive would
-# corrupt that run. The previous run's teardown can still be draining when a
-# compare relaunch re-seeds, so wait it out briefly.
-# ponytail: read-only check, boot.sh owns the lock; the seed→boot handoff
-# window is unguarded (single-operator rig).
-for _ in $(seq 1 20); do
-  HOLDER=$(cat "$LOCK/pid" 2>/dev/null || echo "")
-  if [ -z "$HOLDER" ] || ! kill -0 "$HOLDER" 2>/dev/null; then break; fi
-  sleep 1
-done
-if [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; then
-  echo "frink QA already running (pid $HOLDER) — one run at a time." >&2
+# The wipe would pull a running instance's profile out from under it, booting or up.
+if RUNNING=$(qa_running_pid); then
+  echo "The QA instance on port $QA_CDP_PORT is running (boot.sh pid $RUNNING); stop it before seeding it again." >&2
   exit 1
 fi
 
