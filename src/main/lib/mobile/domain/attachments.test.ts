@@ -15,7 +15,6 @@ import {
   __resetMobileAttachments,
   MOBILE_IMAGE_MAX_BYTES,
   resolveMobileAttachments,
-  safeAttachmentName,
   storeMobileAttachment,
 } from './attachments';
 import { MobileApiError } from './errors';
@@ -92,11 +91,5 @@ describe('mobile attachments', () => {
     await expect(upload({ bytes: new Uint8Array() })).rejects.toMatchObject({ status: 400 });
     await expect(upload({ subChatId: '../escape' })).rejects.toMatchObject({ status: 400 });
     expect(existsSync(join(fixture.userData, 'claude-sessions'))).toBe(false);
-  });
-
-  it('keeps names safe on disk and inside a mention token', () => {
-    expect(safeAttachmentName('../../etc/passwd')).toBe('_.._etc_passwd');
-    expect(safeAttachmentName('a[b]|c.pdf')).toBe('a_b__c.pdf');
-    expect(safeAttachmentName('   ')).toBe('attachment');
   });
 });

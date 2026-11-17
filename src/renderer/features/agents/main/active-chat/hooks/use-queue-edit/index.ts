@@ -6,7 +6,6 @@ import {
   clearSubChatDraft,
   type FullDraftData,
   hasDraftContent,
-  saveSubChatDraftWithAttachments,
   writeSubChatDraft,
 } from '../../../../lib/drafts';
 import type { AgentQueueItem } from '../../../../lib/queue-utils';
@@ -14,10 +13,7 @@ import { createTextPreview, editableQueuedImages } from '../../../../lib/queue-u
 import type { AgentsMentionsEditorHandle } from '../../../../mentions/agents-mentions-editor';
 import { useMessageQueueStore } from '../../../../stores/message-queue-store';
 
-type Upload = Pick<
-  ReturnType<typeof useAgentsFileUpload>,
-  'clearAll' | 'setImagesFromDraft' | 'setFilesFromDraft'
->;
+type Upload = Pick<ReturnType<typeof useAgentsFileUpload>, 'clearAll' | 'setImagesFromDraft'>;
 type TextContexts = Pick<
   ReturnType<typeof useTextContextSelection>,
   | 'clearTextContexts'
@@ -31,24 +27,14 @@ type Pasted = Pick<
   'clearPastedTexts' | 'setPastedTextsFromDraft'
 >;
 
-/** The composer content an Edit loads. A turn restored after a reload has no files left (the user
- * re-attaches them) and previews its images from inline data. */
+/** The composer content an Edit loads. A turn restored after a reload previews its images from
+ * inline data. */
 function editContent(item: AgentQueueItem) {
   const images = editableQueuedImages(item.images).map((img) => ({
     ...img,
     filename: img.filename ?? img.id,
     isLoading: false,
   }));
-  const files = item.attachmentsLost
-    ? []
-    : (item.files ?? []).map((f) => ({
-        id: f.id,
-        filename: f.filename,
-        url: f.url,
-        isLoading: false,
-        size: f.size,
-        type: f.mediaType,
-      }));
   const textContexts = (item.textContexts ?? []).map((ctx) => ({
     ...ctx,
     preview: createTextPreview(ctx.text),
@@ -59,38 +45,25 @@ function editContent(item: AgentQueueItem) {
     preview: createTextPreview(ctx.text),
     createdAt: new Date(),
   }));
-  return { images, files, textContexts, diffTextContexts };
+  const pastedTexts = (item.pastedTexts ?? []).map((p) => ({ ...p, createdAt: new Date() }));
+  return { images, textContexts, diffTextContexts, pastedTexts };
 }
 
-/** Saved at once, not on blur, so a reload or switch before blur finds the whole edit. Files need
- * an async read of their blob, so a turn that still has them re-saves once that completes. */
+/** Saved at once, not on blur, so a reload or switch before blur finds the whole edit. */
 function saveEditDraft(
   chatId: string,
   subChatId: string,
   text: string,
-  { images, files, textContexts }: Omit<ReturnType<typeof editContent>, 'diffTextContexts'>,
+  { images, textContexts, pastedTexts }: ReturnType<typeof editContent>,
 ) {
-  writeSubChatDraft(chatId, subChatId, { text, images, textContexts });
-  if (files.length === 0) return;
-  fileDraftWrites.set(subChatId, (fileDraftWrites.get(subChatId) ?? 0) + 1);
-  void saveSubChatDraftWithAttachments(chatId, subChatId, text, { images, files, textContexts })
-    .catch(() => undefined)
-    .finally(() => {
-      const left = (fileDraftWrites.get(subChatId) ?? 1) - 1;
-      if (left > 0) fileDraftWrites.set(subChatId, left);
-      else fileDraftWrites.delete(subChatId);
-    });
+  writeSubChatDraft(chatId, subChatId, { text, images, textContexts, pastedTexts });
 }
 
-/** In-flight edit draft writes with files (an async blob read), counted per sub-chat so overlapping
- * edits cannot clear each other's marker. */
-const fileDraftWrites = new Map<string, number>();
-
 /** Whether a mount should release the sub-chat's editing flag: only when the saved draft holds
- * nothing and no file draft write for it is still in flight. */
+ * nothing. */
 export function shouldReleaseEdit(subChatId: string, draft: FullDraftData | null): boolean {
   if (!useMessageQueueStore.getState().editingItemIds[subChatId]) return false;
-  return !(draft && hasDraftContent(draft)) && !fileDraftWrites.get(subChatId);
+  return !(draft && hasDraftContent(draft));
 }
 
 /** Edit a queued item in the composer; the original keeps an "Editing…" badge until the edit is sent
@@ -114,7 +87,7 @@ export function useQueueEdit({
   pasted?: Pasted;
 }) {
   const setEditingItemId = useMessageQueueStore((s) => s.setEditingItemId);
-  const { clearAll, setImagesFromDraft, setFilesFromDraft } = upload;
+  const { clearAll, setImagesFromDraft } = upload;
   const {
     clearTextContexts,
     clearDiffTextContexts,
@@ -161,10 +134,9 @@ export function useQueueEdit({
       editorRef.current.setValue(item.message);
       const content = editContent(item);
       setImagesFromDraft(content.images);
-      setFilesFromDraft(content.files);
       setTextContextsFromDraft(content.textContexts);
       setDiffTextContextsFromDraft(content.diffTextContexts);
-      setPastedTextsFromDraft?.(item.pastedTexts ?? []);
+      setPastedTextsFromDraft?.(content.pastedTexts);
       if (parentChatId) saveEditDraft(parentChatId, subChatId, item.message, content);
       // codeSelectionContexts live in per-chat Jotai atoms and are not restored to the editor (v1).
       setEditingItemId(subChatId, itemId);
@@ -177,7 +149,6 @@ export function useQueueEdit({
       inputHasContent,
       setEditingItemId,
       setImagesFromDraft,
-      setFilesFromDraft,
       setTextContextsFromDraft,
       setDiffTextContextsFromDraft,
       setPastedTextsFromDraft,

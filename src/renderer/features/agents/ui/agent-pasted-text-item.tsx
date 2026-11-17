@@ -1,4 +1,5 @@
 import { SquareDashedText } from 'lucide-react';
+import { isAttachedFilePath } from '../../../../shared/lib/mentions/parse-mention';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
 import { AgentFileItem } from './agent-file-item';
 
@@ -18,12 +19,17 @@ type AgentPastedTextItemProps = {
 };
 
 export function AgentPastedTextItem({
-  filePath: _filePath,
+  filePath,
   filename: _filename,
   size,
   preview,
   onRemove,
 }: AgentPastedTextItemProps) {
+  if (isAttachedFilePath(filePath)) {
+    return (
+      <AgentFileItem filename={preview} size={size} className="max-w-48" onRemove={onRemove} />
+    );
+  }
   return (
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>

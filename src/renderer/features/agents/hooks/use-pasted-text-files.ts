@@ -1,4 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
 import { trpc } from '../../../lib/trpc';
 
 export type PastedTextFile = {
@@ -19,11 +21,14 @@ export type PastedTextOptions = { label?: string; filename?: string };
 type UsePastedTextFilesReturn = {
   pastedTexts: PastedTextFile[];
   addPastedText: (text: string, options?: PastedTextOptions) => Promise<void>;
+  addPastedFiles: (files: File[]) => Promise<void>;
   removePastedText: (id: string) => void;
   clearPastedTexts: () => void;
   setPastedTextsFromDraft: (drafts: RestorablePastedText[]) => void;
   pastedTextsRef: React.RefObject<PastedTextFile[]>;
 };
+
+const newChipId = () => `pasted_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
 export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn {
   const [pastedTexts, setPastedTexts] = useState<PastedTextFile[]>([]);
@@ -46,7 +51,7 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
         // Create preview from first 50 chars, replace newlines with spaces
         const preview = text.slice(0, 50).replace(/\n/g, ' ');
         const newPasted: PastedTextFile = {
-          id: `pasted_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+          id: newChipId(),
           filePath: result.filePath,
           filename: result.filename,
           size: result.size,
@@ -64,6 +69,36 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
     [subChatId, writePastedTextMutation],
   );
 
+  const attachPastedFileMutation = trpc.files.attachPastedFile.useMutation();
+
+  /** Copies each file from its place on disk into the chat's pasted folder, one chip per file. */
+  const addPastedFiles = useCallback(
+    async (files: File[]) => {
+      for (const file of files) {
+        const sourcePath = window.webUtils?.getPathForFile(file) ?? '';
+        if (file.size > PASTED_FILE_MAX_BYTES || !sourcePath) {
+          toast.error(`Couldn't attach ${file.name}`, {
+            description:
+              file.size > PASTED_FILE_MAX_BYTES
+                ? 'Attachments must be 20 MB or smaller.'
+                : 'Save it to your computer, then drag it in or use the attach button.',
+          });
+          continue;
+        }
+        try {
+          const saved = await attachPastedFileMutation.mutateAsync({ subChatId, sourcePath });
+          const chip = { ...saved, id: newChipId(), preview: file.name, createdAt: new Date() };
+          setPastedTexts((prev) => [...prev, chip]);
+        } catch (error) {
+          toast.error(`Couldn't attach ${file.name}`, {
+            description: error instanceof Error ? error.message : undefined,
+          });
+        }
+      }
+    },
+    [subChatId, attachPastedFileMutation],
+  );
+
   const removePastedText = useCallback((id: string) => {
     setPastedTexts((prev) => prev.filter((p) => p.id !== id));
   }, []);
@@ -79,6 +114,7 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
   return {
     pastedTexts,
     addPastedText,
+    addPastedFiles,
     removePastedText,
     clearPastedTexts,
     setPastedTextsFromDraft,

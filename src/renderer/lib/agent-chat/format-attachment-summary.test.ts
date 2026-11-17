@@ -45,4 +45,13 @@ describe('formatAttachmentSummaryLabel', () => {
     expect(formatAttachmentSummaryLabel(0, [])).toBe('');
     expect(formatAttachmentSummaryLabel(0, mentions('skill', 'agent'))).toBe('');
   });
+
+  it('counts attached files apart from pasted text', () => {
+    const file = { type: 'pasted', path: '/s/pasted/1a2b3c4d-report.pdf' };
+    const paste = { type: 'pasted', path: '/s/pasted/pasted_1.txt' };
+    expect(formatAttachmentSummaryLabel(0, [file])).toBe('Using file');
+    expect(formatAttachmentSummaryLabel(1, [file, file, paste])).toBe(
+      'Using image, 2 files, selected text',
+    );
+  });
 });

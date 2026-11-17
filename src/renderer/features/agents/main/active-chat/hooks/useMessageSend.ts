@@ -21,7 +21,7 @@ import { pendingAccountAuthAtom } from '../../../../../lib/atoms';
 import { api } from '../../../../../lib/mock-api';
 import { notifySidebarChatActivity } from '../../../../sidebar/unified/sidebar-chat-activity';
 import { pendingChatRetryAtomFamily } from '../../../atoms';
-import type { UploadedFile, UploadedImage } from '../../../hooks/use-agents-file-upload';
+import type { UploadedImage } from '../../../hooks/use-agents-file-upload';
 import type { PastedTextFile } from '../../../hooks/use-pasted-text-files';
 import { clearSubChatDraft } from '../../../lib/drafts';
 import type {
@@ -34,7 +34,6 @@ import {
   generateQueueId,
   toQueuedCodeSelectionContext,
   toQueuedDiffTextContext,
-  toQueuedFile,
   toQueuedImage,
   toQueuedPastedText,
   toQueuedTextContext,
@@ -52,10 +51,6 @@ type SendMessagePart =
   | {
       type: 'data-image';
       data: { url: string; mediaType?: string; filename?: string; base64Data?: string };
-    }
-  | {
-      type: 'data-file';
-      data: { url: string; filename: string; size?: number };
     };
 
 type SendMessageInput = {
@@ -75,7 +70,6 @@ type Props = {
   chatModeRef: React.RefObject<ChatMode>;
   isStreamingRef: React.RefObject<boolean>;
   imagesRef: React.RefObject<UploadedImage[]>;
-  filesRef: React.RefObject<UploadedFile[]>;
   textContextsRef: React.RefObject<SelectedTextContext[]>;
   diffTextContextsRef: React.RefObject<DiffTextContext[]>;
   codeSelectionContextRef: React.RefObject<CodeSelectionContext | null>;
@@ -95,7 +89,6 @@ type Props = {
       id: string;
       message: string;
       images?: unknown[];
-      files?: unknown[];
       textContexts?: unknown[];
       diffTextContexts?: unknown[];
       timestamp: Date;
@@ -120,7 +113,6 @@ export function useMessageSend({
   chatModeRef,
   isStreamingRef,
   imagesRef,
-  filesRef,
   textContextsRef,
   diffTextContextsRef,
   codeSelectionContextRef,
@@ -163,7 +155,6 @@ export function useMessageSend({
     const inputValue = stripHiddenWakeMarker(editorRef.current?.getValue() || '');
     const hasText = inputValue.trim().length > 0;
     const currentImages = imagesRef.current ?? [];
-    const currentFiles = filesRef.current ?? [];
     const currentTextContexts = textContextsRef.current ?? [];
     const currentCodeSelection = codeSelectionContextRef.current;
     const currentPastedTexts = pastedTextsRef.current ?? [];
@@ -185,7 +176,6 @@ export function useMessageSend({
       const queuedImages = currentImages
         .filter((img) => !img.isLoading && img.url)
         .map(toQueuedImage);
-      const queuedFiles = currentFiles.filter((f) => !f.isLoading && f.url).map(toQueuedFile);
       const queuedTextContexts = currentTextContexts.map(toQueuedTextContext);
       const queuedCodeSelections = currentCodeSelection
         ? [toQueuedCodeSelectionContext(currentCodeSelection)]
@@ -201,7 +191,6 @@ export function useMessageSend({
         generateQueueId(),
         [openFileMention(attachedFile, queuedText), queuedText].filter(Boolean).join(' '),
         queuedImages.length > 0 ? queuedImages : undefined,
-        queuedFiles.length > 0 ? queuedFiles : undefined,
         queuedTextContexts.length > 0 ? queuedTextContexts : undefined,
         queuedDiffTextContexts,
         queuedCodeSelections,
@@ -262,7 +251,7 @@ export function useMessageSend({
       mode: chatModeRef.current,
     });
 
-    // Build message parts: images first, then files, then text
+    // Build message parts: images first, then text
     const parts: SendMessagePart[] = [
       ...currentImages
         .filter((img) => !img.isLoading && img.url)
@@ -273,16 +262,6 @@ export function useMessageSend({
             mediaType: img.mediaType,
             filename: img.filename,
             base64Data: img.base64Data,
-          },
-        })),
-      ...currentFiles
-        .filter((f) => !f.isLoading && f.url)
-        .map((f) => ({
-          type: 'data-file' as const,
-          data: {
-            url: f.url,
-            filename: f.filename,
-            size: f.size,
           },
         })),
     ];
@@ -404,7 +383,6 @@ export function useMessageSend({
     chatModeRef,
     isStreamingRef,
     imagesRef,
-    filesRef,
     textContextsRef,
     diffTextContextsRef,
     codeSelectionContextRef,

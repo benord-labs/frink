@@ -11,10 +11,12 @@ import {
   newChatDraftKey,
   readDraft,
   readDraftStamp,
+  readDraftSubChatId,
   readNewChatDraft,
+  replaceDraftText,
   saveSubChatDraftText,
-  saveSubChatDraftWithAttachments,
   writeDraft,
+  writeSubChatDraft,
 } from './drafts';
 
 const STORAGE_KEY = 'agent-drafts-global';
@@ -144,7 +146,12 @@ describe('drafts store', () => {
       expect(getSubChatDraftFull('chat-1', 'sub-1')?.textContexts).toHaveLength(1);
     });
 
-    it('keeps an uploaded file when the sub-chat text is emptied', () => {
+    it('keeps pasted-file chips through a sub-chat switch', () => {
+      writeSubChatDraft('chat-1', 'sub-1', { text: '', pastedTexts: [makePasted('p-1')] });
+      expect(getSubChatDraftFull('chat-1', 'sub-1')?.pastedTexts).toHaveLength(1);
+    });
+
+    it('does not count a file stored by an older build, which can no longer be sent', () => {
       seedRaw('chat-1:sub-1', {
         text: 'about to be deleted',
         files: [{ id: 'f-1', filename: 'notes.txt', base64Data: 'aGk=', type: 'text/plain' }],
@@ -152,9 +159,7 @@ describe('drafts store', () => {
 
       saveSubChatDraftText('chat-1', 'sub-1', '');
 
-      const restored = getSubChatDraftFull('chat-1', 'sub-1');
-      expect(restored?.text).toBeNull();
-      expect(restored?.files).toHaveLength(1);
+      expect(getSubChatDraftFull('chat-1', 'sub-1')).toBeNull();
     });
   });
 
@@ -170,11 +175,9 @@ describe('drafts store', () => {
       expect(readDraft(key)?.images).toHaveLength(1);
     });
 
-    it('does not trip the cap by re-saving the same SUB-CHAT slot repeatedly', async () => {
+    it('does not trip the cap by re-saving the same SUB-CHAT slot repeatedly', () => {
       for (let i = 0; i < 10; i++) {
-        await saveSubChatDraftWithAttachments('chat-1', 'sub-1', `tick ${i}`, {
-          images: [bigImage('img-1')],
-        });
+        writeSubChatDraft('chat-1', 'sub-1', { text: `tick ${i}`, images: [bigImage('img-1')] });
       }
       expect(getSubChatDraftFull('chat-1', 'sub-1')?.images).toHaveLength(1);
     });
@@ -364,35 +367,9 @@ describe('drafts store', () => {
     });
   });
 
-  describe('interleaving with the async sub-chat save', () => {
-    it('does not blind-write over a new-chat draft saved while it was converting', async () => {
-      const pending = saveSubChatDraftWithAttachments('chat-1', 'sub-1', 'sub chat text', {
-        images: [makeImage('interleave-img')],
-      });
-      writeDraft(newChatDraftKey(0), { text: 'typed during the await' });
-      await pending;
-
-      expect(readDraft(newChatDraftKey(0))?.text).toBe('typed during the await');
-      expect(getSubChatDraftFull('chat-1', 'sub-1')?.text).toBe('sub chat text');
-    });
-
-    it('yields its own slot to a synchronous writer that landed first', async () => {
-      const pending = saveSubChatDraftWithAttachments('chat-1', 'sub-1', 'stale text', {
-        images: [makeImage('interleave-bail')],
-      });
-      // A composer unmount writing the same slot synchronously — newer than the captured copy.
-      saveSubChatDraftText('chat-1', 'sub-1', 'newer text');
-      await pending;
-
-      expect(getSubChatDraftFull('chat-1', 'sub-1')?.text).toBe('newer text');
-    });
-  });
-
   describe('sub-chat text save', () => {
-    it('never expires the slot: a week-old draft keeps its attachments through a text save', async () => {
-      await saveSubChatDraftWithAttachments('chat-1', 'sub-1', 'first', {
-        images: [makeImage('img-old')],
-      });
+    it('never expires the slot: a week-old draft keeps its attachments through a text save', () => {
+      writeSubChatDraft('chat-1', 'sub-1', { text: 'first', images: [makeImage('img-old')] });
       vi.useFakeTimers();
       try {
         vi.advanceTimersByTime(8 * 24 * 60 * 60 * 1000);
@@ -406,10 +383,8 @@ describe('drafts store', () => {
       expect(restored?.images).toHaveLength(1);
     });
 
-    it('preserves attachments already stored for that slot', async () => {
-      await saveSubChatDraftWithAttachments('chat-1', 'sub-1', 'first', {
-        images: [makeImage('img-1')],
-      });
+    it('preserves attachments already stored for that slot', () => {
+      writeSubChatDraft('chat-1', 'sub-1', { text: 'first', images: [makeImage('img-1')] });
       saveSubChatDraftText('chat-1', 'sub-1', 'second');
 
       const restored = getSubChatDraftFull('chat-1', 'sub-1');
@@ -429,7 +404,6 @@ describe('hasDraftContent', () => {
   const empty = {
     text: null,
     images: [],
-    files: [],
     textContexts: [],
     pastedTexts: [],
     task: null,
@@ -445,9 +419,30 @@ describe('hasDraftContent', () => {
   it.each([
     ['text', { ...empty, text: 'edited' }],
     ['only an image', { ...empty, images: [{ id: 'i' } as UploadedImage] }],
-    ['only a file', { ...empty, files: [{ id: 'f' } as never] }],
+    ['only a pasted file', { ...empty, pastedTexts: [{ id: 'p' } as never] }],
     ['only an attached task', { ...empty, task: { id: 't' } as never }],
   ])('is true for %s', (_label, draft) => {
     expect(hasDraftContent(draft)).toBe(true);
+  });
+});
+
+describe('new-chat first sub-chat id', () => {
+  const sub = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
+
+  beforeEach(() => localStorage.clear());
+
+  it('is stored with the draft and survives a seeded prompt replacing its text', () => {
+    const key = newChatDraftKey(0);
+    writeDraft(key, { text: 'first', subChatId: sub });
+    replaceDraftText(key, 'seeded prompt', true);
+
+    expect(readDraftSubChatId(key)).toBe(sub);
+    expect(readDraft(key)?.subChatId).toBe(sub);
+  });
+
+  it('is not content on its own', () => {
+    const key = newChatDraftKey(0);
+    writeDraft(key, { text: '', subChatId: sub });
+    expect(readDraftSubChatId(key)).toBeNull();
   });
 });

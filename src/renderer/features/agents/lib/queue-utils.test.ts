@@ -42,26 +42,10 @@ const pasted = {
 
 describe('queued pasted texts (sc-3666)', () => {
   it('keeps pasted texts on the queue item and drops an empty list to undefined', () => {
-    const withPaste = createQueueItem(
-      'q1',
-      '',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      [pasted],
-    );
-    const without = createQueueItem(
-      'q2',
-      'hi',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      [],
-    );
+    const withPaste = createQueueItem('q1', '', undefined, undefined, undefined, undefined, [
+      pasted,
+    ]);
+    const without = createQueueItem('q2', 'hi', undefined, undefined, undefined, undefined, []);
 
     expect(withPaste.pastedTexts).toEqual([pasted]);
     expect(without.pastedTexts).toBeUndefined();

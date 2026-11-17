@@ -10,7 +10,7 @@
  */
 import type { TaskData } from '@/lib/tasks/format-task-message';
 import { newChatTerminalId } from '../../../lib/agent-chat/sentinel-ids';
-import type { UploadedFile, UploadedImage } from '../hooks/use-agents-file-upload';
+import type { UploadedImage } from '../hooks/use-agents-file-upload';
 import type { PastedTextFile } from '../hooks/use-pasted-text-files';
 import type { SelectedTextContext } from './queue-utils';
 
@@ -28,14 +28,6 @@ type DraftImage = {
   filename: string;
   base64Data: string;
   mediaType: string;
-};
-
-type DraftFile = {
-  id: string;
-  filename: string;
-  base64Data: string;
-  size?: number;
-  type?: string;
 };
 
 type DraftTextContext = {
@@ -59,10 +51,11 @@ type DraftContent = {
   text: string;
   updatedAt: number;
   images?: DraftImage[];
-  files?: DraftFile[];
   textContexts?: DraftTextContext[];
   pastedTexts?: DraftPastedText[];
   task?: TaskData;
+  /** New-chat slot only: the id its first sub-chat will get, whose folder holds the pastes. */
+  subChatId?: string;
 };
 
 type GlobalDraftsRaw = Record<string, DraftContent>;
@@ -109,13 +102,7 @@ export function newChatDraftKey(splitPaneIndex?: number): string {
   return newChatTerminalId(splitPaneIndex ?? 0);
 }
 
-/**
- * Counts the SYNCHRONOUS writes per slot — a composer unmount's text save, a clear. Only
- * `saveSubChatDraftWithAttachments` yields, and its `text` is captured before that yield; if this
- * count moved while it converted attachments, something newer has landed and it must not write its
- * own stale copy back over it. Async saves deliberately do not count, so two of them overlapping
- * keep resolving last-write-wins rather than the earlier one blocking the later.
- */
+/** Counts the writes per slot, so a composer can tell another writer landed since it last looked. */
 const draftWriteCount = new Map<string, number>();
 
 function bumpDraftWriteCount(key: string): void {
@@ -133,12 +120,11 @@ function hasItems(list: unknown[] | undefined): boolean {
 export function hasDraftContent(draft: {
   text: string | null;
   images?: unknown[];
-  files?: unknown[];
   textContexts?: unknown[];
   pastedTexts?: unknown[];
   task?: unknown;
 }): boolean {
-  const attachments = [draft.images, draft.files, draft.textContexts, draft.pastedTexts];
+  const attachments = [draft.images, draft.textContexts, draft.pastedTexts];
   return Boolean(draft.text?.trim() || draft.task) || attachments.some(hasItems);
 }
 
@@ -155,7 +141,6 @@ function revokeDraftBlobUrls(draftId: string): void {
 
 function revokeDraftAttachments(draft: DraftContent | undefined): void {
   for (const img of draft?.images ?? []) revokeDraftBlobUrls(img.id);
-  for (const file of draft?.files ?? []) revokeDraftBlobUrls(file.id);
 }
 
 /**
@@ -184,7 +169,7 @@ function commitDraft(
   const overBudget =
     JSON.stringify(drafts).length * 2 + JSON.stringify(draft).length * 2 > MAX_DRAFT_STORAGE_BYTES;
   if (overBudget) {
-    const { images: _images, files: _files, ...rest } = draft;
+    const { images: _images, ...rest } = draft;
     drafts[key] = rest;
     saveGlobalDrafts(drafts);
     return 'attachments_skipped';
@@ -203,6 +188,11 @@ export function clearDraft(key: string, revokeBlobUrls = true): void {
   if (revokeBlobUrls) revokeDraftAttachments(drafts[key]);
   delete drafts[key];
   saveGlobalDrafts(drafts);
+}
+
+/** The new-chat slot's stored first-sub-chat id, read without hydrating its attachments. */
+export function readDraftSubChatId(key: string): string | null {
+  return loadGlobalDrafts()[key]?.subChatId ?? null;
 }
 
 /** The slot's current write stamp, or null when it holds nothing. Pairs with `clearDraftIfUnchanged`. */
@@ -225,23 +215,6 @@ export function clearDraftIfUnchanged(key: string, stamp: number | null): boolea
 
 // Attachment conversion
 
-/** Convert blob URL to base64 data */
-async function blobUrlToBase64(blobUrl: string): Promise<string> {
-  const response = await fetch(blobUrl);
-  const blob = await response.blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      // Remove the data:xxx;base64, prefix
-      const base64 = result.split(',')[1];
-      resolve(base64 || '');
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
 /** Convert UploadedImage to DraftImage (filter out images without base64) */
 function toDraftImage(img: UploadedImage): DraftImage | null {
   if (!img.base64Data) return null;
@@ -251,23 +224,6 @@ function toDraftImage(img: UploadedImage): DraftImage | null {
     base64Data: img.base64Data,
     mediaType: img.mediaType || 'image/png',
   };
-}
-
-/** Convert UploadedFile to DraftFile (requires async conversion) */
-async function toDraftFile(file: UploadedFile): Promise<DraftFile | null> {
-  if (!file.url) return null;
-  try {
-    const base64Data = await blobUrlToBase64(file.url);
-    return {
-      id: file.id,
-      filename: file.filename,
-      base64Data,
-      size: file.size,
-      type: file.type,
-    };
-  } catch (_err) {
-    return null;
-  }
 }
 
 function toDraftTextContext(ctx: SelectedTextContext): DraftTextContext {
@@ -318,23 +274,6 @@ function fromDraftImage(draft: DraftImage): UploadedImage | null {
   }
 }
 
-/** Restore UploadedFile from DraftFile (creates a tracked blob URL) */
-function fromDraftFile(draft: DraftFile): UploadedFile | null {
-  if (!draft.base64Data) return null;
-  try {
-    return {
-      id: draft.id,
-      filename: draft.filename,
-      url: base64ToBlobUrl(draft.id, draft.base64Data, draft.type || 'application/octet-stream'),
-      size: draft.size,
-      type: draft.type,
-      isLoading: false,
-    };
-  } catch (_err) {
-    return null;
-  }
-}
-
 function fromDraftTextContext(draft: DraftTextContext): SelectedTextContext {
   return {
     id: draft.id,
@@ -356,20 +295,20 @@ function fromDraftPastedText(draft: DraftPastedText): PastedTextFile {
 export type FullDraftData = {
   text: string | null;
   images: UploadedImage[];
-  files: UploadedFile[];
   textContexts: SelectedTextContext[];
   pastedTexts: PastedTextFile[];
   task: TaskData | null;
+  subChatId: string | null;
 };
 
 /** Composer state as the caller holds it, before persistence converts it. */
 export type DraftState = {
   text: string;
   images?: UploadedImage[];
-  files?: UploadedFile[];
   textContexts?: SelectedTextContext[];
   pastedTexts?: PastedTextFile[];
   task?: TaskData | null;
+  subChatId?: string;
 };
 
 function toDraftContent(state: DraftState): DraftContent {
@@ -383,6 +322,7 @@ function toDraftContent(state: DraftState): DraftContent {
     ...(textContexts.length > 0 && { textContexts }),
     ...(pastedTexts.length > 0 && { pastedTexts }),
     ...(state.task && { task: state.task }),
+    ...(state.subChatId && { subChatId: state.subChatId }),
   };
 }
 
@@ -403,10 +343,10 @@ export function readDraft(key: string, revokePriorBlobUrls = false): FullDraftDa
   return {
     text: draft.text || null,
     images: draft.images?.map(fromDraftImage).filter((i): i is UploadedImage => i !== null) ?? [],
-    files: draft.files?.map(fromDraftFile).filter((f): f is UploadedFile => f !== null) ?? [],
     textContexts: draft.textContexts?.map(fromDraftTextContext) ?? [],
     pastedTexts: draft.pastedTexts?.map(fromDraftPastedText) ?? [],
     task: draft.task ?? null,
+    subChatId: draft.subChatId ?? null,
   };
 }
 
@@ -443,41 +383,6 @@ export function clearSubChatDraft(chatId: string, subChatId: string): void {
   const key = getSubChatDraftKey(chatId, subChatId);
   bumpDraftWriteCount(key);
   clearDraft(key);
-}
-
-/**
- * Save sub-chat draft with attachments (async — files must be read off their blob URLs first)
- */
-export async function saveSubChatDraftWithAttachments(
-  chatId: string,
-  subChatId: string,
-  text: string,
-  options?: {
-    images?: UploadedImage[];
-    files?: UploadedFile[];
-    textContexts?: SelectedTextContext[];
-  },
-): Promise<{ success: boolean; error?: string }> {
-  const key = getSubChatDraftKey(chatId, subChatId);
-  const writesAtEntry = draftWriteCount.get(key) ?? 0;
-
-  const draftFiles = options?.files
-    ? await Promise.all(options.files.map(toDraftFile)).then((results) =>
-        results.filter((f): f is DraftFile => f !== null),
-      )
-    : [];
-
-  // A SYNCHRONOUS writer got this slot while the attachments converted — its text is newer than the
-  // copy captured above, so leave it alone; the next blur re-saves these attachments against it.
-  // Two overlapping calls to this function do not bump, so they keep resolving last-write-wins.
-  if ((draftWriteCount.get(key) ?? 0) !== writesAtEntry) return { success: true };
-
-  const draft = toDraftContent({ text, ...options });
-  if (draftFiles.length > 0) draft.files = draftFiles;
-
-  const outcome = commitDraft(key, draft);
-  if (outcome === 'attachments_skipped') return { success: true, error: 'attachments_skipped' };
-  return { success: true };
 }
 
 /** Replace a slot's TEXT synchronously, keeping stored attachments byte-for-byte — an unmounting

@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as drafts from '../../../../lib/drafts';
 import { getSubChatDraftFull, hasDraftContent } from '../../../../lib/drafts';
 import { createQueueItem } from '../../../../lib/queue-utils';
 import { useMessageQueueStore } from '../../../../stores/message-queue-store';
@@ -12,22 +11,24 @@ const SUB = 'sub-edit';
 
 function renderQueueEdit() {
   const editor = { setValue: vi.fn(), focus: vi.fn(), clear: vi.fn() };
+  const pasted = { clearPastedTexts: vi.fn(), setPastedTextsFromDraft: vi.fn() };
   const hook = renderHook(() =>
     useQueueEdit({
       subChatId: SUB,
       parentChatId: CHAT,
       editorRef: { current: editor as never },
       inputHasContent: false,
-      upload: { clearAll: vi.fn(), setImagesFromDraft: vi.fn(), setFilesFromDraft: vi.fn() },
+      upload: { clearAll: vi.fn(), setImagesFromDraft: vi.fn() },
       textContexts: {
         clearTextContexts: vi.fn(),
         clearDiffTextContexts: vi.fn(),
         setTextContextsFromDraft: vi.fn(),
         setDiffTextContextsFromDraft: vi.fn(),
       },
+      pasted,
     }),
   );
-  return { ...hook, editor };
+  return { ...hook, editor, pasted };
 }
 
 describe('useQueueEdit', () => {
@@ -75,31 +76,23 @@ describe('useQueueEdit', () => {
     expect(draft?.textContexts.map((c) => c.text)).toEqual(['quoted']);
   });
 
-  it('also saves a turn that still has its files, through the async attachment writer', () => {
-    const save = vi
-      .spyOn(drafts, 'saveSubChatDraftWithAttachments')
-      .mockResolvedValue({ success: true });
+  it('loads and saves an attached file chip with the draft, so it survives a reload', () => {
+    const chip = {
+      id: 'p',
+      filePath: '/s/pasted/1a2b3c4d-a.pdf',
+      filename: 'a.pdf',
+      size: 3,
+      preview: 'a.pdf',
+    };
     useMessageQueueStore.setState({
-      queues: {
-        [SUB]: [
-          {
-            ...createQueueItem('f', 'with file'),
-            files: [{ id: 'f1', url: 'blob:x', filename: 'a.txt' }],
-          },
-        ],
-      },
+      queues: { [SUB]: [{ ...createQueueItem('f', 'with file'), pastedTexts: [chip] }] },
     });
-    const { result } = renderQueueEdit();
+    const { result, pasted } = renderQueueEdit();
 
     act(() => result.current.handleEditFromQueue('f'));
 
-    expect(save).toHaveBeenCalledWith(
-      CHAT,
-      SUB,
-      'with file',
-      expect.objectContaining({ files: [expect.objectContaining({ id: 'f1', url: 'blob:x' })] }),
-    );
-    save.mockRestore();
+    expect(pasted.setPastedTextsFromDraft).toHaveBeenCalledWith([expect.objectContaining(chip)]);
+    expect(getSubChatDraftFull(CHAT, SUB)?.pastedTexts).toEqual([expect.objectContaining(chip)]);
   });
 
   it('clears the eagerly saved draft when the edit is abandoned or its item removed', () => {
@@ -127,10 +120,10 @@ describe('shouldReleaseEdit', () => {
   const empty = {
     text: null,
     images: [],
-    files: [],
     textContexts: [],
     pastedTexts: [],
     task: null,
+    subChatId: null,
   };
 
   beforeEach(() => {
@@ -157,90 +150,10 @@ describe('shouldReleaseEdit', () => {
     expect(shouldReleaseEdit(SUB, empty)).toBe(false);
   });
 
-  it('holds a file edit only while its draft write is in flight, even when the write fails', async () => {
-    let settle!: (outcome: { success: boolean }) => void;
-    const save = vi
-      .spyOn(drafts, 'saveSubChatDraftWithAttachments')
-      .mockImplementation(() => new Promise((resolve) => (settle = resolve)));
-    useMessageQueueStore.setState({
-      queues: {
-        [SUB]: [
-          {
-            ...createQueueItem('f', ''),
-            files: [{ id: 'f1', url: 'blob:x', filename: 'a.txt' }],
-          },
-        ],
-      },
-      editingItemIds: {},
-    });
-    const { result } = renderQueueEdit();
-    act(() => result.current.handleEditFromQueue('f'));
-
-    expect(shouldReleaseEdit(SUB, empty)).toBe(false);
-
-    await act(async () => settle({ success: false }));
-
-    expect(shouldReleaseEdit(SUB, empty)).toBe(true);
-    save.mockRestore();
-  });
-
-  it('keeps holding while a later overlapping file edit is still in flight', async () => {
-    const settles: ((outcome: { success: boolean }) => void)[] = [];
-    const save = vi
-      .spyOn(drafts, 'saveSubChatDraftWithAttachments')
-      .mockImplementation(() => new Promise((resolve) => settles.push(resolve)));
-    const withFile = (id: string) => ({
-      ...createQueueItem(id, ''),
-      files: [{ id: `${id}-f`, url: 'blob:x', filename: 'a.txt' }],
-    });
-    useMessageQueueStore.setState({
-      queues: { [SUB]: [withFile('a'), withFile('b')] },
-      editingItemIds: {},
-    });
-    const { result } = renderQueueEdit();
-    act(() => result.current.handleEditFromQueue('a'));
-    act(() => result.current.handleEditFromQueue('b'));
-
-    await act(async () => settles[0]?.({ success: true }));
-    expect(shouldReleaseEdit(SUB, empty)).toBe(false);
-
-    await act(async () => settles[1]?.({ success: true }));
-    expect(shouldReleaseEdit(SUB, empty)).toBe(true);
-    save.mockRestore();
-  });
-
-  it('never lets an older edit whose file read resolves late overwrite a newer edit', async () => {
-    const reads = new Map<string, (blob: Blob) => void>();
-    vi.stubGlobal(
-      'fetch',
-      (url: string) =>
-        new Promise((resolve) =>
-          reads.set(url, (blob) => resolve({ blob: async () => blob } as Response)),
-        ),
-    );
-    const withFile = (id: string) => ({
-      ...createQueueItem(id, `edit ${id}`),
-      files: [{ id: `${id}-f`, url: `blob:${id}`, filename: `${id}.txt` }],
-    });
-    useMessageQueueStore.setState({
-      queues: { [SUB]: [withFile('a'), withFile('b')] },
-      editingItemIds: {},
-    });
-    const { result } = renderQueueEdit();
-    act(() => result.current.handleEditFromQueue('a'));
-    act(() => result.current.handleEditFromQueue('b'));
-
-    // B's read lands first, then A's (the older edit) lands late.
-    await act(async () => {
-      reads.get('blob:b')?.(new Blob(['b']));
-      await new Promise((r) => setTimeout(r, 20));
-      reads.get('blob:a')?.(new Blob(['a']));
-      await new Promise((r) => setTimeout(r, 20));
-    });
-
-    const draft = getSubChatDraftFull(CHAT, SUB);
-    expect(draft?.text).toBe('edit b');
-    expect(draft?.files.map((f) => f.id)).toEqual(['b-f']);
-    vi.unstubAllGlobals();
+  it('keeps an edit whose draft holds only an attached file', () => {
+    const chip = { id: 'p', filePath: '/p', filename: 'a.pdf', size: 1, preview: 'a.pdf' };
+    expect(
+      shouldReleaseEdit(SUB, { ...empty, pastedTexts: [{ ...chip, createdAt: new Date() }] }),
+    ).toBe(false);
   });
 });

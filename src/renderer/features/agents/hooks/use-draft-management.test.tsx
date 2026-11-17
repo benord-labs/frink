@@ -6,9 +6,14 @@ import { newChatDraftKey, readDraft, readDraftStamp, writeDraft } from '../lib/d
 import type { AgentsMentionsEditorHandle } from '../mentions';
 import { useDraftManagement } from './use-draft-management';
 
+const { attachAsync } = vi.hoisted(() => ({ attachAsync: vi.fn() }));
+
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
-    files: { writePastedText: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    files: {
+      writePastedText: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      attachPastedFile: { useMutation: () => ({ mutateAsync: attachAsync }) },
+    },
     tasks: { updateStatus: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     useUtils: () => ({
       tasks: { listPaginated: { invalidate: vi.fn() }, listCounts: { invalidate: vi.fn() } },
@@ -50,11 +55,14 @@ function makeEditor(initial = '') {
 
 function mountComposer(editorRef: React.RefObject<AgentsMentionsEditorHandle | null>, key: string) {
   const setHasContent = vi.fn();
-  const view = renderHook(() => useDraftManagement({ editorRef, setHasContent, draftKey: key }));
+  const view = renderHook(() =>
+    useDraftManagement({ editorRef, setHasContent, draftKey: key, subChatId: SUB }),
+  );
   return { view, setHasContent };
 }
 
 const KEY = newChatDraftKey(0);
+const SUB = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
 
 describe('useDraftManagement', () => {
   beforeEach(() => {
@@ -90,6 +98,42 @@ describe('useDraftManagement', () => {
     act(() => view.unmount());
 
     expect(readDraft(KEY)?.text).toBe('typed then left immediately');
+  });
+
+  it('stores the first sub-chat id with the draft, so its pastes keep one folder', () => {
+    const editor = makeEditor();
+    const { view } = mountComposer(editor.ref, KEY);
+    editor.bind(view.result.current.handleContentChange);
+
+    act(() => editor.type('see the attached report'));
+    act(() => view.unmount());
+
+    expect(readDraft(KEY)?.subChatId).toBe(SUB);
+  });
+
+  it("saves a new chat's attached PDF in its first sub-chat's folder and keeps it in the draft", async () => {
+    attachAsync.mockResolvedValue({
+      filePath: `/u/claude-sessions/${SUB}/pasted/1a2b3c4d-report.pdf`,
+      filename: '1a2b3c4d-report.pdf',
+      size: 4,
+    });
+    window.webUtils = { getPathForFile: () => '/Users/me/report.pdf' };
+    const editor = makeEditor();
+    const { view } = mountComposer(editor.ref, KEY);
+    const pdf = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' });
+
+    await act(() => view.result.current.handleAddAttachments([pdf]));
+
+    expect(attachAsync).toHaveBeenCalledWith({
+      subChatId: SUB,
+      sourcePath: '/Users/me/report.pdf',
+    });
+    expect(view.result.current.pastedTexts.map((p) => p.preview)).toEqual(['report.pdf']);
+    expect(view.result.current.hasAttachments).toBe(true);
+    expect(readDraft(KEY)).toMatchObject({
+      subChatId: SUB,
+      pastedTexts: [{ preview: 'report.pdf' }],
+    });
   });
 
   it('persists on window close inside the debounce window', () => {
@@ -197,7 +241,7 @@ describe('useDraftManagement', () => {
     const ref = { current: null } as React.RefObject<AgentsMentionsEditorHandle | null>;
     const setHasContent = vi.fn();
     const view = renderHook(() =>
-      useDraftManagement({ editorRef: ref, setHasContent, draftKey: KEY }),
+      useDraftManagement({ editorRef: ref, setHasContent, draftKey: KEY, subChatId: SUB }),
     );
 
     // The user connects an account; EditorSection mounts and populates the ref.
@@ -273,7 +317,8 @@ describe('useDraftManagement', () => {
     const editor = makeEditor();
     const setHasContent = vi.fn();
     const view = renderHook(
-      ({ key }) => useDraftManagement({ editorRef: editor.ref, setHasContent, draftKey: key }),
+      ({ key }) =>
+        useDraftManagement({ editorRef: editor.ref, setHasContent, draftKey: key, subChatId: SUB }),
       { initialProps: { key: newChatDraftKey(0) } },
     );
     editor.bind(view.result.current.handleContentChange);
@@ -413,7 +458,8 @@ describe('useDraftManagement', () => {
     const editor = makeEditor();
     const setHasContent = vi.fn();
     const view = renderHook(
-      ({ key }) => useDraftManagement({ editorRef: editor.ref, setHasContent, draftKey: key }),
+      ({ key }) =>
+        useDraftManagement({ editorRef: editor.ref, setHasContent, draftKey: key, subChatId: SUB }),
       { initialProps: { key: newChatDraftKey(0) } },
     );
     editor.bind(view.result.current.handleContentChange);
@@ -440,7 +486,8 @@ describe('useDraftManagement', () => {
     const editor = makeEditor();
     const setHasContent = vi.fn();
     const view = renderHook(
-      ({ key }) => useDraftManagement({ editorRef: editor.ref, setHasContent, draftKey: key }),
+      ({ key }) =>
+        useDraftManagement({ editorRef: editor.ref, setHasContent, draftKey: key, subChatId: SUB }),
       { initialProps: { key: newChatDraftKey(0) } },
     );
     expect(view.result.current.taskAttachment.attachedTask?.id).toBe('t-1');

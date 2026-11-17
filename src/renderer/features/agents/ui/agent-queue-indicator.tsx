@@ -138,12 +138,12 @@ const QueueItemRow = memo(function QueueItemRow({
 
   const hasAttachments =
     (item.images && item.images.length > 0) ||
-    (item.files && item.files.length > 0) ||
+    (item.pastedTexts && item.pastedTexts.length > 0) ||
     (item.textContexts && item.textContexts.length > 0) ||
     (item.diffTextContexts && item.diffTextContexts.length > 0);
   const attachmentCount =
     (item.images?.length || 0) +
-    (item.files?.length || 0) +
+    (item.pastedTexts?.length || 0) +
     (item.textContexts?.length || 0) +
     (item.diffTextContexts?.length || 0);
 

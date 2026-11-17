@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as analytics from '../../../analytics';
+import * as pastedFiles from '../../../claude/pasted-files';
 import { makeLocalChat, makeLocalSubChat } from './test-factories';
 
 const createChatLocalMock = vi.fn();
@@ -19,6 +20,7 @@ const projectsSelectMock = vi.fn();
 const autoNameSubChatMock = vi.fn();
 const trackMessageSentMock = vi.spyOn(analytics, 'trackMessageSent');
 const getAiAccountTypeMock = vi.fn();
+const getSubChatByIdMock = vi.fn();
 
 vi.mock('../../../db', () => ({
   getDatabase: () => ({
@@ -41,6 +43,7 @@ vi.mock('../../../db/repos/project-ai-accounts', () => ({
 }));
 vi.mock('../../../db/repos/sub-chats', () => ({
   createSubChat: createSubChatLocalMock,
+  getSubChatById: getSubChatByIdMock,
 }));
 vi.mock('../../../db/schema', () => ({
   projects: { id: 'projects.id' },
@@ -269,5 +272,67 @@ describe('createRouter (local-first)', () => {
       caller.create({ ...baseInput, mode: 'agent', accountId: 'github-pat' }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(createChatLocalMock).not.toHaveBeenCalled();
+  });
+
+  it('creates the first sub-chat under the id the composer minted for its pastes', async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+    getSubChatByIdMock.mockResolvedValue(null);
+    const subChatId = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+    await caller.create({ ...baseInput, subChatId });
+
+    expect(createSubChatLocalMock.mock.calls[0]?.[1]).toMatchObject({ id: subChatId });
+  });
+
+  it.each([
+    ['unsafe in a path', '__new_chat_0__', null],
+    ['already taken', '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e', makeLocalSubChat({ id: 'taken' })],
+  ])(
+    'mints a fresh sub-chat id when the composer id is %s',
+    async (_label, subChatId, existing) => {
+      createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+      createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+      getSubChatByIdMock.mockResolvedValue(existing);
+
+      const { createRouter } = await import('./create');
+      const caller = createRouter.createCaller({ getWindow: () => null });
+      await caller.create({ ...baseInput, subChatId });
+
+      const id = createSubChatLocalMock.mock.calls[0]?.[1]?.id;
+      expect(id).toMatch(/^[a-z0-9-]{10,64}$/i);
+      expect(id).not.toBe(subChatId);
+    },
+  );
+
+  it("moves the first message's attachments under a replaced composer id", async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+    getSubChatByIdMock.mockResolvedValue(makeLocalSubChat({ id: 'taken' }));
+    const rehome = vi
+      .spyOn(pastedFiles, 'rehomePastedMentions')
+      .mockImplementation(async (text, ids) => text.replace(ids.from, ids.to));
+    const subChatId = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
+    const token = `@[pasted:4:report.pdf|/u/claude-sessions/${subChatId}/pasted/1a2b3c4d-report.pdf]`;
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+    await caller.create({
+      ...baseInput,
+      subChatId,
+      initialMessageParts: [{ type: 'text', text: `${token} summarise it` }],
+    });
+
+    const created = createSubChatLocalMock.mock.calls[0]?.[1];
+    expect(rehome).toHaveBeenCalledWith(`${token} summarise it`, {
+      from: subChatId,
+      to: created.id,
+    });
+    expect(JSON.parse(created.messages)[0].parts[0].text).toContain(
+      `/u/claude-sessions/${created.id}/pasted/1a2b3c4d-report.pdf`,
+    );
+    rehome.mockRestore();
   });
 });

@@ -55,10 +55,8 @@ function composerProps(
     isStreaming: false,
     isCompacting: false,
     images: [],
-    files: [],
     onAddAttachments: vi.fn(),
     onRemoveImage: vi.fn(),
-    onRemoveFile: vi.fn(),
     isUploading: false,
     textContexts: [],
     onRemoveTextContext: vi.fn(),
@@ -152,6 +150,58 @@ describe('ChatInputArea editor context', () => {
     );
     expect(props.onClearCodeSelection).toHaveBeenCalledOnce();
     expect(props.onDismissActiveFile).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ChatInputArea with only an attached file', () => {
+  const report = {
+    id: 'p1',
+    filePath: '/s/pasted/1a2b3c4d-report.pdf',
+    filename: '1a2b3c4d-report.pdf',
+    size: 2048,
+    preview: 'report.pdf',
+    createdAt: new Date(0),
+  };
+
+  it('shows the file and lets it be sent without any typed text', () => {
+    const { props } = renderComposer({ pastedTexts: [report] });
+
+    expect(screen.getByText('report.pdf')).toBeInTheDocument();
+    const send = screen.getByRole('button', { name: 'Send message' });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    expect(props.onSend).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [false, 1],
+    [true, 0],
+  ])('on Enter with a file still copying (%s), sends %i time(s)', async (isUploading, sends) => {
+    const { props, container } = renderComposer({ pastedTexts: [report], isUploading });
+    const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!editor) throw new Error('composer editor not found');
+    editor.textContent = 'summarise it';
+    fireEvent.input(editor);
+
+    fireEvent.keyDown(editor, { key: 'Enter' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(props.onSend).toHaveBeenCalledTimes(sends);
+  });
+
+  it('sends the file rather than the queue head when a turn is queued', () => {
+    const onSendFromQueue = vi.fn();
+    const { props } = renderComposer({
+      pastedTexts: [report],
+      queueLength: 1,
+      firstQueueItemId: 'q1',
+      onSendFromQueue,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(props.onSend).toHaveBeenCalledOnce();
+    expect(onSendFromQueue).not.toHaveBeenCalled();
   });
 });
 

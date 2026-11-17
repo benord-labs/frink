@@ -12,8 +12,9 @@ import {
   updateChat as updateChatLocal,
 } from '../../../db/repos/chats';
 import { getAiAccountType } from '../../../db/repos/project-ai-accounts';
-import { createSubChat as createSubChatLocal } from '../../../db/repos/sub-chats';
+import { createSubChat as createSubChatLocal, getSubChatById } from '../../../db/repos/sub-chats';
 import { projects as projectsTable } from '../../../db/schema';
+import { createId } from '../../../db/utils';
 import {
   createWorktreeForChat,
   detectBaseBranch,
@@ -21,6 +22,8 @@ import {
   getDefaultBranch,
   sanitizeProjectName,
 } from '../../../git';
+import { rehomePastedMentions } from '../../../claude/pasted-files';
+import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
 import { publicProcedure, router } from '../../index';
 import { extractInitialMessageText } from './helpers/message-text';
 import { autoNameSubChat, maybeNameBuildProjectFromMessage } from './helpers/name-generation-async';
@@ -32,6 +35,34 @@ async function assertAiAccount(db: ReturnType<typeof getDatabase>, accountId?: s
   if (accountId && !(await getAiAccountType(db, accountId))) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
   }
+}
+
+/** The first sub-chat's id: the composer's own (its pastes already sit in that folder) when usable,
+ *  else a fresh one, which `rehomeParts` moves those pastes under. */
+async function claimSubChatId(db: ReturnType<typeof getDatabase>, subChatId?: string) {
+  if (!subChatId) return undefined;
+  if (isValidSubChatIdForSessionPaths(subChatId) && !(await getSubChatById(db, subChatId))) {
+    return subChatId;
+  }
+  log.warn('[chats.create] composer sub-chat id is unsafe or taken; minting a fresh one');
+  return createId();
+}
+
+/** Points the first message's pastes at the claimed id's folder when the composer's id was replaced. */
+async function rehomeParts<T extends { type: string; text?: string }>(
+  parts: T[] | undefined,
+  from: string | undefined,
+  to: string | undefined,
+): Promise<T[] | undefined> {
+  if (!parts || !from || !to || from === to) return parts;
+  const ids = { from, to };
+  return Promise.all(
+    parts.map(async (part) =>
+      part.type === 'text' && part.text !== undefined
+        ? { ...part, text: await rehomePastedMentions(part.text, ids) }
+        : part,
+    ),
+  );
 }
 
 /**
@@ -76,6 +107,8 @@ export const createRouter = router({
         existingWorktreePath: z.string().optional(),
         mode: z.enum(['plan', 'agent', 'debug']).default('agent'),
         accountId: z.string().optional(),
+        /** Id for the first sub-chat, minted by the composer so its pastes land in its folder. */
+        subChatId: z.string().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -92,6 +125,12 @@ export const createRouter = router({
         const seededName = initialMessageText ? null : (input.name ?? null);
 
         const db = getDatabase();
+        const subChatId = await claimSubChatId(db, input.subChatId);
+        const initialMessageParts = await rehomeParts(
+          input.initialMessageParts,
+          input.subChatId,
+          subChatId,
+        );
 
         // Phase 1 ship-blocker fix (commit a09131): the renderer holds CLOUD project IDs.
         // Local `projects.id` is `createId()`-generated and DOES NOT match cloud ids. A
@@ -149,12 +188,12 @@ export const createRouter = router({
           ? { metadata: { source: input.initialMessageSource } }
           : {};
         const initialMessages: unknown[] = (() => {
-          if (input.initialMessageParts && input.initialMessageParts.length > 0) {
+          if (initialMessageParts && initialMessageParts.length > 0) {
             return [
               {
                 id: `msg-${Date.now()}`,
                 role: 'user',
-                parts: input.initialMessageParts,
+                parts: initialMessageParts,
                 ...metadata,
               },
             ];
@@ -172,12 +211,14 @@ export const createRouter = router({
           return [];
         })();
 
-        const subChat = await createSubChatLocal(db, {
+        const firstSubChat: Parameters<typeof createSubChatLocal>[1] = {
           chatId: chat.id,
           name: seededName,
           mode: input.mode,
           messages: JSON.stringify(initialMessages),
-        });
+        };
+        if (subChatId) firstSubChat.id = subChatId;
+        const subChat = await createSubChatLocal(db, firstSubChat);
 
         // Worktree creation (local git operation). Wrapped in try/catch so a worktree failure
         // doesn't undo the chat — the UI still navigates to the new chat with a fallback path.

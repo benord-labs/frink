@@ -13,7 +13,7 @@ import {
 } from '@/lib/code-editor/state';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
-import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
+import { buildQueuedMessageText, pastedTextMention } from '@/lib/mentions/queued-message-text';
 // SplitViewContainer moved to agents-content.tsx for top-level chat splitting
 import { buildAnswerMessage } from '../../../../shared/lib/agent-questions/answered-questions';
 import type { AiProviderId } from '../../../../shared/lib/ai-providers';
@@ -96,6 +96,7 @@ import {
   generateQueueId,
   queuedSendMetadata,
   toQueuedImage,
+  toQueuedPastedText,
 } from '../lib/queue-utils';
 import { requestClaudePrewarm } from '../lib/websocket-chat-transport';
 import { type AgentsMentionsEditorHandle } from '../mentions';
@@ -338,18 +339,14 @@ const ChatViewInner = memo(function ChatViewInner({
   // Cache cleanup hook
   useCacheCleanup(subChatId);
 
-  // File/image upload hook
-  const {
-    images,
-    files,
-    handleAddAttachments,
-    removeImage,
-    removeFile,
-    clearAll,
-    isUploading,
-    setImagesFromDraft,
-    setFilesFromDraft,
-  } = useAgentsFileUpload();
+  // Pasted text files (large pastes and attached non-image files, saved to the chat's folder)
+  const pastedFiles = usePastedTextFiles(subChatId);
+  const { pastedTexts, addPastedText, removePastedText, clearPastedTexts, pastedTextsRef } =
+    pastedFiles;
+
+  // File/image upload hook: images inline, other files become pasted-file chips
+  const { images, handleAddAttachments, removeImage, clearAll, isUploading, setImagesFromDraft } =
+    useAgentsFileUpload(pastedFiles.addPastedFiles);
 
   // Text context selection hook (for selecting text from assistant messages and diff)
   const {
@@ -382,11 +379,6 @@ const ChatViewInner = memo(function ChatViewInner({
     addTextContextOriginal,
     addDiffTextContext,
   });
-
-  // Pasted text files (large pasted text saved as files)
-  const pastedFiles = usePastedTextFiles(subChatId);
-  const { pastedTexts, addPastedText, removePastedText, clearPastedTexts, pastedTextsRef } =
-    pastedFiles;
 
   // Message queue for sending messages while streaming
   const queue = useMessageQueueStore((s) => s.getVisibleQueue(subChatId));
@@ -433,10 +425,7 @@ const ChatViewInner = memo(function ChatViewInner({
       } else {
         clearAll();
       }
-      // Restore files
-      if (savedDraft.files.length > 0) {
-        setFilesFromDraft(savedDraft.files);
-      }
+      pastedFiles.setPastedTextsFromDraft(savedDraft.pastedTexts);
       // Restore text contexts
       if (savedDraft.textContexts.length > 0) {
         setTextContextsFromDraft(savedDraft.textContexts);
@@ -448,6 +437,7 @@ const ChatViewInner = memo(function ChatViewInner({
       editorRef.current?.clear();
       clearAll();
       clearTextContexts();
+      clearPastedTexts();
     }
 
     // The editing flag outlives unmount and reload; the saved draft is what the edit left. An empty
@@ -459,10 +449,11 @@ const ChatViewInner = memo(function ChatViewInner({
     subChatId,
     parentChatId,
     setImagesFromDraft,
-    setFilesFromDraft,
+    pastedFiles.setPastedTextsFromDraft,
     setTextContextsFromDraft,
     clearAll,
     clearTextContexts,
+    clearPastedTexts,
     setEditingItemId,
   ]);
 
@@ -924,8 +915,6 @@ const ChatViewInner = memo(function ChatViewInner({
   chatModeRef.current = chatMode;
   const imagesRef = useRef(images);
   imagesRef.current = images;
-  const filesRef = useRef(files);
-  filesRef.current = files;
   const codeSelectionContextRef = useRef(codeSelectionContext);
   codeSelectionContextRef.current = codeSelectionContext;
   const activeFileRef = useRef(
@@ -958,7 +947,6 @@ const ChatViewInner = memo(function ChatViewInner({
     chatModeRef,
     isStreamingRef,
     imagesRef,
-    filesRef,
     textContextsRef,
     diffTextContextsRef,
     codeSelectionContextRef,
@@ -1025,7 +1013,7 @@ const ChatViewInner = memo(function ChatViewInner({
     parentChatId,
     editorRef,
     inputHasContent,
-    upload: { clearAll, setImagesFromDraft, setFilesFromDraft },
+    upload: { clearAll, setImagesFromDraft },
     textContexts: {
       clearTextContexts,
       clearDiffTextContexts,
@@ -1179,8 +1167,8 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Force send - stop stream and send immediately, bypassing queue (Opt+Enter)
   const handleForceSend = useCallback(async () => {
-    // Block sending while sandbox is still being set up
-    if (sandboxSetupStatus !== 'ready') {
+    // Block sending while the sandbox is still being set up or a file is still being copied
+    if (sandboxSetupStatus !== 'ready' || isUploading) {
       return;
     }
     if (!isResolvedExecutionAccountReady) {
@@ -1192,10 +1180,10 @@ const ChatViewInner = memo(function ChatViewInner({
     const inputValue = editorRef.current?.getValue() || '';
     const hasText = inputValue.trim().length > 0;
     const currentImages = imagesRef.current;
-    const _currentFiles = filesRef.current;
+    const currentPastedTexts = pastedTextsRef.current ?? [];
     const hasImages = currentImages.filter((img) => !img.isLoading && img.url).length > 0;
 
-    if (!hasText && !hasImages) return;
+    if (!hasText && !hasImages && currentPastedTexts.length === 0) return;
 
     clearExpiredQuestionsForSubChat();
 
@@ -1242,7 +1230,11 @@ const ChatViewInner = memo(function ChatViewInner({
       mode: chatModeRef.current,
     });
 
-    // Build message parts (only images and text, files are handled separately)
+    const messageText = [...currentPastedTexts.map(pastedTextMention), finalText]
+      .filter(Boolean)
+      .join(' ');
+
+    // Build message parts: images first, then text
     const parts: Array<
       | {
           type: 'data-image';
@@ -1263,12 +1255,13 @@ const ChatViewInner = memo(function ChatViewInner({
         })),
     ];
 
-    if (finalText) {
-      parts.push({ type: 'text', text: finalText });
+    if (messageText) {
+      parts.push({ type: 'text', text: messageText });
     }
 
     // Clear attachments
     clearAll();
+    clearPastedTexts();
 
     // Update timestamps
     useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId);
@@ -1279,10 +1272,11 @@ const ChatViewInner = memo(function ChatViewInner({
     try {
       if (wasBusy) {
         const images = currentImages.filter((img) => !img.isLoading && img.url).map(toQueuedImage);
-        const queue = () =>
-          addToQueueStore(subChatId, createQueueItem(generateQueueId(), finalText, images));
+        const pasted = currentPastedTexts.map(toQueuedPastedText);
+        const item = createQueueItem(generateQueueId(), finalText, images, [], [], [], pasted);
+        const queue = () => addToQueueStore(subChatId, item);
         if (awaitingHydration) queue();
-        else await steerOrQueue(finalText, currentImages, queue);
+        else await steerOrQueue(messageText, currentImages, queue);
         if (editedId) {
           removeFromQueue(subChatId, editedId);
           setEditingItemId(subChatId, null);
@@ -1298,6 +1292,7 @@ const ChatViewInner = memo(function ChatViewInner({
     } catch (_error) {
       // Restore input so users can retry immediately.
       editorRef.current?.setValue(finalText);
+      pastedFiles.setPastedTextsFromDraft(currentPastedTexts);
       // If the original was lost from the queue mid-flight, restore it. Keep editingItemId set
       // so the badge persists and the user can retry.
       if (editedItem) {
@@ -1311,6 +1306,7 @@ const ChatViewInner = memo(function ChatViewInner({
     }
   }, [
     sandboxSetupStatus,
+    isUploading,
     isArchived,
     onRestoreWorkspace,
     projectPath,
@@ -1319,6 +1315,9 @@ const ChatViewInner = memo(function ChatViewInner({
     steerOrQueue,
     addToQueueStore,
     clearAll,
+    clearPastedTexts,
+    pastedTextsRef,
+    pastedFiles.setPastedTextsFromDraft,
     clearExpiredQuestionsForSubChat,
     removeFromQueue,
     setEditingItemId,
@@ -1516,10 +1515,8 @@ const ChatViewInner = memo(function ChatViewInner({
               isStreaming={isStreaming}
               isCompacting={isCompacting}
               images={images}
-              files={files}
               onAddAttachments={handleAddAttachments}
               onRemoveImage={removeImage}
-              onRemoveFile={removeFile}
               isUploading={isUploading}
               textContexts={textContexts}
               onRemoveTextContext={removeTextContext}

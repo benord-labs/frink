@@ -1,16 +1,16 @@
 /** Phone attachments: raw-body uploads referenced by id in `sendMessage`, stored in the sub-chat's
  *  agent-readable `pasted/` folder, sent as image parts or the desktop's pasted-file mention. */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { app } from 'electron';
+import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
 import type { MobileAttachment } from '../../../../shared/types/remote/mobile';
+import { pastedDirFor, safeAttachmentName } from '../../claude/pasted-files';
 import { isValidSubChatIdForSessionPaths } from '../../claude/session-plan-paths';
 import { MobileApiError, requireChat } from './context';
 
 /** Claude rejects larger images; the phone resizes before upload so this is a backstop. */
 export const MOBILE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-const MOBILE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 /** An upload that is never sent is deleted after this long. */
 const UPLOAD_TTL_MS = 60 * 60 * 1000;
 
@@ -34,17 +34,6 @@ type StoredUpload = MobileAttachment & {
 };
 
 const uploads = new Map<string, StoredUpload>();
-
-/** A name safe to put on disk and inside a `[...]` mention token. */
-export function safeAttachmentName(name: string): string {
-  const cleaned = name
-    .normalize('NFC')
-    .replace(/[/\\[\]|\0-\x1f]/g, '_')
-    .replace(/^\.+/, '')
-    .trim()
-    .slice(0, 120);
-  return cleaned || 'attachment';
-}
 
 function detectImage(bytes: Uint8Array): string | null {
   return IMAGE_SIGNATURES.find((signature) => signature.matches(bytes))?.mimeType ?? null;
@@ -75,15 +64,14 @@ export async function storeMobileAttachment(input: {
   // Trust the bytes, not the declared type: only a real image travels as an image part.
   const imageType = detectImage(input.bytes);
   const kind = imageType ? 'image' : 'file';
-  const limit = kind === 'image' ? MOBILE_IMAGE_MAX_BYTES : MOBILE_FILE_MAX_BYTES;
+  const limit = kind === 'image' ? MOBILE_IMAGE_MAX_BYTES : PASTED_FILE_MAX_BYTES;
   if (input.bytes.byteLength > limit) {
     throw new MobileApiError(422, `Attachments must be under ${limit / (1024 * 1024)} MB.`);
   }
 
   const id = randomUUID();
   const name = safeAttachmentName(input.name);
-  const dir = join(app.getPath('userData'), 'claude-sessions', input.subChatId, 'pasted');
-  await mkdir(dir, { recursive: true });
+  const dir = await pastedDirFor(input.subChatId);
   const path = join(dir, `${id.slice(0, 8)}-${name}`);
   await writeFile(path, input.bytes);
 
