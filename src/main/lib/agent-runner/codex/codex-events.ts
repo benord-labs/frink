@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { CODEX_SUBAGENT_TOOL_NAME } from '../../../../shared/subagent-parts';
 import { usageLimitErrorChunk } from '../../claude/stream-classifiers';
 import type { UIMessageChunk } from '../../claude/types';
+import { compactionOpened, compactionSettled } from './compaction';
 
 /** Result of Frink's permission gate, as returned by `validateToolPermission`. */
 export type ApprovalOutcome =
@@ -262,7 +263,7 @@ const NON_TOOL_ITEM_TYPES = new Set([
   'enteredReviewMode', // lifecycle marker: starts and completes back-to-back
   'exitedReviewMode', // lifecycle marker: starts and completes back-to-back
   'imageView', // instantaneous attachment read, not a job
-  'contextCompaction', // internal housekeeping
+  'contextCompaction', // shown as the compact line instead, never a tool card
   'functionCallOutput', // client-submitted standalone tool output (hook runtime); never a job, never shown upstream
 ]);
 
@@ -288,6 +289,7 @@ function openToolCard(item: Record<string, unknown>, startedAt?: number): UIMess
 
 /** item.started → open a tool card. `startedAtMs` rides the notification, so this stays pure. */
 function mapItemStarted(item: Record<string, unknown>, startedAtMs?: number): UIMessageChunk[] {
+  if (item.type === 'contextCompaction') return compactionOpened(str(item.id, ''));
   if (!isToolItem(item.type)) return [];
   return openToolCard(item, startedAtMs);
 }
@@ -347,6 +349,7 @@ function mapItemCompleted(item: Record<string, unknown>, completedAtMs?: number)
   const id = String(item.id ?? '');
   // The agentMessage text streamed via delta; just close the text block.
   if (item.type === 'agentMessage') return [{ type: 'text-end', id }];
+  if (item.type === 'contextCompaction') return compactionSettled(id);
   if (!isToolItem(item.type)) return [];
   // Re-open the card before closing it. Some variants are emitted ONLY as item/completed upstream
   // (subAgentActivity goes exclusively through emit_turn_item_completed), and the parts reducer

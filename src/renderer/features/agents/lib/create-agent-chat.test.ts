@@ -89,7 +89,11 @@ import {
   wakeHeldAtomFamily,
   wakeHoldAdoptedAtomFamily,
 } from '../../../lib/stores/active-transport-registry';
-import { agentsSubChatUnseenChangesAtom, loadingSubChatsAtom } from '../atoms';
+import {
+  agentsSubChatUnseenChangesAtom,
+  compactingSubChatsAtom,
+  loadingSubChatsAtom,
+} from '../atoms';
 import { flowRunIncompleteAtomFamily } from '../stores/message-store';
 import { announceTurnEnd, createAgentChat } from './create-agent-chat';
 
@@ -185,6 +189,16 @@ describe('onFinish — completion sound seam', () => {
     const { options } = buildChat();
     options.onFinish();
     expect(mocks.appStoreSet).toHaveBeenCalledWith(wakeHoldAdoptedAtomFamily('sub-1'), false);
+  });
+
+  it('stops showing a compaction as running when the turn ends before it settled', () => {
+    // A failed or stopped compaction sends no settling chunk, so only the turn end can clear it.
+    const { options } = buildChat();
+    options.onFinish();
+
+    const [, clear] =
+      mocks.appStoreSet.mock.calls.find(([atom]) => atom === compactingSubChatsAtom) ?? [];
+    expect(clear?.(new Set(['sub-1', 'sub-2']))).toEqual(new Set(['sub-2']));
   });
 });
 

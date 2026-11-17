@@ -4,6 +4,7 @@ import { disposeCodexAppServerSession } from '../app-server-registry';
 import type { ChunkQueue } from '../chunk-queue';
 import { codexHostPermissionDeduper } from '../codex-host-permissions';
 import { clearCodexLiveTurn } from '../codex-live-turn';
+import { createCompactionFailureSettler } from '../compaction';
 
 export type CodexTurnIdentity = {
   threadId?: string;
@@ -53,8 +54,10 @@ export async function* drainCodexTurnChunks(
   queue: ChunkQueue,
   signal: AbortSignal,
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
+  // Here rather than at one producer: a dropped connection queues its error past the stream mapper.
+  const settleCompaction = createCompactionFailureSettler();
   for await (const chunk of queue.drain()) {
     if (signal.aborted) return;
-    yield chunk;
+    yield* settleCompaction(chunk);
   }
 }

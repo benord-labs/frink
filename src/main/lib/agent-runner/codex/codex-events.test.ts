@@ -309,18 +309,37 @@ describe('mapNotificationToChunks', () => {
   });
 
   it('emits no card for lifecycle markers that are not jobs', () => {
-    // The denylist's whole job: review-mode and compaction transitions would otherwise render as
+    // The denylist's whole job: review-mode transitions would otherwise render as
     // instantly-complete junk cards on every turn that uses them.
     for (const type of [
       'enteredReviewMode',
       'exitedReviewMode',
-      'contextCompaction',
       'imageView',
       'functionCallOutput',
     ]) {
       expect(mapNotificationToChunks('item/started', { item: { type, id: 'l1' } })).toEqual([]);
       expect(mapNotificationToChunks('item/completed', { item: { type, id: 'l1' } })).toEqual([]);
     }
+  });
+
+  it('shows a context compaction as the compact line, live then settled, never as a tool card', () => {
+    const item = { type: 'contextCompaction', id: 'cmp-1' };
+    const started = mapNotificationToChunks('item/started', { item, startedAtMs: 5 });
+    const completed = mapNotificationToChunks('item/completed', { item, completedAtMs: 9 });
+
+    expect(started).toEqual([
+      { type: 'data-compact', id: 'cmp-1', transient: true, data: { state: 'input-streaming' } },
+    ]);
+    expect(completed).toEqual([
+      { type: 'data-compact', id: 'cmp-1', data: { state: 'output-available', trigger: 'auto' } },
+    ]);
+    expect([...started, ...completed].filter((c) => c.type.startsWith('tool-'))).toEqual([]);
+  });
+
+  it('emits nothing for a context compaction that carries no id', () => {
+    const item = { type: 'contextCompaction' };
+    expect(mapNotificationToChunks('item/started', { item })).toEqual([]);
+    expect(mapNotificationToChunks('item/completed', { item })).toEqual([]);
   });
 
   it('marks a failed image generation as an error with a readable reason', () => {
