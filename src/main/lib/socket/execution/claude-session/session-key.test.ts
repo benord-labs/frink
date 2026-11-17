@@ -7,7 +7,7 @@ const options = (overrides: Record<string, unknown> = {}) => ({
   env: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-a', CLAUDE_CONFIG_DIR: '/cfg/sub-1' },
   resume: 'sess-1',
   stderr: () => {},
-  systemPrompt: { type: 'preset', preset: 'claude_code', append: '\n\nfrink' },
+  systemPrompt: { type: 'preset', preset: 'claude_code', append: '\n\nfrink', snapshot: false },
   settingSources: ['project', 'user'],
   agents: { reviewer: { description: 'r', prompt: 'p' }, planner: { description: 'q' } },
   extraArgs: { 'mcp-config': '/cfg/sub-1/mcp-config-a.json' },
@@ -81,6 +81,26 @@ describe('computeClaudeSessionKey', () => {
       servers(),
     );
     expect(diffKeyParts(before, after).sort()).toEqual(['betas', 'cwd', 'thinking']);
+  });
+
+  // A changed append (a Flow taking the chat over, debug mode) must recreate the CLI so the
+  // un-recorded prompt picks it up on resume; an unchanged one must keep the warm CLI.
+  it('keys the system-prompt append, and only when it changes', () => {
+    const before = computeClaudeSessionKey(options(), servers());
+    const same = computeClaudeSessionKey(options(), servers());
+    const briefed = computeClaudeSessionKey(
+      options({
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append: '\n\nfrink\n\n## Flow Briefing\n\nPRD',
+          snapshot: false,
+        },
+      }),
+      servers(),
+    );
+    expect(diffKeyParts(before, same)).toEqual([]);
+    expect(diffKeyParts(before, briefed)).toEqual(['systemPrompt']);
   });
 
   it('leaves model, effort and Ultra out of the key: a claim sets them live', () => {
