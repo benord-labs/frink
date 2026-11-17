@@ -54,7 +54,7 @@ A file opens when it is in this chat's folder or in one of your other projects:
 - A short path like `src/app.ts` always points into this chat's folder.
 - A full path, or one starting with `~/`, also opens from any other project you've added to Frink.
 
-A file from another project shows that project's name on its badge and in its tooltip, and it opens whether or not that project is linked to the chat. While it's open, a note above the editor says whether the project is linked. If it isn't and the chat can link it, the note has a **Link project** button. When open files come from more than one project, the editor's tabs are grouped by project.
+A file from another project shows that project's name on its badge. Its tooltip also says whether that project is linked to the chat. The file opens either way. While it's open, a note above the editor says whether the project is linked. If it isn't and the chat can link it, the note has a **Link project** button. When open files come from more than one project, the editor's tabs are grouped by project.
 
 A badge that can't open still shows the file's path when you hover over it. In a worktree chat, a file in the project's main folder stays closed, because the chat works in its own worktree; the tooltip says so.
 
@@ -62,14 +62,14 @@ A badge that can't open still shows the file's path when you hover over it. In a
 
 A chat works in one project, its main project, but you can link your other projects to it. A linked project shows in the chat's file tree, and most agents can read it without asking; see [Linked projects](./projects.md#linked-projects) for each provider.
 
-1. Click **Link project** (the folder with a plus) beside the search field at the top of the file tree.
+1. Click **Link project** (the folder with a plus) beside the search field at the top of the file tree, or **Link project** (a plus) under the message box.
 2. Type to search your projects by name or folder, then pick one with the mouse, or with the arrow keys and **Enter**.
 
 The project you pick is linked and appears below the chat's main project. Each project in the tree has a row you can click to show or hide its files:
 
 - The chat's main project is labelled **Main**. The chat's working folder, branch, worktree and `CLAUDE.md` come from it.
 - A linked project is labelled **Linked** and shows the branch its folder has checked out. If its folder is gone, the tree says it can't find it.
-- The **×** on a linked project's row unlinks it. Its files stay where they are.
+- The **×** on a linked project's row unlinks it, as does the **×** on its chip under the message box. Its files stay where they are.
 
 The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. On the **Search** tab, it looks inside the files of every project in the tree and lists the matches under each project's name, in the tree's order, each project with its own count. Click a match to open the file at that line. A linked project's files are read again when you show them and when you come back to Frink.
 

@@ -1,6 +1,7 @@
 import { useAtomValue } from 'jotai';
 import path from 'path';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { isSameFolder } from '../../../../../shared/lib/path-normalization';
 import { FileLinkBadgeContext, type FileReference } from '@/lib/file-links/file-link-badge-context';
 import {
   buildFileLinkLabels,
@@ -84,11 +85,14 @@ export function FileLinkBadge({ reference, onOpen, projectName, where }: FileLin
 }
 
 type ChatProject = { id: string; name: string; path: string };
+type BadgeChat = { project: ChatProject | null; linkedProjects?: Array<{ path: string }> } | null;
 
-/** The chat's own project, which never opens through the other-projects fallback. */
-function chatProject(chat: { project: ChatProject | null } | null): ChatProject | null {
-  return chat?.project ?? null;
-}
+/** The chat's own project, which never opens through the other-projects fallback, and the
+ *  folders of the projects linked to it. */
+const badgeChat = (chat: BadgeChat) => ({
+  project: chat?.project ?? null,
+  linkedPaths: (chat?.linkedProjects ?? []).map((linked) => linked.path),
+});
 
 /** The chat around a badge, its own project, and the folder it works in: its worktree, else its
  *  project's folder. */
@@ -96,18 +100,19 @@ function useChatFileRoot() {
   const chatId = useCurrentChatId();
   const worktreePath = useCurrentChatWorktree();
   // The chat view keeps the chat fresh. A chat with no worktree works in its project's folder.
-  const project = trpc.chats.get.useQuery(
+  const chat = trpc.chats.get.useQuery(
     { id: chatId ?? '' },
-    { enabled: Boolean(chatId), staleTime: Infinity, select: chatProject },
+    { enabled: Boolean(chatId), staleTime: Infinity, select: badgeChat },
   ).data;
+  const project = chat?.project;
   const root = worktreePath ?? (isRealProjectPath(project?.path) ? project?.path : undefined);
-  return { chatId, worktreePath, project, root };
+  return { chatId, worktreePath, chat, project, root };
 }
 
 /** A badge in a chat's transcript, which opens its file when that lies in the folder the chat
  *  works in, or in full or `~/` form in another registered project. */
 function TranscriptFileLinkBadge({ reference }: { reference: FileReference }) {
-  const { chatId, worktreePath, project, root } = useChatFileRoot();
+  const { chatId, worktreePath, chat, project, root } = useChatFileRoot();
   const paneChatIds = useAtomValue(splitViewChatIdsAtom);
   const home = trpc.external.getHomePath.useQuery(undefined, { staleTime: 300_000 }).data;
   const rawProjects = trpc.projects.list.useQuery(undefined, {
@@ -128,8 +133,11 @@ function TranscriptFileLinkBadge({ reference }: { reference: FileReference }) {
   };
   const input = fileLinkOpenInputAcrossProjects(reference.path, base, projects, project?.id);
   const mainFolder = !input && fileLinkOwnMainFolder(reference.path, base, projects, project?.id);
+  const linked = chat?.linkedPaths.some((linkedPath) =>
+    isSameFolder(linkedPath, input?.projectPath),
+  );
   const where = input?.projectName
-    ? `In ${input.projectName}`
+    ? `In ${input.projectName} · ${linked ? 'linked' : 'not linked'}`
     : mainFolder
       ? `In ${mainFolder.name}'s main folder, not this chat's worktree`
       : undefined;

@@ -53,9 +53,10 @@ The picker only sets the context for the chat you're about to start. Open a new 
 
 ## Linked projects
 
-A chat has one main project. The chat's working folder, branch, worktree and `CLAUDE.md` come from it. You can also link your other projects to the chat with **Link project** in its file tree; see [Link another project](./files.md#link-another-project). Claude, OpenCode and Copilot can read and search a linked project without asking, and Cursor can read it. Codex reads files by running commands, which are checked as usual. With each message you send, Frink tells the agent which projects are linked. Changes there are handled like any change outside the chat's folder. [Permissions](./permissions.md#linked-projects) has the details for each provider.
+A chat has one main project. The chat's working folder, branch, worktree and `CLAUDE.md` come from it. You can also link your other projects to the chat with **Link project** in its file tree or under the message box; see [Link another project](./files.md#link-another-project). Claude, OpenCode and Copilot can read and search a linked project without asking, and Cursor can read it. Codex reads files by running commands, which are checked as usual. With each message you send, Frink tells the agent which projects are linked. Changes there are handled like any change outside the chat's folder. [Permissions](./permissions.md#linked-projects) has the details for each provider.
 
 - A linked project is its registered folder, on whatever branch is checked out there. Its row in the file tree shows that branch.
+- Under the message box, linked projects show as chips next to the chat's project name. Use the **×** on a chip to unlink that project, or **Link project** (just a plus when the row is narrow) to link another. Up to two show as chips, and the rest sit behind a count such as **+1 linked**, which lists them with their own **×**. When the row is narrow, fewer chips show and more sit behind the count. A warning sign on a chip or on the count means a project's folder can't be found.
 - General chats and chats in a virtual folder can't link projects.
 - Moving a chat into one of its linked projects makes that project its main project.
 - **Fork chat** keeps the chat's links on the copy.

@@ -163,6 +163,8 @@ type Project = {
   worktreePath?: string | null;
   /** The folder of the chat's project; null for a chat that has no project. */
   projectPath?: string | null;
+  /** The projects linked to the chat. */
+  linkedProjects?: { path: string }[];
   /** The chats side by side in split view, in pane order; none in single view. */
   panes?: string[];
   /** Every registered project; the chat's own is `app`. */
@@ -190,6 +192,7 @@ function renderReply(
     index = disk,
     worktreePath = null,
     projectPath = ROOT,
+    linkedProjects = [],
     panes = [],
     registered = PROJECTS,
     listed,
@@ -209,7 +212,7 @@ function renderReply(
   // The chat view loaded the chat long before this reply, and is the one that keeps it fresh.
   queries.setQueryData(
     getQueryKey(trpc.chats.get, { id: 'chat-1' }, 'query'),
-    { project: projectPath ? { id: 'app', name: 'app', path: projectPath } : null },
+    { project: projectPath ? { id: 'app', name: 'app', path: projectPath } : null, linkedProjects },
     { updatedAt: 0 },
   );
   if (listed !== undefined) {
@@ -498,7 +501,7 @@ describe('opening a file from its badge', () => {
     );
     fireEvent.focus(badge);
     expect(tooltipLines()).toEqual([
-      ['In api', false],
+      ['In api · not linked', false],
       [`${OTHER}/src/a.ts`, true],
     ]);
     fireEvent.click(badge);
@@ -517,6 +520,17 @@ describe('opening a file from its badge', () => {
     ]);
     expect(store.get(openFilesAtom)[0]).not.toHaveProperty('projectName');
     expect(asked).toEqual([['files.entryType', { projectPath: OTHER, relativePath: 'src/a.ts' }]]);
+  });
+
+  it("says when another project's file is from a project linked to the chat", async () => {
+    renderReply(`See \`${OTHER}/src/a.ts\`.`, {
+      disk: [],
+      linkedProjects: [{ path: `${OTHER}/` }],
+    });
+
+    fireEvent.focus(await screen.findByRole('button', { name: /a\.ts/ }));
+
+    expect(tooltipLines()[0]).toEqual(['In api · linked', false]);
   });
 
   // During tRPC client hydration on dev start the list can briefly hold something else.
