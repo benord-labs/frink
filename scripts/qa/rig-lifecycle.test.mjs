@@ -59,6 +59,8 @@ function makeRig(extraEnv = {}) {
   for (const name of REAL_SCRIPTS) copyFileSync(join(qaDir, name), join(repo, 'scripts/qa', name));
   const env = { ...process.env, HOME: home, PATH: `${join(repo, 'bin')}:${process.env.PATH}` };
   delete env.QA_REAL_CLAUDE;
+  // The rig's lock below is the default instance's, so a caller's named instance must not leak in.
+  delete env.FRINK_QA_PORT;
   const rig = { root, repo, home, lock: join(home, '.frink-qa', 'lock.d'), boots: [] };
   rig.env = { ...env, ...extraEnv };
   rigs.push(rig);

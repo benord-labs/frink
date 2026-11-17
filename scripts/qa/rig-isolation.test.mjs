@@ -238,14 +238,23 @@ describe.runIf(process.platform === 'darwin')('QA rig instances', () => {
 
   // 21322 and 21321 are the dev and shipped apps' profiles, 21399 and 9223 the default instance's,
   // 9222 the dev app's DevTools; the rest would name a different folder than the app opens.
-  it.each(['21322', '21321', '21399', '9223', '9222', '040010', '70000', '999', '4 0', '../x'])(
-    'refuses %j before anything is wiped or launched',
-    (port) => {
-      const refused = instance(port);
-      expect(refused.status).toBe(1);
-      expect(refused.stderr).toContain('FRINK_QA_PORT');
-    },
-  );
+  it.each([
+    '21322',
+    '21321',
+    '21399',
+    '9223',
+    '9222',
+    '040010',
+    '70000',
+    '1023',
+    '999',
+    '4 0',
+    '../x',
+  ])('refuses %j before anything is wiped or launched', (port) => {
+    const refused = instance(port);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('FRINK_QA_PORT');
+  });
 
   it('launches the app on its instance port and profile, and checks that same instance', () => {
     const boot = read('boot.sh');

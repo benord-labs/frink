@@ -21,11 +21,12 @@ if [ -n "${FRINK_QA_PORT:-}" ]; then
   # instance's (9223, 21399) and the dev and shipped apps' own (9222, 21322, 21321).
   case "$FRINK_QA_PORT" in
     9222 | 9223 | 21321 | 21322 | 21399) FRINK_QA_PORT= ;;
-    [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9]) [ "$FRINK_QA_PORT" -le 65535 ] || FRINK_QA_PORT= ;;
+    [1-9][0-9][0-9][0-9] | [1-9][0-9][0-9][0-9][0-9])
+      [ "$FRINK_QA_PORT" -ge 1024 ] && [ "$FRINK_QA_PORT" -le 65535 ] || FRINK_QA_PORT= ;;
     *) FRINK_QA_PORT= ;;
   esac
   if [ -z "$FRINK_QA_PORT" ]; then
-    echo "FRINK_QA_PORT must be a free port from 1000 to 65535 that is not 9222, 9223, 21321, 21322 or 21399." >&2
+    echo "FRINK_QA_PORT must be a free port from 1024 to 65535 that is not 9222, 9223, 21321, 21322 or 21399." >&2
     exit 1
   fi
   QA_CDP_PORT=$FRINK_QA_PORT
