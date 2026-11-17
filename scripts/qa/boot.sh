@@ -1,5 +1,5 @@
 #!/bin/bash
-# Boots the prebuilt QA app on its isolated profile, with CDP on :9223.
+# Boots the prebuilt QA app on its instance's own profile and DevTools port (env.sh; default :9223).
 # Boot-only: app-state prep (profile wipe, fixture DB) lives in seed.sh, which
 # runs first — this script owns what must span the app's lifetime: the
 # single-run lock and launch. Isolated from the owner's running dev app (own
@@ -17,9 +17,8 @@ qa_scrub_host_dev_env
 
 mkdir -p "$QA_HOME"
 
-# One QA run at a time: the rig is single-tenant — one CDP port (9223) and one
-# $HOME QA profile — so a second concurrent run would wipe and re-seed the
-# profile the first one is driving.
+# One run per instance: a second run on the same port and profile would wipe and re-seed the
+# profile the first one is driving. Another instance (FRINK_QA_PORT) has its own lock.
 if ! mkdir "$LOCK" 2>/dev/null; then
   HOLDER=$(cat "$LOCK/pid" 2>/dev/null || echo "")
   if [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; then
@@ -116,7 +115,8 @@ echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR${FRINK_QA_EV
 # rendering someone else's dev server.
 env -u ELECTRON_RUN_AS_NODE \
   FRINK_QA_BUNDLE=1 \
-  FRINK_CDP_PORT=9223 \
+  FRINK_CDP_PORT="$QA_CDP_PORT" \
+  FRINK_AUTH_SERVER_PORT="$QA_PROFILE_PORT" \
   FRINK_CUSTOM_NODES_DIR="$QA_USER_DATA/nodes" \
   FRINK_HOME="$QA_FRINK_HOME" \
   FRINK_WEBHOOK_BASE_URL= \

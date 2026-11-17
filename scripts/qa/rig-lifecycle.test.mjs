@@ -29,6 +29,8 @@ require('node:fs').writeFileSync(process.env.HOME + '/launched', String(process.
 setInterval(() => {}, 1000);
 `,
   'out-qa/main/index.js': '// built\n',
+  // boot.sh links the menu bar icons in beside the bundled CLIs the real build puts here.
+  'out-qa/main/resources/bin/.keep': '',
   // Stands in for smoke-check.ts: once the app is up, prints QA_TEST_CHECKS_OUTPUT and exits with
   // QA_TEST_CHECKS_EXIT (default 0, a pass).
   'bin/bun': `#!/bin/bash
@@ -57,6 +59,8 @@ function makeRig(extraEnv = {}) {
   for (const name of REAL_SCRIPTS) copyFileSync(join(qaDir, name), join(repo, 'scripts/qa', name));
   const env = { ...process.env, HOME: home, PATH: `${join(repo, 'bin')}:${process.env.PATH}` };
   delete env.QA_REAL_CLAUDE;
+  // The rig's lock below is the default instance's, so a caller's named instance must not leak in.
+  delete env.FRINK_QA_PORT;
   const rig = { root, repo, home, lock: join(home, '.frink-qa', 'lock.d'), boots: [] };
   rig.env = { ...env, ...extraEnv };
   rigs.push(rig);

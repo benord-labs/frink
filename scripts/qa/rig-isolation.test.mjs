@@ -200,3 +200,69 @@ describe('QA rig host dev-env isolation', () => {
     expect(src('index.ts')).toMatch(/^assertRigRendererBundled\(\);$/m);
   });
 });
+
+describe.runIf(process.platform === 'darwin')('QA rig instances', () => {
+  const instance = (port) => {
+    const env = { PATH: process.env.PATH, HOME: '/h' };
+    if (port !== undefined) env.FRINK_QA_PORT = port;
+    const print = 'printf "%s\\n" "$QA_CDP_PORT" "$QA_PROFILE_PORT" "$QA_USER_DATA" "$LOCK"';
+    const run = spawnSync('bash', ['-c', `. "${join(qaDir, 'env.sh')}"; ${print}`], {
+      env,
+      encoding: 'utf-8',
+    });
+    return { status: run.status, lines: run.stdout.trim().split('\n'), stderr: run.stderr };
+  };
+
+  it('is the one default instance when no port is named', () => {
+    const today = [
+      '9223',
+      '21399',
+      '/h/Library/Application Support/Frink Dev-21399',
+      '/h/.frink-qa/lock.d',
+    ];
+    expect(instance(undefined).lines).toEqual(today);
+    expect(instance('').lines).toEqual(today);
+  });
+
+  it('gives a named port its own DevTools port, profile and lock', () => {
+    expect(instance('40010')).toMatchObject({
+      status: 0,
+      lines: [
+        '40010',
+        '40010',
+        '/h/Library/Application Support/Frink Dev-40010',
+        '/h/.frink-qa/lock-40010.d',
+      ],
+    });
+  });
+
+  // 21322 and 21321 are the dev and shipped apps' profiles, 21399 and 9223 the default instance's,
+  // 9222 the dev app's DevTools; the rest would name a different folder than the app opens.
+  it.each([
+    '21322',
+    '21321',
+    '21399',
+    '9223',
+    '9222',
+    '040010',
+    '70000',
+    '1023',
+    '999',
+    '4 0',
+    '../x',
+  ])('refuses %j before anything is wiped or launched', (port) => {
+    const refused = instance(port);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('FRINK_QA_PORT');
+  });
+
+  it('launches the app on its instance port and profile, and checks that same instance', () => {
+    const boot = read('boot.sh');
+    expect(boot).toContain('FRINK_CDP_PORT="$QA_CDP_PORT"');
+    expect(boot).toContain('FRINK_AUTH_SERVER_PORT="$QA_PROFILE_PORT"');
+    expect(boot).toContain('MAIN_VITE_AUTH_SERVER_PORT=21399');
+    expect(read('smoke.sh')).toContain(
+      'FRINK_CDP_PORT="$QA_CDP_PORT" bun scripts/qa/smoke-check.ts',
+    );
+  });
+});
