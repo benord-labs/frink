@@ -98,6 +98,13 @@ export function buildTestResult(
 
 // `KeyError: 'x'`, `Error [ERR_X]: …`, `fatal: …`, `error[E0425]: …`: the keyword followed by a colon.
 const CAUSE_LINE = /(error|exception|fatal)\b(\s*\[[^\]]*\])?:/i;
+// Keyword-free failures in their exact shell shape, strongest first: a command that cannot run, a refused
+// one, then a missing file (the kind most often tolerated or printed by cleanup). The first hit in a tier leads.
+const SHELL_FAILURE_TIERS = [
+  /: command not found$|: command not found: \S+$|^(?:\S*\/)?(?:a|ba|da)?sh: (?:\d+: )?[^:\s]+: not found$|^'[^']+' is not recognized as an internal or external command,$/i,
+  /[:\]] permission denied$|^access is denied\.$/i,
+  /[:\]] no such file or directory$|^the system cannot find the (?:file|path) specified\.$/i,
+];
 const PYTHON_TRACEBACK_HEADER = 'Traceback (most recent call last):';
 const BARE_PYTHON_EXCEPTION = /^[\w.]*(Error|Exception)$/; // `raise ValueError` prints just `ValueError`
 
@@ -110,7 +117,13 @@ const lastCause = (lines: string[]) => [...lines].reverse().find(isCause);
 function findCause(rawLines: string[]): string | undefined {
   const trimmed = rawLines.map((line) => line.trim());
   const header = trimmed.lastIndexOf(PYTHON_TRACEBACK_HEADER);
-  if (header < 0) return lastCause(trimmed);
+  // A keyword line outranks any shell failure.
+  if (header < 0) {
+    return (
+      lastCause(trimmed) ??
+      SHELL_FAILURE_TIERS.map((tier) => trimmed.find((line) => tier.test(line))).find(Boolean)
+    );
+  }
   const margin = indentOf(rawLines[header]);
   const atMargin = rawLines
     .slice(header + 1)
