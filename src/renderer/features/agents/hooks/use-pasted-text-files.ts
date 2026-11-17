@@ -1,6 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
+import {
+  PASTED_FILE_MAX_BYTES,
+  PASTED_FILE_TOO_LARGE,
+} from '../../../../shared/pasted-file-limits';
 import { trpc } from '../../../lib/trpc';
 
 export type PastedTextFile = {
@@ -15,8 +18,8 @@ export type PastedTextFile = {
 /** A chip restored from a draft or a queued item; the queue does not keep `createdAt`. */
 type RestorablePastedText = Omit<PastedTextFile, 'createdAt'> & { createdAt?: Date };
 
-/** `label` names the chip instead of the text's opening words; `filename` names the saved file. */
-export type PastedTextOptions = { label?: string; filename?: string };
+/** `label` names the chip instead of the text's opening words; `kind` prefixes the saved file. */
+export type PastedTextOptions = { label?: string; kind?: 'terminal' };
 
 type UsePastedTextFilesReturn = {
   pastedTexts: PastedTextFile[];
@@ -45,7 +48,7 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
         const result = await writePastedTextMutation.mutateAsync({
           subChatId,
           text,
-          filename: options?.filename,
+          kind: options?.kind,
         });
 
         // Create preview from first 50 chars, replace newlines with spaces
@@ -80,7 +83,7 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
           toast.error(`Couldn't attach ${file.name}`, {
             description:
               file.size > PASTED_FILE_MAX_BYTES
-                ? 'Attachments must be 20 MB or smaller.'
+                ? PASTED_FILE_TOO_LARGE
                 : 'Save it to your computer, then drag it in or use the attach button.',
           });
           continue;
