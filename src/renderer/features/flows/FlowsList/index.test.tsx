@@ -1,11 +1,19 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import * as Sentry from '@sentry/electron/renderer';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { TRPCClientError } from '@trpc/client';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+type UpdateErrorOpts = {
+  onError: (err: Error, variables: { id: string }, context?: { prev?: object[] }) => void;
+};
+type CancelRunErrorOpts = { onError: (err: Error, variables: { runId: string }) => void };
+type RecordedMutationOpts = { update?: UpdateErrorOpts; cancelRun?: CancelRunErrorOpts };
 
 const snap = vi.hoisted(() => {
   const flow = {
@@ -27,11 +35,14 @@ const snap = vi.hoisted(() => {
   };
   // Extra rows override any base field; a run field may be cleared to null.
   const extraFlows: { [K in keyof typeof flow]?: (typeof flow)[K] | null }[] = [];
+  const mutationOpts: RecordedMutationOpts = {};
   return {
     cancelRun: vi.fn(),
     copyFlow: vi.fn(),
     openFlow: vi.fn(),
     updateFlow: vi.fn(),
+    setListData: vi.fn(),
+    mutationOpts,
     flow,
     extraFlows,
   };
@@ -66,14 +77,27 @@ vi.mock('../../../lib/trpc', () => ({
       },
       delete: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       copy: { useMutation: () => ({ mutateAsync: snap.copyFlow, isPending: false }) },
-      update: { useMutation: () => ({ mutate: snap.updateFlow, isPending: false }) },
+      update: {
+        useMutation: (opts: UpdateErrorOpts) => {
+          snap.mutationOpts.update = opts;
+          return { mutate: snap.updateFlow, isPending: false };
+        },
+      },
       cancelRun: {
-        useMutation: () => ({ mutate: snap.cancelRun, isPending: false, variables: undefined }),
+        useMutation: (opts: CancelRunErrorOpts) => {
+          snap.mutationOpts.cancelRun = opts;
+          return { mutate: snap.cancelRun, isPending: false, variables: undefined };
+        },
       },
     },
     useUtils: () => ({
       flows: {
-        list: { invalidate: vi.fn(), getData: () => [snap.flow] },
+        list: {
+          invalidate: vi.fn(),
+          cancel: vi.fn(),
+          getData: () => [snap.flow],
+          setData: snap.setListData,
+        },
         listRuns: { invalidate: vi.fn() },
         listBatches: { invalidate: vi.fn() },
         listBatchRuns: { invalidate: vi.fn() },
@@ -105,6 +129,7 @@ afterEach(() => {
   snap.cancelRun.mockReset();
   snap.openFlow.mockReset();
   snap.updateFlow.mockReset();
+  snap.setListData.mockReset();
   snap.extraFlows = [];
 });
 
@@ -267,5 +292,75 @@ describe('FlowsList duplicate', () => {
 
     expect(snap.copyFlow).toHaveBeenCalledTimes(1);
     finish({ id: 'flow-copy' });
+  });
+});
+
+describe('FlowsList row menu error reporting', () => {
+  const events: Sentry.ErrorEvent[] = [];
+
+  function installSentryClient(): Sentry.BrowserClient {
+    const client = new Sentry.BrowserClient({
+      dsn: 'https://public@sentry.invalid/1',
+      integrations: [],
+      stackParser: Sentry.defaultStackParser,
+      transport: (options) => Sentry.createTransport(options, async () => ({})),
+      beforeSend: (event) => {
+        events.push(event);
+        return null;
+      },
+    });
+    Sentry.setCurrentClient(client);
+    client.init();
+    return client;
+  }
+
+  afterEach(() => {
+    Sentry.getCurrentScope().setClient(undefined);
+    events.length = 0;
+  });
+
+  it('reports a failed enable/disable and still rolls back and toasts', async () => {
+    const client = installSentryClient();
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
+    const prev = [snap.flow];
+
+    act(() =>
+      snap.mutationOpts.update?.onError(new Error('db locked'), { id: 'flow-1' }, { prev }),
+    );
+    await client.flush();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.tags).toEqual({ source: 'FlowRowMenu', action: 'toggle-enabled' });
+    expect(snap.setListData).toHaveBeenCalledWith(undefined, prev);
+    expect(toast.error).toHaveBeenCalledWith('db locked');
+  });
+
+  it('reports a failed stop-run, including tRPC errors other than CONFLICT', async () => {
+    const client = installSentryClient();
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
+    const notFound = TRPCClientError.from({
+      error: { message: 'Flow run not found', code: -32004, data: { code: 'NOT_FOUND' } },
+    });
+
+    act(() => snap.mutationOpts.cancelRun?.onError(notFound, { runId: 'run-1' }));
+    await client.flush();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.tags).toEqual({ source: 'FlowRowMenu', action: 'stop-run' });
+    expect(toast.error).toHaveBeenCalledWith('Flow run not found');
+  });
+
+  it('does not report a stop on a run that already finished', async () => {
+    const client = installSentryClient();
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
+    const conflict = TRPCClientError.from({
+      error: { message: 'Run already finished', code: -32009, data: { code: 'CONFLICT' } },
+    });
+
+    act(() => snap.mutationOpts.cancelRun?.onError(conflict, { runId: 'run-1' }));
+    await client.flush();
+
+    expect(events).toHaveLength(0);
+    expect(toast.info).toHaveBeenCalledWith('Run already finished');
   });
 });
