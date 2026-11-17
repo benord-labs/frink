@@ -123,6 +123,11 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # Node 24.20+ rejects the structure lint's schema lookups (tdegrunt/jsonschema#423); pin below it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+
       - name: Install root dependencies
         id: install
         run: bun install --frozen-lockfile
@@ -196,6 +201,11 @@ jobs:
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
+
+      # Node 24.20+ rejects the structure lint's schema lookups (tdegrunt/jsonschema#423); pin below it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
 
       - name: Install root dependencies
         run: bun install --frozen-lockfile
