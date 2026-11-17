@@ -40,7 +40,6 @@ export function runSendSideNaming(input: {
         chatId: input.chatId,
         subChatId: input.subChatId,
         projectId: input.projectId || null,
-        projectPath: null,
         rawUserMessage: text,
         isFirstSubChat: oldest?.id === input.subChatId,
       });
