@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ReactNode, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -32,21 +32,32 @@ vi.mock('@/components/ui/context-menu', () => ({
 }));
 
 const main = { id: 'app', name: 'app', path: '/w/app', workingPath: '/w/app', branch: 'feat' };
-const project = (name: string) => ({ id: name, name, path: `/w/${name}` });
+const project = (name: string) => ({ id: name, name, path: `/w/${name}`, missing: false });
 
-/** The layout around a stand-in for the chat's tree: a focusable tree holding a text field. */
+/** The layout around a stand-in for the chat's tree: a focusable tree holding a text field. An
+ *  unlink succeeds after a tick unless `unlink` says it fails then, or never settles. */
 function Harness({
   initial,
   chatId = 'chat-1',
   onCreateInMain = () => {},
+  unlink = 'succeeds',
 }: {
   initial: string[];
   chatId?: string;
   onCreateInMain?: (type: 'file' | 'folder') => void;
+  unlink?: 'succeeds' | 'fails' | 'hangs';
 }) {
   const [names, setNames] = useState(initial);
   const [expanded, setExpanded] = useState(true);
-  const remove = (id: string) => setNames((current) => current.filter((name) => name !== id));
+  const [, setUnlinking] = useState(false);
+  // As the real hook does: it renders again as the unlink starts, before the row goes.
+  const remove = (id: string, options?: { onError?: () => void }) => {
+    setUnlinking(true);
+    if (unlink === 'succeeds') {
+      setTimeout(() => setNames((current) => current.filter((name) => name !== id)));
+    }
+    if (unlink === 'fails') setTimeout(() => options?.onError?.());
+  };
   return (
     <TooltipProvider>
       <TreeRootsLayout
@@ -65,14 +76,19 @@ function Harness({
       <button type="button" onClick={() => setNames((current) => [...current, 'api'])}>
         Add api
       </button>
+      {/* Another window unlinks every project, or the chat's links change */}
+      <button type="button" onClick={() => setNames([])}>
+        Drop all
+      </button>
+      <input aria-label="composer" />
     </TooltipProvider>
   );
 }
 
 const chatTree = () => screen.getByRole('tree', { name: 'app file tree', hidden: true });
-const thisChatRow = () => screen.getByRole('button', { name: /^app This chat/, hidden: true });
+const mainRow = () => screen.getByRole('button', { name: /^app Main/, hidden: true });
 const rootRow = (name: string) =>
-  screen.getByRole('button', { name: new RegExp(`^${name} Browsing`) });
+  screen.getByRole('button', { name: new RegExp(`^${name} Linked`) });
 
 afterEach(() => {
   cleanup();
@@ -83,59 +99,90 @@ describe('TreeRootsLayout', () => {
     render(<Harness initial={[]} />);
     fireEvent.change(screen.getByLabelText('open folder'), { target: { value: 'src' } });
 
-    expect(screen.queryByRole('button', { name: /This chat/ })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Browsing/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Main/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Linked/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add api' }));
 
     expect(screen.getByLabelText('open folder')).toHaveValue('src');
   });
 
-  it("puts This chat first, then the chat's tree, then each project in the order added", () => {
+  it("puts Main first, then the chat's tree, then each linked project in order", () => {
     render(<Harness initial={['api', 'web']} />);
 
-    const inOrder = [thisChatRow(), chatTree(), rootRow('api'), rootRow('web')];
+    const inOrder = [mainRow(), chatTree(), rootRow('api'), rootRow('web')];
     for (const [index, element] of inOrder.slice(1).entries()) {
       expect(inOrder[index].compareDocumentPosition(element)).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING,
       );
     }
-    expect(thisChatRow()).toHaveAccessibleName('app This chat on branch feat');
-    expect(screen.queryByRole('button', { name: /^Remove app/ })).not.toBeInTheDocument();
+    expect(mainRow()).toHaveAccessibleName('app Main on branch feat');
+    expect(screen.queryByRole('button', { name: /^Unlink app/ })).not.toBeInTheDocument();
+    expect(rootRow('api').parentElement).toContainElement(screen.getByLabelText('Unlink api'));
+    fireEvent.focus(mainRow());
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      /^The working folder, branch, worktree and CLAUDE\.md come from here\.\/w\/app$/,
+    );
   });
 
-  it("hides the chat's tree under a closed This chat row without unmounting it", async () => {
+  it("hides the chat's tree under a closed Main row without unmounting it", async () => {
     render(<Harness initial={['api']} />);
     fireEvent.change(screen.getByLabelText('open folder'), { target: { value: 'src' } });
 
-    await userEvent.click(thisChatRow());
+    await userEvent.click(mainRow());
 
-    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'false');
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'false');
     expect(chatTree()).not.toBeVisible();
     expect(rootRow('api')).toBeVisible();
-    await userEvent.click(thisChatRow());
+    await userEvent.click(mainRow());
     expect(screen.getByLabelText('open folder')).toHaveValue('src');
   });
 
   it.each([
     ['the next project', ['api', 'web'], 'api', () => rootRow('web')],
-    ['This chat after the last project', ['api', 'web'], 'web', thisChatRow],
+    ['Main after the last project', ['api', 'web'], 'web', mainRow],
     ["the chat's tree once no project is left", ['api'], 'api', chatTree],
-  ])('moves focus to %s when the x removes a project', async (_, initial, removed, expected) => {
+  ])(
+    'moves focus to %s once the x has unlinked a project',
+    async (_, initial, removed, expected) => {
+      const user = userEvent.setup();
+      render(<Harness initial={initial} />);
+      screen.getByRole('button', { name: `Unlink ${removed}` }).focus();
+
+      await user.keyboard('{Enter}');
+
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: `Unlink ${removed}` })).toBeNull(),
+      );
+      expect(expected()).toHaveFocus();
+    },
+  );
+
+  it.each([
+    ['fails', 'chat-1'],
+    ['is still on its way when the chat changes', 'chat-2'],
+  ] as const)('moves no focus later once an unlink %s', async (_, laterChatId) => {
     const user = userEvent.setup();
-    render(<Harness initial={initial} />);
-    screen.getByRole('button', { name: `Remove ${removed} from this tree` }).focus();
-
+    const unlink = laterChatId === 'chat-1' ? 'fails' : 'hangs';
+    const { rerender } = render(<Harness initial={['api', 'web']} unlink={unlink} />);
+    screen.getByRole('button', { name: 'Unlink api' }).focus();
     await user.keyboard('{Enter}');
+    // Let a failed unlink report back.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.getByRole('button', { name: 'Unlink api' })).toHaveFocus();
 
-    expect(screen.queryByRole('button', { name: `Remove ${removed} from this tree` })).toBeNull();
-    expect(expected()).toHaveFocus();
+    screen.getByLabelText('composer').focus();
+    rerender(<Harness initial={['api', 'web']} unlink={unlink} chatId={laterChatId} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Drop all' }));
+
+    expect(screen.queryByRole('button', { name: 'Unlink api' })).toBeNull();
+    expect(screen.getByLabelText('composer')).toHaveFocus();
   });
 
-  it("offers New File and New Folder on This chat, opening the chat's tree first", async () => {
+  it("offers New File and New Folder on Main, opening the chat's tree first", async () => {
     const onCreateInMain = vi.fn();
     render(<Harness initial={['api']} onCreateInMain={onCreateInMain} />);
-    await userEvent.click(thisChatRow());
+    await userEvent.click(mainRow());
     expect(chatTree()).not.toBeVisible();
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'New Folder...' }));
@@ -144,16 +191,16 @@ describe('TreeRootsLayout', () => {
     expect(chatTree()).toBeVisible();
   });
 
-  it("focuses the chat's tree, or This chat while it has the tree closed", async () => {
+  it("focuses the chat's tree, or Main while it has the tree closed", async () => {
     render(<Harness initial={['api']} />);
 
     focusChatTree(chatTree());
     expect(chatTree()).toHaveFocus();
 
-    await userEvent.click(thisChatRow());
+    await userEvent.click(mainRow());
     rootRow('api').focus();
     focusChatTree(chatTree());
-    expect(thisChatRow()).toHaveFocus();
+    expect(mainRow()).toHaveFocus();
   });
 
   it("starts each project's section afresh in another chat", async () => {

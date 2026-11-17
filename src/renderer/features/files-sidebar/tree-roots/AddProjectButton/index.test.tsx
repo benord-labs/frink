@@ -7,7 +7,6 @@ import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
-import { chatTreeProjectIdsAtomFamily } from '@/lib/workspace-context/tree-projects';
 import { AddProjectButton } from '.';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -39,9 +38,22 @@ const CHATS: Record<string, unknown> = {
 let projectsReady = Promise.resolve();
 /** What projects.list answers; a test can add to it */
 let projects = PROJECTS;
+/** The projects linked to app-chat */
+let linked: object[] = [];
 
 async function answer(op: Operation): Promise<unknown> {
-  if (op.path === 'chats.get') return CHATS[(op.input as { id: string }).id] ?? null;
+  if (op.path === 'chats.get') {
+    const chat = CHATS[(op.input as { id: string }).id];
+    return chat && { ...chat, linkedProjects: chat === CHATS['app-chat'] ? linked : [] };
+  }
+  if (op.path === 'chats.linkProject') {
+    const { projectId } = op.input as { projectId: string };
+    linked = [
+      ...linked,
+      { ...projects.find((project) => project.id === projectId), missing: false },
+    ];
+    return { success: true };
+  }
   if (op.path === 'changes.getBranches') return { current: 'main' };
   if (op.path === 'projects.list') return projectsReady.then(() => projects);
   throw new Error(`Unexpected test operation: ${op.path}`);
@@ -62,7 +74,7 @@ function renderButtons(chatIds: string[], getMentionTexts?: () => string[]) {
   return { store, user: userEvent.setup() };
 }
 
-const addButton = () => screen.findByRole('button', { name: 'Add project' });
+const addButton = () => screen.findByRole('button', { name: 'Link project' });
 /** Each listed row's folder, in order */
 const rowPaths = () => screen.queryAllByRole('menuitem').map((row) => row.getAttribute('title'));
 
@@ -70,6 +82,7 @@ afterEach(() => {
   cleanup();
   projectsReady = Promise.resolve();
   projects = PROJECTS;
+  linked = [];
 });
 
 describe('AddProjectButton', () => {
@@ -83,23 +96,23 @@ describe('AddProjectButton', () => {
     await user.click(await addButton());
     await screen.findByRole('menuitem', { name: 'api' });
 
-    expect(screen.getAllByRole('button', { name: 'Add project' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Link project' })).toHaveLength(1);
   });
 
-  it("adds the picked project to the chat's tree, offering only the other projects", async () => {
-    const { store, user } = renderButtons(['app-chat']);
+  it('links the picked project to the chat, offering only the other projects', async () => {
+    const { user } = renderButtons(['app-chat']);
 
     await user.click(await addButton());
     const rows = await screen.findAllByRole('menuitem');
     expect(rows.map((row) => row.getAttribute('title'))).toEqual(['/w/api', '/forks/app']);
     // The other 'app' shows its folder, to tell it from the chat's own project
     expect(within(rows[1]).getByText('forks')).toBeInTheDocument();
-    expect(screen.getByRole('note')).toHaveTextContent(
-      /^Only changes this chat's file tree\. The chat, its agent and its branch stay on app\.$/,
+    expect(screen.getByRole('note').textContent).toBe(
+      "Linked projects are saved on this chat. The agent can read them without asking; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on app.",
     );
     await user.click(screen.getByRole('menuitem', { name: 'api' }));
 
-    expect(store.get(chatTreeProjectIdsAtomFamily('app-chat'))).toEqual(['api']);
+    await waitFor(() => expect(linked).toMatchObject([{ id: 'api' }]));
   });
 
   it("reads the chat's messages each time the list opens, and lists the projects they name first", async () => {
@@ -154,7 +167,7 @@ describe('AddProjectButton', () => {
       </Provider>
     );
     const { rerender } = renderWithTrpc(ui('app-chat'), answer);
-    const [button] = await screen.findAllByRole('button', { name: 'Add project' });
+    const [button] = await screen.findAllByRole('button', { name: 'Link project' });
     await userEvent.setup().click(button);
     await screen.findByRole('menuitem', { name: /Mentioned in this chat/ });
 
@@ -164,13 +177,11 @@ describe('AddProjectButton', () => {
     expect(screen.queryByText('Mentioned in this chat')).not.toBeInTheDocument();
   });
 
-  it('is named Add project and explains itself in a tooltip', async () => {
+  it('is named Link project and explains itself in a tooltip', async () => {
     renderButtons(['app-chat']);
 
     fireEvent.focus(await addButton());
 
-    expect(screen.getByRole('tooltip')).toHaveTextContent(
-      'Add another project to this tree to browse its files',
-    );
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Link another project to this chat');
   });
 });

@@ -75,7 +75,7 @@ function emptyText(status: Props['status'], total: number, query: string): strin
   if (total > 0) return `No projects match “${query}”.`;
   if (status === 'pending') return 'Loading projects…';
   if (status === 'error') return "Can't load your projects.";
-  return 'No other projects to add.';
+  return 'No other projects to link.';
 }
 
 /** A searchable list of projects in a popover. Picking one closes it. */

@@ -5,7 +5,6 @@ import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type OpenFile, openFilesAtom } from '@/lib/code-editor/state';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
-import { chatTreeProjectIdsAtomFamily } from './tree-projects';
 import { useSettleBrowsedTabsForChat } from './use-settle-browsed-tabs-for-chat';
 import { useTreeProjects } from './use-tree-projects';
 
@@ -27,16 +26,23 @@ const browsed: OpenFile = {
   isOtherProject: true,
 };
 
-let releaseList: () => void = () => {};
-let listReady = Promise.resolve();
+let releaseChat: () => void = () => {};
+let chatReady = Promise.resolve();
 
 async function answer(op: Operation): Promise<unknown> {
-  if (op.path === 'chats.get') return { worktreePath: null, branch: null, project: app };
-  if (op.path === 'changes.getBranches') return { current: 'main' };
-  if (op.path === 'projects.list') {
-    await listReady;
-    return [app, api];
+  if (op.path === 'chats.get') {
+    // Only chat B links api.
+    const { id } = op.input as { id: string };
+    await chatReady;
+    return {
+      worktreePath: null,
+      branch: null,
+      project: app,
+      linkedProjects: id === 'chat-b' ? [api] : [],
+    };
   }
+  if (op.path === 'changes.getBranches') return { current: 'main' };
+  if (op.path === 'projects.list') return [app, api];
   throw new Error(`Unexpected test operation: ${op.path}`);
 }
 
@@ -54,11 +60,10 @@ function Probe({ chatId }: { chatId: string }) {
   return null;
 }
 
-/** Shows chat A with the tab open, and api already in chat B's file tree. */
+/** Shows chat A with the tab open; chat B links api. */
 function renderOnChatA() {
   const store = createStore();
   store.set(openFilesAtom, [browsed]);
-  store.set(chatTreeProjectIdsAtomFamily('chat-b'), ['api']);
   const view = renderWithTrpc(
     <Provider store={store}>
       <Probe chatId="chat-a" />
@@ -77,11 +82,11 @@ function renderOnChatA() {
 afterEach(() => {
   cleanup();
   seen.main = null;
-  listReady = Promise.resolve();
+  chatReady = Promise.resolve();
 });
 
 describe('useSettleBrowsedTabsForChat', () => {
-  it("keeps a tab of a project in the incoming chat's tree on a switch to that chat", async () => {
+  it('keeps a tab of a project the incoming chat links on a switch to that chat', async () => {
     const { store, showChat } = renderOnChatA();
 
     showChat('chat-b');
@@ -91,18 +96,18 @@ describe('useSettleBrowsedTabsForChat', () => {
     );
   });
 
-  it("settles nothing until the incoming chat's tree has its project list", async () => {
-    listReady = new Promise((resolve) => {
-      releaseList = resolve;
-    });
+  it('settles nothing until the incoming chat says which projects it links', async () => {
     const { store, showChat } = renderOnChatA();
+    await waitFor(() => expect(seen.main).toMatchObject({ id: 'app' }));
+    chatReady = new Promise((resolve) => {
+      releaseChat = resolve;
+    });
 
     showChat('chat-c');
-    // Chat C has its project, but the list that says what else is in its tree hasn't come yet.
-    await waitFor(() => expect(seen.main).toMatchObject({ id: 'app' }));
+    expect(seen.main).toBeNull();
     expect(store.get(openFilesAtom)).toEqual([browsed]);
 
-    releaseList();
+    releaseChat();
     await waitFor(() => expect(store.get(openFilesAtom)).toEqual([]));
   });
 });

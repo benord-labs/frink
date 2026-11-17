@@ -111,7 +111,7 @@ type PaneFileTreeProps = {
   isWorktree?: boolean;
   /** Collapses the file tree in split view (header close control). */
   onClose?: () => void;
-  /** The chat's loaded message texts, for listing the projects they name first in Add project */
+  /** The chat's loaded message texts, for listing the projects they name first in Link project */
   getMentionTexts?: () => string[];
 };
 
@@ -137,7 +137,7 @@ export type PaneFileTreeHandle = {
   clearSelection?: () => void;
   /** Activate "Search" tab in this pane's file tree. */
   activateSearch?: () => void;
-  /** Whether the chat's own tree is collapsed under its "This chat" row. */
+  /** Whether the chat's own tree is collapsed under its "Main" row. */
   getIsMainRootHidden?: () => boolean;
 };
 

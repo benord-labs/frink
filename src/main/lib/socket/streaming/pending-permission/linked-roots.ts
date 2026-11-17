@@ -1,6 +1,7 @@
 import log from 'electron-log';
 import type { getDatabase } from '../../../db';
 import { listLinkedProjectRoots, liveLinks } from '../../../db/repos/chat-linked-projects';
+import { getProjectById } from '../../../db/repos/projects';
 import { getProjectDoc } from '../../../permissions/v2/store-local';
 import type { LinkedRoot, PermissionsDoc } from '../../../permissions/v2/types';
 
@@ -38,4 +39,18 @@ export async function loadLinkedRoots(
   return Promise.all(
     links.map(async (link) => ({ ...link, doc: await loadDoc(db, link.projectId) })),
   );
+}
+
+/** The name of the linked project whose own rule decided a call, so the card and the agent's deny
+ * message can name it. Undefined when there is none or it cannot be read. */
+export async function linkedProjectName(
+  db: Db,
+  projectId: string | undefined,
+): Promise<string | undefined> {
+  if (!projectId) return undefined;
+  try {
+    return (await getProjectById(db, projectId))?.name;
+  } catch {
+    return undefined;
+  }
 }

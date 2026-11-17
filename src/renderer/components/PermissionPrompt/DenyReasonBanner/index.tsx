@@ -8,11 +8,22 @@ type DenyReasonBannerProps = {
 export const DenyReasonBanner = memo(function DenyReasonBanner({ prompt }: DenyReasonBannerProps) {
   if (prompt.reason === 'rule:ask') {
     if (!prompt.matchedRule || !prompt.matchedTier) return null;
+    const linkedName = prompt.matchedProjectName;
     return (
       <p className="text-[10px] text-muted-foreground leading-relaxed">
         Asking because of rule{' '}
-        <code className="font-mono text-foreground">{prompt.matchedRule}</code> at{' '}
-        <span className="font-medium text-foreground">{prompt.matchedTier}</span> scope.
+        <code className="font-mono text-foreground">{prompt.matchedRule}</code>{' '}
+        {/* A rule saved on a project linked to the chat is named by that project, not its scope. */}
+        {prompt.matchedProjectId ? (
+          <>
+            saved on {linkedName ? 'linked project ' : 'a linked project'}
+            {linkedName && <span className="font-medium text-foreground">{linkedName}</span>}.
+          </>
+        ) : (
+          <>
+            at <span className="font-medium text-foreground">{prompt.matchedTier}</span> scope.
+          </>
+        )}
       </p>
     );
   }

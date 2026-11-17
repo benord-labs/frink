@@ -1,10 +1,10 @@
 /**
- * Whether a chat's own files show under its "This chat" row, for the file tree hosts that hold it.
+ * Whether a chat's own files show under its "Main" row, for the file tree hosts that hold it.
  */
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 /**
- * The open state of the "This chat" row in `chatId`'s file tree. Each chat's tree starts open, and
+ * The open state of the "Main" row in `chatId`'s file tree. Each chat's tree starts open, and
  * it opens again once no other project is left, so a project added later never hides it.
  * `isHidden` reads the latest value when called, so a shortcut held by a parent that does not
  * re-render when the row toggles still sees it.

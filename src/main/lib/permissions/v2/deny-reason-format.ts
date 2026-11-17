@@ -11,10 +11,12 @@
 
 import type { DenyReason } from './types';
 
-export function formatDenyReason(reason: DenyReason): string {
+/** `linkedProjectName` names the linked project a `rule:deny` with a `projectId` comes from. */
+export function formatDenyReason(reason: DenyReason, linkedProjectName?: string): string {
   switch (reason.kind) {
     case 'rule:deny':
-      return `Denied by ${reason.tier}-tier rule ${reason.rule}`;
+      if (!reason.projectId) return `Denied by ${reason.tier}-tier rule ${reason.rule}`;
+      return `Denied by rule ${reason.rule} saved on ${linkedProjectName ? `linked project ${linkedProjectName}` : 'a linked project'}`;
     case 'safety:path':
       return `Path is denied by safety policy: ${reason.path}`;
     case 'db:unavailable':

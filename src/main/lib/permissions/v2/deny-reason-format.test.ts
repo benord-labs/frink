@@ -12,6 +12,19 @@ describe('formatDenyReason', () => {
     expect(formatDenyReason(reason)).toMatch(pattern);
   });
 
+  it.each([
+    ['lib', 'Denied by rule Read(secrets/**) saved on linked project lib'],
+    [undefined, 'Denied by rule Read(secrets/**) saved on a linked project'],
+  ])('names the linked project a rule is saved on (%s)', (name, message) => {
+    const reason: DenyReason = {
+      kind: 'rule:deny',
+      rule: 'Read(secrets/**)',
+      tier: 'project',
+      projectId: 'p',
+    };
+    expect(formatDenyReason(reason, name)).toBe(message);
+  });
+
   it('every kind produces a non-empty string', () => {
     const cases: DenyReason[] = [
       { kind: 'rule:deny', rule: 'X', tier: 'policy' },

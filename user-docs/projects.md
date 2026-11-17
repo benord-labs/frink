@@ -14,7 +14,7 @@ No project, no folder. The agent can answer questions, explain things, and help 
 
 Pick **General chat** explicitly if you want the picker to say so.
 
-**What the agent can run here.** A general chat works from your home folder and is governed by the same permission rules as any project chat. For **commands**, Frink asks the first time and **Allow on this machine** saves the approval machine-wide, never asking for that command again. File **writes and edits** ask each time on Claude and Codex, with no save option yet in a general chat (a rule added in Settings can cover them). File **reads** prompt on Claude only; Codex never prompts a read. Frink also keeps a built-in deny list for credential paths (`~/.ssh`, `~/.aws`, `.env` files) on the surfaces it gates — it is a static check, not a sandbox, so some paths around it exist (search tools, Codex reads, commands whose targets Frink can't resolve). [Permissions](./permissions.md#whats-always-blocked-system-deny-list) states the exact coverage; OS-level sandboxing to close these structurally is the planned follow-up.
+**What the agent can run here.** A general chat works from your home folder and is governed by the same permission rules as any project chat. For **commands**, Frink asks the first time and **Allow on this machine** saves the approval machine-wide, never asking for that command again. File **writes and edits** ask each time on Claude and Codex, with no save option yet in a general chat (a rule added in Settings can cover them). File **reads** prompt on Claude. Codex reads files by running commands, so a read there asks like any other command. Frink also keeps a built-in deny list for credential paths (`~/.ssh`, `~/.aws`, `.env` files) on the surfaces it gates — it is a static check, not a sandbox, so some paths around it exist (search tools, Codex reads, commands whose targets Frink can't resolve). [Permissions](./permissions.md#whats-always-blocked-system-deny-list) states the exact coverage; OS-level sandboxing to close these structurally is the planned follow-up.
 
 **Auto works here too.** [Auto permission mode](./permissions.md#auto-permission-mode) is available in a general chat on Claude and Codex, exactly as it is in a project chat. Worth knowing before you switch it on: Auto lets the agent change files inside the folder the chat works in without asking, and a general chat's folder is your **whole home folder** — including other projects on disk. The credential deny list above still applies. If you want that freedom scoped to one repo, open it as a project instead.
 
@@ -51,4 +51,11 @@ Both give you a project; they differ only in **where the folder lives and whethe
 
 The picker only sets the context for the chat you're about to start. Open a new chat and it resets to **Open project** (general chat on send) — your previous projects are always one click away in the list.
 
-A chat has one project at a time, but you can browse your other projects' files from its file tree without changing that project; see [Browse another project's files](./files.md#browse-another-projects-files).
+## Linked projects
+
+A chat has one main project. The chat's working folder, branch, worktree and `CLAUDE.md` come from it. You can also link your other projects to the chat with **Link project** in its file tree; see [Link another project](./files.md#link-another-project). Claude, OpenCode and Copilot can read and search a linked project without asking, and Cursor can read it. Codex reads files by running commands, which are checked as usual. With each message you send, Frink tells the agent which projects are linked. Changes there are handled like any change outside the chat's folder. [Permissions](./permissions.md#linked-projects) has the details for each provider.
+
+- A linked project is its registered folder, on whatever branch is checked out there. Its row in the file tree shows that branch.
+- General chats and chats in a virtual folder can't link projects.
+- Moving a chat into one of its linked projects makes that project its main project.
+- **Fork chat** keeps the chat's links on the copy.

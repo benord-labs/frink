@@ -856,37 +856,39 @@ const pressDeleteAndNewFile = (target: Element) => {
 
 describe('PaneFileTree with another project in the tree', () => {
   const api = { id: 'api', name: 'api', path: '/w/api' };
-  const thisChatRow = () => screen.getByRole('button', { name: 'proj This chat on branch main' });
+  const mainRow = () => screen.getByRole('button', { name: 'proj Main on branch main' });
   const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
   const sectionButton = () => screen.getByRole('button', { name: 'Remove api' });
 
-  it("shows This chat and the project outside the chat's tree, counted in the footer", () => {
+  it("shows Main and the project outside the chat's tree, counted in the footer", () => {
     treeState.extras = [api];
     searchState.debouncedQuery = 'src';
     render(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" isWorktree={false} />);
     const section = screen.getByRole('region', { name: 'api' });
 
-    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'true');
     // The chat's tree takes its keys and pastes on its own element, so they never reach the section.
     expect(chatTree().contains(section)).toBe(false);
     expect(section).toHaveAttribute('data-query', 'src');
     expect(screen.getByText('2 projects in this tree')).toBeInTheDocument();
 
     fireEvent.click(sectionButton());
-    expect(treeState.remove).toHaveBeenCalledExactlyOnceWith('api');
+    expect(treeState.remove).toHaveBeenCalledExactlyOnceWith('api', {
+      onError: expect.any(Function),
+    });
   });
 
-  it("closes the chat's tree on Enter on This chat, without renaming the selected file", async () => {
+  it("closes the chat's tree on Enter on Main, without renaming the selected file", async () => {
     treeState.extras = [api];
     mockState.primary = { path: 'src/a.ts', name: 'a.ts', type: 'file' };
     const handle = createRef<PaneFileTreeHandle>();
     render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="chat-1" />);
     expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
 
-    thisChatRow().focus();
+    mainRow().focus();
     await userEvent.keyboard('{Enter}');
 
-    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'false');
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'false');
     expect(chatTree()).not.toBeVisible();
     expect(handle.current?.getIsMainRootHidden?.()).toBe(true);
     expect(fileTreePropsState.renamingPath).toBeNull();
@@ -908,20 +910,20 @@ describe('PaneFileTree with another project in the tree', () => {
     expect(actions.onSetRootCreating).toHaveBeenCalledTimes(calls);
   });
 
-  it('Cmd+Backspace and Cmd+Shift+N skip a closed This chat and act once it opens again', () => {
+  it('Cmd+Backspace and Cmd+Shift+N skip a closed Main and act once it opens again', () => {
     treeState.extras = [api];
     const { actions, rerenderContainer } = renderPaneWithShortcuts();
 
     // The container doesn't re-render, so it still holds the handle from before the row closed.
-    fireEvent.click(thisChatRow());
-    pressDeleteAndNewFile(thisChatRow());
+    fireEvent.click(mainRow());
+    pressDeleteAndNewFile(mainRow());
     expect(actions.onDeleteFile).not.toHaveBeenCalled();
     expect(actions.onSetRootCreating).not.toHaveBeenCalled();
 
     // Now it holds one from while the row was closed.
     rerenderContainer();
-    fireEvent.click(thisChatRow());
-    pressDeleteAndNewFile(thisChatRow());
+    fireEvent.click(mainRow());
+    pressDeleteAndNewFile(mainRow());
     expect(actions.onDeleteFile).toHaveBeenCalledExactlyOnceWith('src/a.ts');
     expect(actions.onSetRootCreating).toHaveBeenCalledExactlyOnceWith('file');
   });
@@ -937,7 +939,7 @@ describe('PaneFileTree with another project in the tree', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Add project' }));
+    await user.click(screen.getByRole('button', { name: 'Link project' }));
     await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
     expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
 
@@ -950,24 +952,24 @@ describe('PaneFileTree with another project in the tree', () => {
     expect(chatTree()).toHaveFocus();
   });
 
-  it('opens This chat again for another chat, and once no other project is left', () => {
+  it('opens Main again for another chat, and once no other project is left', () => {
     treeState.extras = [api];
     const handle = createRef<PaneFileTreeHandle>();
     const { rerender } = render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="a" />);
     const showChat = (chatId: string) =>
       rerender(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId={chatId} />);
 
-    fireEvent.click(thisChatRow());
+    fireEvent.click(mainRow());
     showChat('b');
-    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'true');
     expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
 
-    fireEvent.click(thisChatRow());
+    fireEvent.click(mainRow());
     treeState.extras = [];
     showChat('b');
     treeState.extras = [api];
     showChat('b');
-    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'true');
     expect(chatTree()).toBeVisible();
   });
 });
@@ -1029,8 +1031,8 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
     searchFor('useOrders');
 
     expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
-      'projThis chat',
-      'apiBrowsing',
+      'projMain',
+      'apiLinked',
     ]);
     const [own, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
     fireEvent.click(own);
@@ -1043,11 +1045,11 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
     ]);
   });
 
-  it("names the pane's folder in This chat's tooltip, the folder its matches come from", () => {
+  it("names the pane's folder in Main's tooltip, the folder its matches come from", () => {
     treeState.extras = [api];
     searchFor('useOrders', '/tmp/proj-wt');
 
-    expect(screen.getByRole('heading', { name: 'proj This chat' })).toHaveAttribute(
+    expect(screen.getByRole('heading', { name: 'proj Main' })).toHaveAttribute(
       'title',
       '/tmp/proj-wt',
     );
@@ -1070,8 +1072,8 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
       '/w/api': matchesIn('api', 55),
     };
     showSearchTab();
-    const own = () => section('proj This chat');
-    const browsed = () => section('api Browsing');
+    const own = () => section('proj Main');
+    const browsed = () => section('api Linked');
     const shown = (part: ReturnType<typeof section>) =>
       part.getAllByRole('button', { name: /useOrders/ }).length;
 

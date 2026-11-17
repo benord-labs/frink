@@ -38,7 +38,7 @@ type UseFileTreeShortcutsParams = {
   onBatchDelete?: (paths: string[]) => void;
   /** Get all selected paths for batch operations. */
   getSelectedPaths?: () => string[];
-  /** Whether the chat's own tree is collapsed under its "This chat" row, read at each key press. */
+  /** Whether the chat's own tree is collapsed under its "Main" row, read at each key press. */
   isMainRootHidden?: () => boolean;
 };
 

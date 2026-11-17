@@ -72,7 +72,7 @@ type Props = {
   chatId?: string;
   /** Current chat worktree path (when chat is running in a worktree). */
   worktreePath?: string;
-  /** The chat's loaded message texts, for listing the projects they name first in Add project */
+  /** The chat's loaded message texts, for listing the projects they name first in Link project */
   getMentionTexts?: () => string[];
 };
 
@@ -515,7 +515,7 @@ export function FilesSidebar({
   const getVisiblePathsCallback = useCallback(() => getVisiblePaths(treeContainerRef.current), []);
 
   // Focus the tree when requested by the toggle-files shortcut (Cmd+Shift+F opening), or its
-  // "This chat" row while that row has the tree closed
+  // "Main" row while that row has the tree closed
   useEffect(() => {
     const handleFocusTree = () => focusChatTree(treeContainerRef.current);
     window.addEventListener('file-tree:focus', handleFocusTree);

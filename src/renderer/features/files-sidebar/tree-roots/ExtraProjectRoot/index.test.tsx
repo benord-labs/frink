@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { DndContext, useDndContext } from '@dnd-kit/core';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import type { ComponentProps, ReactNode } from 'react';
@@ -28,6 +28,7 @@ const api = vi.hoisted(() => {
     searchQuery: vi.fn((_input: unknown, _options: unknown) => ({ data: state.searchResults })),
     invalidateList: vi.fn(),
     invalidateBranches: vi.fn(),
+    invalidateChat: vi.fn(),
     listChildren: vi.fn(),
     subscribeToGitWatcher: vi.fn(),
   };
@@ -42,6 +43,7 @@ vi.mock('@/lib/trpc', () => ({
         entryType: { invalidate: vi.fn() },
       },
       changes: { getBranches: { invalidate: api.invalidateBranches } },
+      chats: { get: { invalidate: api.invalidateChat } },
     }),
     files: {
       listDirectory: { useQuery: api.listQuery },
@@ -90,7 +92,7 @@ function renderRoot(
       </TooltipProvider>
     </Provider>,
   );
-  const tree = screen.getByRole('tree', { name: 'api file tree', hidden: true });
+  const tree = screen.getByRole('tree', { name: 'api file tree, linked', hidden: true });
   return { store, onRemove, tree, row: screen.getByRole('button', { name: /^api/ }) };
 }
 
@@ -143,12 +145,41 @@ describe('ExtraProjectRoot', () => {
     expect(within(tree).getByRole('treeitem', { name: 'a.ts' })).toBeVisible();
     expect(api.invalidateList).toHaveBeenCalledWith({ projectPath: '/w/api' });
     await waitFor(() => expect(api.listChildren).toHaveBeenCalledTimes(folderReads + 1));
+    // The folder was there, so the chat isn't asked about it again.
+    expect(api.invalidateChat).not.toHaveBeenCalled();
   });
 
-  it('takes the project out of the tree from its x', async () => {
+  it('unlinks the project from its x', async () => {
     const { onRemove } = renderRoot();
-    await userEvent.click(screen.getByRole('button', { name: 'Remove api from this tree' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Unlink api' }));
     expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it('says a linked folder that is gone is missing, and reads neither it nor its branch', () => {
+    renderRoot({ project: { id: 'api', name: 'api', path: '/w/api', missing: true } });
+
+    expect(screen.getByRole('status')).toHaveTextContent(/^Can't find api's folder\.$/);
+    expect(screen.getByRole('button', { name: /^api/ })).toHaveAccessibleName(
+      'api Linked folder missing',
+    );
+    expect(api.listQuery).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
+  });
+
+  it('keeps a missing folder marked on its row while closed, and looks for it again on opening', async () => {
+    const user = userEvent.setup();
+    const { row } = renderRoot({
+      project: { id: 'api', name: 'api', path: '/w/api', missing: true },
+    });
+
+    await user.click(row);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(row).toHaveAccessibleName('api Linked folder missing');
+    fireEvent.focus(row);
+    expect(screen.getByRole('tooltip')).toHaveTextContent("Can't find api's folder.");
+    expect(api.invalidateChat).not.toHaveBeenCalled();
+
+    await user.click(row);
+    expect(api.invalidateChat).toHaveBeenCalledExactlyOnceWith({ id: 'chat-1' });
   });
 
   it("opens a file as the chat's browsed tab and never as its context file", async () => {
@@ -284,8 +315,8 @@ describe('ExtraProjectRoot', () => {
   });
 
   it.each([
-    ['shows the branch checked out', { data: { current: 'main' } }, 'api Browsing on branch main'],
-    ['shows no branch when it cannot be read', { isError: true }, 'api Browsing'],
+    ['shows the branch checked out', { data: { current: 'main' } }, 'api Linked on branch main'],
+    ['shows no branch when it cannot be read', { isError: true }, 'api Linked'],
   ])('%s', (_, branches, name) => {
     api.state.branches = branches;
     renderRoot();
@@ -341,7 +372,7 @@ describe('ExtraProjectRoot', () => {
     };
 
     expect(
-      within(screen.getByRole('tree', { name: 'api file tree' })).getAllByRole('treeitem'),
+      within(screen.getByRole('tree', { name: 'api file tree, linked' })).getAllByRole('treeitem'),
     ).toHaveLength(2);
     expectMainTreeRegistered();
     rerender(panes(false));

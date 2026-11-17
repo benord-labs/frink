@@ -1,5 +1,5 @@
 import { Badge, Button } from '@benord-labs/frink-primitives';
-import { ChevronRight, GitBranch, type LucideIcon, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, GitBranch, type LucideIcon, X } from 'lucide-react';
 import type { KeyboardEvent, ReactElement } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -7,12 +7,17 @@ import { cn } from '@/lib/utils';
 /** Each role's tint. The label always says the role too, so colour is never the only cue. */
 const BADGE_TONES = {
   main: 'bg-foreground/5 text-muted-foreground',
-  browse: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
   linked: 'bg-primary/10 text-primary',
 };
 
-/** What a project is to its tree, e.g. "Browsing"; `tone` tints it, neutral by default */
-type RootBadgeProps = { label: string; icon?: LucideIcon; tone?: keyof typeof BADGE_TONES };
+/** What a project is to its tree, e.g. "Linked"; `tone` tints it, neutral by default. `hint`
+ *  says what the role means, in the row's tooltip. */
+type RootBadgeProps = {
+  label: string;
+  icon?: LucideIcon;
+  tone?: keyof typeof BADGE_TONES;
+  hint?: string;
+};
 
 function RootBadge({ label, icon: Icon, tone = 'main' }: RootBadgeProps): ReactElement {
   return (
@@ -50,12 +55,14 @@ type Props = {
   path: string;
   /** The folder's current branch; nothing shows without one */
   branch?: string | null;
+  /** The folder is gone: a warning shows in place of the branch, open or closed */
+  missing?: boolean;
   badge?: RootBadgeProps;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   /** The id of the element the row shows and hides */
   controlsId: string;
-  /** Adds an x beside the row that takes the project out of the tree */
+  /** Adds an x beside the row that takes the project out of the tree, e.g. by unlinking it */
   remove?: { label: string; onRemove: () => void };
 };
 
@@ -64,6 +71,7 @@ export function ProjectRootRow({
   name,
   path,
   branch,
+  missing = false,
   badge,
   expanded,
   onExpandedChange,
@@ -104,17 +112,26 @@ export function ProjectRootRow({
             />
             <span className="truncate">{name}</span>
             {badge && <RootBadge {...badge} />}
-            {branch && (
-              <span className="flex min-w-0 items-center gap-1 font-normal text-muted-foreground">
-                <GitBranch className="size-3 shrink-0" aria-hidden />
-                <span className="sr-only">on branch</span>
-                <span className="truncate">{branch}</span>
+            {missing ? (
+              <span className="flex shrink-0 items-center text-warning">
+                <AlertTriangle className="size-3" aria-hidden />
+                <span className="sr-only">folder missing</span>
               </span>
+            ) : (
+              branch && (
+                <span className="flex min-w-0 items-center gap-1 font-normal text-muted-foreground">
+                  <GitBranch className="size-3 shrink-0" aria-hidden />
+                  <span className="sr-only">on branch</span>
+                  <span className="truncate">{branch}</span>
+                </span>
+              )
             )}
           </button>
         </TooltipTrigger>
-        <TooltipContent side="bottom" className="font-mono wrap-anywhere">
-          {path}
+        <TooltipContent side="bottom" className="wrap-anywhere">
+          {badge?.hint && <p>{badge.hint}</p>}
+          {missing && <p>{`Can't find ${name}'s folder.`}</p>}
+          <p className="font-mono">{path}</p>
         </TooltipContent>
       </Tooltip>
       {remove && (

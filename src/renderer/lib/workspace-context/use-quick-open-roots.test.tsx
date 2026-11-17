@@ -5,7 +5,6 @@ import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openFilesAtom } from '@/lib/code-editor/state';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
-import { chatTreeProjectIdsAtomFamily } from './tree-projects';
 import { useQuickOpenRoots } from './use-quick-open-roots';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -22,10 +21,18 @@ const CHATS: Record<string, unknown> = {
   'chat-b': { worktreePath: '/wt/web-1', branch: 'feat', project: web },
   'chat-c': { worktreePath: null, branch: null, project: api },
 };
-const TREES = { 'chat-a': ['docs'], 'chat-b': ['api'], 'chat-c': ['web'] };
+// chat-c's link to docs is to a folder that is gone.
+const LINKS: Record<string, object[]> = {
+  'chat-a': [docs],
+  'chat-b': [api],
+  'chat-c': [web, { ...docs, missing: true }],
+};
 
 async function answer(op: Operation): Promise<unknown> {
-  if (op.path === 'chats.get') return CHATS[(op.input as { id: string }).id] ?? null;
+  if (op.path === 'chats.get') {
+    const { id } = op.input as { id: string };
+    return CHATS[id] ? { ...CHATS[id], linkedProjects: LINKS[id] } : null;
+  }
   if (op.path === 'changes.getBranches') throw new Error('not a git repository');
   if (op.path === 'projects.list') return [app, web, api, docs];
   throw new Error(`Unexpected test operation: ${op.path}`);
@@ -44,9 +51,6 @@ const B_ROOTS = [root('/wt/web-1', 'web', true), root('/w/api', 'api')];
 
 function renderQuickOpen(input: QuickOpenInput) {
   const store = createStore();
-  for (const [chatId, ids] of Object.entries(TREES)) {
-    store.set(chatTreeProjectIdsAtomFamily(chatId), ids);
-  }
   const seen: { current?: ReturnType<typeof useQuickOpenRoots> } = {};
   function Probe() {
     seen.current = useQuickOpenRoots(input);
@@ -85,7 +89,7 @@ describe('useQuickOpenRoots', () => {
       opened: { sourceChatId: 'chat-b', sourcePaneIndex: 1, isOtherProject: true },
     },
     {
-      name: "split view: the pane chat's main folder",
+      name: "split view: the pane chat's main folder, without its missing linked folder",
       input: { pane: { index: 1, chatId: 'chat-c' }, single: SINGLE_A },
       roots: [root('/w/api', 'api', true), root('/w/web', 'web')],
       pick: 0,

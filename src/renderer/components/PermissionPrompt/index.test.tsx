@@ -305,11 +305,17 @@ describe('PermissionPrompt — DenyReasonBanner', () => {
         matchedRule: 'Glob',
         matchedTier: 'project',
         matchedProjectId: 'lib',
+        matchedProjectName: 'lib',
         suggestedRules: [],
         pathLocation: 'outside',
       },
     };
-    render(<PermissionPrompt request={req} onApprove={vi.fn()} onDeny={vi.fn()} />);
+    const { container } = render(
+      <PermissionPrompt request={req} onApprove={vi.fn()} onDeny={vi.fn()} />,
+    );
+    expect(container.textContent).toContain(
+      'Asking because of rule Glob saved on linked project lib.',
+    );
     expect(screen.getByRole('button', { name: 'Allow this time' })).toBeTruthy();
     expect(screen.queryByText('Always allow')).toBeNull();
     expect(screen.queryByRole('button', { name: 'In this project' })).toBeNull();

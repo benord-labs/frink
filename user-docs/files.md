@@ -54,35 +54,35 @@ A file opens when it is in this chat's folder or in one of your other projects:
 - A short path like `src/app.ts` always points into this chat's folder.
 - A full path, or one starting with `~/`, also opens from any other project you've added to Frink.
 
-A file from another project shows that project's name on its badge and in its tooltip. While it's open, a note above the editor says you're browsing that project; browsing doesn't change what the agent can read. When open files come from more than one project, the editor's tabs are grouped by project.
+A file from another project shows that project's name on its badge and in its tooltip, and it opens whether or not that project is linked to the chat. While it's open, a note above the editor says whether the project is linked. If it isn't and the chat can link it, the note has a **Link project** button. When open files come from more than one project, the editor's tabs are grouped by project.
 
 A badge that can't open still shows the file's path when you hover over it. In a worktree chat, a file in the project's main folder stays closed, because the chat works in its own worktree; the tooltip says so.
 
-## Browse another project's files
+## Link another project
 
-A chat works in one project, but its file tree can show your other projects too, so you can read their files without leaving the chat.
+A chat works in one project, its main project, but you can link your other projects to it. A linked project shows in the chat's file tree, and most agents can read it without asking; see [Linked projects](./projects.md#linked-projects) for each provider.
 
-1. Click **Add project** (the folder with a plus) beside the search field at the top of the file tree.
+1. Click **Link project** (the folder with a plus) beside the search field at the top of the file tree.
 2. Type to search your projects by name or folder, then pick one with the mouse, or with the arrow keys and **Enter**.
 
-The project you pick appears below the chat's own project. Each project in the tree has a row you can click to show or hide its files:
+The project you pick is linked and appears below the chat's main project. Each project in the tree has a row you can click to show or hide its files:
 
-- The chat's own project is labelled **This chat**.
-- A project you added is labelled **Browsing** and shows the branch its folder has checked out.
-- The **×** on a browsed project's row takes it out of the tree. Its files stay where they are.
+- The chat's main project is labelled **Main**. The chat's working folder, branch, worktree and `CLAUDE.md` come from it.
+- A linked project is labelled **Linked** and shows the branch its folder has checked out. If its folder is gone, the tree says it can't find it.
+- The **×** on a linked project's row unlinks it. Its files stay where they are.
 
-The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. On the **Search** tab, it looks inside the files of every project in the tree and lists the matches under each project's name, in the tree's order, each project with its own count. Click a match to open the file at that line. A browsed project's files are read again when you show them and when you come back to Frink.
+The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. On the **Search** tab, it looks inside the files of every project in the tree and lists the matches under each project's name, in the tree's order, each project with its own count. Click a match to open the file at that line. A linked project's files are read again when you show them and when you come back to Frink.
 
-Browsed projects are read-only in the tree: you can't create, rename, move, paste, drop or delete files there. You can still open a file and edit it in the editor.
+Linked projects are read-only in the tree: you can't create, rename, move, paste, drop or delete files there. You can still open a file and edit it in the editor.
 
-Browsing doesn't change the chat, its agent, its branch or what the agent can read. The list belongs to the chat, so it shows wherever the chat's file tree does, and it's cleared when Frink restarts.
+Links are saved with the chat, so they stay after Frink restarts and every window shows the same ones. The file tree, **Search files** and the **Search** tab all cover the chat's linked projects. The chat's folder, branch and worktree stay on its main project.
 
-The picker lists your other projects, except the ones already in the tree and any project inside the chat's folder or holding it. If the messages in the sub-chat you have open name a project's folder by its full path, that project is marked **Mentioned in this chat** and listed first. When you search, it comes first among the projects that match equally well. Only messages Frink has loaded are checked, so older messages you haven't scrolled back to don't count. **Add project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
+The picker lists your other projects, except the ones already linked and any project inside the chat's folder or holding it. If the messages in the sub-chat you have open name a project's folder by its full path, that project is marked **Mentioned in this chat** and listed first. When you search, it comes first among the projects that match equally well. Only messages Frink has loaded are checked, so older messages you haven't scrolled back to don't count. **Link project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
 
 ## Find a file
 
-Press **Cmd+Shift+P / Ctrl+Shift+P** (**Search files**) and type part of a file's name. Pick a result with the mouse, or with the arrow keys and **Enter**, to open it in the editor. Files you opened recently come first, then the chat's own project's files, then each browsed project's.
+Press **Cmd+Shift+P / Ctrl+Shift+P** (**Search files**) and type part of a file's name. Pick a result with the mouse, or with the arrow keys and **Enter**, to open it in the editor. Files you opened recently come first, then the chat's own project's files, then each linked project's.
 
-Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a project you're browsing shows that project's name. Search files starts with **All in this tree** each time you open it.
+Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a linked project shows that project's name. Search files starts with **All in this tree** each time you open it.
 
 In split view, Search files looks in the projects of the pane you're working in. It doesn't open for a pane with no project, such as a new chat that hasn't started yet.
