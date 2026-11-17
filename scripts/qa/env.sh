@@ -10,12 +10,10 @@ if [ "$(uname)" != "Darwin" ]; then
   exit 1
 fi
 
-QA_HOME="$HOME/.frink-qa"
 # FRINK_QA_PORT names one more rig instance, so worktrees can each run one at once: it is that
 # instance's DevTools port and, as "Frink Dev-<port>", its profile. Unset is the default instance.
 QA_CDP_PORT=9223
 QA_PROFILE_PORT=21399
-LOCK="$QA_HOME/lock.d"
 if [ -n "${FRINK_QA_PORT:-}" ]; then
   # Only a plain port the app would also name the profile by; the reserved ones are the default
   # instance's (9223, 21399) and the dev and shipped apps' own (9222, 21322, 21321).
@@ -31,7 +29,6 @@ if [ -n "${FRINK_QA_PORT:-}" ]; then
   fi
   QA_CDP_PORT=$FRINK_QA_PORT
   QA_PROFILE_PORT=$FRINK_QA_PORT
-  LOCK="$QA_HOME/lock-$FRINK_QA_PORT.d"
 fi
 # The literal prefix is on purpose: nothing a caller sets can widen seed.sh's rm -rf target.
 QA_USER_DATA="$HOME/Library/Application Support/Frink Dev-$QA_PROFILE_PORT"
@@ -39,3 +36,14 @@ QA_USER_DATA="$HOME/Library/Application Support/Frink Dev-$QA_PROFILE_PORT"
 # operator's ~/.frink (sc-2903). Under $QA_USER_DATA so the profile wipe resets it; seed.sh writes
 # the seeded MCP config here and boot.sh hands it to the app as FRINK_HOME.
 QA_FRINK_HOME="$QA_USER_DATA/home"
+# boot.sh's claim on this instance: a symlink to "<pid>:<start time>", created in one atomic step.
+# It sits in the profile, so a seed's wipe clears one left by a boot.sh that was killed.
+QA_BOOT_LOCK="$QA_USER_DATA/boot.lock"
+# A fixed locale, so every caller writes and reads the same start-time text.
+qa_started() { LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1};1'; }
+# The claiming boot.sh's pid while it runs; a reused pid has another start time, so it doesn't count.
+qa_running_pid() {
+  local claim
+  claim=$(readlink "$QA_BOOT_LOCK" 2>/dev/null) || return 1
+  [ -n "${claim%%:*}" ] && [ "$(qa_started "${claim%%:*}")" = "${claim#*:}" ] && echo "${claim%%:*}"
+}
