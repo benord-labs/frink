@@ -112,6 +112,9 @@ export function buildClaudeEnv(options?: {
   if (!env.SHELL) env.SHELL = getDefaultShell();
   if (!env.TERM) env.TERM = 'xterm-256color';
   if (isWindows() && !env.USERPROFILE) env.USERPROFILE = os.homedir();
+  // Opts out of the auto/bypass steer to edit files through Bash, which Frink's file-change UI
+  // cannot see. A non-empty value the user exported still wins.
+  if (!env.CLAUDE_CODE_THRIFTY_SONIC) env.CLAUDE_CODE_THRIFTY_SONIC = '0';
 
   // 4. Add custom overrides
   if (options?.ghToken) {

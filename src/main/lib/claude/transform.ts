@@ -159,7 +159,7 @@ function salvagePartialJsonFields(raw: string): Record<string, string> {
   return out;
 }
 
-export function createTransformer() {
+export function createTransformer(defersGoalCheck?: () => boolean) {
   let textId: string | null = null;
   let textStarted: boolean = false;
   let started: boolean = false;
@@ -192,7 +192,7 @@ export function createTransformer() {
   const partialEmissions = new Set<string>();
 
   // Session-scoped SDK state: compaction and goal cards, and context-window occupancy
-  const [mapCompaction, mapGoal] = [createCompactionMapper(), createGoalMapper()];
+  const [mapCompaction, mapGoal] = [createCompactionMapper(), createGoalMapper(defersGoalCheck)];
   const contextUsage = createContextUsageTracker();
 
   const thinking = createThinkingEmitter();

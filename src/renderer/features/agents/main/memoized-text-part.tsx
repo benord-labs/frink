@@ -1,9 +1,10 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useContext, useEffect, useMemo, useRef } from 'react';
 import {
   clearSearchHighlights,
   highlightSearchText,
 } from '@/lib/agent-chat/search/highlight-search-text';
 import { MemoizedMarkdown } from '../../../components/chat-markdown-renderer';
+import { FileLinkScopeContext } from '../../../lib/file-links/file-link-scope';
 import { cn } from '../../../lib/utils';
 import { useSearchHighlight, useSearchQuery } from '../search';
 import { DebugReproduceCard } from '../ui/debug-reproduce-card';
@@ -304,6 +305,8 @@ export const MemoizedTextPart = memo(
     const highlights = useSearchHighlight(messageId, partIndex, 'text');
     const currentHighlight = highlights.find((h) => h.isCurrent);
     const currentMatchIndexInPart = currentHighlight?.indexInPart ?? null;
+    // A bare name turning into a badge replaces the text the highlights were drawn on.
+    const fileLinkScope = useContext(FileLinkScopeContext);
 
     // Apply DOM-based highlighting after render
     // Skip during streaming to avoid performance issues
@@ -319,7 +322,7 @@ export const MemoizedTextPart = memo(
       return () => {
         if (containerRef.current) clearSearchHighlights(containerRef.current);
       };
-    }, [searchQuery, currentMatchIndexInPart, isStreaming]);
+    }, [searchQuery, currentMatchIndexInPart, isStreaming, fileLinkScope]);
 
     if (!text?.trim()) return null;
 

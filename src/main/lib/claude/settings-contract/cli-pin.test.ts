@@ -14,11 +14,11 @@ const SDK_CLI: string = readJson(
   'node_modules/@anthropic-ai/claude-agent-sdk/package.json',
 ).claudeCodeVersion;
 
-// The settings contract only knows the keys of the SDK's paired CLI. 25 admits the 0.4.0 CLI
-// (23 ahead) and forces an SDK bump with the next CLI bump.
+// The settings contract only knows the keys of the SDK's paired CLI. 25 leaves room for the
+// 7-day package age rule, which can hold the SDK a few releases behind a fresh CLI.
 const MAX_CLI_AHEAD_OF_SDK = 25;
-// The first CLI that ships `claude-haiku-5-5`, which the model catalog offers.
-const CATALOG_MODEL_FLOOR = '2.1.293';
+// The first CLI that ships `claude-fable-5-2`, the newest model the catalog offers.
+const CATALOG_MODEL_FLOOR = '2.1.321';
 
 function patchParts(version: string): [string, number] {
   const match = /^(\d+\.\d+)\.(\d+)$/.exec(version);
@@ -57,8 +57,8 @@ describe('pinned Claude CLI', () => {
   });
 
   it('compares the catalog floor by whole version, so a new release line still meets it', () => {
-    expect(meetsCatalogFloor('2.1.293')).toBe(true);
-    expect(meetsCatalogFloor('2.1.292')).toBe(false);
+    expect(meetsCatalogFloor('2.1.321')).toBe(true);
+    expect(meetsCatalogFloor('2.1.320')).toBe(false);
     expect(meetsCatalogFloor('2.2.0')).toBe(true);
     expect(meetsCatalogFloor('3.0.0')).toBe(true);
     expect(meetsCatalogFloor('2.0.999')).toBe(false);

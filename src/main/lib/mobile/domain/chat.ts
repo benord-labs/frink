@@ -386,7 +386,8 @@ export async function sendMobileMessage(
       throw new MobileApiError(409, error.message);
     if (record(error).category === 'FLOW_RUN_ENDED')
       throw new MobileApiError(409, 'This Flow step changed. Refresh the chat before replying.');
-    throw error;
+    // The reply is kept: the paused run continues with it once it takes a slot back.
+    if (record(error).category !== 'FLOW_RUN_RESUMING') throw error;
   }
   await attachments?.release();
   return { ok: true as const };

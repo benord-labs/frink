@@ -9,6 +9,8 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { HookRegistration } from '../../../../../shared/types/hook-inventory';
+import type { SecretRequest } from '../../../../../shared/types/task-signal';
+import * as persist from '../../../trpc/routers/frink-task-signal-persist';
 import type { ClaudeSession } from '../../claude-session-registry';
 import { createClaudeTurnContext } from '../../claude-turn-context';
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
@@ -208,5 +210,66 @@ describe("the user's PreToolUse hooks inside Frink's gate", () => {
       permissionDecisionReason: `${ASKED} Its reason: check this`,
     });
     expect(validate).not.toHaveBeenCalled();
+  });
+});
+
+describe('canUseTool on a turn a secret request parks', () => {
+  const secretRequest: SecretRequest = {
+    id: 'req-1',
+    name: 'STRIPE_KEY',
+    chatId: 'chat-1',
+    file: '.env',
+    cwd: '/work',
+    reason: 'Charge test cards',
+    replaces: false,
+    git: 'none',
+  };
+
+  async function askTaskSignal(parkedOnSecret: boolean) {
+    const { turn } = gate(undefined, allowRule);
+    turn.execution = {
+      ...turn.execution,
+      taskSignalReady: true,
+      signalTaskId: 'task-1',
+      executionContextId: 'exec-1',
+    };
+    vi.spyOn(persist, 'latestTaskSignalFor').mockResolvedValue({
+      state: 'awaiting_input',
+      summary: 'Needs STRIPE_KEY',
+      at: 'now',
+      secretRequest: parkedOnSecret ? secretRequest : undefined,
+    });
+    const record = vi.spyOn(persist, 'recordTaskSignalFromToolCall').mockResolvedValue(null);
+    // SAFETY: the gate reads only the session's attached turn.
+    const session = { current: { currentTurn: turn } as ClaudeSession };
+    const scope = {
+      chatId: 'chat',
+      subChatId: 'sub',
+      project: null,
+      projectPath: '/work',
+      permissionProjectPath: '/work',
+      agents: {},
+      validateToolPermission: vi.fn<typeof validateToolPermission>(async () => allowRule()),
+      abortSources: new Map<string, string>(),
+    };
+    const canUseTool = buildClaudeSessionCallbacks(scope, session).canUseTool;
+    const verdict = await canUseTool(
+      'mcp__frink_dynamic_chat__frink_task_signal',
+      { state: 'done', summary: 'Done' },
+      { signal, toolUseID: 'tool-1', requestId: 'request-1' },
+    );
+    vi.restoreAllMocks();
+    return { verdict, recorded: record.mock.calls.length };
+  }
+
+  it('does not record a later signal over the park on the task row', async () => {
+    const { verdict, recorded } = await askTaskSignal(true);
+
+    expect(verdict).toMatchObject({ behavior: 'allow' });
+    expect(recorded).toBe(0);
+  });
+
+  it('still records the signal of a turn with no secret request', async () => {
+    expect((await askTaskSignal(false)).recorded).toBe(1);
   });
 });

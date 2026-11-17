@@ -17,25 +17,25 @@ export const TICKETING_PROVIDERS: ReadonlyArray<Provider> = [
         id: 'story_assigned',
         label: 'Story assigned',
         description: 'Runs when a story gains an assignee.',
-        filter_field_ids: ['storyType'],
+        filter_field_ids: ['storyType', 'storyName'],
         assignee: true,
       },
       {
         id: 'story_moved',
         label: 'Story moves to state',
         description: 'Runs when a story moves into a workflow state you choose.',
-        filter_field_ids: ['storyType'],
+        filter_field_ids: ['storyType', 'storyName'],
       },
       {
         id: 'story_created',
         label: 'New story created',
         description: 'Runs when a new story is created in your workspace.',
-        filter_field_ids: ['storyType', 'labels', 'projectId', 'epicId'],
+        filter_field_ids: ['storyType', 'storyName', 'labels', 'projectId', 'epicId'],
         assignee: true,
       },
     ],
-    // A filter id IS the event-data key matchesConditions reads (buildEventData's names). Update
-    // actions carry only story_type, so labels/project/epic are offered on story_created alone.
+    // A filter id IS the event-data key matchesConditions reads (buildEventData's names). Update actions
+    // carry only the title and story_type, so labels/project/epic are offered on story_created alone.
     filter_fields: [
       {
         id: 'storyType',
@@ -43,6 +43,7 @@ export const TICKETING_PROVIDERS: ReadonlyArray<Provider> = [
         value_source: 'static_enum',
         static_values: ['feature', 'bug', 'chore'],
       },
+      { id: 'storyName', label: 'Story title', value_source: 'text' },
       { id: 'labels', label: 'Labels', value_source: 'text' },
       { id: 'projectId', label: 'Project ID', value_source: 'text' },
       { id: 'epicId', label: 'Epic ID', value_source: 'text' },

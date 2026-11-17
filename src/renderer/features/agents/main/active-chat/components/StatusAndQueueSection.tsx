@@ -2,6 +2,7 @@ import { useAtomValue } from 'jotai';
 import { type ReactElement, useMemo } from 'react';
 import { useUncommittedFiles } from '../../../../../lib/agent-chat/use-uncommitted-files';
 import { activeGoalAtom } from '../../../../../lib/commands/goal';
+import { wakeHeldAtomFamily } from '../../../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../../../lib/trpc';
 import type { SubChatFileChange } from '../../../atoms';
 import type { AgentQueueItem } from '../../../lib/queue-utils';
@@ -59,8 +60,10 @@ function useStackedCards({
     [subChatId],
   );
   const goal = useAtomValue(goalAtom);
+  const waiting = useAtomValue(wakeHeldAtomFamily(subChatId)) !== null;
   const cardAbove = queue.length > 0 || uncommittedFiles.length > 0;
-  return { uncommittedFiles, goal, cardAbove, stacked: cardAbove || goal !== null || undefined };
+  const stacked = cardAbove || goal !== null || undefined;
+  return { uncommittedFiles, goal, waiting, cardAbove, stacked };
 }
 
 function clearGoal(subChatId: string): void {
@@ -87,7 +90,7 @@ export function StatusAndQueueSection({
   handleStop,
 }: Props): ReactElement {
   const steerSupported = useSteerSupported(parentChatId);
-  const { uncommittedFiles, goal, cardAbove, stacked } = useStackedCards({
+  const { uncommittedFiles, goal, waiting, cardAbove, stacked } = useStackedCards({
     subChatId,
     queue,
     changedFilesForSubChat,
@@ -133,6 +136,7 @@ export function StatusAndQueueSection({
           <GoalCard
             goal={goal}
             isStreaming={isStreaming}
+            waiting={waiting}
             hasCardAbove={cardAbove}
             onClear={() => clearGoal(subChatId)}
           />

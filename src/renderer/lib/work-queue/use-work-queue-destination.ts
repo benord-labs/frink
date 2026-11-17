@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import { useTrayOpen } from '../hooks/tray-open';
 import { navigateFromWorkQueue } from './work-queue-navigation';
 
 /**
@@ -89,6 +90,8 @@ export function useWorkQueueDestination(input: Input): ReturnValue {
   const latestRef = useRef(input);
   const destinationSettleRef = useRef<DestinationSettle | null>(null);
   latestRef.current = input;
+  // The menu bar's rows lead into a chat or the Work Queue from outside the window, routed alike.
+  useTrayOpen(input);
 
   const closeOverlay = useCallback(() => latestRef.current.setActiveOverlay(null), []);
   const requestWorkQueueClose = useCallback(() => {

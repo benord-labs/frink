@@ -1,8 +1,13 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fanOutItemChatRunIds } from '../../../flows/fan-out/sql';
-import { nodeRuns, subChats } from '../../schema';
-import { getActiveFlowRunForSubChat, listChatIdsWithActiveFlowRun } from '../flow-runs';
+import { type FlowRun, flowRuns, nodeRuns, subChats } from '../../schema';
+import {
+  getActiveFlowRunForSubChat,
+  getBatchIdByChatId,
+  getOrCreateFlowRunByIdempotencyKey,
+  listChatIdsWithActiveFlowRun,
+} from '../flow-runs';
 import { setKv } from '../flow-kv-state';
 import { createTask, updateTaskStatus } from '../tasks';
 import { seedCompletedNodeRun, seedFlowRun } from '../../test-utils/flow-fixtures';
@@ -90,6 +95,39 @@ describe('linkedFlowRunIds', () => {
 
     expect(linkedFlowRunIds(db, 'chatId', ['branch-chat']).all()).toEqual([{ id: flowRunId }]);
     expect(linkedFlowRunIds(db, 'subChatId', 'branch-sub').all()).toEqual([{ id: flowRunId }]);
+  });
+
+  // Catches a post-task run being owned by the finished task's chat: archiving that chat
+  // would cancel the run, and the run would drive the chat's tab, badge, banner and rollback guard.
+  it('does not link a post-task run to the chat its trigger names, only other triggers', async () => {
+    const { versionId } = await seedFlowRun(db, { nodes: [], edges: [] });
+    const ids = { chatId: 'done-chat', subChatId: 'done-sub' };
+    const seedRun = async (key: string, triggerContext: FlowRun['triggerContext']) =>
+      (
+        await getOrCreateFlowRunByIdempotencyKey(db, {
+          flowVersionId: versionId,
+          status: 'running',
+          triggerContext,
+          idempotencyKey: key,
+          startedAt: new Date(),
+        })
+      ).run.id;
+    const postTask = await seedRun('pt', {
+      _frinkTrigger: 'post_task_trigger',
+      taskId: 't',
+      ...ids,
+    });
+    const fromChat = await seedRun('chat', ids);
+
+    const only = [{ id: fromChat }];
+    expect(linkedFlowRunIds(db, 'chatId', ['done-chat']).all()).toEqual(only);
+    expect(linkedFlowRunIds(db, 'subChatId', 'done-sub').all()).toEqual(only);
+
+    await db.delete(flowRuns).where(eq(flowRuns.id, fromChat));
+    expect(await listChatIdsWithActiveFlowRun(db)).toEqual([]);
+    // A grouped run (a batch, or a Fan Out that opened item chats) must not fold that chat in.
+    await db.update(flowRuns).set({ batchId: 'group-1' }).where(eq(flowRuns.id, postTask));
+    expect((await getBatchIdByChatId(db)).has('done-chat')).toBe(false);
   });
 });
 

@@ -35,6 +35,8 @@ export const CODEX_MODEL_SLUGS: {
   familyName: string;
   isDefault?: boolean;
 }[] = [
+  { slug: 'gpt-6.2-astra', familyId: 'codex-6.2-astra', familyName: 'GPT-6.2 Astra' },
+  { slug: 'gpt-6.2-sol', familyId: 'codex-6.2-sol', familyName: 'GPT-6.2 Sol' },
   { slug: 'gpt-6-astra', familyId: 'codex-6-astra', familyName: 'GPT-6 Astra', isDefault: true },
   { slug: 'gpt-6.1-sol', familyId: 'codex-6.1-sol', familyName: 'GPT-6.1 Sol' },
   { slug: 'gpt-6-sol', familyId: 'codex-6-sol', familyName: 'GPT-6 Sol' },
@@ -72,6 +74,8 @@ export const CODEX_ULTRAFAST_SPEED_MULTIPLIER = 8;
  *  offered (or billed) that tier, and the UI discloses these same numbers. */
 const CODEX_TIER_CREDITS: Record<Exclude<CodexSpeed, 'standard'>, Record<string, number>> = {
   fast: {
+    'gpt-6.2-astra': 2,
+    'gpt-6.2-sol': 2,
     'gpt-6-astra': 2.5,
     'gpt-6.1-sol': 2.5,
     'gpt-6-sol': 2.5,
@@ -84,6 +88,7 @@ const CODEX_TIER_CREDITS: Record<Exclude<CodexSpeed, 'standard'>, Record<string,
     // gpt-5.4-mini advertises no service tiers — intentionally absent.
   },
   // Pro 500 and eligible Enterprise/Edu plans only; the app-server drops it for other accounts.
+  // GPT-6.2 runs Ultrafast at up to 4.5x, not the 8x CODEX_ULTRAFAST_SPEED_MULTIPLIER discloses.
   ultrafast: { 'gpt-6-astra': 8 },
 };
 

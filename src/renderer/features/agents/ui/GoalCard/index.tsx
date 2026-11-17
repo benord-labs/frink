@@ -7,6 +7,8 @@ import { cn } from '../../../../lib/utils';
 type GoalCardProps = {
   goal: ActiveGoal;
   isStreaming: boolean;
+  /** Idle between wakes while background work runs: Claude resumes the goal on its own. */
+  waiting: boolean;
   hasCardAbove: boolean;
   onClear: () => void;
 };
@@ -15,14 +17,16 @@ type GoalCardProps = {
 export function GoalCard({
   goal,
   isStreaming,
+  waiting,
   hasCardAbove,
   onClear,
 }: GoalCardProps): ReactElement {
-  const detail = isStreaming
-    ? goal.lastCheck
-      ? `Not there yet: ${goal.lastCheck}`
-      : 'Keeps working until this is true'
-    : 'Paused. Your next message picks it back up.';
+  const detail =
+    isStreaming || waiting
+      ? goal.lastCheck
+        ? `Not there yet: ${goal.lastCheck}`
+        : 'Keeps working until this is true'
+      : 'Paused. Your next message picks it back up.';
   return (
     <div
       data-stacked-card

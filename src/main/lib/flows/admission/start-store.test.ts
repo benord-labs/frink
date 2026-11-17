@@ -9,6 +9,7 @@ import {
   flowVersions,
 } from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
+import type { FlowSettings } from '../../../../shared/types/flow';
 import { StageRunMovedError } from './batch-promotion';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
 
@@ -33,6 +34,26 @@ function seedBatchStageRun(db: TestDb, status = 'pending'): string {
     .run();
   db.insert(batchStageRuns).values({ id: 'stage-run-start', stageId: 'stage-start', status }).run();
   return 'stage-run-start';
+}
+
+function seedRuleVersion(db: TestDb, id: string, settings: FlowSettings): void {
+  const versionNumber = db.select().from(flowVersions).all().length + 1;
+  db.insert(flowVersions)
+    .values({ id, flowId: 'flow-start', versionNumber, graph: { ...GRAPH, settings } })
+    .run();
+}
+
+/** A Shortcut assign delivery as the webhook trigger stores it: the raw body under fullContent. */
+function shortcutStart(flowVersionId: string, idempotencyKey: string, storyTitle: string) {
+  return {
+    ...startInput(flowVersionId, idempotencyKey),
+    triggerContext: {
+      _frinkTrigger: 'webhook_trigger',
+      source: 'shortcut',
+      eventType: 'story_assigned',
+      fullContent: { primary_id: 46, actions: [{ id: 46, name: storyTitle }] },
+    },
+  };
 }
 
 function startInput(flowVersionId: string, idempotencyKey: string) {
@@ -181,6 +202,87 @@ describe('atomic Flow start admission', () => {
     expect(replay.run.flowVersionId).toBe(plainVersion);
     expect(replay.admission?.ticket).toBeGreaterThan(plain.admission?.ticket ?? 0);
     expect(replay.admission?.runFirst).toBe(false);
+  });
+
+  it('marks only the runs whose own saved details match the Only runs that match rule', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const rule = [
+      { detail: 'trigger.story.title', operator: 'contains' as const, value: '[follow-up]' },
+    ];
+    seedRuleVersion(db, 'version-rule', { runFirstWhen: rule });
+    const controller = new FlowAdmissionController(db);
+
+    const followUp = await controller.enqueueStart(
+      shortcutStart('version-rule', 'follow-up', '[Follow-up] Retry the card'),
+    );
+    const other = await controller.enqueueStart(
+      shortcutStart('version-rule', 'other', 'Fix login'),
+    );
+    const runButton = await controller.enqueueStart({
+      ...startInput('version-rule', 'run-button'),
+      triggerContext: null,
+    });
+
+    expect(followUp.admission).toMatchObject({ priorityClass: 'start', runFirst: true });
+    expect(other.admission?.runFirst).toBe(false);
+    expect(runButton.admission?.runFirst).toBe(false);
+  });
+
+  it('reads numbers as text and never matches an object, an array or a missing detail', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const payload = { count: 3, labels: ['bug'], story: { title: 'x' } };
+    const cases = [
+      ['trigger.payload.count', 'equals', '3', true],
+      ['trigger.payload.story', 'contains', 'title', false],
+      ['trigger.payload.labels', 'equals', 'bug', false],
+      ['trigger.payload.missing', 'not_equals', 'x', false],
+    ] as const;
+    const controller = new FlowAdmissionController(db);
+
+    for (const [index, [detail, operator, value, expected]] of cases.entries()) {
+      seedRuleVersion(db, `version-${index}`, { runFirstWhen: [{ detail, operator, value }] });
+      const { admission } = await controller.enqueueStart({
+        ...startInput(`version-${index}`, `case-${index}`),
+        triggerContext: { source: 'generic_webhook', fullContent: payload },
+      });
+      expect(admission?.runFirst).toBe(expected);
+    }
+  });
+
+  it('lets Every new run win over a rule, and ignores a rule with a blank row', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const match = { detail: 'trigger.story.title', operator: 'contains' as const, value: 'retry' };
+    const blank = { ...match, value: ' ' };
+    seedRuleVersion(db, 'version-every', { runFirst: true, runFirstWhen: [blank] });
+    seedRuleVersion(db, 'version-blank', { runFirstWhen: [match, blank] });
+    const controller = new FlowAdmissionController(db);
+
+    const every = await controller.enqueueStart(shortcutStart('version-every', 'every', 'Fix'));
+    const blankRule = await controller.enqueueStart(
+      shortcutStart('version-blank', 'blank', 'Retry the card'),
+    );
+
+    expect(every.admission?.runFirst).toBe(true);
+    expect(blankRule.admission?.runFirst).toBe(false);
+  });
+
+  it('keeps the original queue entry when a delivery replays after the rule changed', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const rule = [{ detail: 'trigger.story.title', operator: 'contains' as const, value: 'retry' }];
+    seedRuleVersion(db, 'version-rule', { runFirstWhen: rule });
+    const controller = new FlowAdmissionController(db);
+    const first = await controller.enqueueStart(shortcutStart('version-rule', 'same', 'Retry'));
+    db.update(flowVersions).set({ graph: GRAPH }).where(eq(flowVersions.id, 'version-rule')).run();
+
+    const replay = await controller.enqueueStart(shortcutStart('version-rule', 'same', 'Retry'));
+
+    expect(replay.isReplay).toBe(true);
+    expect(replay.admission).toEqual(first.admission);
+    expect(replay.admission?.runFirst).toBe(true);
   });
 
   it('re-enqueues only a replay that is still pending and proven unstarted', async () => {

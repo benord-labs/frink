@@ -304,7 +304,6 @@ export const createRouter = router({
             chatId: chat.id,
             subChatId: subChat.id,
             projectId: project?.id ?? null,
-            projectPath: project?.path ?? null,
             rawUserMessage: initialMessageText,
             isFirstSubChat: true,
           });

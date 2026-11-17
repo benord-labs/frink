@@ -6,7 +6,17 @@ import {
   admissionRemovalCopy,
   admissionWaitCopy,
   oldestWaitingNote,
+  recoveryWaitToast,
 } from './admission-wait-copy';
+
+// A repeat click must still say something: it used to show the same "Queued to resume" toast.
+describe('recoveryWaitToast', () => {
+  it('confirms a wait for a slot, including a repeat click, and stays quiet once resumed', () => {
+    expect(recoveryWaitToast('queued')).toBe('Queued to resume');
+    expect(recoveryWaitToast('already-queued')).toBe('Already queued to resume');
+    expect(recoveryWaitToast('resumed')).toBeNull();
+  });
+});
 
 describe('admissionGroup', () => {
   it('keeps resumes in their own group whatever the run-first flag says', () => {

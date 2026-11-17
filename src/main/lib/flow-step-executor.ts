@@ -13,6 +13,7 @@ import {
   parseStructuredStdout,
   resolveNodeCredentialEnvVars,
   runCustomNodeProcess,
+  summarizeStderr,
 } from './custom-nodes';
 import { getDatabase } from './db';
 import { getProjectById as getLocalProjectById } from './db/repos/projects';
@@ -26,7 +27,7 @@ import { buildSafeEnv } from './terminal/env';
 
 // Output minimization: parse stdout here and carry only structured data onward.
 // parseStructuredStdout and its constants live in custom-nodes/parse-node-output.ts.
-const MAX_ERROR_MESSAGE_LENGTH = 500; // derived error field (stderr first line + optional spawn detail)
+const MAX_ERROR_MESSAGE_LENGTH = 500; // derived error field (stderr cause line + optional spawn detail)
 const MAX_OUTPUTS_SERIALIZED_BYTES = 1_048_576; // 1MB cap on total outputs object
 
 type ParsedStepOutput = {
@@ -37,7 +38,7 @@ type ParsedStepOutput = {
 
 /**
  * Derive a short error message for a step's `error` field.
- * Prefer the first line of stderr; when empty or when spawn/exec detail adds information,
+ * Prefer the stderr summary; when empty or when spawn/exec detail adds information,
  * include `spawnMessage` (from runShellCommand). Capped at MAX_ERROR_MESSAGE_LENGTH.
  */
 function deriveErrorMessage(
@@ -46,13 +47,13 @@ function deriveErrorMessage(
   spawnMessage?: string,
 ): string {
   const sm = spawnMessage?.trim() ?? '';
-  const firstLine = stderr.split('\n')[0]?.trim() ?? '';
+  const summary = summarizeStderr(stderr);
 
   const parts: string[] = [];
-  if (firstLine) {
-    parts.push(firstLine);
+  if (summary) {
+    parts.push(summary);
   }
-  if (sm && (!firstLine || (sm !== firstLine && !firstLine.includes(sm)))) {
+  if (sm && (!summary || (sm !== summary && !summary.includes(sm)))) {
     parts.push(sm);
   }
 

@@ -34,6 +34,7 @@ import {
   getHistoryDeleteAllTarget,
   HISTORY_TASK_STATUSES,
 } from '../../../lib/work-queue/delete-all-target';
+import { useRecoverTaskMutation } from '../../../lib/work-queue/recovery/use-recover-task-mutation';
 import { assessRowRetry } from '../../../lib/work-queue/task-menu/task-menu-actions';
 import { useWorkQueueTaskNavigation } from '../../../lib/work-queue/use-work-queue-task-navigation';
 import {
@@ -261,7 +262,7 @@ export function WorkQueue({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
   });
   // tasks.recover re-resolves the kind server-side, so a stale row label is refused, never swapped.
-  const retryTaskMutation = trpc.tasks.recover.useMutation({
+  const retryTaskMutation = useRecoverTaskMutation({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
   });
   // tasks.complete also finalizes sibling done rows in a Flow.

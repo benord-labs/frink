@@ -15,6 +15,7 @@ import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
 import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-flow-graph';
+import { unreadableWebhookFilterMessage } from '../../../../shared/lib/webhook-match';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
 import { patchTemplateWarnings } from './patch-template-warnings';
 import {
@@ -92,6 +93,19 @@ import { describeFlowRunBlockers } from './run-readiness';
 import { truncateNodeOutput } from './truncate-node-output';
 
 export { resetRegisterNodeCount } from './register-node';
+
+/** Only a run that queued names the slots held by runs waiting on the user. The run exists already,
+ * so a failed count drops the note rather than report a failed launch that a retry would repeat. */
+async function slotsHeldByWaitingRuns(run: DbFlowRun): Promise<number> {
+  if (run.started_at !== null) return 0;
+  try {
+    const { getFlowAdmissionSettings } = await import('../../flows/admission/runtime');
+    return (await getFlowAdmissionSettings()).held_by_waiting_runs;
+  } catch (error) {
+    log.warn('[Flows MCP] could not count slots held by waiting runs', { error });
+    return 0;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Argument schemas (Zod)
@@ -848,19 +862,23 @@ export async function handleFlowsToolCall(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/** Patch-time setup hints for webhook triggers left without a real integration binding (a
- * webhook_trigger fires only when config.integrationId + config.eventType are set). */
+/** Patch-time hints for webhook triggers that can never fire: no integrationId + eventType
+ * binding, or filters the matcher cannot read. */
 function collectWebhookSetupHints(graph: FlowGraph): string[] {
   const hints: string[] = [];
   for (const node of graph.nodes) {
     if (node.blockType !== 'webhook_trigger') continue;
     const config = (node.config ?? {}) as Record<string, unknown>;
+    const label = node.label?.trim() || node.id;
     const iid = typeof config.integrationId === 'string' ? config.integrationId.trim() : '';
     const et = typeof config.eventType === 'string' ? config.eventType.trim() : '';
-    if (iid && et) continue;
-    hints.push(
-      `Webhook trigger "${node.label ?? node.id}" needs integrationId + eventType — call frink_flows_list_catalog({ kind: 'integrations' }) to get valid values.`,
-    );
+    if (!iid || !et) {
+      hints.push(
+        `Webhook trigger "${label}" needs integrationId + eventType — call frink_flows_list_catalog({ kind: 'integrations' }) to get valid values.`,
+      );
+    }
+    const filterMessage = unreadableWebhookFilterMessage(label, node.config);
+    if (filterMessage) hints.push(filterMessage);
   }
   return hints;
 }
@@ -1289,7 +1307,7 @@ async function handleRun(
       triggerContext: triggerContext ?? null,
     })) as DbFlowRun & { flowRunId?: string; batchId?: string | null };
 
-    const launchResult = buildFlowRunLaunchResult(flowId, run);
+    const launchResult = buildFlowRunLaunchResult(flowId, run, await slotsHeldByWaitingRuns(run));
     if (!launchResult.isError) recordRunSuccess(sessionKey);
     return toolResult(JSON.stringify(launchResult.body, null, 2), launchResult.isError);
   } catch (err) {

@@ -65,7 +65,7 @@ export function BatchTriggerVariables({ flowId, batchId, schema, onChange }: Pro
         <Variable className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
         <Label className="text-xs font-medium">Batch trigger variables</Label>
       </div>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         Declare the <code className="font-mono">{'{{trigger.*}}'}</code> variables your batch flow
         expects. Declarations only drive editor chips and validation — values at runtime come from
         each run&apos;s <code className="font-mono">triggerContext</code> in{' '}
@@ -141,12 +141,10 @@ function DeclaredVariables({ declared, onChange }: DeclaredVariablesProps): Reac
 
   return (
     <div className="grid gap-2">
-      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
-        Declared
-      </p>
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Declared</p>
 
       {declared.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">
+        <p className="text-sm text-muted-foreground italic">
           No variables declared. Add one below.
         </p>
       ) : (
@@ -186,7 +184,7 @@ function DeclaredVariables({ declared, onChange }: DeclaredVariablesProps): Reac
             aria-describedby={keyError ? 'batch-var-key-error' : undefined}
           />
           {keyError && (
-            <p id="batch-var-key-error" className="text-[11px] text-destructive">
+            <p id="batch-var-key-error" className="text-sm text-destructive">
               {keyError}
             </p>
           )}
@@ -260,7 +258,7 @@ function DeclaredRow({
         value={item.description ?? ''}
         onChange={(e) => onDescriptionChange(e.target.value)}
         placeholder="Description (optional)"
-        className="h-6 text-[11px] border-0 bg-transparent p-0 text-muted-foreground placeholder:text-muted-foreground/50 focus:ring-0"
+        className="h-6 text-sm border-0 bg-transparent p-0 text-muted-foreground placeholder:text-muted-foreground/50 focus:ring-0"
         maxLength={200}
         aria-label={`Description for ${item.key}`}
       />
@@ -341,15 +339,13 @@ function FromRunsSection({ flowId, batchId, declaredKeys }: FromRunsSectionProps
 
   return (
     <div className="grid gap-2 border-t border-border/40 pt-3">
-      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
-        From runs
-      </p>
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">From runs</p>
       {isError ? (
-        <p className="text-[11px] text-destructive italic">Could not load run data.</p>
+        <p className="text-sm text-destructive italic">Could not load run data.</p>
       ) : isLoading ? (
-        <p className="text-[11px] text-muted-foreground italic">Loading…</p>
+        <p className="text-sm text-muted-foreground italic">Loading…</p>
       ) : detectedKeys.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">
+        <p className="text-sm text-muted-foreground italic">
           No runs yet — detected variables will appear here once the batch starts.
         </p>
       ) : (
@@ -358,7 +354,7 @@ function FromRunsSection({ flowId, batchId, declaredKeys }: FromRunsSectionProps
             <li key={key} className="flex items-baseline gap-2 py-0.5">
               <code
                 className={cn(
-                  'text-[11px] font-mono shrink-0',
+                  'text-xs font-mono shrink-0',
                   resolvedSet.has(key) ? 'text-muted-foreground' : 'text-warning',
                 )}
                 title={
@@ -372,12 +368,12 @@ function FromRunsSection({ flowId, batchId, declaredKeys }: FromRunsSectionProps
                 {'}}'}
               </code>
               {example !== null && (
-                <span className="text-[10px] text-muted-foreground/70 truncate max-w-[140px]">
+                <span className="text-xs text-muted-foreground/70 truncate max-w-[140px]">
                   e.g. {example}
                 </span>
               )}
               {!resolvedSet.has(key) && (
-                <span className="text-[10px] text-warning shrink-0">not declared</span>
+                <span className="text-xs text-warning shrink-0">not declared</span>
               )}
             </li>
           ))}

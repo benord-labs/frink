@@ -50,7 +50,7 @@ describe('groupPickerModels', () => {
 
   it('groups each Codex model into one window with the medium default', () => {
     const [astra] = groupPickerModels(CODEX_MODELS.map(codexModelToPickerItem));
-    expect(astra.label).toBe('GPT-6 Astra');
+    expect(astra.label).toBe('GPT-6.2 Astra');
     expect(astra.windows).toHaveLength(1);
     expect(astra.windows[0].tiers.map((t) => t.detail)).toEqual([
       'Low',
@@ -58,7 +58,7 @@ describe('groupPickerModels', () => {
       'High',
       'Extra High',
     ]);
-    expect(astra.defaultWindow.defaultTier.id).toBe('codex-gpt-6-astra-medium');
+    expect(astra.defaultWindow.defaultTier.id).toBe('codex-gpt-6.2-astra-medium');
   });
 });
 

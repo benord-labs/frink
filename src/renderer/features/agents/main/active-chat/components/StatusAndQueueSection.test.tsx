@@ -5,6 +5,7 @@ import { Chat } from '@ai-sdk/react';
 import type { UIMessage } from 'ai';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { wakeHeldAtomFamily } from '../../../../../lib/stores/active-transport-registry';
 import type { SubChatFileChange } from '../../../atoms';
 import type { AgentQueueItem } from '../../../lib/queue-utils';
 import { agentChatStore } from '../../../stores/agent-chat-store';
@@ -215,5 +216,19 @@ describe('StatusAndQueueSection goal card', () => {
       parts: [{ type: 'text', text: '/goal clear' }],
     });
     spy.mockRestore();
+  });
+
+  it('reads the goal as still being worked on while the chat waits on background work', () => {
+    const store = storeWithGoal();
+    const workflow = { id: 't1', label: 'Workflow', description: 'research', stoppable: true };
+    store.set(wakeHeldAtomFamily('sub-1'), { waitingOn: [workflow] });
+
+    render(
+      <Provider store={store}>
+        <StatusAndQueueSection {...baseProps()} />
+      </Provider>,
+    );
+
+    expect(screen.getByText('Keeps working until this is true')).toBeInTheDocument();
   });
 });

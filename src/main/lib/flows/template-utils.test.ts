@@ -215,7 +215,7 @@ describe('resolveRoutingTemplate', () => {
     });
   });
 
-  it('rejects an over-long template, which rendering would truncate into a different valid value', () => {
+  it('rejects an over-long template as an authoring error rather than routing on it', () => {
     const long = `feat/${'a'.repeat(600)}`;
     expect(resolveRoutingTemplate(long, {})).toEqual({ ok: false, reason: 'is too long' });
   });
@@ -270,6 +270,52 @@ describe('findAbsentShellPlaceholder', () => {
     expect(
       findAbsentShellPlaceholder(`echo "$(printf '{{previous.missing}}')"`, { previous: {} }),
     ).toBeUndefined();
+  });
+});
+
+describe('templates longer than 10,000 characters render whole', () => {
+  const SHELL_CAP = 256 * 1024;
+  const filler = `echo ${'a'.repeat(10_500)}\n`;
+
+  it('passes a long heredoc script to the shell byte-identical', () => {
+    const body = Array.from({ length: 400 }, (_, i) => `print("line ${i}", {"n": ${i}})`).join(
+      '\n',
+    );
+    const script = `python3 - <<'PY'\n${body}\nPY`;
+    expect(script.length).toBeGreaterThan(10_000);
+    expect(renderTemplateForShell(script, {})).toBe(script);
+  });
+
+  it('still refuses a missing value placed after the first 10,000 characters', () => {
+    const command = `${filler}rm -rf /tmp/work/{{previous.dir}}`;
+    expect(findAbsentShellPlaceholder(command, { previous: {} })).toBe('{{previous.dir}}');
+  });
+
+  it('still escapes a value placed after the first 10,000 characters', () => {
+    const rendered = renderTemplateForShell(`${filler}echo {{trigger.name}}`, {
+      trigger: { name: "it's" },
+    });
+    expect(rendered).toBe(`${filler}echo 'it'\\''s'`);
+  });
+
+  it('renders a long plain template whole, including its last placeholder', () => {
+    const long = 'a'.repeat(12_000);
+    expect(renderTemplate(`${long}{{trigger.tail}}`, { trigger: { tail: 'end' } })).toBe(
+      `${long}end`,
+    );
+  });
+
+  it('renders a command of exactly the 256KB cap unchanged', () => {
+    const command = `echo ${'a'.repeat(SHELL_CAP - 'echo '.length)}`;
+    expect(renderTemplateForShell(command, {})).toBe(command);
+  });
+
+  it('refuses a command over the 256KB cap before classifying any placeholder', () => {
+    const command = `rm -rf /tmp/{{previous.dir}} ${'a'.repeat(SHELL_CAP)}`;
+    expect(findAbsentShellPlaceholder(command, { previous: {} })).toBeUndefined();
+    expect(renderTemplateForShell(command, { previous: {} })).toContain(
+      'rendered command exceeded the 256KB safety limit',
+    );
   });
 });
 

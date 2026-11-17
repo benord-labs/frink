@@ -26,11 +26,19 @@ const GOAL_GONE = ['Goal cleared: ', 'No goal set'];
 const FEEDBACK = 'Stop hook feedback:';
 
 /** `data-goal` parts read from `/goal`'s synthetic replies and the evaluator's Stop-hook feedback
- * (`active_goal` only reaches remote sessions): one for the turn's goal, one per checked objective. */
-export function createGoalMapper(): (msg: GoalFrame) => UIMessageChunk[] {
+ * (`active_goal` only reaches remote sessions): one for the turn's goal, one per checked objective,
+ * and one per result saying whether that stop deferred the check. */
+export function createGoalMapper(
+  defersGoalCheck: () => boolean = () => false,
+): (msg: GoalFrame) => UIMessageChunk[] {
   const id = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   let current: GoalPartData | null = null;
+  let stops = 0;
   return (msg) => {
+    if (msg.type === 'result') {
+      const data: GoalPartData = { state: 'stopped', deferred: defersGoalCheck() };
+      return [{ type: 'data-goal', id: `${id}:stop-${stops++}`, data }];
+    }
     const next = nextGoal(current, msg);
     if (!next) return [];
     if (next.state === 'checked')

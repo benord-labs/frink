@@ -4,6 +4,12 @@ import {
   type FlowAdmissionIntentV1,
   isFlowAdmissionIntentV1,
 } from '../../../../shared/lib/flow-admission';
+import {
+  priorityQueueMode,
+  readyRunFirstRule,
+  runFirstRuleMatches,
+} from '../../../../shared/lib/flow-admission/run-first-rule';
+import { runFirstRowSchema } from '../../../../shared/types/flow-settings-schema';
 import type { getDatabase } from '../../db';
 import {
   type BatchStageRun,
@@ -14,6 +20,8 @@ import {
   flowVersions,
   type NewFlowRun,
 } from '../../db/schema';
+import { buildVariables } from '../block-context';
+import { resolveScalarText } from '../template-utils';
 import { assertStageHasSlot, StageRunMovedError } from './batch-promotion';
 import { enqueueFlowAdmission, type FlowRunAdmission, liveAdmissionForRun } from './store';
 
@@ -61,16 +69,26 @@ function isProvenUnstarted(run: FlowRun): boolean {
 }
 
 const memberAttachmentsSchema = z.object({ attachments: z.array(z.unknown()) });
-const runFirstGraphSchema = z.object({ settings: z.object({ runFirst: z.literal(true) }) });
+const runFirstGraphSchema = z.object({
+  settings: z.object({
+    runFirst: z.boolean().optional().catch(undefined),
+    runFirstWhen: z.array(runFirstRowSchema).optional().catch(undefined),
+  }),
+});
 
-/** Read from the version the run is pinned to, so a replayed start keeps that version's choice. */
-function versionRunsFirst(db: Db, flowVersionId: string): boolean {
+/** Judged once, from the version the run is pinned to and the run's own saved trigger details. */
+function startRunsFirst(db: Db, run: FlowRun): boolean {
   const version = db
     .select({ graph: flowVersions.graph })
     .from(flowVersions)
-    .where(eq(flowVersions.id, flowVersionId))
+    .where(eq(flowVersions.id, run.flowVersionId))
     .get();
-  return runFirstGraphSchema.safeParse(version?.graph).success;
+  const settings = runFirstGraphSchema.safeParse(version?.graph).data?.settings;
+  const mode = priorityQueueMode(settings);
+  const rule = mode === 'match' ? readyRunFirstRule(settings?.runFirstWhen ?? []) : null;
+  if (!rule) return mode === 'every';
+  const scope = buildVariables({ triggerContext: run.triggerContext, previousOutput: undefined });
+  return runFirstRuleMatches(rule, (path) => resolveScalarText(scope, path));
 }
 
 /** Uploads append only while the member is pending, so this read is final for its run. */
@@ -185,7 +203,7 @@ export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueF
   const { admission } = enqueueFlowAdmission(db, {
     intent,
     requestedAt,
-    runFirst: versionRunsFirst(db, run.flowVersionId),
+    runFirst: startRunsFirst(db, run),
   });
   return { run, isReplay, admission };
 }

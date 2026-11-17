@@ -12,6 +12,7 @@ describe('GoalCard', () => {
       <GoalCard
         goal={{ objective: 'tests pass', lastCheck: '2 fail' }}
         isStreaming
+        waiting={false}
         hasCardAbove={false}
         onClear={vi.fn()}
       />,
@@ -27,6 +28,7 @@ describe('GoalCard', () => {
       <GoalCard
         goal={{ objective: 'tests pass' }}
         isStreaming={false}
+        waiting={false}
         hasCardAbove
         onClear={onClear}
       />,
@@ -34,5 +36,19 @@ describe('GoalCard', () => {
     expect(screen.getByText('Paused. Your next message picks it back up.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear goal' }));
     expect(onClear).toHaveBeenCalledOnce();
+  });
+
+  it('reads as working while it waits on background work, and still offers Clear', () => {
+    render(
+      <GoalCard
+        goal={{ objective: 'tests pass' }}
+        isStreaming={false}
+        waiting
+        hasCardAbove={false}
+        onClear={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Keeps working until this is true')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear goal' })).toBeInTheDocument();
   });
 });
