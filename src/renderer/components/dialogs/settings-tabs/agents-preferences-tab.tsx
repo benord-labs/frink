@@ -8,6 +8,7 @@ import { SettingsCard } from '@/components/settings/SettingsCard';
 import { SettingsSection } from '@/components/settings/SettingsSection';
 import { useIsNarrowScreen } from '@/hooks/use-is-narrow-screen';
 import { cn } from '@/lib/utils';
+import { isMacOS } from '@/lib/utils/platform';
 import {
   analyticsOptOutAtom,
   desktopNotificationsEnabledAtom,
@@ -17,6 +18,7 @@ import {
 import { trpc } from '../../../lib/trpc';
 import { Switch } from '../../ui/switch';
 import { FlowConcurrencySettings } from './FlowConcurrencySettings';
+import { MenuBarStatusSetting } from './MenuBarStatusSetting';
 import { SettingsTabHeader } from './SettingsTabHeader';
 import { SETTINGS_TAB_PAGE_CLASS } from './settings-tab-surface';
 
@@ -31,6 +33,20 @@ export function AgentsPreferencesTab() {
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom);
   const isNarrowScreen = useIsNarrowScreen();
   const [worktreePathInput, setWorktreePathInput] = useState('');
+  const utils = trpc.useUtils();
+  // The low-battery cutoff reads `pmset`, so only macOS gets the battery promise.
+  const isMac = isMacOS();
+  const keepAwakeLabel = `Keep this ${isMac ? 'Mac' : 'computer'} awake while agents are working`;
+  const { data: keepAwake } = trpc.power.keepAwakeWhileWorking.useQuery();
+  const setKeepAwakeMutation = trpc.power.setKeepAwakeWhileWorking.useMutation({
+    onMutate: async ({ enabled }) => {
+      // An in-flight read would otherwise land after this and put the old value back.
+      await utils.power.keepAwakeWhileWorking.cancel();
+      utils.power.keepAwakeWhileWorking.setData(undefined, { enabled });
+    },
+    onError: (error) => toast.error(error.message),
+    onSettled: () => utils.power.keepAwakeWhileWorking.invalidate(),
+  });
 
   const { data: worktreeBasePath, refetch: refetchWorktreeBasePath } =
     trpc.claudeSettings.getWorktreeBasePath.useQuery();
@@ -127,6 +143,25 @@ export function AgentsPreferencesTab() {
                 className="shrink-0"
               />
             </div>
+
+            {/* Keep Awake */}
+            <div className="flex items-start justify-between gap-4 px-4 py-3">
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className="text-sm font-medium text-foreground">{keepAwakeLabel}</span>
+                <span className="text-xs text-muted-foreground leading-relaxed">
+                  {isMac
+                    ? 'Stops your Mac from going to sleep while an agent is working, including chats waiting on background work. It still sleeps when you close the lid, and this turns off when the battery is low'
+                    : 'Stops your computer from going to sleep while an agent is working, including chats waiting on background work'}
+                </span>
+              </div>
+              <Switch
+                aria-label={keepAwakeLabel}
+                checked={keepAwake?.enabled ?? true}
+                onCheckedChange={(enabled) => setKeepAwakeMutation.mutate({ enabled })}
+                className="shrink-0"
+              />
+            </div>
+            <MenuBarStatusSetting />
           </div>
         </SettingsCard>
       </SettingsSection>

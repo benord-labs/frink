@@ -9,20 +9,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sql = (q) => execFileSync('sqlite3', ['-readonly', dbPath, q], { encoding: 'utf8' }).trim();
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-const target = (await (await fetch('http://127.0.0.1:9223/json')).json()).find((t) => t.type === 'page');
+const target = (await (await fetch('http://127.0.0.1:9223/json')).json()).find(
+  (t) => t.type === 'page',
+);
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
 let seq = 0;
 const pending = new Map();
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
-  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m);
+    pending.delete(m.id);
+  }
 };
 const cdp = (method, params = {}) =>
-  new Promise((res) => { const id = ++seq; pending.set(id, res); ws.send(JSON.stringify({ id, method, params })); });
+  new Promise((res) => {
+    const id = ++seq;
+    pending.set(id, res);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
 const evaluate = async (expression) => {
   const r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-  if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails).slice(0, 400));
+  if (r.result?.exceptionDetails)
+    throw new Error(JSON.stringify(r.result.exceptionDetails).slice(0, 400));
   return r.result?.result?.value;
 };
 // Raw trpc-electron request (superjson transformer) — the prod bundle exposes no modules.
@@ -37,12 +47,17 @@ const rpc = (type, path, input) =>
   })`);
 
 const appUrl = target.url;
-const projectId = sql("select id from projects order by created_at limit 1");
+const projectId = sql('select id from projects order by created_at limit 1');
 log('app', appUrl, 'project', projectId);
 
 await rpc('mutation', 'tasks.pausePoller');
 const prompt = `QA missed-dispatch repro ${Date.now()}: reply with the single word OK.`;
-const task = await rpc('mutation', 'tasks.create', { projectId, description: prompt, source: 'manual', requiresFilesystem: false });
+const task = await rpc('mutation', 'tasks.create', {
+  projectId,
+  description: prompt,
+  source: 'manual',
+  requiresFilesystem: false,
+});
 log('created task', task.id, '(poller paused)');
 
 // Resume the poller, then leave the app page at once: the claim + dispatch land while no
@@ -57,13 +72,31 @@ let subChatId = '';
 for (let i = 0; i < 60 && !dispatchedAt; i++) {
   await sleep(1000);
   const lines = readFileSync(logPath, 'utf8').split('\n');
-  const j = lines.findIndex((l, k) => l.includes('dispatching task:chat-ready') && lines.slice(k, k + 3).join('').includes(task.id));
+  const j = lines.findIndex(
+    (l, k) =>
+      l.includes('dispatching task:chat-ready') &&
+      lines
+        .slice(k, k + 3)
+        .join('')
+        .includes(task.id),
+  );
   if (j < 0) continue;
   dispatchedAt = new Date(lines[j].slice(1, 24).replace(' ', 'T')).getTime();
-  subChatId = lines.slice(j, j + 5).join('').match(/subChatId: '([^']+)'/)?.[1] ?? '';
+  subChatId =
+    lines
+      .slice(j, j + 5)
+      .join('')
+      .match(/subChatId: '([^']+)'/)?.[1] ?? '';
 }
-if (!dispatchedAt) { log('FAIL-RIG: task never dispatched'); process.exit(2); }
-log('dispatched', new Date(dispatchedAt).toISOString(), dispatchedAt > awayAt - 2000 ? '(while away)' : '(BEFORE leaving — race lost, rerun)');
+if (!dispatchedAt) {
+  log('FAIL-RIG: task never dispatched');
+  process.exit(2);
+}
+log(
+  'dispatched',
+  new Date(dispatchedAt).toISOString(),
+  dispatchedAt > awayAt - 2000 ? '(while away)' : '(BEFORE leaving — race lost, rerun)',
+);
 await sleep(3000);
 
 await cdp('Page.navigate', { url: appUrl });
@@ -77,6 +110,10 @@ for (let i = 0; i < 45 && !delivered; i++) {
   delivered = readFileSync(logPath, 'utf8').includes(bound);
 }
 log('task status', sql(`select status from tasks where id='${task.id}'`));
-log(delivered ? 'DELIVERED: prompt reached the chat after the listener remounted' : 'STRANDED: prompt never reached the chat (bug reproduced)');
+log(
+  delivered
+    ? 'DELIVERED: prompt reached the chat after the listener remounted'
+    : 'STRANDED: prompt never reached the chat (bug reproduced)',
+);
 ws.close();
 process.exit(delivered ? 0 : 1);

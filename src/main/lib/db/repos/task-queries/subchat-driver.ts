@@ -26,11 +26,24 @@ export function activeFlowRunForSubChatId(db: Db, subChatId: string | SQL) {
       .where(
         and(
           inArray(flowRuns.status, ['pending', 'running', 'paused']),
-          inArray(flowRuns.id, linkedFlowRunIds(db, 'subChatId', subChatId)),
+          inArray(
+            flowRuns.id,
+            linkedFlowRunIds(db, 'subChatId', subChatId, { currentLanesOnly: true }),
+          ),
         ),
       )
       // Run-side links keep newer taskless runs authoritative over a previous run's parked task.
       .orderBy(desc(flowRuns.createdAt), desc(sql`flow_runs.rowid`))
       .limit(1)
   );
+}
+
+/** {@link activeFlowRunForSubChatId} in any status: the linked set is one sub-chat's few runs. */
+export function newestFlowRunForSubChatId(db: Db, subChatId: string) {
+  return db
+    .select({ id: flowRuns.id, status: flowRuns.status })
+    .from(flowRuns)
+    .where(inArray(flowRuns.id, linkedFlowRunIds(db, 'subChatId', subChatId)))
+    .orderBy(desc(flowRuns.createdAt), desc(sql`flow_runs.rowid`))
+    .limit(1);
 }

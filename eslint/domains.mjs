@@ -14,10 +14,16 @@
 /** First-level domains under src/renderer/lib/ (renderer-process logic, by concern). */
 export const RENDERER_LIB_DOMAINS = [
   'agent-chat',
+  // Per-provider chat options: each AI provider's models and the controls its chats offer.
+  'ai-providers',
+  'analytics',
   'atoms',
   'audio',
+  // The signed-in Codex account as the chat composer and Flows both read it (models, paid speeds).
+  'codex',
   'code-editor',
   'commands',
+  'file-links',
   'flow-rehearsal',
   'flows',
   'hooks',
@@ -30,6 +36,8 @@ export const RENDERER_LIB_DOMAINS = [
   'sentry',
   'stores',
   'tasks',
+  // A terminal pane's output on its way to the chat composer.
+  'terminal',
   'test-utils',
   'themes',
   'tree-navigation',
@@ -52,9 +60,12 @@ export const MAIN_ROOT_FOLDERS = ['lib', 'windows'];
 export const MAIN_LIB_DOMAINS = [
   'agent-runner',
   'agents',
+  'analytics',
   // Per-chat composer settings (model / Auto / Fast / Thinking) main owns for every window + phone.
   'chat-composer',
   'claude',
+  // Command-line launch arguments (`frink <dir>`) parsed at startup.
+  'cli',
   'cloud',
   'commands',
   'credentials',
@@ -69,6 +80,10 @@ export const MAIN_LIB_DOMAINS = [
   'mobile',
   'permissions',
   'platform',
+  // Keeps the Mac awake while agents, background waits or Flow nodes are working.
+  'power',
+  // Project creation and GitHub cloning: insert-or-adopt by path, one clone per repo.
+  'projects',
   'provider',
   'sentry',
   'skills',

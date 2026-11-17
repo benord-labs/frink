@@ -31,7 +31,11 @@ export type FlowChangeOutlineModel = {
   synopsis?: string;
   totalNodeCount: number;
   branchCount: number;
+  /** The tool finished but its result was not readable, so changes read as requests. */
+  resultUnread: boolean;
 };
+
+type ChangeCopyContext = { resultUnread?: boolean };
 
 const ACTION_NOUN: Record<FlowSemanticChange['action'], string> = {
   add: 'addition',
@@ -96,6 +100,13 @@ const UNKNOWN_ACTION_COPY: Record<FlowSemanticChange['action'], ChangeCopy> = {
   update: (target) => `Could not confirm the change to ${target}`,
 };
 
+/** Outcome copy when the tool finished but its result could not be read: neither doubt nor claim. */
+const UNREAD_ACTION_COPY = {
+  add: (target: string) => `Requested: add ${target}`,
+  remove: () => 'Requested: removal from this Flow',
+  update: (target: string) => `Requested: change to ${target}`,
+} satisfies Record<FlowSemanticChange['action'], ChangeCopy>;
+
 const UPDATED_STEP_STATUS_COPY: Partial<
   Record<FlowSemanticChange['status'], (label: string) => string>
 > = {
@@ -103,17 +114,30 @@ const UPDATED_STEP_STATUS_COPY: Partial<
   unknown: (label) => `Update attempted for ${label}`,
 };
 
+const HEADING_BY_PHASE = {
+  proposed: 'Requested flow',
+  applying: 'Requested flow',
+  applied: 'Resulting flow',
+  partial: 'Saved flow',
+  unchanged: 'Resulting flow',
+  failed: 'Changes not applied',
+  denied: 'Changes not applied',
+  stale: 'Changes not applied',
+  unconfirmed: 'Attempted layout',
+  interrupted: 'Attempted layout',
+  unread: 'Requested changes',
+} satisfies Record<FlowChangePhase, string>;
+
 function headingForPhase(phase: FlowChangePhase): string {
-  if (phase === 'proposed' || phase === 'applying') return 'Requested flow';
-  if (phase === 'partial') return 'Saved flow';
-  if (phase === 'failed' || phase === 'denied' || phase === 'stale') {
-    return 'Changes not applied';
-  }
-  if (phase === 'unconfirmed' || phase === 'interrupted') return 'Attempted layout';
-  return 'Resulting flow';
+  return HEADING_BY_PHASE[phase];
 }
 
-function actionCopy(change: FlowSemanticChange): string {
+function isUnreadChange(change: FlowSemanticChange, context: ChangeCopyContext): boolean {
+  return context.resultUnread === true && change.status === 'unknown';
+}
+
+function actionCopy(change: FlowSemanticChange, context: ChangeCopyContext): string {
+  if (isUnreadChange(change, context)) return `${ACTION_NOUN[change.action]} requested`;
   return (
     STATUS_ACTION_COPY[change.status]?.(ACTION_NOUN[change.action]) ??
     APPLIED_ACTION_COPY[change.action]
@@ -157,8 +181,12 @@ function changeTarget(change: FlowSemanticChange): string {
   return 'this step';
 }
 
-export function describeFlowChange(change: FlowSemanticChange): string {
+export function describeFlowChange(
+  change: FlowSemanticChange,
+  context: ChangeCopyContext = {},
+): string {
   const target = changeTarget(change);
+  if (isUnreadChange(change, context)) return UNREAD_ACTION_COPY[change.action](target);
   // A reason only explains an operation that did not apply; on any other status a stored receipt
   // is self-inconsistent, so the status copy is the truthful reading.
   const explainsFailure = change.status === 'failed' || change.status === 'skipped';
@@ -189,6 +217,9 @@ function singleUpdatedNode(presentation: FlowChangePresentation): FlowSemanticCh
 function updatedStepSynopsis(presentation: FlowChangePresentation) {
   const change = singleUpdatedNode(presentation);
   if (!change) return undefined;
+  if (isUnreadChange(change, copyContext(presentation))) {
+    return `Update requested for ${change.label}`;
+  }
   const detail = friendlyFlowChangeDetail(change);
   if (change.status === 'applied') {
     return detail ? `${change.label}: ${detail} changed` : `Updated ${change.label}`;
@@ -203,6 +234,10 @@ function updatedStepSynopsis(presentation: FlowChangePresentation) {
   );
 }
 
+function copyContext(presentation: FlowChangePresentation): ChangeCopyContext {
+  return { resultUnread: presentation.phase === 'unread' };
+}
+
 function routeSynopsis(routes: FlowOutlineRoute[]) {
   const firstRoute = routes[0];
   if (!firstRoute) return undefined;
@@ -214,7 +249,7 @@ function routeSynopsis(routes: FlowOutlineRoute[]) {
 
 function firstChangeSynopsis(presentation: FlowChangePresentation) {
   const first = presentation.changes[0];
-  return first ? `${first.label} ${actionCopy(first)}` : undefined;
+  return first ? `${first.label} ${actionCopy(first, copyContext(presentation))}` : undefined;
 }
 
 function synopsisFor(
@@ -245,6 +280,7 @@ function changesOnlyModel(
     synopsis: synopsisFor(presentation, []),
     totalNodeCount: graph?.nodes.length ?? 0,
     branchCount: 0,
+    resultUnread: presentation.phase === 'unread',
   };
 }
 
@@ -286,5 +322,6 @@ export function buildFlowChangeOutline(
     synopsis: synopsisFor(presentation, visibleRoutes),
     totalNodeCount: graph.nodes.length,
     branchCount: index.branchCount,
+    resultUnread: presentation.phase === 'unread',
   };
 }

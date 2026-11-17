@@ -22,9 +22,8 @@ const deleteRunMock = vi.fn();
 const renameProjectAiAccountsByLabelMock = vi.fn().mockResolvedValue(undefined);
 const deleteProjectAiAccountsByLabelMock = vi.fn().mockResolvedValue(undefined);
 const openExternalMock = vi.fn();
-const detectCodexAccountMock = vi.fn();
-// Mutable so a per-test toggle of the dark-launch flag works — the router reads
-// LAUNCH_FLAGS.codexAccounts at call time, and it is the ONLY flag the router reads.
+// Mutable so a per-test toggle of codexAccounts works: the Codex connect guards read it at
+// call time. Flags missing here read as off.
 const launchFlagsMock = { codexAccounts: false };
 
 function mockAnthropicOAuthValidation401() {
@@ -170,13 +169,41 @@ vi.mock('../../credentials/source-readers', () => ({
   KEYCHAIN_READ_TIMEOUT_MS: 1500,
 }));
 
-vi.mock('../../credentials/detect-codex', () => ({
-  detectCodexAccount: detectCodexAccountMock,
-}));
-
 vi.mock('../../../../shared/launch-flags', () => ({ LAUNCH_FLAGS: launchFlagsMock }));
 
 beforeEach(() => {});
+
+describe('claudeCodeRouter.hasExistingCliConfig', () => {
+  it('reads the API proxy from the login shell once it has answered, not the launch env', async () => {
+    // Called by onboarding right after launch, while the shell is usually still resolving.
+    const { LoginShellEnvResolver, setLoginShellEnvResolver } =
+      await import('../../platform/login-shell-env');
+    let answer: () => void = () => {};
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    setLoginShellEnvResolver(
+      new LoginShellEnvResolver({
+        spawnShell: async () => {
+          await answered;
+          return {
+            ok: true,
+            env: { PATH: process.env.PATH ?? '', ANTHROPIC_BASE_URL: 'https://proxy.example' },
+          };
+        },
+        extendPath: (p) => p ?? '',
+      }),
+    );
+    const { claudeCodeRouter } = await import('./claude-code');
+    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+    const pending = caller.hasExistingCliConfig();
+    answer();
+
+    await expect(pending).resolves.toMatchObject({
+      hasConfig: true,
+      baseUrl: 'https://proxy.example',
+    });
+  });
+});
 
 describe('claudeCodeRouter project account ownership', () => {
   beforeEach(() => {
@@ -320,7 +347,7 @@ describe('claudeCodeRouter project account ownership', () => {
     selectGetMock.mockReturnValue({
       id: 'cred-work',
       accountLabel: 'Work',
-      type: 'claude',
+      type: 'claude-code',
       oauthToken: 'oauth-token',
     });
 
@@ -369,7 +396,7 @@ describe('claudeCodeRouter project account ownership', () => {
     getProjectAiAccountMock.mockResolvedValue(null);
     selectGetMock.mockReturnValue({
       accountLabel: 'DefaultAcct',
-      type: 'claude',
+      type: 'claude-code',
       oauthToken: 'oauth',
       isDefault: true,
     });
@@ -495,7 +522,7 @@ describe('claudeCodeRouter project account ownership', () => {
     getProjectAiAccountMock.mockRejectedValueOnce(new Error('db read failed'));
     selectGetMock.mockReturnValue({
       accountLabel: 'Default',
-      type: 'claude',
+      type: 'claude-code',
       oauthToken: 'oauth-token',
       isDefault: true,
     });
@@ -907,125 +934,11 @@ describe('claudeCodeRouter connectClaudePassthrough — concurrency (Bug #20)', 
   });
 });
 
-describe('claudeCodeRouter connectCodexPassthrough — dark-launch creation gate', () => {
-  beforeEach(() => {
-    selectGetMock.mockReset();
-    insertValuesMock.mockClear();
-    insertValuesRunMock.mockClear();
-    updateRunMock.mockClear();
-    transactionSpy.mockReset();
-    detectCodexAccountMock.mockReset();
-    launchFlagsMock.codexAccounts = true; // default ON; the guard test flips it off
-    detectCodexAccountMock.mockReturnValue({
-      available: true,
-      email: 'me@openai.example',
-      displayName: 'me@openai.example',
-      sourcePath: 'codex-passthrough://local',
-    });
-  });
-
-  it('refuses to persist while the dark-launch flag is off (server-side guard, not just UI)', async () => {
-    // A tRPC mutation is reachable from DevTools/automation even when the UI is gated.
-    // While codex ships dark, the server itself MUST reject so no codex row can be created.
-    launchFlagsMock.codexAccounts = false;
-    const { claudeCodeRouter } = await import('./claude-code');
-    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
-
-    await expect(caller.connectCodexPassthrough({ accountLabel: 'Codex' })).rejects.toThrow(
-      /not enabled/i,
-    );
-    // Guard short-circuits before detection or any DB write.
-    expect(detectCodexAccountMock).not.toHaveBeenCalled();
-    expect(insertValuesRunMock).not.toHaveBeenCalled();
-  });
-
-  it('throws the detector hint when the codex binary is not logged in on this machine', async () => {
-    detectCodexAccountMock.mockReturnValue({
-      available: false,
-      hint: 'No Codex login found. Run `codex login` and try again.',
-    });
-    const { claudeCodeRouter } = await import('./claude-code');
-    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
-
-    await expect(caller.connectCodexPassthrough({ accountLabel: 'Codex' })).rejects.toThrow(
-      /codex login/i,
-    );
-    expect(insertValuesRunMock).not.toHaveBeenCalled();
-  });
-
-  it('inserts a token-null codex row marked default when it is the first account', async () => {
-    selectGetMock
-      .mockReturnValueOnce(undefined) // no existing codex-passthrough row
-      .mockReturnValueOnce(undefined); // no claude rows → first account
-    const { claudeCodeRouter } = await import('./claude-code');
-    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
-
-    const result = await caller.connectCodexPassthrough({ accountLabel: 'My Codex' });
-
-    expect(result).toMatchObject({ accountId: 'new-id', status: 'created' });
-    expect(insertValuesRunMock).toHaveBeenCalled();
-    // Token-null passthrough, codex type/source, machine-local sourcePath, default (first account).
-    expect(insertValuesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'codex',
-        oauthToken: null,
-        source: 'codex-passthrough',
-        sourcePath: 'codex-passthrough://local',
-        isDefault: true,
-        expectedEmail: 'me@openai.example',
-      }),
-    );
-    expect(transactionSpy).toHaveBeenCalled(); // SELECT+INSERT atomic (one-per-machine safety)
-  });
-
-  it('updates the existing codex row in place — one codex login per machine, never a second row', async () => {
-    selectGetMock.mockReturnValueOnce({ id: 'codex-existing' }); // existing codex-passthrough row
-    const { claudeCodeRouter } = await import('./claude-code');
-    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
-
-    const result = await caller.connectCodexPassthrough({ accountLabel: 'Renamed Codex' });
-
-    expect(result).toMatchObject({ accountId: 'codex-existing', status: 'updated' });
-    expect(updateRunMock).toHaveBeenCalled();
-    expect(insertValuesRunMock).not.toHaveBeenCalled();
-  });
-});
-
 describe('claudeCodeRouter — codex account-type recognition in the selection reads (sc-923)', () => {
   beforeEach(() => {
     selectGetMock.mockReset();
     selectAllMock.mockReset();
-    detectCodexAccountMock.mockReset();
     launchFlagsMock.codexAccounts = true;
-  });
-
-  describe('detectCodexAccount query', () => {
-    it('returns unavailable while the flag is dark — never probes the machine', async () => {
-      launchFlagsMock.codexAccounts = false;
-      const { claudeCodeRouter } = await import('./claude-code');
-      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
-
-      await expect(caller.detectCodexAccount()).resolves.toEqual({
-        available: false,
-        hint: 'Codex accounts are not enabled.',
-      });
-      expect(detectCodexAccountMock).not.toHaveBeenCalled();
-    });
-
-    it('returns the detector result when the flag is on', async () => {
-      detectCodexAccountMock.mockReturnValue({
-        available: true,
-        email: 'me@openai.example',
-        sourcePath: 'codex-passthrough://local',
-      });
-      const { claudeCodeRouter } = await import('./claude-code');
-      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
-
-      await expect(caller.detectCodexAccount()).resolves.toMatchObject({
-        available: true,
-        email: 'me@openai.example',
-      });
-    });
   });
 
   describe('listAccounts', () => {
@@ -1077,6 +990,37 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
       const [acc] = await caller.listAccounts();
       expect(acc).toMatchObject({ type: 'codex', label: 'My Codex', isAuthenticated: false });
     });
+
+    it('names each account from the provider table and never lists an unknown type', async () => {
+      const row = (id: string, type: string | null) => ({
+        id,
+        accountLabel: null,
+        type,
+        oauthToken: null,
+        source: 'api-key',
+        needsReauthAt: null,
+        isDefault: false,
+        connectedAt: null,
+        sourcePath: null,
+        expectedEmail: null,
+      });
+      selectAllMock.mockReturnValueOnce([
+        row('legacy', null),
+        row('cx', 'codex'),
+        row('oc', 'opencode'),
+        row('new', 'someday-agent'),
+      ]);
+      const { claudeCodeRouter } = await import('./claude-code');
+      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+      const accounts = await caller.listAccounts();
+      // The db mock ignores the selectable-provider scope, so the OpenCode row comes back here.
+      expect(accounts.map(({ id, type, label }) => [id, type, label])).toEqual([
+        ['legacy', 'claude-code', 'Claude'],
+        ['cx', 'codex', 'OpenAI'],
+        ['oc', 'opencode', 'OpenCode'],
+      ]);
+    });
   });
 
   describe('getResolvedAccount', () => {
@@ -1099,6 +1043,30 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
         isAuthenticated: true,
         label: 'My Codex',
       });
+    });
+
+    it.each([
+      ['codex', 'OpenAI'],
+      [null, 'Claude'],
+    ])('names an unlabelled default %s row from the provider table', async (type, label) => {
+      selectGetMock.mockReturnValueOnce({ accountLabel: null, type, isDefault: 1 });
+      const { claudeCodeRouter } = await import('./claude-code');
+      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.getResolvedAccount({})).resolves.toMatchObject({ label });
+    });
+
+    it('shows no login for a chat whose provider is switched off', async () => {
+      getChatByIdMock.mockResolvedValueOnce({
+        id: 'chat-oc',
+        projectId: null,
+        provider: 'opencode',
+      });
+      selectGetMock.mockReturnValue({ id: 'oc-1', accountLabel: 'My OpenCode', type: 'opencode' });
+      const { claudeCodeRouter } = await import('./claude-code');
+      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.getResolvedAccount({ chatId: 'chat-oc' })).resolves.toBeNull();
     });
   });
 

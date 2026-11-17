@@ -10,6 +10,7 @@ vi.mock('../../credentials/detect', () => ({ readClaudeUserConfig: vi.fn(() => (
 vi.mock('../../sentry/init', () => ({ captureMainException: vi.fn() }));
 
 import { codexPlanUsage, codexUsageDeps } from '../../agent-runner/codex/usage';
+import type { CodexUsageSnapshot } from '../../agent-runner/codex/usage/codex-usage';
 import { claudePlanUsage } from '../../claude/usage';
 import { claudeUsageDeps } from '../../claude/usage/refresh';
 import { getDefaultCredentialForType } from '../../credentials';
@@ -173,8 +174,16 @@ describe('usageRouter.getCodexUsage', () => {
     email: 'me@home.com',
     available: true,
     updatedAt: 5,
+    catalog: { tiers: { 'gpt-6-astra': ['fast' as const] }, defaultSlug: 'gpt-6-astra' },
   };
-  const codexProbe = vi.fn(async () => codexSnapshot);
+  const codexProbe = vi.fn(async (): Promise<CodexUsageSnapshot> => codexSnapshot);
+  const connectCodex = () =>
+    asMock(getDefaultCredentialForType).mockResolvedValue({
+      token: null,
+      passthrough: true,
+      isApiKey: false,
+      type: 'codex',
+    });
   codexUsageDeps.probe = codexProbe;
 
   beforeEach(() => {
@@ -201,5 +210,44 @@ describe('usageRouter.getCodexUsage', () => {
     });
     expect(await caller.getCodexUsage()).toEqual(codexSnapshot);
     expect(getDefaultCredentialForType).toHaveBeenCalledWith('codex');
+  });
+
+  it("returns the account's catalog with its slugs intact", async () => {
+    connectCodex();
+    expect(await caller.getCodexAccountCatalog()).toEqual(codexSnapshot.catalog);
+  });
+
+  it('reports an unknown catalog without spawning when no Codex account is connected', async () => {
+    asMock(getDefaultCredentialForType).mockResolvedValue({ token: null, type: 'codex' });
+    expect(await caller.getCodexAccountCatalog()).toBeNull();
+    expect(codexProbe).not.toHaveBeenCalled();
+  });
+
+  it('retries a read that missed the catalog well inside the TTL, keeping its usage', async () => {
+    connectCodex();
+    codexProbe.mockResolvedValueOnce({ ...codexSnapshot, catalog: null });
+    expect(await caller.getCodexAccountCatalog()).toBeNull();
+    expect((await caller.getCodexUsage()).windows).toEqual(codexSnapshot.windows);
+    clock += 10_000;
+    await caller.getCodexAccountCatalog();
+    expect(codexProbe).toHaveBeenCalledTimes(1);
+    clock += 30_000;
+    await caller.getCodexAccountCatalog();
+    expect(codexProbe).toHaveBeenCalledTimes(2);
+    await vi.waitFor(async () =>
+      expect(await caller.getCodexAccountCatalog()).toEqual(codexSnapshot.catalog),
+    );
+  });
+
+  it('retries a failed read well inside the TTL, since it hides the paid speeds', async () => {
+    connectCodex();
+    codexProbe.mockRejectedValueOnce(new Error('Codex did not answer account/read'));
+    expect(await caller.getCodexAccountCatalog()).toBeNull();
+    clock += 10_000;
+    await caller.getCodexAccountCatalog();
+    expect(codexProbe).toHaveBeenCalledTimes(1);
+    clock += 30_000;
+    expect(await caller.getCodexAccountCatalog()).toEqual(codexSnapshot.catalog);
+    expect(codexProbe).toHaveBeenCalledTimes(2);
   });
 });

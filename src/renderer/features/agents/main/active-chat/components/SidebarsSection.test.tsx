@@ -19,14 +19,6 @@ vi.mock('../../../../../components/ui/resizable-sidebar', () => ({
     isOpen ? <div data-testid="resizable-sidebar">{children}</div> : null,
 }));
 
-vi.mock('../../../ui/agent-preview', () => ({
-  AgentPreview: () => <div data-testid="agent-preview" />,
-}));
-
-vi.mock('./EmptyPreviewState', () => ({
-  EmptyPreviewState: () => <div data-testid="empty-preview-state" />,
-}));
-
 afterEach(cleanup);
 
 function baseProps(): ComponentProps<typeof SidebarsSection> {
@@ -39,13 +31,6 @@ function baseProps(): ComponentProps<typeof SidebarsSection> {
     diffPanel: null,
     gitContextPath: null,
     chatId: 'chat-1',
-    sandboxId: null,
-    repository: null,
-    canOpenPreview: false,
-    isPreviewSidebarOpen: false,
-    setIsPreviewSidebarOpen: vi.fn(),
-    isQuickSetup: false,
-    previewPort: null,
   };
 }
 

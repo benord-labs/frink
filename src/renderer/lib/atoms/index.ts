@@ -1,5 +1,6 @@
 import { atom } from 'jotai';
 import { atomWithStorage, RESET } from 'jotai/utils';
+import type { AiProviderId } from '../../../shared/lib/ai-providers';
 import { persistThinking } from './composer-persistence';
 
 export {
@@ -8,10 +9,13 @@ export {
   agentsSettingsDialogOpenAtom,
   exitTransientDestinationForNavigationAtom,
   flowEditorDirtyAtom,
+  flowsFocusRunAtom,
   flowsSelectedFlowIdAtom,
   focusAgentChatAtom,
   leaveOverlayStackForChatSurfaceAtom,
   navigateToAgentChatAtom,
+  openDestinationAtom,
+  openFlowRunAtom,
 } from './agent-navigation-atoms';
 // ============================================
 // RE-EXPORT FROM FEATURES/AGENTS/ATOMS (source of truth)
@@ -71,10 +75,20 @@ export const extendedThinkingEnabledAtom = atom(
   },
 );
 
-/** Hidden model family ids (`familyId`) — chat pickers filter; triggers/flows stay unfiltered. */
+/** Hidden model family ids (agents: `<providerId>:<familyId ?? id>`); flows stay unfiltered. */
 export const hiddenModelsAtom = atomWithStorage<string[]>('models:hidden', [], undefined, {
   getOnInit: true,
 });
+
+/** The chat sidebar leaves out chats a Flow opened, keeping the ones the user started. */
+export const hideFlowChatsAtom = atomWithStorage<boolean>(
+  'sidebar:hide-flow-chats',
+  false,
+  undefined,
+  {
+    getOnInit: true,
+  },
+);
 
 // Preferences - Sound Notifications
 // When enabled, play a sound when agent completes work (if not viewing the chat)
@@ -192,15 +206,12 @@ export type PendingAccountAuthState = {
   accountLabel: string;
   mode: 'add' | 'reauth';
   returnToSettings?: boolean;
-  /** Which connect page to route to. Absent/undefined = Claude (backward-compatible). */
-  provider?: 'claude-code' | 'codex';
+  /** The provider whose connect page opens. */
+  provider: AiProviderId;
 };
 
-// Track pending Claude/Codex account connect/reconnect flow from Settings.
-// null = normal app flow
-// { mode: 'add' } = brand-new passthrough connect
-// { mode: 'reauth' } = reconnect an existing passthrough (e.g. signed out of the CLI)
-// { provider: 'codex' } = route to the Codex connect page instead of Claude
+// A pending account connect or reconnect; null = normal app flow.
+// mode 'add' connects a new login, 'reauth' reconnects one that is signed out or missing.
 export const pendingAccountAuthAtom = atom<PendingAccountAuthState | null>(null);
 
 // ============================================

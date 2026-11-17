@@ -4,6 +4,7 @@ import { flowRunAdmissions, flowRuns, tasks } from '../../schema';
 import { isFlowRepresentative } from './flow-collapse';
 import {
   isNotQueuedForAdmission,
+  isNotWaitingOnApproval,
   workQueueOverviewSectionExpr,
 } from './work-queue-overview-filter';
 
@@ -37,7 +38,7 @@ export async function getWorkQueueOverviewCounts(db: Db): Promise<WorkQueueOverv
     })
     .from(tasks)
     .leftJoin(flowRuns, eq(flowRuns.id, tasks.flowRunId))
-    .where(and(isFlowRepresentative, isNotQueuedForAdmission))
+    .where(and(isFlowRepresentative, isNotQueuedForAdmission, isNotWaitingOnApproval))
     .groupBy(workQueueOverviewSectionExpr);
 
   let inbox = 0;

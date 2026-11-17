@@ -9,6 +9,8 @@ import {
   flowVersions,
 } from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
+import type { FlowSettings } from '../../../../shared/types/flow';
+import { StageRunMovedError } from './batch-promotion';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
 
 const GRAPH = { nodes: [], edges: [], settings: {} };
@@ -32,6 +34,26 @@ function seedBatchStageRun(db: TestDb, status = 'pending'): string {
     .run();
   db.insert(batchStageRuns).values({ id: 'stage-run-start', stageId: 'stage-start', status }).run();
   return 'stage-run-start';
+}
+
+function seedRuleVersion(db: TestDb, id: string, settings: FlowSettings): void {
+  const versionNumber = db.select().from(flowVersions).all().length + 1;
+  db.insert(flowVersions)
+    .values({ id, flowId: 'flow-start', versionNumber, graph: { ...GRAPH, settings } })
+    .run();
+}
+
+/** A Shortcut assign delivery as the webhook trigger stores it: the raw body under fullContent. */
+function shortcutStart(flowVersionId: string, idempotencyKey: string, storyTitle: string) {
+  return {
+    ...startInput(flowVersionId, idempotencyKey),
+    triggerContext: {
+      _frinkTrigger: 'webhook_trigger',
+      source: 'shortcut',
+      eventType: 'story_assigned',
+      fullContent: { primary_id: 46, actions: [{ id: 46, name: storyTitle }] },
+    },
+  };
 }
 
 function startInput(flowVersionId: string, idempotencyKey: string) {
@@ -64,6 +86,82 @@ describe('atomic Flow start admission', () => {
     expect(db.select().from(flowRuns).all()).toHaveLength(1);
     expect(db.select().from(flowRunAdmissions).all()).toHaveLength(1);
   });
+  it('refuses a batch member that moved to another stage since the dispatcher read it', async () => {
+    const db = freshDb();
+    const flowVersionId = seedVersion(db);
+    const batchStageRunId = seedBatchStageRun(db);
+    db.insert(batchStages)
+      .values({ id: 'stage-other', batchId: 'batch-start', stageNumber: 2 })
+      .run();
+    db.update(batchStageRuns)
+      .set({ stageId: 'stage-other' })
+      .where(eq(batchStageRuns.id, batchStageRunId))
+      .run();
+    const controller = new FlowAdmissionController(db);
+
+    await expect(
+      controller.enqueueStart({
+        ...startInput(flowVersionId, batchStageRunId),
+        batchId: 'batch-start',
+        batchStageRunId,
+        batchStageId: 'stage-start',
+      }),
+    ).rejects.toBeInstanceOf(StageRunMovedError);
+
+    expect(db.select().from(flowRuns).all()).toHaveLength(0);
+    expect(db.select().from(batchStageRuns).get()).toMatchObject({
+      stageId: 'stage-other',
+      status: 'pending',
+      flowRunId: null,
+    });
+  });
+  it('refuses a moved member before replaying an existing run for it', async () => {
+    const db = freshDb();
+    const flowVersionId = seedVersion(db);
+    const batchStageRunId = seedBatchStageRun(db);
+    db.insert(batchStages)
+      .values({ id: 'stage-other', batchId: 'batch-start', stageNumber: 2 })
+      .run();
+    const controller = new FlowAdmissionController(db);
+    const input = {
+      ...startInput(flowVersionId, batchStageRunId),
+      batchId: 'batch-start',
+      batchStageRunId,
+      batchStageId: 'stage-start',
+    };
+    const { run } = await controller.enqueueStart(input);
+    // A begun run whose member link was lost: the replay path would return it without admission.
+    db.update(flowRuns)
+      .set({ status: 'running', startedAt: new Date('2026-08-01T10:00:00Z') })
+      .where(eq(flowRuns.id, run.id))
+      .run();
+    db.update(batchStageRuns)
+      .set({ stageId: 'stage-other', status: 'pending', flowRunId: null })
+      .where(eq(batchStageRuns.id, batchStageRunId))
+      .run();
+
+    await expect(controller.enqueueStart(input)).rejects.toBeInstanceOf(StageRunMovedError);
+  });
+
+  it('queues a batch member still in the stage the dispatcher read it from', async () => {
+    const db = freshDb();
+    const flowVersionId = seedVersion(db);
+    const batchStageRunId = seedBatchStageRun(db);
+    const controller = new FlowAdmissionController(db);
+
+    const { run } = await controller.enqueueStart({
+      ...startInput(flowVersionId, batchStageRunId),
+      batchId: 'batch-start',
+      batchStageRunId,
+      batchStageId: 'stage-start',
+    });
+
+    expect(db.select().from(batchStageRuns).get()).toMatchObject({
+      stageId: 'stage-start',
+      status: 'queued',
+      flowRunId: run.id,
+    });
+  });
   it('replays one run for a repeated idempotency key', async () => {
     const db = freshDb();
     const flowVersionId = seedVersion(db);
@@ -76,6 +174,117 @@ describe('atomic Flow start admission', () => {
     expect(replay.run.id).toBe(first.run.id);
     expect(db.select().from(flowRuns).all()).toEqual([first.run]);
   });
+  it('marks a start run-first from the version it admits, never from a newer one', async () => {
+    const db = freshDb();
+    const plainVersion = seedVersion(db);
+    db.insert(flowVersions)
+      .values({
+        id: 'version-run-first',
+        flowId: 'flow-start',
+        versionNumber: 2,
+        graph: { ...GRAPH, settings: { runFirst: true } },
+      })
+      .run();
+    const controller = new FlowAdmissionController(db);
+    const first = await controller.enqueueStart(startInput('version-run-first', 'first-start'));
+    const plain = await controller.enqueueStart(startInput(plainVersion, 'plain-start'));
+    db.update(flowRunAdmissions)
+      .set({ state: 'failed', settledAt: new Date('2026-08-01T10:00:00Z') })
+      .where(eq(flowRunAdmissions.ticket, plain.admission?.ticket ?? -1))
+      .run();
+
+    // The replay re-queues the run still pinned to the plain version, even though a newer
+    // version of the same flow now runs first.
+    const replay = await controller.enqueueStart(startInput('version-run-first', 'plain-start'));
+
+    expect(first.admission).toMatchObject({ priorityClass: 'start', runFirst: true });
+    expect(first.admission?.intentJson).not.toHaveProperty('runFirst');
+    expect(replay.run.flowVersionId).toBe(plainVersion);
+    expect(replay.admission?.ticket).toBeGreaterThan(plain.admission?.ticket ?? 0);
+    expect(replay.admission?.runFirst).toBe(false);
+  });
+
+  it('marks only the runs whose own saved details match the Only runs that match rule', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const rule = [
+      { detail: 'trigger.story.title', operator: 'contains' as const, value: '[follow-up]' },
+    ];
+    seedRuleVersion(db, 'version-rule', { runFirstWhen: rule });
+    const controller = new FlowAdmissionController(db);
+
+    const followUp = await controller.enqueueStart(
+      shortcutStart('version-rule', 'follow-up', '[Follow-up] Retry the card'),
+    );
+    const other = await controller.enqueueStart(
+      shortcutStart('version-rule', 'other', 'Fix login'),
+    );
+    const runButton = await controller.enqueueStart({
+      ...startInput('version-rule', 'run-button'),
+      triggerContext: null,
+    });
+
+    expect(followUp.admission).toMatchObject({ priorityClass: 'start', runFirst: true });
+    expect(other.admission?.runFirst).toBe(false);
+    expect(runButton.admission?.runFirst).toBe(false);
+  });
+
+  it('reads numbers as text and never matches an object, an array or a missing detail', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const payload = { count: 3, labels: ['bug'], story: { title: 'x' } };
+    const cases = [
+      ['trigger.payload.count', 'equals', '3', true],
+      ['trigger.payload.story', 'contains', 'title', false],
+      ['trigger.payload.labels', 'equals', 'bug', false],
+      ['trigger.payload.missing', 'not_equals', 'x', false],
+    ] as const;
+    const controller = new FlowAdmissionController(db);
+
+    for (const [index, [detail, operator, value, expected]] of cases.entries()) {
+      seedRuleVersion(db, `version-${index}`, { runFirstWhen: [{ detail, operator, value }] });
+      const { admission } = await controller.enqueueStart({
+        ...startInput(`version-${index}`, `case-${index}`),
+        triggerContext: { source: 'generic_webhook', fullContent: payload },
+      });
+      expect(admission?.runFirst).toBe(expected);
+    }
+  });
+
+  it('lets Every new run win over a rule, and ignores a rule with a blank row', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const match = { detail: 'trigger.story.title', operator: 'contains' as const, value: 'retry' };
+    const blank = { ...match, value: ' ' };
+    seedRuleVersion(db, 'version-every', { runFirst: true, runFirstWhen: [blank] });
+    seedRuleVersion(db, 'version-blank', { runFirstWhen: [match, blank] });
+    const controller = new FlowAdmissionController(db);
+
+    const every = await controller.enqueueStart(shortcutStart('version-every', 'every', 'Fix'));
+    const blankRule = await controller.enqueueStart(
+      shortcutStart('version-blank', 'blank', 'Retry the card'),
+    );
+
+    expect(every.admission?.runFirst).toBe(true);
+    expect(blankRule.admission?.runFirst).toBe(false);
+  });
+
+  it('keeps the original queue entry when a delivery replays after the rule changed', async () => {
+    const db = freshDb();
+    seedVersion(db);
+    const rule = [{ detail: 'trigger.story.title', operator: 'contains' as const, value: 'retry' }];
+    seedRuleVersion(db, 'version-rule', { runFirstWhen: rule });
+    const controller = new FlowAdmissionController(db);
+    const first = await controller.enqueueStart(shortcutStart('version-rule', 'same', 'Retry'));
+    db.update(flowVersions).set({ graph: GRAPH }).where(eq(flowVersions.id, 'version-rule')).run();
+
+    const replay = await controller.enqueueStart(shortcutStart('version-rule', 'same', 'Retry'));
+
+    expect(replay.isReplay).toBe(true);
+    expect(replay.admission).toEqual(first.admission);
+    expect(replay.admission?.runFirst).toBe(true);
+  });
+
   it('re-enqueues only a replay that is still pending and proven unstarted', async () => {
     const db = freshDb();
     const flowVersionId = seedVersion(db);
@@ -132,6 +341,69 @@ describe('atomic Flow start admission', () => {
     expect(
       db.select().from(batchStageRuns).where(eq(batchStageRuns.id, batchStageRunId)).get(),
     ).toMatchObject({ status: 'dispatched', flowRunId: null });
+  });
+  it('queues a batch member with the attachments it holds at link time, not the dispatch snapshot', async () => {
+    const db = freshDb();
+    const flowVersionId = seedVersion(db);
+    const batchStageRunId = seedBatchStageRun(db);
+    const early = { url: 'frink-attachment://stage-run-start/a.png', type: 'image/png' };
+    const late = { url: 'frink-attachment://stage-run-start/b.png', type: 'image/png' };
+    // An upload committed after dispatch read the member but before it was queued.
+    db.update(batchStageRuns)
+      .set({ triggerContext: { attachments: [early, late] } })
+      .where(eq(batchStageRuns.id, batchStageRunId))
+      .run();
+    const controller = new FlowAdmissionController(db);
+
+    const { run } = await controller.enqueueStart({
+      ...startInput(flowVersionId, 'batch-attachments'),
+      triggerContext: { source: 'test', attachments: [early] },
+      batchId: 'batch-start',
+      batchStageRunId,
+    });
+
+    const expected = { source: 'test', attachments: [early, late] };
+    expect(run.triggerContext).toEqual(expected);
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, run.id)).get()?.triggerContext).toEqual(
+      expected,
+    );
+  });
+  it.each([['not-an-array'], [42], [null]])(
+    'keeps the dispatch snapshot when the member attachments value is malformed (%j)',
+    async (malformed) => {
+      const db = freshDb();
+      const flowVersionId = seedVersion(db);
+      const batchStageRunId = seedBatchStageRun(db);
+      db.update(batchStageRuns)
+        .set({ triggerContext: { attachments: malformed } })
+        .where(eq(batchStageRuns.id, batchStageRunId))
+        .run();
+      const snapshot = { url: 'frink-attachment://stage-run-start/a.png', type: 'image/png' };
+      const controller = new FlowAdmissionController(db);
+
+      const { run } = await controller.enqueueStart({
+        ...startInput(flowVersionId, 'batch-malformed'),
+        triggerContext: { source: 'test', attachments: [snapshot] },
+        batchId: 'batch-start',
+        batchStageRunId,
+      });
+
+      expect(run.triggerContext).toEqual({ source: 'test', attachments: [snapshot] });
+    },
+  );
+  it('leaves the run trigger_context alone when the batch member has no attachments', async () => {
+    const db = freshDb();
+    const flowVersionId = seedVersion(db);
+    const batchStageRunId = seedBatchStageRun(db);
+    const controller = new FlowAdmissionController(db);
+
+    const { run } = await controller.enqueueStart({
+      ...startInput(flowVersionId, 'batch-no-attachments'),
+      batchId: 'batch-start',
+      batchStageRunId,
+    });
+
+    expect(run.triggerContext).toEqual({ source: 'test' });
   });
   it('refuses to queue a member into a stage at its concurrency limit and leaves it pending', async () => {
     const db = freshDb();

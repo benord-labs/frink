@@ -3,7 +3,14 @@ import { useSetAtom } from 'jotai';
 import { useCallback, useEffect, useRef } from 'react';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
-import { codeSelectionMention, pastedTextMention } from '@/lib/mentions/queued-message-text';
+import {
+  attachedContextFile,
+  codeSelectionMention,
+  diffMention,
+  openFileMention,
+  pastedTextMention,
+  quoteMention,
+} from '@/lib/mentions/queued-message-text';
 import { isRunBusy } from '../../../../../lib/agent-chat/steer/run-busy';
 import { isCompactCommand } from '../../../../../../shared/commands/expand-slash-command';
 import { stripHiddenWakeMarker } from '../../../../../../shared/lib/message-markers/hidden-wake-marker';
@@ -33,9 +40,12 @@ import {
   toQueuedTextContext,
 } from '../../../lib/queue-utils';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
-import { MENTION_PREFIXES, MENTION_PREVIEW_SANITIZE_REGEX } from '../../../mentions';
 import { useAgentSubChatStore } from '../../../stores/sub-chat-store';
-import { clearFlowRunEndedErrorSignal, showAccountNotReadyToast, utf8ToBase64 } from '../utils';
+import {
+  clearFlowRunEndedErrorSignal,
+  showAccountNotReadyToast,
+  type UnauthAccountForSend,
+} from '../utils';
 
 type SendMessagePart =
   | { type: 'text'; text: string }
@@ -95,7 +105,7 @@ type Props = {
   /** After getResolvedAccount succeeded for this chat — required before direct sends (not queued). */
   isResolvedExecutionAccountReady: boolean;
   /** Set when the resolved account exists but is not authenticated — used to route the toast action. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
 };
 
 export function useMessageSend({
@@ -157,6 +167,12 @@ export function useMessageSend({
     const currentTextContexts = textContextsRef.current ?? [];
     const currentCodeSelection = codeSelectionContextRef.current;
     const currentPastedTexts = pastedTextsRef.current ?? [];
+    // The same rule the composer chip reads, so what is shown is what is sent.
+    const attachedFile = attachedContextFile(
+      activeFileRef.current,
+      activeFileExcludedRef.current,
+      currentCodeSelection,
+    );
     const hasImages = currentImages.filter((img) => !img.isLoading && img.url).length > 0;
     const hasTextContexts = currentTextContexts.length > 0;
     const hasCodeSelection = currentCodeSelection !== null;
@@ -180,9 +196,10 @@ export function useMessageSend({
       const queuedDiffTextContexts = (diffTextContextsRef.current ?? []).map(
         toQueuedDiffTextContext,
       );
+      const queuedText = inputValue.trim();
       const item = createQueueItem(
         generateQueueId(),
-        inputValue.trim(),
+        [openFileMention(attachedFile, queuedText), queuedText].filter(Boolean).join(' '),
         queuedImages.length > 0 ? queuedImages : undefined,
         queuedFiles.length > 0 ? queuedFiles : undefined,
         queuedTextContexts.length > 0 ? queuedTextContexts : undefined,
@@ -272,14 +289,8 @@ export function useMessageSend({
 
     // Add text contexts as mention tokens
     const currentDiffTextContexts = diffTextContextsRef.current ?? [];
-    const currentActiveFile = activeFileRef.current;
+    const fileMention = openFileMention(attachedFile, finalText);
     let mentionPrefix: string = '';
-
-    // Include active file context if viewing a file (and no code selection from that file, and user hasn't excluded it)
-    const shouldIncludeActiveFile =
-      currentActiveFile &&
-      !activeFileExcludedRef.current &&
-      (!currentCodeSelection || currentCodeSelection.filePath !== currentActiveFile.path);
 
     // Mention tokens would push `/compact` off position 0 — see isCompactCommand.
     if (
@@ -287,33 +298,20 @@ export function useMessageSend({
       (currentTextContexts.length > 0 ||
         currentDiffTextContexts.length > 0 ||
         currentCodeSelection ||
-        shouldIncludeActiveFile ||
+        fileMention ||
         currentPastedTexts.length > 0)
     ) {
-      const quoteMentions = currentTextContexts.map((tc) => {
-        const preview = tc.preview.replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
-        const encodedText = utf8ToBase64(tc.text);
-        return `@[${MENTION_PREFIXES.QUOTE}${preview}:${encodedText}]`;
-      });
-
-      const diffMentions = currentDiffTextContexts.map((dtc) => {
-        const preview = dtc.preview.replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
-        const encodedText = utf8ToBase64(dtc.text);
-        const lineNum = dtc.lineNumber || 0;
-        return `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${lineNum}:${preview}:${encodedText}]`;
-      });
+      const quoteMentions = currentTextContexts.map(quoteMention);
+      const diffMentions = currentDiffTextContexts.map(diffMention);
 
       // Add code selection as mention token
       const codeMentions = currentCodeSelection ? [codeSelectionMention(currentCodeSelection)] : [];
 
-      // Add active file as context (if not already included via code selection)
-      const activeFileMention = shouldIncludeActiveFile
-        ? [`@[${MENTION_PREFIXES.FILE}local:${currentActiveFile.path}]`]
-        : [];
-
       const pastedTextMentions = currentPastedTexts.map(pastedTextMention);
 
-      mentionPrefix = `${[...quoteMentions, ...diffMentions, ...codeMentions, ...activeFileMention, ...pastedTextMentions].join(' ')} `;
+      // The open file goes last, next to the typed text: the order a queued message drains in.
+      const mentions = [...quoteMentions, ...diffMentions, ...codeMentions, ...pastedTextMentions];
+      mentionPrefix = `${[...mentions, ...(fileMention ? [fileMention] : [])].join(' ')} `;
     }
 
     if (finalText || mentionPrefix) {

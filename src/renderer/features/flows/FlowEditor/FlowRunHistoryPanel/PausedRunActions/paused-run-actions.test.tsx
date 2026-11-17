@@ -6,7 +6,7 @@
  * RunDetailPane wiring is covered by FlowRunHistoryPanel.tab.test.tsx).
  */
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const snap = vi.hoisted(() => ({
@@ -146,7 +146,7 @@ function inheritedPlanDetail(
 }
 
 function renderActions(detail: Parameters<typeof PausedRunActions>[0]['detail']) {
-  const onResumeRun = vi.fn();
+  const onResumeRun = vi.fn().mockResolvedValue(undefined);
   render(<PausedRunActions detail={detail} onResumeRun={onResumeRun} resumePending={false} />);
   return { onResumeRun };
 }
@@ -273,7 +273,7 @@ describe('PausedRunActions — question-park Answer jump', () => {
   it('Approve on an inheriting node resumes THAT node run', () => {
     const { onResumeRun } = renderActions(inheritedPlanDetail());
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(onResumeRun).toHaveBeenCalledWith('approve', 'nr-a');
+    expect(onResumeRun).toHaveBeenCalledWith({ action: 'approve', nodeRunId: 'nr-a' });
   });
 
   it('a non-agent block downstream of a plan start_task never gets Approve', () => {
@@ -319,5 +319,134 @@ describe('PausedRunActions — question-park Answer jump', () => {
     const { toast } = await import('sonner');
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('No chat found for this step'));
     expect(snap.requestNav).not.toHaveBeenCalled();
+  });
+});
+
+describe('PausedRunActions — per-step recovery', () => {
+  afterEach(cleanup);
+
+  it('reads Continue (and resumes that node) when its session already answered it', () => {
+    const { onResumeRun } = renderActions({
+      ...questionDetail('failed'),
+      recoveries: [{ nodeRunId: 'nr-a', kind: 'continue', confirmSideEffects: false }],
+    });
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(onResumeRun).toHaveBeenCalledWith({
+      action: 'retry',
+      nodeRunId: 'nr-a',
+      kind: 'continue',
+    });
+  });
+
+  // Every actionable row routes through its own node's session, so each row reads its own kind.
+  it('labels and confirms each actionable row from its own recovery', () => {
+    const base = questionDetail('failed');
+    const { onResumeRun } = renderActions({
+      graph: {
+        nodes: [...base.graph.nodes, { id: 'cmd', blockType: 'run_command', label: 'Deploy' }],
+      },
+      nodeRuns: [
+        ...base.nodeRuns,
+        {
+          id: 'nr-cmd',
+          node_id: 'cmd',
+          block_type: 'run_command',
+          status: 'failed',
+          node_output: null,
+        },
+      ],
+      recoveries: [
+        { nodeRunId: 'nr-a', kind: 'continue', confirmSideEffects: false },
+        { nodeRunId: 'nr-cmd', kind: 'retry', confirmSideEffects: true },
+      ],
+    });
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onResumeRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /retry anyway/i }));
+    expect(onResumeRun).toHaveBeenCalledWith({
+      action: 'retry',
+      nodeRunId: 'nr-cmd',
+      kind: 'retry',
+    });
+    // Closed on submit, so a second click cannot resubmit while the run refetches.
+    expect(screen.queryByRole('button', { name: /retry anyway/i })).not.toBeInTheDocument();
+  });
+
+  it('drops an open confirmation when the panel switches to another run, even after returning', () => {
+    const cmdRun = (id: string) => ({
+      graph: { nodes: [{ id: 'cmd', blockType: 'run_command', label: 'Deploy' }] },
+      nodeRuns: [
+        { id, node_id: 'cmd', block_type: 'run_command', status: 'failed', node_output: null },
+      ],
+      recoveries: [{ nodeRunId: id, kind: 'retry' as const, confirmSideEffects: true }],
+    });
+    const onResumeRun = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <PausedRunActions detail={cmdRun('nr-a')} onResumeRun={onResumeRun} resumePending={false} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.getByRole('button', { name: /retry anyway/i })).toBeInTheDocument();
+
+    for (const id of ['nr-b', 'nr-a']) {
+      rerender(
+        <PausedRunActions detail={cmdRun(id)} onResumeRun={onResumeRun} resumePending={false} />,
+      );
+      expect(screen.queryByRole('button', { name: /retry anyway/i })).not.toBeInTheDocument();
+    }
+    expect(onResumeRun).not.toHaveBeenCalled();
+  });
+
+  it('submits the Retry the user confirmed even if a poll flips the step to Continue', () => {
+    const cmdRun = (kind: 'retry' | 'continue') => ({
+      graph: { nodes: [{ id: 'cmd', blockType: 'run_command', label: 'Deploy' }] },
+      nodeRuns: [
+        {
+          id: 'nr-a',
+          node_id: 'cmd',
+          block_type: 'run_command',
+          status: 'failed',
+          node_output: null,
+        },
+      ],
+      recoveries: [{ nodeRunId: 'nr-a', kind, confirmSideEffects: true }],
+    });
+    const onResumeRun = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <PausedRunActions detail={cmdRun('retry')} onResumeRun={onResumeRun} resumePending={false} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    rerender(
+      <PausedRunActions
+        detail={cmdRun('continue')}
+        onResumeRun={onResumeRun}
+        resumePending={false}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /retry anyway/i }));
+    expect(onResumeRun).toHaveBeenCalledWith({ action: 'retry', nodeRunId: 'nr-a', kind: 'retry' });
+  });
+
+  // Closing the confirmation re-exposes Retry before `resumePending` renders.
+  it('ignores a second submit until the first request settles', async () => {
+    let settle: () => void = () => undefined;
+    const onResumeRun = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
+    const detail = {
+      ...questionDetail('failed'),
+      recoveries: [{ nodeRunId: 'nr-a', kind: 'retry' as const, confirmSideEffects: true }],
+    };
+    render(<PausedRunActions detail={detail} onResumeRun={onResumeRun} resumePending={false} />);
+    const confirmRetry = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      fireEvent.click(screen.getByRole('button', { name: /retry anyway/i }));
+    };
+    confirmRetry();
+    confirmRetry();
+    expect(onResumeRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => settle());
+    confirmRetry();
+    expect(onResumeRun).toHaveBeenCalledTimes(2);
   });
 });

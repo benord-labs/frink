@@ -28,7 +28,10 @@ import { captureMainException } from '../../sentry/init';
 // reach any path the user could already open in a terminal. Operations that take a
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
+import { findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
+import { resolveNamesProcedure } from './resolve-file-names';
+import { findSymlinkEscape } from './symlink-escape';
 
 // Active copy operations — allows cancellation by operationId
 type ActiveOperation = {
@@ -951,16 +954,12 @@ export const filesRouter = router({
     .query(async ({ input }) => {
       const { projectPath, query, limit } = input;
 
-      if (!projectPath) {
-        return [];
-      }
+      if (!projectPath) return [];
 
       try {
         // Verify the path exists and is a directory
         const pathStat = await stat(projectPath);
-        if (!pathStat.isDirectory()) {
-          return [];
-        }
+        if (!pathStat.isDirectory()) return [];
 
         // Get entry list (cached or fresh scan)
         const entries = await getEntryList(projectPath);
@@ -972,6 +971,8 @@ export const filesRouter = router({
         return [];
       }
     }),
+
+  resolveNames: resolveNamesProcedure(getEntryList),
 
   /**
    * Search inside local file contents (VS Code style find-in-files).
@@ -1109,6 +1110,13 @@ export const filesRouter = router({
   readFile: publicProcedure
     .input(z.object({ filePath: z.string() }))
     .query(({ input }) => readEditorTextFile(input.filePath)),
+
+  symlinkEscape: publicProcedure
+    .input(z.object({ projectPath: z.string(), filePath: z.string() }))
+    .query(({ input }) => findSymlinkEscape(input.projectPath, input.filePath)),
+  entryType: publicProcedure
+    .input(z.object({ projectPath: z.string(), relativePath: z.string() }))
+    .query(({ input }) => findEntryType(input.projectPath, input.relativePath)),
 
   /**
    * Read image file as base64 data URL for display in the code editor panel.

@@ -6,6 +6,7 @@ import {
   applyChatRenameToSidebarMaps,
   applyChatRestoreToSidebarMaps,
   applyForkInsertToSidebarMaps,
+  applyOpenChatActivityToSidebarMaps,
   applyPinToggleToSidebarMaps,
   buildChatCountByProjectMap,
   computeChatCountByFolderKey,
@@ -15,6 +16,7 @@ import {
   refetchListCountsAndSyncFolderSnapshots,
   removeChatIdsFromSidebarMaps,
   resolveSidebarFolderKeyForProjectId,
+  shouldShowFlowChatsFilter,
   SIDEBAR_GENERAL_COUNT_KEY,
 } from './use-sidebar-chat-cache';
 
@@ -90,9 +92,9 @@ describe('resolveSidebarFolderKeyForProjectId', () => {
 describe('buildChatCountByProjectMap / computeChatCountByFolderKey', () => {
   it('aggregates folder counts from listCounts rows', () => {
     const raw = [
-      { projectId: 'p1', count: 2 },
-      { projectId: 'p2', count: 3 },
-      { projectId: null, count: 1 },
+      { projectId: 'p1', count: 2, flowCount: 0 },
+      { projectId: 'p2', count: 3, flowCount: 0 },
+      { projectId: null, count: 1, flowCount: 0 },
     ];
     const map = buildChatCountByProjectMap(raw);
     expect(map.get('p1')).toBe(2);
@@ -105,6 +107,58 @@ describe('buildChatCountByProjectMap / computeChatCountByFolderKey', () => {
     const byFolder = computeChatCountByFolderKey(folderDescriptors, map, SIDEBAR_GENERAL_COUNT_KEY);
     expect(byFolder['folder-a']).toBe(5);
     expect(byFolder[GENERAL]).toBe(1);
+  });
+
+  it('counts only chats the user started while Flow chats are hidden', () => {
+    const raw = [
+      { projectId: 'p1', count: 5, flowCount: 3 },
+      { projectId: null, count: 2, flowCount: 2 },
+    ];
+    const map = buildChatCountByProjectMap(raw, true);
+    expect(map.get('p1')).toBe(2);
+    expect(map.get(SIDEBAR_GENERAL_COUNT_KEY)).toBe(0);
+    expect(buildChatCountByProjectMap(raw).get('p1')).toBe(5);
+  });
+});
+
+describe('shouldShowFlowChatsFilter', () => {
+  const noFlows = [{ projectId: 'p1', count: 2, flowCount: 0 }];
+  const withFlows = [{ projectId: 'p1', count: 2, flowCount: 1 }];
+  const show = (input: Partial<Parameters<typeof shouldShowFlowChatsFilter>[0]>) =>
+    shouldShowFlowChatsFilter({
+      hideFlowChats: false,
+      showArchived: false,
+      chatCounts: undefined,
+      archivedChats: undefined,
+      ...input,
+    });
+
+  it('shows only when a non-archived Flow chat exists', () => {
+    expect(show({ chatCounts: noFlows })).toBe(false);
+    expect(show({ chatCounts: withFlows })).toBe(true);
+    expect(show({})).toBe(false);
+  });
+
+  it('treats non-array query data as no Flow chats instead of throwing', () => {
+    // tRPC hydration can briefly hand back a non-array value; the helper must survive it.
+    const hydrating: readonly [] = JSON.parse('{}');
+    expect(show({ chatCounts: hydrating })).toBe(false);
+    expect(show({ showArchived: true, archivedChats: hydrating })).toBe(false);
+  });
+
+  it('stays visible while the filter is on, so it can be turned off', () => {
+    expect(show({ hideFlowChats: true, chatCounts: noFlows })).toBe(true);
+    expect(show({ hideFlowChats: true, showArchived: true, archivedChats: [] })).toBe(true);
+  });
+
+  it('decides from archived chats in the Archived view', () => {
+    const archivedFlow = [{ taskId: null }, { taskId: 'task-1' }];
+    expect(show({ showArchived: true, chatCounts: noFlows, archivedChats: archivedFlow })).toBe(
+      true,
+    );
+    expect(
+      show({ showArchived: true, chatCounts: withFlows, archivedChats: [{ taskId: null }] }),
+    ).toBe(false);
   });
 });
 
@@ -297,8 +351,8 @@ describe('refetchListCountsAndSyncFolderSnapshots', () => {
   it('refetches counts and aligns snapshots for loaded folders only', async () => {
     const invalidate = vi.fn(async () => undefined);
     const fetch = vi.fn(async () => [
-      { projectId: 'p1', count: 10 },
-      { projectId: null, count: 0 },
+      { projectId: 'p1', count: 10, flowCount: 4 },
+      { projectId: null, count: 0, flowCount: 0 },
     ]);
     const setSnapshot = vi.fn((fn: (p: Record<string, number>) => Record<string, number>) =>
       fn({ folderA: 5 }),
@@ -312,15 +366,37 @@ describe('refetchListCountsAndSyncFolderSnapshots', () => {
       ],
       setSnapshot as Dispatch<SetStateAction<Record<string, number>>>,
       SIDEBAR_GENERAL_COUNT_KEY,
+      false,
     );
 
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(1);
+    // SAFETY: the helper always hands setFolderCountSnapshotByKey an updater function.
     const updater = setSnapshot.mock.calls[0][0] as (
       p: Record<string, number>,
     ) => Record<string, number>;
     const next = updater({ folderA: 5 });
     expect(next.folderA).toBe(10);
+  });
+
+  it('snapshots only the chats the Flow-chat filter keeps', async () => {
+    const fetch = vi.fn(async () => [{ projectId: 'p1', count: 10, flowCount: 4 }]);
+    const setSnapshot = vi.fn();
+
+    // SAFETY: the helper only ever calls this setter, which the double records.
+    await refetchListCountsAndSyncFolderSnapshots(
+      { chats: { listCounts: { invalidate: vi.fn(async () => undefined), fetch } } },
+      [{ key: 'folderA', projectIds: ['p1'] }],
+      setSnapshot as Dispatch<SetStateAction<Record<string, number>>>,
+      SIDEBAR_GENERAL_COUNT_KEY,
+      true,
+    );
+
+    // SAFETY: the helper always hands setFolderCountSnapshotByKey an updater function.
+    const updater = setSnapshot.mock.calls[0][0] as (
+      p: Record<string, number>,
+    ) => Record<string, number>;
+    expect(updater({ folderA: 10 }).folderA).toBe(6);
   });
 });
 
@@ -564,5 +640,35 @@ describe('invalidateBatchViews', () => {
 
     expect(utils.chats.listByBatch.invalidate).toHaveBeenCalledTimes(1);
     expect(utils.chats.listBatchGroups.invalidate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('applyOpenChatActivityToSidebarMaps', () => {
+  type FolderMap = Record<string, SidebarChatListItem[]>;
+  const BUMPED_AT = new Date('2026-05-01');
+  /** Applies activity in `chatId` to `before` and returns the folder map that results. */
+  const applyActivity = (before: FolderMap, openChats: SidebarChatListItem[], chatId: string) => {
+    const setFolders = vi.fn();
+    applyOpenChatActivityToSidebarMaps(setFolders, openChats, [], GENERAL, chatId, BUMPED_AT);
+    // SAFETY: the helper only ever hands the setter an updater function.
+    const update = setFolders.mock.calls[0]?.[0] as ((prev: FolderMap) => FolderMap) | undefined;
+    return update ? update(before) : before;
+  };
+
+  it('adds an open chat no loaded page holds to its folder, as the newest chat', () => {
+    const idle = makeChat({ id: 'idle', updatedAt: new Date('2025-01-01') });
+    const next = applyActivity({ [GENERAL]: [makeChat({ id: 'recent' })] }, [idle], 'idle');
+    expect(next[GENERAL].map((c) => c.id)).toEqual(['idle', 'recent']);
+    expect(next[GENERAL][0].updatedAt).toEqual(BUMPED_AT);
+  });
+
+  it('leaves the lists alone for an open chat a loaded page already holds', () => {
+    const before = { [GENERAL]: [makeChat({ id: 'loaded' })] };
+    expect(applyActivity(before, [makeChat({ id: 'loaded' })], 'loaded')).toBe(before);
+  });
+
+  it('ignores activity in a chat that is not open', () => {
+    const before = { [GENERAL]: [makeChat({ id: 'recent' })] };
+    expect(applyActivity(before, [], 'elsewhere')).toBe(before);
   });
 });

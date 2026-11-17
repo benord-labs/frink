@@ -13,6 +13,7 @@ import {
   checkWorktreeBasePath,
   worktreeBasePathErrorMessage,
 } from '../../../../../../shared/lib/worktree-base-path-rules';
+import { FilesToCopy } from './FilesToCopy';
 
 const COMMANDS_LABEL_ID = 'project-worktree-commands';
 const COMMANDS_HINT_ID = 'project-worktree-commands-hint';
@@ -175,6 +176,7 @@ export function ProjectWorktreeSettings({ projectId }: Props) {
           onCommit={() => save()}
           onRemove={removeCommand}
         />
+        <FilesToCopy projectId={projectId} />
         <LocationField
           value={fields.location}
           disabled={!hydrated}
@@ -218,9 +220,8 @@ function SetupCommands({ commands, disabled, onChange, onCommit, onRemove }: Set
           Setup commands
         </p>
         <p id={COMMANDS_HINT_ID} className="text-xs leading-relaxed text-muted-foreground">
-          Get each new worktree ready, like installing packages or copying your .env. They run in
-          order, each on its own. <code className="font-mono">$ROOT_WORKTREE_PATH</code> is your
-          main project folder.
+          Get each new worktree ready, like installing packages. They run in order, each on its own.{' '}
+          <code className="font-mono">$ROOT_WORKTREE_PATH</code> is your main project folder.
         </p>
       </div>
       <div

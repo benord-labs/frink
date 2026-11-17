@@ -24,7 +24,11 @@ describe('recordCodexCommandOutput', () => {
     recordCodexCommandOutput(outputs, 'item/started', command('c1'));
 
     for (let i = 0; i < 5000; i += 1) {
-      recordCodexCommandOutput(outputs, 'item/commandExecution/outputDelta', delta('c1', `line ${i}\n`));
+      recordCodexCommandOutput(
+        outputs,
+        'item/commandExecution/outputDelta',
+        delta('c1', `line ${i}\n`),
+      );
     }
 
     const output = outputs.get('c1');
@@ -37,7 +41,11 @@ describe('recordCodexCommandOutput', () => {
     const outputs: CodexCommandOutputs = new Map();
     recordCodexCommandOutput(outputs, 'item/started', command('c1'));
 
-    recordCodexCommandOutput(outputs, 'item/commandExecution/outputDelta', delta('c1', `${'a'.repeat(9000)}end`));
+    recordCodexCommandOutput(
+      outputs,
+      'item/commandExecution/outputDelta',
+      delta('c1', `${'a'.repeat(9000)}end`),
+    );
 
     expect(outputs.get('c1')?.text).toBe(`${'a'.repeat(8189)}end`);
     expect(outputs.get('c1')?.cut).toBe(true);
@@ -47,8 +55,16 @@ describe('recordCodexCommandOutput', () => {
     const outputs: CodexCommandOutputs = new Map();
     const before = Date.now();
 
-    for (const [id, startedAtMs] of [['c0', 0], ['c1', -5], ['c2', Number.NaN], ['c3', undefined]] as const) {
-      recordCodexCommandOutput(outputs, 'item/started', { item: { id, type: 'commandExecution' }, startedAtMs });
+    for (const [id, startedAtMs] of [
+      ['c0', 0],
+      ['c1', -5],
+      ['c2', Number.NaN],
+      ['c3', undefined],
+    ] as const) {
+      recordCodexCommandOutput(outputs, 'item/started', {
+        item: { id, type: 'commandExecution' },
+        startedAtMs,
+      });
     }
 
     for (const output of outputs.values()) expect(output.startedAt).toBeGreaterThanOrEqual(before);

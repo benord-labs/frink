@@ -5,7 +5,6 @@ import { useSetAtom, useStore } from 'jotai';
 import { Loader2 } from 'lucide-react';
 import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { assessTaskRetry } from '../../../../shared/lib/task-retry-policy';
 import {
   type ResolvedTaskStartMode,
   resolveTaskExecutionMetadata,
@@ -35,6 +34,8 @@ import {
   getHistoryDeleteAllTarget,
   HISTORY_TASK_STATUSES,
 } from '../../../lib/work-queue/delete-all-target';
+import { useRecoverTaskMutation } from '../../../lib/work-queue/recovery/use-recover-task-mutation';
+import { assessRowRetry } from '../../../lib/work-queue/task-menu/task-menu-actions';
 import { useWorkQueueTaskNavigation } from '../../../lib/work-queue/use-work-queue-task-navigation';
 import {
   openWorkQueueTaskChat,
@@ -48,8 +49,8 @@ import { useMessageQueueStore } from '../../agents/stores/message-queue-store';
 import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';
 import { useWorkQueueOverviewCounts } from '../hooks/use-work-queue-overview-counts';
 import { useWorkQueueOverviewPages } from '../hooks/use-work-queue-overview-pages';
-import type { Task } from '../types';
-import { buildTaskMessage } from '../utils/build-task-message';
+import type { ConfirmedRecovery, Task } from '../types';
+import { buildTaskMessage, buildTaskOpening } from '../utils/build-task-message';
 import { dedupeRowsById } from '../utils/dedupe-rows-by-id';
 import { getOverviewTaskChatId } from '../utils/overview-task-groups';
 import { parseTriggerContext } from '../utils/trigger-context';
@@ -225,9 +226,8 @@ export function WorkQueue({
 
   const isLoading = isHistoryView ? historyQuery.isLoading : overviewPages.isLoading;
 
-  const showDeleteFailedToast = (description: string) => {
+  const showDeleteFailedToast = (description: string) =>
     toast.error('Could not delete task', { description });
-  };
 
   const cancelMutation = trpc.tasks.cancel.useMutation({
     onSuccess: (_data, taskId) => refreshTaskViews(taskId),
@@ -261,8 +261,8 @@ export function WorkQueue({
   const updateTaskStatusMutation = trpc.tasks.updateStatus.useMutation({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
   });
-  // tasks.retry preserves the resume mode and renderer retry-dedup marker.
-  const retryTaskMutation = trpc.tasks.retry.useMutation({
+  // tasks.recover re-resolves the kind server-side, so a stale row label is refused, never swapped.
+  const retryTaskMutation = useRecoverTaskMutation({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
   });
   // tasks.complete also finalizes sibling done rows in a Flow.
@@ -471,7 +471,6 @@ export function WorkQueue({
     const task = allTaskRows.find((t) => t.id === taskId);
     if (!task) return;
 
-    const message = buildTaskMessage(task);
     const triggerContext = parseTriggerContext(task.triggerContext);
     const startMetadata = resolveTaskExecutionMetadata(triggerContext?._config, {
       overrideMode: mode,
@@ -483,18 +482,18 @@ export function WorkQueue({
     );
 
     createChatMutation.mutate({
-      initialMessage: message,
+      ...buildTaskOpening(task),
       taskId: task.id,
       projectId: task.projectId || undefined,
       useWorktree,
       mode,
     });
   };
-
-  const handleRetryTask = (taskId: string) => {
+  const handleRetryTask = (taskId: string, confirmed?: ConfirmedRecovery) => {
     const task = allTaskRows.find((t) => t.id === taskId);
-    if (!task) return;
-    const retryAssessment = assessTaskRetry(task);
+    const kind = confirmed?.kind ?? task?.recoveryKind;
+    if (!task || !kind) return;
+    const retryAssessment = assessRowRetry(task);
     if (!retryAssessment.canRetry) {
       toast.error('Retry blocked', {
         description:
@@ -503,13 +502,11 @@ export function WorkQueue({
       });
       return;
     }
-
-    // The retry procedure scrubs failure state and preserves session-resume metadata.
     retryTaskMutation.mutate(
-      { taskId, mode: 'continue' },
+      { taskId, kind, recoveryNodeRunId: confirmed?.recoveryNodeRunId },
       {
         onError: (error) => {
-          toast.error('Could not retry task', {
+          toast.error(`Could not ${kind} task`, {
             description: error.message || 'Please try again in a moment.',
           });
           refreshTaskViews(taskId);
@@ -615,6 +612,9 @@ export function WorkQueue({
     flowRunId: t.flowRunId,
     linkedChatId: t.linkedChatId ?? getOverviewTaskChatId(t),
     triggerContext: parseTriggerContext(t.triggerContext),
+    recoveryKind: t.recoveryKind,
+    confirmSideEffects: t.confirmSideEffects,
+    recoveryNodeRunId: t.recoveryNodeRunId,
   });
   const overviewAttentionRows = overviewPages.attention.rows as WorkQueueTaskRow[];
   const overviewRunningRows = overviewPages.running.rows as WorkQueueTaskRow[];
@@ -718,7 +718,7 @@ export function WorkQueue({
                   taskActions={commonTaskActions}
                   waitingTasks={waitingTasks}
                 />
-                {isEmpty && (
+                {isEmpty && overview.review === 0 && (
                   <EmptyState
                     onOpenSettings={() => {
                       setActiveOverlay('flows');

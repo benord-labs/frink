@@ -2,8 +2,7 @@
  * Shared index math for serialized `@[id]` mention tokens (see agents-mentions-editor `buildMentionsInto`).
  */
 
-/** Source for `new RegExp(..., 'g')` — keep in sync with mention serialization format. */
-export const SERIALIZED_MENTION_PATTERN_SRC = '@\\[([^\\]]+)\\]';
+import { MENTION_TOKEN_PATTERN_SRC } from '../../../shared/lib/mentions/mention-grammar';
 
 /** Exclusive end offset in `serialized` for one `RegExpExecArray` mention match. */
 export function serializedMentionMatchEndIndex(match: RegExpExecArray): number {
@@ -15,7 +14,7 @@ export function serializedMentionMatchEndIndex(match: RegExpExecArray): number {
  * Mirrors the mention scan loop that advances with `currentMatch` (not the next `exec` result).
  */
 export function getSerializedMentionScanLastIndex(serialized: string): number {
-  const re = new RegExp(SERIALIZED_MENTION_PATTERN_SRC, 'g');
+  const re = new RegExp(MENTION_TOKEN_PATTERN_SRC, 'g');
   re.lastIndex = 0;
   let lastIndex = 0;
   let match = re.exec(serialized);

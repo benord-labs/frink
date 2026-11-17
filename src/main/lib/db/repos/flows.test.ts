@@ -12,6 +12,7 @@ import {
 } from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import { createFlowVersion } from './flow-versions';
+import { TriggerProjectRequiredError, update as updateBinding } from './flow-trigger-bindings';
 import {
   copyFlow,
   createFlow,
@@ -303,6 +304,26 @@ describe('copyFlow', () => {
         .where(and(eq(flowVersions.flowId, copied.id), eq(flowVersions.versionNumber, 2)))
         .all(),
     ).toHaveLength(0);
+  });
+
+  it('a copied legacy project-less post-task binding cannot be re-activated (sc-3299)', async () => {
+    const source = await createFlow(db, { name: 'Legacy trigger' });
+    await createFlowVersion(db, { flowId: source.id, graph: graph('go') });
+    db.insert(flowTriggerBindings)
+      .values({ flowId: source.id, projectId: null, triggerType: 'post_task_trigger' })
+      .run();
+
+    const result = await copyFlow(db, { sourceFlowId: source.id });
+    const copied = db
+      .select()
+      .from(flowTriggerBindings)
+      .where(eq(flowTriggerBindings.flowId, result.id))
+      .get();
+
+    expect(copied).toMatchObject({ projectId: null, isActive: false });
+    await expect(updateBinding(db, String(copied?.id), { isActive: true })).rejects.toBeInstanceOf(
+      TriggerProjectRequiredError,
+    );
   });
 
   it('copies one internally consistent snapshot at either save/copy ordering', async () => {

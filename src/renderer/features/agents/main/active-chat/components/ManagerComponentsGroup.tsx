@@ -73,7 +73,6 @@ export function ManagerComponentsGroup({
         isActive={isActive}
         isPaneActive={isPaneActive}
         isStreaming={isStreaming}
-        subChatId={subChatId}
         pendingQuestions={pendingQuestions}
         hasUnapprovedPlan={hasUnapprovedPlan}
         editorRef={editorRef}

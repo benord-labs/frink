@@ -1,3 +1,4 @@
+import { openDestination } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
 import { openApp, type AppState } from './fixtures/app';
 import { overviewFixture } from './fixtures/data';
@@ -27,7 +28,7 @@ async function openFlows(page: Page, options: Parameters<typeof openApp>[1] = {}
     ...options,
     data: { flows: macFlows(), ...options.data },
   });
-  await page.getByTestId('tab-flows').click();
+  await openDestination(page, 'Flows');
   return state;
 }
 
@@ -78,7 +79,7 @@ test.describe('Flows tab', () => {
     await page.emulateMedia({ colorScheme: 'light' });
     await shot(page, 'list-light');
     await page.getByTestId('flow-row-flow-4').click();
-    await page.getByRole('link', { name: 'Tabs, back' }).click();
+    await page.getByRole('link', { name: /back/i }).click();
     await expect(page.getByRole('tab', { name: 'Library', exact: true })).toHaveAttribute(
       'aria-selected',
       'true',

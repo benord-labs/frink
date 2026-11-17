@@ -3,30 +3,39 @@ import { ChevronDown } from 'lucide-react';
 import { type ReactElement, useState } from 'react';
 import { toast } from 'sonner';
 import { SettingsCard } from '@/components/settings/SettingsCard';
+import { agentModelFamilies } from '@/lib/ai-providers/chat-options';
 import { cn } from '@/lib/utils';
+import { LAUNCH_FLAGS } from '../../../../../../shared/launch-flags';
+import {
+  AI_PROVIDERS,
+  type AiProviderId,
+  selectableProviderIds,
+} from '../../../../../../shared/lib/ai-providers';
 import {
   CLAUDE_MODEL_FAMILIES,
   CODEX_MODEL_FAMILIES,
   splitNewestFamilies,
 } from '../../../../../../shared/lib/models';
 import { hiddenModelsAtom } from '../../../../../lib/atoms';
+import { trpc } from '../../../../../lib/trpc';
 import { AccountsErrorBanner } from '../../../../ui/accounts-error-banner';
 import { Switch } from '../../../../ui/switch';
-import type { AccountType } from '../auth-flow-utils';
-import { PROVIDER_NAME, ProviderTile } from '../ProviderTile';
+import { ProviderTile } from '../ProviderTile';
 
 type Family = { id: string; name: string };
 
 const CATALOG = {
   'claude-code': CLAUDE_MODEL_FAMILIES,
   codex: CODEX_MODEL_FAMILIES,
-} satisfies Record<AccountType, readonly Family[]>;
+} satisfies Record<string, readonly Family[]>;
+type CatalogProvider = keyof typeof CATALOG;
+type ToggleModel = (provider: AiProviderId, families: readonly Family[], family: Family) => void;
 
 type Props = {
-  /** When false, show full catalog (avoids empty flash while listAccounts is loading). */
+  /** When false, show the Claude and OpenAI catalogs (avoids an empty flash while accounts load). */
   authGateReady: boolean;
-  showClaudeModels: boolean;
-  showCodexModels: boolean;
+  /** Provider ids with a signed-in account. */
+  connected: string[];
   /** After fetch completed with an error; catalog stays ungated until retry succeeds. */
   accountsListFailed?: boolean;
   onRetryAccounts?: () => void;
@@ -51,16 +60,28 @@ function ModelRow({
   );
 }
 
+function isCatalogProvider(provider: AiProviderId): provider is CatalogProvider {
+  return Object.hasOwn(CATALOG, provider);
+}
+
 function ProviderModels({
   provider,
+  families,
+  fold,
   hidden,
   onToggle,
+  empty,
 }: {
-  provider: AccountType;
+  provider: AiProviderId;
+  families: readonly Family[];
+  /** Fold older models behind a toggle; agents list every model. */
+  fold: boolean;
   hidden: string[];
-  onToggle: (provider: AccountType, family: Family) => void;
+  onToggle: ToggleModel;
+  /** Shown in place of the rows when there are none. */
+  empty?: string;
 }): ReactElement {
-  const { newest, older } = splitNewestFamilies(CATALOG[provider]);
+  const { newest, older } = fold ? splitNewestFamilies(families) : { newest: families, older: [] };
   // Start open when the only models left on are older ones, so they can be seen.
   const [showOlder, setShowOlder] = useState(() => newest.every((f) => hidden.includes(f.id)));
   const row = (family: Family) => (
@@ -68,19 +89,22 @@ function ProviderModels({
       key={family.id}
       family={family}
       on={!hidden.includes(family.id)}
-      onToggle={() => onToggle(provider, family)}
+      onToggle={() => onToggle(provider, families, family)}
     />
   );
   return (
     <div className="pb-2">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-1">
         <ProviderTile type={provider} size="sm" />
-        <span className="text-sm font-medium text-foreground">{PROVIDER_NAME[provider]}</span>
+        <span className="text-sm font-medium text-foreground">{AI_PROVIDERS[provider].name}</span>
       </div>
       <ul>
         {newest.map(row)}
         {showOlder ? older.map(row) : null}
       </ul>
+      {families.length === 0 && empty ? (
+        <p className="px-4 py-2.5 text-sm text-muted-foreground">{empty}</p>
+      ) : null}
       {older.length > 0 ? (
         <button
           type="button"
@@ -99,30 +123,54 @@ function ProviderModels({
   );
 }
 
+/** An installed agent's group: the models it last reported, read from the picker's own query. */
+function AgentModels({
+  agentId,
+  hidden,
+  onToggle,
+}: {
+  agentId: AiProviderId;
+  hidden: string[];
+  onToggle: ToggleModel;
+}): ReactElement {
+  const { data, isPending } = trpc.agentAccounts.models.useQuery({ type: agentId });
+  return (
+    <ProviderModels
+      provider={agentId}
+      families={agentModelFamilies(agentId, data ?? [])}
+      fold={false}
+      hidden={hidden}
+      onToggle={onToggle}
+      empty={
+        isPending
+          ? undefined
+          : `Start a chat with ${AI_PROVIDERS[agentId].name} to see its models here.`
+      }
+    />
+  );
+}
+
 export function ModelsSection({
   authGateReady,
-  showClaudeModels,
-  showCodexModels,
+  connected,
   accountsListFailed = false,
   onRetryAccounts,
 }: Props) {
   const [hiddenModels, setHiddenModels] = useAtom(hiddenModelsAtom);
 
-  // Until accounts load, show every provider rather than flashing an empty card.
-  const providers = (['claude-code', 'codex'] as const).filter(
-    (p) => !authGateReady || (p === 'codex' ? showCodexModels : showClaudeModels),
+  // Until accounts load, show the Claude and OpenAI catalogs rather than flashing an empty card.
+  const providers = selectableProviderIds(LAUNCH_FLAGS, window.desktopApi?.platform).filter((p) =>
+    authGateReady ? connected.includes(p) : isCatalogProvider(p),
   );
 
-  const toggleModel = (provider: AccountType, family: Family) => {
+  const toggleModel: ToggleModel = (provider, families, family) => {
     if (hiddenModels.includes(family.id)) {
       setHiddenModels(hiddenModels.filter((id) => id !== family.id));
       return;
     }
-    const othersOn = CATALOG[provider].some(
-      (f) => f.id !== family.id && !hiddenModels.includes(f.id),
-    );
+    const othersOn = families.some((f) => f.id !== family.id && !hiddenModels.includes(f.id));
     if (!othersOn) {
-      toast.info(`Keep at least one ${PROVIDER_NAME[provider]} model on.`);
+      toast.info(`Keep at least one ${AI_PROVIDERS[provider].name} model on.`);
       return;
     }
     setHiddenModels([...hiddenModels, family.id]);
@@ -132,7 +180,7 @@ export function ModelsSection({
     <SettingsCard>
       {accountsListFailed ? (
         <AccountsErrorBanner
-          message="Could not load accounts. All models are shown until this succeeds, including providers you have not connected."
+          message="Could not load accounts. Claude and OpenAI models are shown until this works."
           onRetry={onRetryAccounts}
         />
       ) : null}
@@ -142,9 +190,20 @@ export function ModelsSection({
         </p>
       ) : (
         <div className="divide-y divide-border/50">
-          {providers.map((p) => (
-            <ProviderModels key={p} provider={p} hidden={hiddenModels} onToggle={toggleModel} />
-          ))}
+          {providers.map((p) =>
+            isCatalogProvider(p) ? (
+              <ProviderModels
+                key={p}
+                provider={p}
+                families={CATALOG[p]}
+                fold
+                hidden={hiddenModels}
+                onToggle={toggleModel}
+              />
+            ) : (
+              <AgentModels key={p} agentId={p} hidden={hiddenModels} onToggle={toggleModel} />
+            ),
+          )}
         </div>
       )}
     </SettingsCard>

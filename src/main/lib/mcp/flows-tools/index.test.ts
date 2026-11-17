@@ -1,6 +1,6 @@
 /* eslint-disable max-lines */
 import { TRPCError } from '@trpc/server';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { invocableFlowFixture } from './flow-run-test-fixtures';
 import { expectMcpText, type McpToolResultLike } from './test-helpers';
@@ -155,10 +155,10 @@ const OPERATIONS_BUILD_MIN_VALID = [
   { op: 'add_edge' as const, edge: { id: 'e1', source: 'nst', target: 'n2' } },
 ];
 
-/** Deferred import of `./index` (avoids mock hoisting issues; fresh module instance when tests need it). */
-async function getModule() {
-  return import('./index');
-}
+/** Deferred import of `./index` so the vi.mock registrations above apply; cached after the warm-up below. */
+const getModule = () => import('./index');
+// File-level warm-up: a cold import under a loaded suite overran the first test's 5s timeout.
+beforeAll(() => getModule(), 60_000);
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -208,9 +208,8 @@ describe('flows-tools', () => {
       });
       const body = JSON.parse(expectMcpText(result));
       expect(body.status).toBe('success');
-      expect(body.graph.nodes.find((n: { id: string }) => n.id === 'n2').config.instructions).toBe(
-        'patched',
-      );
+      // The receipt echoes topology only; the patched config is asserted on the persisted graph.
+      expect(body.graph.nodes.find((n: { id: string }) => n.id === 'n2').config).toBeUndefined();
     });
 
     it('accepts flow with null graph (starts from empty)', async () => {
@@ -1098,6 +1097,26 @@ describe('handleFlowsToolCall — frink_flows_run', () => {
     expect(result?.content[0].text).toMatch(/Flow not found[\s\S]*published version/);
   });
 
+  // The run is already queued: a failed count must not report a failed launch the agent would retry.
+  it('reports a queued run even when the waiting-run count cannot be read', async () => {
+    const { handleFlowsToolCall, resetFlowsRunCount } = await getModule();
+    resetFlowsRunCount();
+    mockInvocableGetFlow();
+    const runtime = await import('../../flows/admission/runtime');
+    const settings = vi
+      .spyOn(runtime, 'getFlowAdmissionSettings')
+      .mockRejectedValueOnce(new Error('database is locked'));
+    state.startFlowRun.mockResolvedValue({ id: 'run-queued', status: 'pending', started_at: null });
+
+    const result = await handleFlowsToolCall('frink_flows_run', { flowId: runFlowId });
+
+    expect(settings).toHaveBeenCalledOnce();
+    expect(result?.isError).toBe(false);
+    expect(result?.content[0].text).toContain('"status": "queued"');
+    settings.mockRestore();
+    resetFlowsRunCount();
+  });
+
   it('rate limits independently from patch (5 runs per session)', async () => {
     const { handleFlowsToolCall, resetFlowsRunCount, resetFlowsPatchCount } = await getModule();
     resetFlowsRunCount();
@@ -1760,7 +1779,7 @@ describe('handleFlowsToolCall — frink_flows_patch webhook setup hint', () => {
     vi.clearAllMocks();
   });
 
-  it('hints to call frink_flows_list_catalog when a webhook_trigger lacks integration/event', async () => {
+  async function patchWithTrigger(trigger: Record<string, unknown>, sessionId: string) {
     const { handleFlowsToolCall } = await getModule();
     state.getFlow.mockResolvedValue({
       id: 'f-wh',
@@ -1770,38 +1789,29 @@ describe('handleFlowsToolCall — frink_flows_patch webhook setup hint', () => {
       graph: { nodes: [], edges: [] },
     });
     state.createFlowVersion.mockResolvedValue({ id: 'ver-wh' });
-
-    const body = JSON.parse(
+    const operations = [
+      { op: 'add_node', node: { id: 'n1', blockType: 'webhook_trigger', ...trigger } },
+      {
+        op: 'add_node',
+        node: {
+          id: 'nst',
+          blockType: 'start_task',
+          config: { projectId: '550e8400-e29b-41d4-a716-446655440010' },
+        },
+      },
+      { op: 'add_node', node: { id: 'n2', blockType: 'agent', config: { instructions: 'do it' } } },
+      { op: 'add_edge', edge: { id: 'e0', source: 'n1', target: 'nst' } },
+      { op: 'add_edge', edge: { id: 'e1', source: 'nst', target: 'n2' } },
+    ];
+    return JSON.parse(
       expectMcpText(
-        await handleFlowsToolCall(
-          'frink_flows_patch',
-          {
-            flowId: 'f-wh',
-            operations: [
-              {
-                op: 'add_node',
-                node: { id: 'n1', blockType: 'webhook_trigger', label: 'Shortcut story' },
-              },
-              {
-                op: 'add_node',
-                node: {
-                  id: 'nst',
-                  blockType: 'start_task',
-                  config: { projectId: '550e8400-e29b-41d4-a716-446655440010', label: 'Start' },
-                },
-              },
-              {
-                op: 'add_node',
-                node: { id: 'n2', blockType: 'agent', config: { instructions: 'do it' } },
-              },
-              { op: 'add_edge', edge: { id: 'e0', source: 'n1', target: 'nst' } },
-              { op: 'add_edge', edge: { id: 'e1', source: 'nst', target: 'n2' } },
-            ],
-          },
-          'wh-hint-session',
-        ),
+        await handleFlowsToolCall('frink_flows_patch', { flowId: 'f-wh', operations }, sessionId),
       ),
     );
+  }
+
+  it('hints to call frink_flows_list_catalog when a webhook_trigger lacks integration/event', async () => {
+    const body = await patchWithTrigger({ label: 'Shortcut story' }, 'wh-hint-session');
     expect(body.status).toBe('success');
     expect(body.webhookSetup).toBeDefined();
     expect(body.webhookSetup[0]).toContain('frink_flows_list_catalog');
@@ -1809,104 +1819,42 @@ describe('handleFlowsToolCall — frink_flows_patch webhook setup hint', () => {
   });
 
   it('still hints when a webhook_trigger has integrationId but no eventType', async () => {
-    const { handleFlowsToolCall } = await getModule();
-    state.getFlow.mockResolvedValue({
-      id: 'f-wh2',
-      name: 'WH2',
-      description: null,
-      version_number: 1,
-      graph: { nodes: [], edges: [] },
-    });
-    state.createFlowVersion.mockResolvedValue({ id: 'ver-wh2' });
-
-    const body = JSON.parse(
-      expectMcpText(
-        await handleFlowsToolCall(
-          'frink_flows_patch',
-          {
-            flowId: 'f-wh2',
-            operations: [
-              {
-                op: 'add_node',
-                node: {
-                  id: 'n1',
-                  blockType: 'webhook_trigger',
-                  label: 'Partial',
-                  config: { integrationId: 'abc-123' },
-                },
-              },
-              {
-                op: 'add_node',
-                node: {
-                  id: 'nst',
-                  blockType: 'start_task',
-                  config: { projectId: '550e8400-e29b-41d4-a716-446655440010' },
-                },
-              },
-              {
-                op: 'add_node',
-                node: { id: 'n2', blockType: 'agent', config: { instructions: 'do it' } },
-              },
-              { op: 'add_edge', edge: { id: 'e0', source: 'n1', target: 'nst' } },
-              { op: 'add_edge', edge: { id: 'e1', source: 'nst', target: 'n2' } },
-            ],
-          },
-          'wh-partial-session',
-        ),
-      ),
+    const body = await patchWithTrigger(
+      { label: 'Partial', config: { integrationId: 'abc-123' } },
+      'wh-partial-session',
     );
     expect(body.webhookSetup).toBeDefined();
     expect(body.webhookSetup[0]).toContain('frink_flows_list_catalog');
   });
 
   it('does not hint when a webhook_trigger has both integrationId and eventType', async () => {
-    const { handleFlowsToolCall } = await getModule();
-    state.getFlow.mockResolvedValue({
-      id: 'f-ok',
-      name: 'OK',
-      description: null,
-      version_number: 1,
-      graph: { nodes: [], edges: [] },
-    });
-    state.createFlowVersion.mockResolvedValue({ id: 'ver-ok' });
-
-    const body = JSON.parse(
-      expectMcpText(
-        await handleFlowsToolCall(
-          'frink_flows_patch',
-          {
-            flowId: 'f-ok',
-            operations: [
-              {
-                op: 'add_node',
-                node: {
-                  id: 'n1',
-                  blockType: 'webhook_trigger',
-                  config: { integrationId: 'abc-123', eventType: 'story_created' },
-                },
-              },
-              {
-                op: 'add_node',
-                node: {
-                  id: 'nst',
-                  blockType: 'start_task',
-                  config: { projectId: '550e8400-e29b-41d4-a716-446655440010' },
-                },
-              },
-              {
-                op: 'add_node',
-                node: { id: 'n2', blockType: 'agent', config: { instructions: 'do it' } },
-              },
-              { op: 'add_edge', edge: { id: 'e0', source: 'n1', target: 'nst' } },
-              { op: 'add_edge', edge: { id: 'e1', source: 'nst', target: 'n2' } },
-            ],
-          },
-          'wh-ok-session',
-        ),
-      ),
+    const body = await patchWithTrigger(
+      { config: { integrationId: 'abc-123', eventType: 'story_created' } },
+      'wh-ok-session',
     );
     expect(body.status).toBe('success');
     expect(body.webhookSetup).toBeUndefined();
+  });
+
+  it('saves a webhook_trigger whose filters the matcher cannot read, and names the bad filter', async () => {
+    const filters = [{ field: 'storyName', operator: 'regex', value: '^Bug' }];
+    const body = await patchWithTrigger(
+      {
+        label: 'Story moved',
+        config: { integrationId: 'abc-123', eventType: 'story_created', conditions: { filters } },
+      },
+      'wh-bad-filter-session',
+    );
+    expect(body.status).toBe('success');
+    expect(body.webhookSetup).toEqual([
+      `Webhook trigger "Story moved" filter 1 (unknown operator 'regex') can't match any event, so this trigger will never start. Fix or remove it.`,
+    ]);
+  });
+
+  // Agents address nodes by id, so a blank label must not leave the hint naming nothing.
+  it('names a blank-labelled trigger by its node id', async () => {
+    const body = await patchWithTrigger({ label: '  ' }, 'wh-blank-label-session');
+    expect(body.webhookSetup[0]).toContain('Webhook trigger "n1" needs integrationId');
   });
 });
 

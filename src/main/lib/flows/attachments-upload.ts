@@ -7,10 +7,13 @@
  * Validation:
  * - mimeType must be in ALLOWED_ATTACHMENT_MIME_TYPES.
  * - Decoded bytes <= MAX_IMAGE_BYTES (5MB).
+ * - The run is still pending (dispatch copies trigger_context only once).
  * - Existing attachments array length < MAX_ATTACHMENTS_PER_RUN (10).
  */
 
+import { randomBytes } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
+import { decodedBytes } from '../../../shared/utils/base64';
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   MAX_ATTACHMENT_URL_LENGTH,
@@ -18,8 +21,27 @@ import {
   type RunAttachment,
 } from '../../../shared/types/run-attachment';
 import { getDatabase } from '../db';
-import { getBatchStageRun, setStageRunStatus } from '../db/repos/batch-stage-runs';
+import type { BatchStageRun } from '../db/schema';
+import {
+  type AppendAttachmentResult,
+  appendStageRunAttachment,
+  getBatchStageRun,
+  type StageRunTriggerContext,
+  stageRunTriggerContextSchema,
+} from '../db/repos/batch-stage-runs';
 import { MAX_IMAGE_BYTES, deleteAttachmentFile, writeAttachment } from './attachments-storage';
+
+export type UploadDeps = {
+  db: ReturnType<typeof getDatabase>;
+  writeAttachment: typeof writeAttachment;
+  deleteAttachmentFile: typeof deleteAttachmentFile;
+};
+
+const defaultDeps = (): UploadDeps => ({
+  db: getDatabase(),
+  writeAttachment,
+  deleteAttachmentFile,
+});
 
 type UploadInput = {
   flowId: string;
@@ -32,13 +54,88 @@ type UploadInput = {
 type UploadResult = {
   url: string;
   filename: string;
-  run: { id: string; trigger_context: Record<string, unknown> };
+  run: { id: string; trigger_context: StageRunTriggerContext };
 };
 
 const isAllowedMime = (m: string): m is (typeof ALLOWED_ATTACHMENT_MIME_TYPES)[number] =>
   (ALLOWED_ATTACHMENT_MIME_TYPES as readonly string[]).includes(m);
 
-export async function uploadAttachmentToStageRun(input: UploadInput): Promise<UploadResult> {
+const UNSAFE_NAME_CHARS_RE = /[^A-Za-z0-9._-]/g;
+const MAX_STORED_NAME_LENGTH = 128;
+const MAX_EXTENSION_LENGTH = 16;
+
+// Unique so same-named concurrent uploads (pasted `image.png`) never share a file.
+// Sanitised and capped so real names fit; the extension drives the served MIME type.
+function storedNameFor(filename: string): string {
+  const safe = filename.replace(UNSAFE_NAME_CHARS_RE, '_');
+  const dot = safe.lastIndexOf('.');
+  const ext = dot > 0 ? safe.slice(dot).slice(0, MAX_EXTENSION_LENGTH) : '';
+  const base = dot > 0 ? safe.slice(0, dot) : safe;
+  const prefix = `${randomBytes(4).toString('hex')}-`;
+  return `${prefix}${base.slice(0, MAX_STORED_NAME_LENGTH - prefix.length - ext.length)}${ext}`;
+}
+
+const capExceeded = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message: `Stage run already has ${MAX_ATTACHMENTS_PER_RUN} attachments`,
+  });
+
+const notPending = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message: 'Attachments can only be added before the run starts',
+  });
+
+const tooLarge = () =>
+  new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
+
+/** Fast-fail before touching disk; the authoritative checks are in the transactional append. */
+function rejectBeforeWrite(stageRun: BatchStageRun, data: string): void {
+  if (stageRun.status !== 'pending') throw notPending();
+  const current = stageRunTriggerContextSchema.safeParse(stageRun.triggerContext);
+  if (current.success && current.data.attachments.length >= MAX_ATTACHMENTS_PER_RUN) {
+    throw capExceeded();
+  }
+  // Exact for well-formed base64; the post-decode check stays authoritative.
+  if (decodedBytes(data) > MAX_IMAGE_BYTES) throw tooLarge();
+}
+
+function appendRefusal(reason: Exclude<AppendAttachmentResult, { ok: true }>['reason']) {
+  if (reason === 'cap') return capExceeded();
+  if (reason === 'not_pending') return notPending();
+  if (reason === 'invalid') {
+    return new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Stage run attachments could not be read',
+    });
+  }
+  return new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
+}
+
+/** Append in one transaction; any refusal or error deletes this request's file first. */
+async function appendOrRollback(
+  db: UploadDeps['db'],
+  runId: string,
+  attachment: RunAttachment,
+  rollback: () => Promise<void>,
+): Promise<StageRunTriggerContext> {
+  let appended: AppendAttachmentResult;
+  try {
+    appended = appendStageRunAttachment(db, runId, attachment, MAX_ATTACHMENTS_PER_RUN);
+  } catch (err) {
+    await rollback();
+    throw err;
+  }
+  if (appended.ok) return appended.triggerContext;
+  await rollback();
+  throw appendRefusal(appended.reason);
+}
+
+export async function uploadAttachmentToStageRun(
+  input: UploadInput,
+  deps: UploadDeps = defaultDeps(),
+): Promise<UploadResult> {
   if (!isAllowedMime(input.mimeType)) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -46,41 +143,24 @@ export async function uploadAttachmentToStageRun(input: UploadInput): Promise<Up
     });
   }
 
-  const db = getDatabase();
-  const stageRun = await getBatchStageRun(db, input.runId);
+  const stageRun = await getBatchStageRun(deps.db, input.runId);
   if (!stageRun) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
   }
+  rejectBeforeWrite(stageRun, input.data);
 
-  // Existing attachments cap (matches cloud).
-  const triggerContext: Record<string, unknown> =
-    (stageRun.triggerContext as Record<string, unknown> | null) ?? {};
-  const existing = Array.isArray(triggerContext.attachments)
-    ? (triggerContext.attachments as RunAttachment[])
-    : [];
-  if (existing.length >= MAX_ATTACHMENTS_PER_RUN) {
-    throw new TRPCError({
-      code: 'CONFLICT',
-      message: `Stage run already has ${MAX_ATTACHMENTS_PER_RUN} attachments`,
-    });
-  }
-
-  // Approximate decoded size from base64 length (overshoots by up to 2 bytes).
-  const approxBytes = Math.floor((input.data.length * 3) / 4);
-  if (approxBytes > MAX_IMAGE_BYTES) {
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
-  }
-
-  const written = await writeAttachment(input.runId, input.filename, input.data);
+  const storedName = storedNameFor(input.filename);
+  const written = await deps.writeAttachment(input.runId, storedName, input.data);
+  const rollback = () => deps.deleteAttachmentFile(input.runId, storedName).catch(() => {});
   // Post-decode validation. Roll back the on-disk file before throwing — orphan
   // sweep operates at directory granularity and would never reclaim this file
   // alone if the run still exists.
   if (written.byteLength > MAX_IMAGE_BYTES) {
-    await deleteAttachmentFile(input.runId, input.filename).catch(() => {});
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
+    await rollback();
+    throw tooLarge();
   }
   if (written.url.length > MAX_ATTACHMENT_URL_LENGTH) {
-    await deleteAttachmentFile(input.runId, input.filename).catch(() => {});
+    await rollback();
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Attachment URL too long' });
   }
 
@@ -90,27 +170,11 @@ export async function uploadAttachmentToStageRun(input: UploadInput): Promise<Up
     label: input.filename,
     mimeType: input.mimeType,
   };
-  const nextTriggerContext: Record<string, unknown> = {
-    ...triggerContext,
-    attachments: [...existing, attachment],
-  };
-
-  // Persist updated trigger_context. setStageRunStatus only updates status; reuse
-  // it with the existing status to avoid adding a new repo function for a single
-  // partial-update path.
-  const nextStatus = stageRun.status as Parameters<typeof setStageRunStatus>[2];
-  await setStageRunStatus(db, input.runId, nextStatus, stageRun.flowRunId ?? undefined);
-  // Direct trigger_context patch via raw update — repo doesn't expose it yet; small inline.
-  const { batchStageRuns } = await import('../db/schema');
-  const { eq } = await import('drizzle-orm');
-  await db
-    .update(batchStageRuns)
-    .set({ triggerContext: nextTriggerContext })
-    .where(eq(batchStageRuns.id, input.runId));
-
+  // A crash before this commit leaves an unreferenced file for the startup sweep.
+  const triggerContext = await appendOrRollback(deps.db, input.runId, attachment, rollback);
   return {
     url: written.url,
     filename: written.filename,
-    run: { id: input.runId, trigger_context: nextTriggerContext },
+    run: { id: input.runId, trigger_context: triggerContext },
   };
 }

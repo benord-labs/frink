@@ -88,7 +88,7 @@ describe('FlowRunButton', () => {
     renderButton({ hasUnsavedChanges: true });
     expect(screen.getByRole('button', { name: 'Batch already ran' })).toHaveAttribute(
       'title',
-      'This batch already has runs — use Retry or Carry on above, per run',
+      'This batch already has runs — use Continue or Retry above, per run',
     );
   });
 });

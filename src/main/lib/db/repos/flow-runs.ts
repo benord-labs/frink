@@ -1,5 +1,7 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, not, or, sql } from 'drizzle-orm';
+import { union, unionAll } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../shared/types/flow';
+import { fanOutItemChatRunIds, isPastFanOutLane } from '../../flows/fan-out/sql';
 import type { getDatabase } from '../index';
 import {
   type Chat,
@@ -12,8 +14,11 @@ import {
   tasks,
 } from '../schema';
 import type { TaskStatus } from './tasks';
-import { linkedFlowRunIds } from './task-queries/linked-flow-runs';
-import { activeFlowRunForSubChatId } from './task-queries/subchat-driver';
+import { chatLinkId, linkedFlowRunIds, triggerChatOwnsRun } from './task-queries/linked-flow-runs';
+import {
+  activeFlowRunForSubChatId,
+  newestFlowRunForSubChatId,
+} from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -33,6 +38,17 @@ export async function isFlowRunSignalDead(db: Db, flowRunId: string | null): Pro
     .where(and(eq(flowRuns.id, flowRunId), inArray(flowRuns.status, [...SIGNAL_DEAD_RUN_STATUSES])))
     .limit(1);
   return Boolean(row);
+}
+
+/** The newest run linked to a sub-chat in ANY status, or null when none exists (never linked, or
+ * deleted). {@link getActiveFlowRunForSubChat} without its status filter; same lookup and ordering. */
+export async function getNewestFlowRunForSubChat(
+  db: Db,
+  subChatId: string,
+): Promise<{ id: string; status: string } | null> {
+  if (!subChatId) return null;
+  const [row] = await newestFlowRunForSubChatId(db, subChatId);
+  return row ?? null;
 }
 
 /** Display priority among active flow-driving statuses; highest wins when a run has several. */
@@ -133,16 +149,18 @@ export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boole
 
 /**
  * The chat-id projection for each of the THREE chat↔run JSON link sources (no FK). Centralised so the
- * readers that resolve a chat FROM a run (listChatIdsWithActiveFlowRun, getBatchIdByChatId,
- * listChatsByBatch) cannot drift on which sources they cover. The third source is load-bearing: in a
+ * readers that resolve a chat FROM a run (getBatchIdByChatId, listChatsByBatch) cannot drift on
+ * which sources they cover. The third source is load-bearing: in a
  * multi-agent run, `linkChatToTask` is first-agent-wins, so a NON-anchor (branch) chat's only link is
  * `tasks.result.$.chatId`. Selecting these requires `leftJoin(nodeRuns)` + `leftJoin(tasks)` +
  * `selectDistinct` (to dedupe the fan-out).
  */
 export const CHAT_LINK_SOURCES = {
-  triggerChatId: sql<string | null>`json_extract(${flowRuns.triggerContext}, '$.chatId')`,
-  nodeChatId: sql<string | null>`json_extract(${nodeRuns.nodeOutput}, '$.outputs.chatId')`,
-  taskChatId: sql<string | null>`json_extract(${tasks.result}, '$.chatId')`,
+  triggerChatId: sql<
+    string | null
+  >`(CASE WHEN ${triggerChatOwnsRun} THEN ${chatLinkId(flowRuns.triggerContext, '$.chatId')} END)`,
+  nodeChatId: chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId'),
+  taskChatId: chatLinkId(tasks.result, '$.chatId'),
 } as const;
 
 /**
@@ -204,22 +222,27 @@ export async function getLatestFlowRunForChat(db: Db, chatId: string): Promise<F
  * the first agent task exists, or while a non-agent node runs) where no tracked task drives it.
  * Resolves the chat via every link source so a gap is covered: trigger_context.$.chatId,
  * node_output.$.outputs.chatId, AND tasks.result.$.chatId (a run's completed/done task still
- * carries it). selectDistinct + a Set dedupe the leftJoin fan-out.
+ * carries it). A link made inside a Fan Out item the loop has moved past does not count.
  */
 export async function listChatIdsWithActiveFlowRun(db: Db): Promise<string[]> {
-  const rows = await db
-    .selectDistinct(CHAT_LINK_SOURCES)
-    .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(inArray(flowRuns.status, ['pending', 'running', 'paused']));
-  const chatIds = new Set<string>();
-  for (const r of rows) {
-    if (r.triggerChatId) chatIds.add(r.triggerChatId);
-    if (r.nodeChatId) chatIds.add(r.nodeChatId);
-    if (r.taskChatId) chatIds.add(r.taskChatId);
-  }
-  return Array.from(chatIds);
+  const live = inArray(flowRuns.status, ['pending', 'running', 'paused']);
+  const rows = await union(
+    db
+      .select({ chatId: chatLinkId(flowRuns.triggerContext, '$.chatId') })
+      .from(flowRuns)
+      .where(and(live, triggerChatOwnsRun)),
+    db
+      .select({ chatId: chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId') })
+      .from(nodeRuns)
+      .innerJoin(flowRuns, eq(flowRuns.id, nodeRuns.flowRunId))
+      .where(and(live, not(isPastFanOutLane(nodeRuns.id)))),
+    db
+      .select({ chatId: chatLinkId(tasks.result, '$.chatId') })
+      .from(tasks)
+      .innerJoin(flowRuns, eq(flowRuns.id, tasks.flowRunId))
+      .where(and(live, not(isPastFanOutLane(tasks.nodeRunId)))),
+  );
+  return rows.flatMap((row) => (row.chatId ? [row.chatId] : []));
 }
 
 /** The live run driving a sub-chat. */
@@ -235,7 +258,8 @@ export type ActiveFlowRunRef = { id: string };
  * Same three JSON link sources as `CHAT_LINK_SOURCES`, sub-chat-scoped: `node_output` spans the run's
  * whole life (every agent node hard-requires an upstream start_task that emits subChatId), and
  * `tasks.result` keeps this a SUPERSET of `getFlowDriveInfoForSubChat` — a narrower set would resolve
- * a driving task with no run and hand the composer back from the other side. Newest by createdAt, so
+ * a driving task with no run and hand the composer back from the other side. A Fan Out item the loop
+ * has moved past is no longer driven, so its chat gets the composer back. Newest by createdAt, so
  * a flow chat reused across runs reports the CURRENT run, never the previous one. Sub-chat-scoped,
  * not chat-scoped: a user-added sub-chat on a flow chat must keep its composer.
  */
@@ -248,58 +272,68 @@ export async function getActiveFlowRunForSubChat(
   return row ?? null;
 }
 
-/**
- * Map of chatId → batchId for every chat linked to a BATCHED flow_run, across all three
- * `CHAT_LINK_SOURCES` (incl. `tasks.result.$.chatId`, the only link a non-anchor branch chat in a
- * multi-agent batched run has). Powers sidebar batch grouping locally, replacing the cloud `batch_id`
- * LEFT JOIN. Bounded to batched runs (`batchId IS NOT NULL`, `flow_runs_batch_idx`); `selectDistinct`
- * dedupes the node_runs/tasks fan-out.
- *
- * A chat reused across batches (a worktree shared by successive batch runs) links to several batched
- * runs, so we resolve to the NEWEST run's batch (max createdAt, batchId as the tie-break) — the map
- * is then deterministic and stable across refetches, not last-row-wins on an unordered scan.
- */
+/** A group is keyed by its batch, or by the run itself when it is not batched. */
+const GROUP_KEY = { groupId: sql<string>`coalesce(${flowRuns.batchId}, ${flowRuns.id})` };
+
+/** Runs the sidebar folds into one group: batch members, and Fan Out runs that opened item chats.
+ * UNION ALL + a Set: SQLite plans a UNION as a sorted merge that scans every node_run. */
+async function listGroupedRunIds(db: Db): Promise<string[]> {
+  const rows = await unionAll(
+    db.select({ id: flowRuns.id }).from(flowRuns).where(isNotNull(flowRuns.batchId)),
+    db.select({ id: sql<string>`flow_run_id` }).from(sql`(${fanOutItemChatRunIds})`),
+  );
+  return [...new Set(rows.map((row) => row.id))];
+}
+
+/** chatId → sidebar group key (`batchId`, or the id of a Fan Out run that opened item chats). A chat
+ * linked to several grouped runs resolves to the NEWEST run's group, deterministic across refetches. */
 export async function getBatchIdByChatId(db: Db): Promise<Map<string, string>> {
-  const rows = await db
-    .selectDistinct({
-      ...CHAT_LINK_SOURCES,
-      batchId: flowRuns.batchId,
-      createdAt: flowRuns.createdAt,
-    })
-    .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(isNotNull(flowRuns.batchId));
-  const best = new Map<string, { batchId: string; at: number }>();
-  const consider = (chatId: string | null, batchId: string, at: number) => {
-    if (!chatId) return;
-    const cur = best.get(chatId);
-    if (!cur || at > cur.at || (at === cur.at && batchId > cur.batchId))
-      best.set(chatId, { batchId, at });
-  };
-  for (const r of rows) {
-    if (!r.batchId) continue;
-    const at = r.createdAt?.getTime() ?? 0;
-    consider(r.triggerChatId, r.batchId, at);
-    consider(r.nodeChatId, r.batchId, at);
-    consider(r.taskChatId, r.batchId, at);
+  const runIds = await listGroupedRunIds(db);
+  if (runIds.length === 0) return new Map();
+  const grouped = inArray(flowRuns.id, runIds);
+  const run = { ...GROUP_KEY, createdAt: flowRuns.createdAt };
+  const { triggerChatId, nodeChatId, taskChatId } = CHAT_LINK_SOURCES;
+  const rows = await union(
+    db
+      .select({ chatId: triggerChatId, ...run })
+      .from(flowRuns)
+      .where(grouped),
+    db
+      .select({ chatId: nodeChatId, ...run })
+      .from(flowRuns)
+      .innerJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
+      .where(grouped),
+    db
+      .select({ chatId: taskChatId, ...run })
+      .from(flowRuns)
+      .innerJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
+      .where(grouped),
+  );
+  const best = new Map<string, { groupId: string; at: number }>();
+  for (const { chatId, groupId, createdAt } of rows) {
+    const at = createdAt?.getTime() ?? 0;
+    const cur = chatId ? best.get(chatId) : undefined;
+    if (chatId && (!cur || at > cur.at || (at === cur.at && groupId > cur.groupId)))
+      best.set(chatId, { groupId, at });
   }
-  return new Map([...best].map(([chatId, v]) => [chatId, v.batchId]));
+  return new Map([...best].map(([chatId, v]) => [chatId, v.groupId]));
 }
 
 /**
- * Non-archived chats linked to any flow_run in a single batch — the inverse of `getBatchIdByChatId`
- * for one batch. Resolves chatIds via the same JSON-only link (no FK), then loads those chats.
- * Powers the sidebar's expand-on-demand `listByBatch` locally (replaces the cloud `getChatsByBatch`).
- * Lives here, not in the chats repo, because the chat↔run link is a flow-runs concern.
+ * Non-archived chats in one sidebar group — the inverse of `getBatchIdByChatId`. A batch lists its
+ * most recently active chats first; a Fan Out run lists its chats in the order the run opened them.
  */
-export async function listChatsByBatch(db: Db, batchId: string): Promise<Chat[]> {
+export async function listChatsByBatch(db: Db, groupId: string): Promise<Chat[]> {
+  const fanOutRun = await db
+    .select({ id: flowRuns.id })
+    .from(flowRuns)
+    .where(and(eq(flowRuns.id, groupId), isNull(flowRuns.batchId)));
   const linkRows = await db
     .selectDistinct(CHAT_LINK_SOURCES)
     .from(flowRuns)
     .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
     .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(eq(flowRuns.batchId, batchId));
+    .where(fanOutRun.length > 0 ? eq(flowRuns.id, groupId) : eq(flowRuns.batchId, groupId));
   const ids = new Set<string>();
   for (const r of linkRows) {
     if (r.triggerChatId) ids.add(r.triggerChatId);
@@ -311,7 +345,11 @@ export async function listChatsByBatch(db: Db, batchId: string): Promise<Chat[]>
     .select()
     .from(chats)
     .where(and(inArray(chats.id, Array.from(ids)), isNull(chats.archivedAt)))
-    .orderBy(desc(chats.updatedAt), desc(chats.id));
+    .orderBy(
+      ...(fanOutRun.length > 0
+        ? [asc(chats.createdAt), asc(sql`chats.rowid`)]
+        : [desc(chats.updatedAt), desc(chats.id)]),
+    );
 }
 
 /** Earliest run of a batch — pins the flow version the whole batch executes against. */

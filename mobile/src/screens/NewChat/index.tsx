@@ -1,6 +1,6 @@
 import { useHeaderHeight } from '@react-navigation/elements';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Image, KeyboardAvoidingView, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResource } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
@@ -8,18 +8,20 @@ import { readPreferences, savePreferences, type NewChatPreferences } from '../..
 import { useRootNavigation } from '../../navigation/routes';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Text } from '../../ui/text';
-import { GUTTER, space } from '../../ui/theme';
+import { GUTTER, space, useTheme } from '../../ui/theme';
 import { Composer, useComposerAttachments, useComposerState } from '../Chat/Composer';
 import { ChipButton } from '../Chat/Composer/chip';
 import { ModeMenu, ModelMenus } from '../Chat/Composer/controls';
 import { MenuChip } from '../Chat/Composer/menu';
 import { Sheet } from '../Chat/Composer/sheet';
 import { useExecutionReady, useKeyboardShown } from '../Chat/environment';
+import { useChatHeader } from '../Chat/header';
 import { chosenProject, creationChoiceChanged, PLAN_HELP, WORK_HELP } from './new-chat-options';
 import { ProjectPicker } from './project-picker';
 import { useStartChat } from './use-start-chat';
 
 const ios = Platform.OS === 'ios';
+const mark = require('../../../assets/frink-mark.png');
 const NO_PROJECTS = 'Add a project in Frink on your Mac to start a chat.';
 const PLACES = [
   { id: 'worktree', label: 'Worktree' },
@@ -32,6 +34,7 @@ const PLACES = [
  * or by asking for the models, since the model list belongs to a chat.
  */
 export function NewChat({ requestedProjectId }: { requestedProjectId?: string }) {
+  const t = useTheme();
   const navigation = useRootNavigation();
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
@@ -49,7 +52,10 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
     choice && project ? chat.create({ ...choice, projectId: project.id }) : undefined;
   const attachments = useComposerAttachments(created, { retainPicked: true, ensureTarget: start });
 
-  useLayoutEffect(() => navigation.setOptions({ title: 'New chat' }), [navigation]);
+  useChatHeader(
+    { name: 'New chat', kind: undefined, project: project?.name, activity: undefined, elapsed: '' },
+    null,
+  );
   useEffect(() => {
     void readPreferences().then((saved) =>
       setChoice(
@@ -68,7 +74,9 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
     // shows the first one, and picking that same one again changes nothing.
     const target = chosenProject(projects.data, next.projectId);
     const shown = choice && { ...choice, projectId: project?.id ?? choice.projectId };
-    if (creationChoiceChanged(shown, { ...next, projectId: target?.id ?? next.projectId }, !!created)) {
+    if (
+      creationChoiceChanged(shown, { ...next, projectId: target?.id ?? next.projectId }, !!created)
+    ) {
       chat.discard();
       if (attachments.items.length && target) void chat.create({ ...next, projectId: target.id });
     }
@@ -111,6 +119,27 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
           gap: space.md,
         }}
       >
+        {!keyboard && (
+          <View
+            style={{
+              flex: 1,
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: space.md,
+              paddingHorizontal: GUTTER,
+            }}
+          >
+            <Image
+              source={mark}
+              style={{ width: 32, height: 38, tintColor: t.accent }}
+              resizeMode="contain"
+            />
+            <Text style={{ textAlign: 'center' }}>What would you like to work on?</Text>
+            <Text variant="secondary" color="muted" style={{ textAlign: 'center' }}>
+              Choose a project, then start a conversation.
+            </Text>
+          </View>
+        )}
         <ResourceStatus {...projects} />
         {choice && project && (
           <View style={{ gap: space.xs, paddingHorizontal: GUTTER - 10 }}>
@@ -136,7 +165,6 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
               onChange={draft.update}
               onSend={() => void send()}
               onStop={() => {}}
-              autoFocus
               attachments={attachments}
               onUpdate={(patch) => settings.change({ type: 'updateComposer', patch })}
               onMode={() => {}}

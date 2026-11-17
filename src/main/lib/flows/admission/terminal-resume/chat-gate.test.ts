@@ -240,16 +240,6 @@ describe('terminal resume admission with a deleted chat', () => {
     await expect(attempt).rejects.not.toBeInstanceOf(TerminalResumeChatDeletedError);
   });
 
-  it('refuses a Retry (continuation) and a Re-run (redispatch) alike', async () => {
-    seedNode(db, 'nr-work', 'work');
-    deleteChat(db, 'chat-top');
-    for (const continuation of [true, undefined] as const) {
-      await expect(
-        controller().enqueueTerminalResume({ flowRunId: RUN, nodeRunId: 'nr-work', continuation }),
-      ).rejects.toBeInstanceOf(TerminalResumeChatDeletedError);
-    }
-  });
-
   it('admits a resume again once the chat row exists (refusal leaves nothing behind to clear)', async () => {
     seedNode(db, 'nr-work', 'work');
     deleteChat(db, 'chat-top');

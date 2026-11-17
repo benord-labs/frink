@@ -48,6 +48,7 @@ const mockActionableTaskInvalidate = vi.fn();
 const mockGetAgentChatInvalidate = vi.fn();
 
 const mockTrpcUtils = {
+  chats: { listActiveChats: { invalidate: vi.fn() } },
   tasks: {
     getById: { setData: mockSetData, invalidate: mockGetByIdInvalidate },
     listPaginated: { invalidate: mockListPaginatedInvalidate },

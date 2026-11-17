@@ -1,7 +1,8 @@
 import { Children, Fragment, type ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Text } from './text';
+import { glassLighting } from './material';
 import { GUTTER, radius, space, useTheme } from './theme';
 
 /**
@@ -34,6 +35,7 @@ export function ListRow({
   compact?: boolean;
 }) {
   const t = useTheme();
+  const { fontScale } = useWindowDimensions();
   return (
     <Pressable
       testID={testID}
@@ -55,7 +57,7 @@ export function ListRow({
     >
       {leading}
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text variant="row" numberOfLines={titleLines}>
+        <Text variant="row" numberOfLines={fontScale > 1.2 ? undefined : titleLines}>
           {title}
         </Text>
         {typeof subtitle === 'string' ? (
@@ -71,34 +73,25 @@ export function ListRow({
   );
 }
 
-/** Rows on one inset card, hairlines between them, as iOS groups a list: each section reads as
- *  one block on the page instead of a run of lines. */
+/** Related work stays visibly grouped while retaining the shared glass rim. */
 export function ListGroup({ children }: { children: ReactNode }) {
   const t = useTheme();
-  const rows = Children.toArray(children);
   return (
     <View
       style={{
         marginHorizontal: GUTTER,
         borderRadius: radius.lg,
         overflow: 'hidden',
-        backgroundColor: t.solidCard,
-        borderWidth: StyleSheet.hairlineWidth,
+        backgroundColor: t.surface,
+        borderWidth: 1,
         borderColor: t.borderSubtle,
+        ...glassLighting(t),
       }}
     >
-      {rows.map((row, index) => (
+      {Children.toArray(children).map((child, index) => (
         <Fragment key={index}>
-          {index > 0 && (
-            <View
-              style={{
-                height: StyleSheet.hairlineWidth,
-                marginLeft: space.lg,
-                backgroundColor: t.border,
-              }}
-            />
-          )}
-          {row}
+          {index > 0 && <RowSeparator inset={GUTTER} />}
+          {child}
         </Fragment>
       ))}
     </View>
@@ -126,7 +119,6 @@ export function SectionHeader({
   action?: string;
   onAction?: () => void;
 }) {
-  const t = useTheme();
   return (
     <View
       accessibilityRole="header"
@@ -134,13 +126,14 @@ export function SectionHeader({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: GUTTER,
-        paddingTop: space.xl,
+        paddingTop: space.lg,
         paddingBottom: space.sm,
         gap: space.sm,
-        backgroundColor: t.background,
       }}
     >
-      <Text variant="headline">{title}</Text>
+      <Text variant="secondary" style={{ fontWeight: '600' }}>
+        {title}
+      </Text>
       {count != null && (
         <Text variant="secondary" color="muted">
           {count}

@@ -582,12 +582,6 @@ export const hasUnapprovedPlanAtom = atom((get) => {
 // NOTE: This is a simplified change detection optimized for streaming performance.
 // It only checks the LAST part (partsLength + lastPartText + lastPartState).
 // During streaming, only the last part changes, so this is sufficient and fast.
-//
-// Compare with messages-list.tsx which uses a more thorough check (all parts'
-// textLengths[] and partStates[]) for useSyncExternalStore. That approach is
-// more comprehensive but slightly slower. Both are correct for their use cases:
-// - This (message-store): Jotai atom updates during high-frequency streaming
-// - messages-list.tsx: External store subscription for React render triggering
 const previousMessageState = new Map<
   string,
   {
@@ -757,8 +751,8 @@ export const syncMessagesWithStatusAtom = atom(
     // ===================================================================
     // Individual message atoms (always update — keyed by message ID, not global)
     // ===================================================================
-    // CRITICAL: AI SDK mutates objects in-place, so we MUST create a new reference
-    // for Jotai to detect the change (it uses Object.is() for comparison)
+    // CRITICAL: every change gets a fresh clone — Jotai and AssistantMessageItem's memo both
+    // detect changes by identity (Object.is), so a reused object would never re-render.
     for (const uiMsg of messages) {
       const currentAtomValue = get(messageAtomFamily(uiMsg.id));
       const msgChanged = hasMessageChanged(currentSubChatId, uiMsg.id, uiMsg);

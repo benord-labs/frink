@@ -43,4 +43,12 @@ export const LAUNCH_FLAGS = {
    * docs/decisions/flow-html-artifact-preview-boundary.md.
    */
   flowHtmlArtifacts: true,
+  /** OpenCode as an AI provider, run through the Agent Client Protocol. */
+  opencodeAccounts: true,
+  /** GitHub Copilot as an AI provider, run through GitHub's Copilot SDK. */
+  copilotAccounts: true,
+  /** Cursor as an AI provider, run through Cursor's own SDK. */
+  cursorAccounts: true,
+  /** Grok Build as an AI provider. Nothing can start it yet, even with this on. */
+  grokAccounts: false,
 } as const;

@@ -111,7 +111,7 @@ afterEach(() => {
 describe('FlowsList queued admission', () => {
   it('shows queue metadata and keyboard-cancels without opening the Flow', async () => {
     const user = userEvent.setup();
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     expect(screen.getByText('Queued · #3 · 1m ago')).toBeInTheDocument();
     screen.getByRole('button', { name: 'More actions for Queue demo' }).focus();
@@ -125,7 +125,7 @@ describe('FlowsList queued admission', () => {
 
   it('keyboard-activates row actions without opening the Flow', async () => {
     const user = userEvent.setup();
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     const menu = screen.getByRole('button', { name: 'More actions for Queue demo' });
     menu.focus();
@@ -170,7 +170,7 @@ describe('FlowsList sections', () => {
         latest_run_admission_state: null,
       },
     ];
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     const headings = screen
       .getAllByRole('heading', { level: 2 })
@@ -181,7 +181,7 @@ describe('FlowsList sections', () => {
 
   it('focuses search on "/" and clears it on Escape', async () => {
     const user = userEvent.setup();
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     await user.keyboard('/');
     const search = screen.getByRole('searchbox', { name: 'Search flows' });
@@ -201,7 +201,7 @@ describe('FlowsList sections', () => {
         latest_run_admission_state: null,
       },
     ];
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     screen.getByRole('button', { name: 'Broken' }).focus();
     await user.keyboard('{ArrowDown}');
@@ -215,7 +215,7 @@ describe('FlowsList sections', () => {
     snap.extraFlows = [
       { ...snap.flow, id: 'flow-2', name: 'Alpha', latest_run_admission_state: null },
     ];
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'Name' }));
     expect(screen.getByRole('button', { name: 'Name' })).toHaveAttribute('aria-pressed', 'true');
@@ -228,7 +228,7 @@ describe('FlowsList duplicate', () => {
   it('duplicates a saved flow from the row menu', async () => {
     const user = userEvent.setup();
     snap.copyFlow.mockResolvedValue({ id: 'flow-copy' });
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'More actions for Queue demo' }));
     await user.click(screen.getByRole('menuitem', { name: 'Duplicate' }));
@@ -241,7 +241,7 @@ describe('FlowsList duplicate', () => {
   it('explains why a never-saved flow cannot be duplicated', async () => {
     const user = userEvent.setup();
     snap.extraFlows = [{ ...snap.flow, id: 'flow-2', name: 'Draft', node_count: null }];
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'More actions for Draft' }));
     const item = screen.getByRole('menuitem', { name: 'Save the flow to duplicate it' });
@@ -257,7 +257,7 @@ describe('FlowsList duplicate', () => {
         finish = resolve;
       }),
     );
-    render(<FlowsList onCreateClick={vi.fn()} />);
+    render(<FlowsList onCreateClick={vi.fn()} onOpenChat={vi.fn()} />);
     const menu = screen.getByRole('button', { name: 'More actions for Queue demo' });
 
     await user.click(menu);

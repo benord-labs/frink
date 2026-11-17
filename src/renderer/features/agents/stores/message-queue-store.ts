@@ -3,6 +3,7 @@ import { createJSONStorage, persist, subscribeWithSelector } from 'zustand/middl
 import { isRunSettling } from '../../../lib/agent-chat/steer/run-busy';
 import { registerChatScopedCleanup } from '../../../lib/atoms/atom-family-factory';
 import { approvedPlanContextSchema } from '../../../../shared/types/approved-plan-context-schema';
+import { isRecord } from '../../../../shared/lib/validate-flow-graph';
 import type { AgentQueueItem } from '../lib/queue-utils';
 import { FLOW_DISPATCH_SOURCE, isInternalQueueItem, removeQueueItem } from '../lib/queue-utils';
 import { agentChatStore, onChatRegistered } from './agent-chat-store';
@@ -99,10 +100,6 @@ function reviveItem(raw: AgentQueueItem): AgentQueueItem {
     status: 'pending',
     ...(lost ? { attachmentsLost: true as const } : {}),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const isString = (value: unknown): value is string => typeof value === 'string';

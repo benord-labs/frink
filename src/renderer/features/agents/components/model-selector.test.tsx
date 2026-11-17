@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import type { ComponentProps } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type CodexAccountTiers, CODEX_MODEL_SLUGS } from '../../../../shared/lib/codex-cli-models';
 import {
   CLAUDE_PICKER_MODELS,
   CODEX_MODELS,
@@ -12,16 +13,33 @@ import {
 import type { CodexSpeed } from '../../../../shared/types/execution';
 import { extendedThinkingEnabledAtom } from '../../../lib/atoms';
 import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
+import {
+  COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+  COMPOSER_MODEL_ULTRA_EFFORT_CLASS,
+} from '../main/chat-composer-shell-classes';
 import { type ModelItem, ModelSelector } from './model-selector';
 
 const capabilities = vi.hoisted(() => ({ supportsXhigh: true, supportsUltra: true }));
+/** The signed-in Codex account's paid speeds per slug; defaults to every tier the catalog has. */
+const BOTH_SPEEDS: CodexAccountTiers[string] = ['fast', 'ultrafast'];
+const ALL_TIERS: CodexAccountTiers = Object.fromEntries(
+  CODEX_MODEL_SLUGS.map(({ slug }) => [slug, BOTH_SPEEDS]),
+);
+/** What the stubbed speed-tier query returns; undefined while loading. */
+type AccountTiersStub = { tiers: CodexAccountTiers | null | undefined };
+const account = vi.hoisted((): AccountTiersStub => ({ tiers: undefined }));
 
 // Stub the trpc client (the real module creates a client at load needing the electronTRPC preload
-// global, absent in tests). Only the bundled-CLI capability query is consumed here.
+// global, absent in tests). Only the bundled-CLI capability and Codex catalog queries are consumed.
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     claudeSettings: {
       getBundledClaudeCapabilities: { useQuery: () => ({ data: capabilities }) },
+    },
+    usage: {
+      getCodexAccountCatalog: {
+        useQuery: () => ({ data: account.tiers && { tiers: account.tiers, defaultSlug: null } }),
+      },
     },
   },
 }));
@@ -60,6 +78,10 @@ const focusedSlider = async () => {
   return slider();
 };
 
+beforeEach(() => {
+  account.tiers = ALL_TIERS;
+});
+
 afterEach(() => {
   cleanup();
   capabilities.supportsXhigh = true;
@@ -84,12 +106,37 @@ describe('trigger label', () => {
         <ModelSelector {...base} isOpen={false} onModelChange={vi.fn()} selectedModel={byId(id)} />,
       );
     const { unmount } = renderTrigger('opus-5.5-max');
-    expect(trigger().querySelector('.chroma-text')).toBeNull();
+    expect(trigger().querySelector('.chroma-text, .chroma-fill')).toBeNull();
     unmount();
     renderTrigger('opus-5.5-low-ultra');
-    expect(trigger().querySelector('.chroma-text-animate')).toHaveTextContent('Ultra');
+    const chromaWords = [...trigger().querySelectorAll('.chroma-text')].map((el) => el.textContent);
+    expect(chromaWords).toEqual(['Ultra', 'L']);
     expect(trigger()).toHaveTextContent('Opus 5.5 · Low · Ultra');
     expect(trigger()).toHaveAccessibleName('Model: Opus 5.5 · Low · Ultra — parallel agents on');
+  });
+
+  // Narrow tiers shed the word "Ultra"; its chroma moves to the effort token, the name, the glyph.
+  it('keeps Ultra and the effort readable as the composer narrows', () => {
+    render(
+      <ModelSelector
+        {...base}
+        isOpen={false}
+        onModelChange={vi.fn()}
+        selectedModel={byId('opus-5.5-xhigh-ultra')}
+      />,
+    );
+    expect(within(trigger()).getByText('Opus 5.5')).toHaveClass(
+      '@max-[19.5rem]/composer:chroma-text',
+    );
+    expect(within(trigger()).getByText('XH')).toHaveClass('chroma-text-animate');
+    // The longer Ultra label trades its full form for the effort token at its own, wider tier.
+    expect(within(trigger()).getByText('Ultra').parentElement).toHaveClass(
+      COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+    );
+    expect(within(trigger()).getByText('XH').parentElement).toHaveClass(
+      ...COMPOSER_MODEL_ULTRA_EFFORT_CLASS.split(' '),
+    );
+    expect(trigger().querySelector('.chroma-fill.chroma-text-animate')).not.toBeNull();
   });
 
   it('falls back to "Auto" in chat and the inherit label in flow', () => {
@@ -270,7 +317,7 @@ describe('model list pane', () => {
     const haiku = screen.getByRole('option', { name: 'Haiku 4.5' });
     await waitFor(() => expect(haiku).toHaveFocus());
     fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowUp' });
-    expect(screen.getByRole('option', { name: 'Sonnet 4.6' })).toHaveFocus();
+    expect(screen.getByRole('option', { name: 'Haiku 5.5' })).toHaveFocus();
     fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
     expect(haiku).toHaveFocus();
   });
@@ -343,6 +390,43 @@ describe('provider controls', () => {
     expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
   });
 
+  it('offers a free account no paid speed, and a Plus account Fast only', () => {
+    account.tiers = { 'gpt-5.5': [] };
+    renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
+    expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
+    cleanup();
+
+    account.tiers = { 'gpt-6-astra': ['fast'] };
+    renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
+    expect(screen.getByRole('switch', { name: /^Fast mode/ })).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
+  });
+
+  it("names a saved model the account can't use, and says why on the trigger", () => {
+    account.tiers = { 'gpt-5.5': [] };
+    renderPicker({ ...codex('codex-gpt-6-astra-medium', 'chat-1'), unavailable: true });
+    const note = "GPT-6 Astra isn't available on your ChatGPT plan — pick another model";
+    expect(trigger()).toHaveAccessibleName(`Model: ${note}`);
+    expect(trigger()).toHaveAttribute('title', note);
+  });
+
+  it('offers no paid speed until the account tiers are known', () => {
+    account.tiers = undefined;
+    renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
+    expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
+  });
+
+  it('keeps a speed that is already on, so an account without it can still turn it off', () => {
+    account.tiers = { 'gpt-6-astra': [] };
+    const { store } = renderPicker(codex('codex-gpt-6-astra-medium', 'chat-f'));
+    act(() => store.set(codexSpeedAtomFamily('chat-f'), 'fast'));
+    const fast = screen.getByRole('switch', { name: /^Fast mode/ });
+    expect(fast).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(fast);
+    expect(store.get(codexSpeedAtomFamily('chat-f'))).toBe('standard');
+    expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
+  });
+
   it('omits Fast for a model with no priority tier — never a live-but-inert control', () => {
     renderPicker(codex('codex-gpt-5.4-mini-medium', 'chat-1'));
     expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
@@ -379,5 +463,73 @@ describe('provider controls', () => {
       'aria-checked',
       'true',
     );
+  });
+});
+
+describe('agent models', () => {
+  const OPENCODE: ModelItem[] = [
+    { id: 'opencode/big-pickle', name: 'Big Pickle' },
+    { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+  ];
+
+  it("lists the agent's models flat, with no Thinking, effort or speed controls", () => {
+    const onOpenModelSettings = vi.fn();
+    const { onModelChange } = renderPicker({
+      selectedModel: OPENCODE[0],
+      availableModels: OPENCODE,
+      modelVariant: 'opencode',
+      chatId: 'chat-1',
+      onOpenModelSettings,
+    });
+    expect(trigger()).toHaveAccessibleName('Model: Big Pickle');
+    expect(screen.getByRole('option', { name: 'Big Pickle' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Claude Sonnet 4.5' }));
+    expect(onModelChange).toHaveBeenCalledWith(OPENCODE[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Model visibility & accounts…' }));
+    expect(onOpenModelSettings).toHaveBeenCalled();
+  });
+
+  it("moves GitHub Copilot's effort for a model that offers it, and shows none for Auto", async () => {
+    const gpt = { name: 'GPT-5', familyId: 'gpt-5' };
+    const COPILOT: ModelItem[] = [
+      { ...gpt, id: 'gpt-5/low', effort: 'low', detail: 'Low' },
+      { ...gpt, id: 'gpt-5/medium', effort: 'medium', detail: 'Medium', effortDefault: true },
+      { ...gpt, id: 'gpt-5/high', effort: 'high', detail: 'High' },
+      { id: 'auto', name: 'Auto' },
+    ];
+    const { onModelChange } = renderPicker({
+      selectedModel: COPILOT[1],
+      availableModels: COPILOT,
+      modelVariant: 'copilot',
+    });
+    fireEvent.keyDown(await focusedSlider(), { key: 'ArrowRight' });
+    expect(onModelChange).toHaveBeenCalledWith(COPILOT[2]);
+    expect(screen.queryByRole('switch')).toBeNull();
+    cleanup();
+
+    renderPicker({
+      selectedModel: COPILOT[3],
+      availableModels: [COPILOT[3]],
+      modelVariant: 'copilot',
+    });
+    expect(trigger()).toHaveAccessibleName('Model: Auto');
+    expect(screen.queryByRole('slider')).toBeNull();
+  });
+
+  it('shows how to load the list before the agent has listed any models', () => {
+    const fallback = { id: 'sonnet', name: 'OpenCode default' };
+    renderPicker({
+      selectedModel: fallback,
+      availableModels: [fallback],
+      modelVariant: 'opencode',
+      hint: "Send a message to load OpenCode's models.",
+    });
+    expect(trigger()).toHaveAccessibleName('Model: OpenCode default');
+    expect(screen.getByText("Send a message to load OpenCode's models.")).toBeVisible();
   });
 });

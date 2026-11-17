@@ -19,6 +19,7 @@ import {
   type PickerWindow,
   pickInWindow,
 } from '../../../../../shared/lib/model-picker-label/groups';
+import type { ModelVariant } from '../../../../lib/ai-providers/chat-options';
 import { extendedThinkingEnabledAtom } from '../../../../lib/atoms';
 import { overlayItem } from '../../../../lib/overlay-styles';
 import { cn } from '../../../../lib/utils';
@@ -41,7 +42,7 @@ type Props = {
   models: readonly ModelItem[];
   selectedModel: ModelItem | undefined;
   onSelect: (model: ModelItem) => void;
-  variant: 'claude' | 'codex';
+  variant: ModelVariant;
   /** Drop the Extra High stop (the bundled Claude CLI cannot run `--effort xhigh`). */
   hideXhigh: boolean;
   /** Hide the Ultra switch (the bundled Claude CLI cannot run Ultra at any effort). */

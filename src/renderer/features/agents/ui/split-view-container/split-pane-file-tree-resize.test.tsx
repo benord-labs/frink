@@ -13,6 +13,13 @@ import {
 import { SplitPane } from './SplitPane';
 import type { SplitPaneData } from './types';
 
+// The pane's Back button imports `lib/trpc`, which wires its ipc client at import time.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
+  });
+});
+
 // Module-level capture for ResizableSidebar mock (vi.mock is hoisted)
 type CapturedResizableProps = {
   widthAtom: unknown;

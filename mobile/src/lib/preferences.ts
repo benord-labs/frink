@@ -65,3 +65,29 @@ export function saveAppearance(mode: AppearanceMode): Promise<void> {
     .catch(() => undefined);
   return appearanceWrites;
 }
+
+export const TRANSPARENCY_LEVELS = [0, 25, 50, 75, 100] as const;
+export type Transparency = (typeof TRANSPARENCY_LEVELS)[number];
+const TRANSPARENCY_KEY = 'frink.mobile.transparency.v1';
+let transparencyWrites: Promise<void> = Promise.resolve();
+
+export async function readTransparency(): Promise<Transparency> {
+  try {
+    const saved = web
+      ? sessionStorage.getItem(TRANSPARENCY_KEY)
+      : await SecureStore.getItemAsync(TRANSPARENCY_KEY);
+    return TRANSPARENCY_LEVELS.find((value) => String(value) === saved) ?? 50;
+  } catch {
+    return 50;
+  }
+}
+
+export function saveTransparency(level: Transparency): Promise<void> {
+  transparencyWrites = transparencyWrites
+    .then(async () => {
+      if (web) sessionStorage.setItem(TRANSPARENCY_KEY, String(level));
+      else await SecureStore.setItemAsync(TRANSPARENCY_KEY, String(level));
+    })
+    .catch(() => undefined);
+  return transparencyWrites;
+}

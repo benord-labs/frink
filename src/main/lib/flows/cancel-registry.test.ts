@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isWorkActive } from '../power/work-activity';
 import { abortFlowRun, registerNodeAbort, unregisterNodeAbort } from './cancel-registry';
 
 describe('Flow cancellation registry', () => {
@@ -33,5 +34,22 @@ describe('Flow cancellation registry', () => {
     registerNodeAbort('flow-run', late);
     expect(late.signal.aborted).toBe(false);
     expect(abortFlowRun('flow-run')).toBe(1);
+  });
+
+  it('reports in-flight nodes as live work until the last one settles or the run is cancelled', () => {
+    const shell = new AbortController();
+    const http = new AbortController();
+    registerNodeAbort('awake-run', shell);
+    registerNodeAbort('awake-run', http);
+    expect(isWorkActive()).toBe(true);
+
+    unregisterNodeAbort('awake-run', shell);
+    expect(isWorkActive()).toBe(true);
+    unregisterNodeAbort('awake-run', http);
+    expect(isWorkActive()).toBe(false);
+
+    registerNodeAbort('awake-run', new AbortController());
+    abortFlowRun('awake-run');
+    expect(isWorkActive()).toBe(false);
   });
 });

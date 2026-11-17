@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,105 +27,159 @@ vi.mock('jotai', async () => {
   };
 });
 
-// Mutable per-test OS switch (default non-Windows so the existing tests keep their happy path).
-const platformMock = vi.hoisted(() => ({ isWindows: vi.fn(() => false) }));
-vi.mock('@/lib/utils/platform', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/utils/platform')>();
-  return { ...actual, isWindows: platformMock.isWindows };
-});
-
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { NoAccountsEmptyState } from './no-accounts-empty-state';
+
+const ALL = ['Claude', 'OpenAI', 'OpenCode', 'GitHub Copilot', 'Cursor'];
+
+function onPlatform(platform: string) {
+  Object.defineProperty(window, 'desktopApi', { value: { platform }, configurable: true });
+}
 
 function renderEmptyState(props: Parameters<typeof NoAccountsEmptyState>[0] = {}) {
   const store = createStore();
   return render(
     <Provider store={store}>
-      <NoAccountsEmptyState {...props} />
+      <TooltipProvider>
+        <NoAccountsEmptyState {...props} />
+      </TooltipProvider>
     </Provider>,
   );
 }
 
+function connectNames(): string[] {
+  return screen
+    .getAllByRole('button', { name: /^Connect / })
+    .map((b) => b.getAttribute('aria-label')?.replace('Connect ', '') ?? '');
+}
+
 describe('NoAccountsEmptyState', () => {
   beforeEach(() => {
+    onPlatform('darwin');
     setPendingAccountAuthMock.mockClear();
     setSettingsOpenMock.mockClear();
     setSettingsActiveTabMock.mockClear();
   });
 
-  afterEach(() => {
-    cleanup();
-    platformMock.isWindows.mockReturnValue(false);
-  });
+  afterEach(cleanup);
 
-  describe('first-time mode (no existing account)', () => {
-    it('advertises Claude and OpenAI in the description', () => {
+  describe('no account', () => {
+    it('on macOS offers every provider in table order, each opening its connect page', () => {
       renderEmptyState();
-      expect(screen.getByText(/Frink supports Claude.*and OpenAI/i)).toBeInTheDocument();
+      expect(screen.getByText('Frink works through your own AI account.')).toBeInTheDocument();
+      expect(connectNames()).toEqual(ALL);
+      const ids = ['claude-code', 'codex', 'opencode', 'copilot', 'cursor'];
+      for (const [i, name] of ALL.entries()) {
+        screen.getByRole('button', { name: `Connect ${name}` }).click();
+        expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ mode: 'add', provider: ids[i] }),
+        );
+      }
+      expect(screen.getByText('Free models, or your own AI provider')).toBeInTheDocument();
+      screen.getByRole('button', { name: 'Add it in Settings' }).click();
+      expect(setSettingsActiveTabMock).toHaveBeenCalledWith('models');
+      expect(setSettingsOpenMock).toHaveBeenCalledWith(true);
     });
 
-    it('renders the Claude passthrough CTA AND the API key CTA', () => {
+    it('tags only OpenCode, GitHub Copilot and Cursor as Preview, and says what that means', async () => {
       renderEmptyState();
-      expect(screen.getByRole('button', { name: /connect claude/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /add api key/i })).toBeInTheDocument();
-    });
-
-    it('renders the Codex passthrough CTA and routes to the Codex connect page on click', () => {
-      renderEmptyState();
-      const codexCta = screen.getByRole('button', { name: /connect openai/i });
-      expect(codexCta).toBeInTheDocument();
-      codexCta.click();
-      expect(setPendingAccountAuthMock).toHaveBeenCalledWith(
-        expect.objectContaining({ mode: 'add', provider: 'codex' }),
+      const tagged = screen
+        .getAllByRole('listitem')
+        .filter((row) => within(row).queryByText('Preview'))
+        .map((row) => within(row).getByRole('button').getAttribute('aria-label'));
+      expect(tagged).toEqual(['Connect OpenCode', 'Connect GitHub Copilot', 'Connect Cursor']);
+      fireEvent.focus(screen.getAllByText('Preview')[0]);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        "In preview: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet.",
       );
     });
 
-    it('Windows hides the Codex Connect CTA and shows the Mac/Linux codex passthrough note', () => {
-      // Codex passthrough is mac/linux-only: the Windows note reads "Claude and OpenAI …", CTA hidden.
-      platformMock.isWindows.mockReturnValue(true);
+    it('on Linux offers every provider, as on macOS', () => {
+      onPlatform('linux');
       renderEmptyState();
-      expect(screen.queryByRole('button', { name: /connect openai/i })).not.toBeInTheDocument();
-      expect(screen.getByText(/Claude and OpenAI passthrough/i)).toBeInTheDocument();
+      expect(connectNames()).toEqual(ALL);
     });
 
-    it('does not show the reconnect heading', () => {
+    it('on Windows replaces every sign-in with an API key button and says why', () => {
+      onPlatform('win32');
       renderEmptyState();
-      expect(screen.queryByText(/Reconnect to keep chatting/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Connect/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Add an API key' })).toBeInTheDocument();
+      expect(screen.getByText(/your own account needs macOS or Linux/i)).toBeInTheDocument();
     });
   });
 
-  describe('existing-account mode — Claude row needs reauth', () => {
-    it('renders the reconnect heading and surfaces the row label', () => {
-      renderEmptyState({ existingAccount: { label: 'Personal Claude', type: 'claude-code' } });
-      expect(screen.getByText(/Reconnect to keep chatting/i)).toBeInTheDocument();
-      // Visible description + sr-only live-region both contain the label.
-      expect(screen.getAllByText(/Personal Claude/).length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('renders a Reconnect Claude CTA (not the Connect first-time CTA)', () => {
-      renderEmptyState({ existingAccount: { label: 'Personal Claude', type: 'claude-code' } });
-      expect(screen.getByRole('button', { name: /reconnect claude/i })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /^connect claude/i })).not.toBeInTheDocument();
-    });
-
-    it('does not surface the "Add API key" CTA in reauth mode', () => {
-      renderEmptyState({ existingAccount: { label: 'Personal Claude', type: 'claude-code' } });
-      expect(screen.queryByRole('button', { name: /add api key/i })).not.toBeInTheDocument();
-    });
-  });
-
-  // The transcript scrolls under the composer slot, so a card narrower than the composer column
-  // would leave message lines sharp on either side of it.
-  it('compact card spans the composer column; the full card keeps its narrow width', () => {
+  describe('signed-out account', () => {
     const existingAccount = { label: 'Personal Claude', type: 'claude-code' } as const;
-    const { unmount } = renderEmptyState({ compact: true, existingAccount });
-    expect(screen.getByTestId('no-accounts-empty-state').className).not.toMatch(/\bmax-w-/);
-    unmount();
-    renderEmptyState({ existingAccount });
-    expect(screen.getByTestId('no-accounts-empty-state')).toHaveClass('max-w-md');
+
+    it('re-authenticates that account and offers every other provider as a switch', () => {
+      renderEmptyState({ existingAccount });
+      expect(screen.getByText('Claude · Signed out')).toBeInTheDocument();
+      screen.getByRole('button', { name: 'Sign in again' }).click();
+      expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mode: 'reauth', accountLabel: 'Personal Claude' }),
+      );
+      expect(connectNames()).toEqual(ALL.slice(1));
+    });
+
+    it('compact card signs back in or switches to the next provider, the rest under More', async () => {
+      renderEmptyState({ compact: true, existingAccount });
+      expect(
+        screen.getByRole('heading', { name: 'Personal Claude was signed out' }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument();
+      expect(connectNames()).toEqual(['OpenAI']);
+      await userEvent.setup().click(screen.getByRole('button', { name: 'More' }));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+        'Connect OpenCodePreview',
+        'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
+      ]);
+    });
   });
 
-  it('compact card is a slot surface, so a stacked card on it squares its top', () => {
-    renderEmptyState({ compact: true });
-    expect(screen.getByTestId('no-accounts-empty-state')).toHaveClass('composer-slot-surface');
+  describe('compact card', () => {
+    it('shows two providers as buttons and connects the rest from More', async () => {
+      renderEmptyState({ compact: true });
+      expect(connectNames()).toEqual(['Claude', 'OpenAI']);
+      await userEvent.setup().click(screen.getByRole('button', { name: 'More' }));
+      const menu = screen.getByRole('menu');
+      expect(
+        within(menu)
+          .getAllByRole('menuitem')
+          .map((item) => item.textContent),
+      ).toEqual([
+        'Connect OpenCodePreview',
+        'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
+      ]);
+      await userEvent
+        .setup()
+        .click(within(menu).getByRole('menuitem', { name: 'Connect Cursor Preview' }));
+      expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mode: 'add', provider: 'cursor' }),
+      );
+    });
+
+    it('on Linux connects OpenCode, GitHub Copilot and Cursor from More', async () => {
+      onPlatform('linux');
+      renderEmptyState({ compact: true });
+      expect(connectNames()).toEqual(['Claude', 'OpenAI']);
+      await userEvent.setup().click(screen.getByRole('button', { name: 'More' }));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+        'Connect OpenCodePreview',
+        'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
+      ]);
+    });
+
+    // The transcript scrolls under the composer slot, so a card narrower than the composer column
+    // would leave message lines sharp on either side of it.
+    it('spans the composer column as a slot surface', () => {
+      renderEmptyState({ compact: true });
+      const card = screen.getByTestId('no-accounts-empty-state');
+      expect(card.className).not.toMatch(/\bmax-w-/);
+      expect(card).toHaveClass('composer-slot-surface');
+    });
   });
 });

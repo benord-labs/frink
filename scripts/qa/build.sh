@@ -3,6 +3,11 @@
 # Builds into out-qa/, never out/: this build bakes QA-only env, and a stale QA build in out/
 # is what `bun run package:mac` would ship.
 set -euo pipefail
+. "$(dirname "$0")/scrub-host-env.sh"
+
+# Run from an agent shell, the host's NODE_ENV=development would make this a DEV bundle and its
+# MAIN_VITE_*/VITE_* would override this worktree's .env. electron-vite re-reads .env.
+qa_scrub_host_dev_env
 
 cd "$(dirname "$0")/../.."
 

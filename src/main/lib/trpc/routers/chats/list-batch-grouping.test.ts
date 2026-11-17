@@ -57,8 +57,10 @@ describe('sidebar batch grouping — end-to-end casing/wiring contract', () => {
   });
 
   it('listBatchGroups (snake batch_id) and listByFolder (camel batchId) agree on the key', async () => {
-    const groups = await caller().listBatchGroups();
     const folder = await caller().listByFolder({ projectIds: null, limit: 30 });
+    const groups = await caller().listBatchGroups({
+      groupIds: folder.chats.flatMap((c) => c.batchId ?? []),
+    });
 
     // The group key the renderer reads must survive un-camelCased (publicProcedureRaw)...
     expect(groups).toHaveLength(1);
@@ -73,5 +75,10 @@ describe('sidebar batch grouping — end-to-end casing/wiring contract', () => {
     const rows = await caller().listByBatch({ batchId: BATCH_ID });
     expect(rows.map((r) => r.id)).toEqual([chatId]);
     expect(rows[0].batchId).toBe(BATCH_ID);
+  });
+
+  it('list (the sidebar search corpus) carries the same batchId as listByFolder', async () => {
+    const rows = await caller().list({});
+    expect(rows.find((r) => r.id === chatId)?.batchId).toBe(BATCH_ID);
   });
 });

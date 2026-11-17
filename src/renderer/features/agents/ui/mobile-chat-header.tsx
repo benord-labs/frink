@@ -1,15 +1,6 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue } from 'jotai';
-import {
-  AlignJustify,
-  Play,
-  Hammer,
-  SquareTerminal,
-  Diff,
-  Loader2,
-  Undo2,
-  MapIcon,
-} from 'lucide-react';
+import { AlignJustify, Hammer, SquareTerminal, Diff, Loader2, Undo2, MapIcon } from 'lucide-react';
 import { useMemo } from 'react';
 import { cn } from '../../../lib/utils';
 import { loadingSubChatsAtom } from '../atoms';
@@ -25,8 +16,6 @@ type DiffStats = {
 
 type MobileChatHeaderProps = {
   onBackToChats?: () => void;
-  onOpenPreview?: () => void;
-  canOpenPreview?: boolean;
   onOpenDiff?: () => void;
   canOpenDiff?: boolean;
   diffStats?: DiffStats;
@@ -38,8 +27,6 @@ type MobileChatHeaderProps = {
 
 export function MobileChatHeader({
   onBackToChats,
-  onOpenPreview,
-  canOpenPreview = false,
   onOpenDiff,
   canOpenDiff = false,
   diffStats,
@@ -156,19 +143,6 @@ export function MobileChatHeader({
             ) : (
               <Diff className="h-4 w-4" />
             )}
-          </Button>
-        )}
-
-        {/* Preview button */}
-        {onOpenPreview && canOpenPreview && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onOpenPreview}
-            className="h-7 w-7 p-0 transition-[background-color,transform] duration-150 ease-out active:scale-[0.97] rounded-md"
-            iconOnly
-          >
-            <Play className="h-4 w-4" />
           </Button>
         )}
 

@@ -86,7 +86,7 @@ vi.mock('../agent-runner', () => ({
 
 // oxlint-disable-next-line anti-slop/no-module-mocking -- same Codex auth probe stub as executor.test.ts; this harness mocks every collaborator
 vi.mock('../credentials/detect-codex', () => ({
-  detectCodexAccount: vi.fn(() => ({
+  detectCodexAccount: vi.fn(async () => ({
     available: true,
     displayName: 'Codex',
     sourcePath: 'codex-passthrough://local',
@@ -119,6 +119,8 @@ vi.mock('../cloud-client', () => ({
 }));
 
 vi.mock('../db/repos/tasks', () => ({
+  claimTask: vi.fn(),
+  getPendingTaskIds: vi.fn(async () => []),
   getTaskById: vi.fn(),
   updateTaskStatus: vi.fn(),
   updateTaskResult: vi.fn(),
@@ -140,6 +142,7 @@ vi.mock('../db/repos/sub-chats', () => ({
 
 vi.mock('../db/repos/flow-runs', () => ({
   getFlowRun: flowProviderPreflightMocks.getFlowRun,
+  getNewestFlowRunForSubChat: vi.fn(async () => null),
   isFlowRunSignalDead: flowProviderPreflightMocks.isFlowRunSignalDead,
 }));
 
@@ -177,7 +180,6 @@ vi.mock('../flows/resume', () => ({
 vi.mock('../tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tasks')>()),
   resumeParkedTaskInPlace: vi.fn(async () => true),
-  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -293,6 +295,7 @@ vi.mock('./client', () => ({
   sendStreamSettledDirect: vi.fn(),
   sendStreamChunkDirect: vi.fn(),
   sendSubChatModeChange: vi.fn(),
+  sendMessage: vi.fn(),
   sendWakeHoldChanged: vi.fn(),
 }));
 
@@ -311,7 +314,7 @@ import {
 import { isRunRestartInterrupted } from '../flows/resume';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import { checkPermission } from '../permissions/v2/check';
-import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
+import { resumeParkedTaskInPlace } from '../tasks';
 import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
@@ -539,7 +542,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     );
   });
 
-  it('does not revive restart-interrupted Flow work before credential validation', async () => {
+  it('does not touch restart-interrupted Flow work before credential validation', async () => {
     const activity = await import('../flows/admission/activity');
     vi.mocked(getLatestFlowTaskForSubChat).mockResolvedValueOnce({
       id: 'restart-task',
@@ -555,13 +558,13 @@ describe('local-only dispatch with unresolved machineId', () => {
     });
     activity.setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     await handleRemoteExecute({ ...basePayload, message: 'restart without credentials' });
 
     expect(flowProviderPreflightMocks.registerNodeAbort).toHaveBeenCalledOnce();
     expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(reviveRestartInterruptedFlow).not.toHaveBeenCalled();
     expect(claudeQueryMock).not.toHaveBeenCalled();
   });
 
@@ -579,6 +582,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     } as Awaited<ReturnType<typeof getTaskById>>);
     activity.setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     setActiveFlowTaskForChat(basePayload.chatId, 'stale-flow-task');
@@ -707,6 +711,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     const activity = await import('../flows/admission/activity');
     activity.setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     // SAFETY: the executor reads only chat.taskId and account from this row.
@@ -824,6 +829,35 @@ describe('local-only dispatch with unresolved machineId', () => {
     await handleRemoteExecute({ ...basePayload, message: 'answer quietly' });
 
     await expect(quietEndMarkerWritten()).resolves.toBe(true);
+  });
+
+  it('stops a Codex run with a sign-in message when the login is gone at spawn time (sc-3811)', async () => {
+    // The gate awaits the async, presence-only detector: an un-awaited promise would
+    // either block every Codex run or let this one through.
+    const { detectCodexAccount } = await import('../credentials/detect-codex');
+    vi.mocked(detectCodexAccount).mockResolvedValueOnce({
+      available: false,
+      hint: 'No Codex login found. Run `codex login` and try again.',
+    });
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'codex',
+      label: 'codex-test',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+
+    await handleRemoteExecute({ ...basePayload, message: 'codex run with no login' });
+
+    expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: basePayload.chatId,
+        subChatId: basePayload.subChatId,
+        error: expect.stringContaining('authenticated on this machine'),
+      }),
+    );
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
   });
 
   describe('user-message delivery (sc-3666)', () => {

@@ -59,6 +59,7 @@ import {
   setFlowRunStatus,
 } from '../../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, listNodeRunsForFlowRun } from '../../db/repos/node-runs';
+import { createProject, deleteProject, getProjectById } from '../../db/repos/projects';
 import { deleteChatWithFlowQueueTasks } from '../../db/repos/task-queries/chat-flow-cleanup';
 import { createTask, getTaskById, updateTaskStatus } from '../../db/repos/tasks';
 import { flowRunAdmissions, flowRuns, flowVersions } from '../../db/schema';
@@ -610,6 +611,20 @@ describe('advance fenced on the admission ticket', () => {
 });
 
 describe('removal through the Cancel command', () => {
+  const parkedTask = async (
+    chatId: string | null,
+    status: 'needs_attention' | 'plan_ready' = 'needs_attention',
+  ) => {
+    const task = await createTask(db, {
+      description: 'parked step',
+      source: 'flow',
+      flowRunId,
+      result: chatId ? { chatId } : undefined,
+    });
+    await updateTaskStatus(db, task.id, status);
+    return task;
+  };
+
   it.each([
     ['delete', cancelFlowRunsForChatOrThrow],
     ['archive', cancelFlowRunsForChat],
@@ -643,6 +658,92 @@ describe('removal through the Cancel command', () => {
     expect(attemptDelete).toHaveBeenCalledTimes(2);
     expect(await getChatById(db, chat.id)).toBeNull();
     expect(ticketState(ticket)).toBe('cancelled');
+  });
+
+  it.each(['failed', 'cancelled', 'completed'] as const)(
+    'deletes a chat whose %s run left a parked task, sparing a sibling chat on the same run',
+    async (status) => {
+      const chat = await createChat(db, { name: 'C' });
+      const sibling = await createChat(db, { name: 'S' });
+      const task = await parkedTask(chat.id);
+      const siblingTask = await parkedTask(sibling.id);
+      const node = await createNodeRun(db, { flowRunId, nodeId: 'work', blockType: 'agent' });
+      await setFlowRunStatus(db, flowRunId, status);
+      const attemptDelete = vi.fn(() => deleteChatWithFlowQueueTasks(db, chat.id));
+
+      await settleChatOwnedFlowDeletion(attemptDelete, cancelFlowRunForChatDeletion);
+
+      expect(attemptDelete).toHaveBeenCalledTimes(2);
+      expect(await getChatById(db, chat.id)).toBeNull();
+      expect(await getTaskById(db, task.id)).toBeNull();
+      expect(await getChatById(db, sibling.id)).not.toBeNull();
+      expect((await getTaskById(db, siblingTask.id))?.status).toBe('needs_attention');
+      expect(await runStatus()).toBe(status);
+      expect(await getNodeRun(db, node.id)).not.toBeNull();
+      expect(cancelledEvents).toEqual([]);
+    },
+  );
+
+  it.each(['needs_attention', 'plan_ready'] as const)(
+    'deletes a chat that alone owns a failed run, with its %s task and the unclaimed one',
+    async (status) => {
+      const chat = await createChat(db, { name: 'C' });
+      const task = await parkedTask(chat.id, status);
+      const unclaimed = await parkedTask(null, status);
+      await setFlowRunStatus(db, flowRunId, 'failed');
+      const attemptDelete = vi.fn(() => deleteChatWithFlowQueueTasks(db, chat.id));
+
+      await settleChatOwnedFlowDeletion(attemptDelete, cancelFlowRunForChatDeletion);
+
+      expect(attemptDelete).toHaveBeenCalledTimes(2);
+      expect(await getChatById(db, chat.id)).toBeNull();
+      expect(await getTaskById(db, task.id)).toBeNull();
+      expect(await getTaskById(db, unclaimed.id)).toBeNull();
+      expect(await runStatus()).toBe('failed');
+      expect(cancelledEvents).toEqual([]);
+    },
+  );
+
+  it('deletes a project whose chats share a failed run, sparing a chat outside it', async () => {
+    const project = await createProject(db, { name: 'P2', path: '/tmp/p2' });
+    const first = await createChat(db, { name: 'A', projectId: project.id });
+    const second = await createChat(db, { name: 'B', projectId: project.id });
+    const outside = await createChat(db, { name: 'O' });
+    const firstTask = await parkedTask(first.id);
+    const secondTask = await parkedTask(second.id);
+    const outsideTask = await parkedTask(outside.id);
+    await setFlowRunStatus(db, flowRunId, 'failed');
+
+    await settleChatOwnedFlowDeletion(
+      () => deleteProject(db, project.id),
+      cancelFlowRunForChatDeletion,
+    );
+
+    expect(await getProjectById(db, project.id)).toBeNull();
+    expect(await getTaskById(db, firstTask.id)).toBeNull();
+    expect(await getTaskById(db, secondTask.id)).toBeNull();
+    expect(await getChatById(db, outside.id)).not.toBeNull();
+    expect((await getTaskById(db, outsideTask.id))?.status).toBe('needs_attention');
+    expect(await runStatus()).toBe('failed');
+  });
+
+  it('settles two overlapping deletes of the same chat on a failed run', async () => {
+    const chat = await createChat(db, { name: 'C' });
+    const sibling = await createChat(db, { name: 'S' });
+    const task = await parkedTask(chat.id);
+    const siblingTask = await parkedTask(sibling.id);
+    await setFlowRunStatus(db, flowRunId, 'failed');
+    const remove = () =>
+      settleChatOwnedFlowDeletion(
+        () => deleteChatWithFlowQueueTasks(db, chat.id),
+        cancelFlowRunForChatDeletion,
+      );
+
+    await expect(Promise.all([remove(), remove()])).resolves.toBeDefined();
+
+    expect(await getChatById(db, chat.id)).toBeNull();
+    expect(await getTaskById(db, task.id)).toBeNull();
+    expect((await getTaskById(db, siblingTask.id))?.status).toBe('needs_attention');
   });
 
   it('aborts a live node on flow hard delete, and a later dispatch into the run declines', async () => {

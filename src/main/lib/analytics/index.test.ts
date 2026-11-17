@@ -1,0 +1,331 @@
+import { EventEmitter } from 'node:events';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AnalyticsHost } from '.';
+
+const capture = vi.fn();
+const message = {
+  workspaceId: 'chat-1',
+  messageLength: 5,
+  mode: 'agent' as const,
+  startsChat: false,
+};
+const flow = { id: 'flow-1', triggerType: 'schedule', createdBy: 'ui' } as const;
+const flowRun = { flowId: 'flow-1', outcome: 'completed', stepCount: 3, batchSize: 1 } as const;
+const HOUR = 60 * 60 * 1000;
+let userData: string;
+let appEvents: EventEmitter;
+
+const installIdFile = () => join(userData, '.install_id');
+const sentEvents = () => capture.mock.calls.map(([sent]) => sent.event);
+const sentTriggers = () => capture.mock.calls.map(([sent]) => sent.properties.trigger);
+const sentIds = () => [...new Set(capture.mock.calls.map(([sent]) => sent.distinctId))];
+
+/** Announces a finished chat reply on the same module copy the launched analytics listens to. */
+async function finishReply(subChatId: string) {
+  const completions = await import('../socket/streaming/live-stream/completion-events');
+  completions.publishSessionCompletion({ chatId: 'chat-1', subChatId });
+}
+
+/** Leaves every Frink window unfocused for the given hours, then focuses one again. */
+function refocusAfter(hours: number) {
+  appEvents.emit('browser-window-blur');
+  vi.setSystemTime(Date.now() + hours * HOUR);
+  appEvents.emit('browser-window-focus');
+}
+
+/** Closes every window, then opens one again, as a Dock click on macOS does. */
+function reopenWindow() {
+  appEvents.emit('window-all-closed');
+  appEvents.emit('browser-window-created');
+}
+
+/** Loads a fresh copy of the module, as a new app launch would, in an official build by default. */
+async function launch(overrides: Partial<AnalyticsHost> = {}) {
+  vi.resetModules();
+  appEvents = new EventEmitter();
+  const analytics = await import('.');
+  analytics.initAnalytics({
+    isPackaged: true,
+    userDataDir: userData,
+    version: '1.2.3',
+    key: 'phc_test',
+    disableUsageAnalytics: undefined,
+    createClient: () => ({ capture, shutdown: async () => {} }),
+    appEvents,
+    ...overrides,
+  });
+  return analytics;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  userData = mkdtempSync(join(tmpdir(), 'frink-analytics-'));
+});
+
+afterEach(() => {
+  rmSync(userData, { recursive: true, force: true });
+  capture.mockClear();
+  vi.useRealTimers();
+});
+
+describe('main-process analytics', () => {
+  it('sends nothing before the renderer reports the saved preference', async () => {
+    const analytics = await launch();
+
+    analytics.trackMessageSent(message);
+    reopenWindow();
+    refocusAfter(5);
+    await analytics.shutdown();
+
+    expect(capture).not.toHaveBeenCalled();
+    expect(existsSync(installIdFile())).toBe(false);
+  });
+
+  it('sends nothing, and creates no install id, for an install that opted out', async () => {
+    const analytics = await launch();
+
+    analytics.setOptOut(true);
+    analytics.trackMessageSent(message);
+    await finishReply('chat-1');
+    analytics.trackFlowCreated(flow);
+    analytics.trackFlowRunCompleted(flowRun);
+    reopenWindow();
+    refocusAfter(5);
+    await analytics.shutdown();
+
+    expect(capture).not.toHaveBeenCalled();
+    expect(existsSync(installIdFile())).toBe(false);
+  });
+
+  it('reports the app open once, however often the preference is reported', async () => {
+    const analytics = await launch();
+
+    analytics.setOptOut(false);
+    analytics.setOptOut(false);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'first_launch']);
+    expect(sentTriggers()[0]).toBe('launch');
+  });
+
+  it('reports the app open when a user opts back in', async () => {
+    const analytics = await launch();
+
+    analytics.setOptOut(true);
+    analytics.setOptOut(false);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'first_launch']);
+  });
+
+  it('keeps one id for the install across launches and events', async () => {
+    const firstLaunch = await launch();
+    firstLaunch.setOptOut(false);
+    await firstLaunch.shutdown();
+    const secondLaunch = await launch();
+    secondLaunch.setOptOut(false);
+    secondLaunch.trackMessageSent(message);
+
+    expect(sentEvents()).toEqual([
+      'desktop_opened',
+      'first_launch',
+      'desktop_opened',
+      'message_sent',
+    ]);
+    expect(sentIds()).toEqual([readFileSync(installIdFile(), 'utf8')]);
+    expect(capture.mock.calls.every(([sent]) => sent.disableGeoip === true)).toBe(true);
+    expect(capture.mock.calls[2][0].properties.first_launch).toBe(false);
+    expect(capture.mock.calls[3][0].properties).toMatchObject({
+      app_version: '1.2.3',
+      workspace_id: 'chat-1',
+      message_length: 5,
+      mode: 'agent',
+      starts_chat: false,
+    });
+  });
+
+  it('counts a Dock reopen and a return after hours away as app opens', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    reopenWindow();
+    refocusAfter(4);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'desktop_opened']);
+    expect(sentTriggers()).toEqual(['window_reopened', 'returned_after_idle']);
+  });
+
+  it('counts no return for the first focus, a short blur or a second return within hours', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    appEvents.emit('browser-window-focus');
+    refocusAfter(3.9);
+    refocusAfter(4);
+    appEvents.emit('browser-window-focus');
+    refocusAfter(3);
+
+    expect(sentTriggers()).toEqual(['returned_after_idle']);
+  });
+
+  it('counts a Dock reopen after hours away once, as a reopen', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    appEvents.emit('browser-window-blur');
+    vi.setSystemTime(Date.now() + 5 * HOUR);
+    reopenWindow();
+    appEvents.emit('browser-window-focus');
+
+    expect(sentTriggers()).toEqual(['window_reopened']);
+  });
+
+  it('counts no reopen for a window opened while another is open', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    appEvents.emit('browser-window-created');
+    reopenWindow();
+    appEvents.emit('browser-window-created');
+
+    expect(sentTriggers()).toEqual(['window_reopened']);
+  });
+
+  it('counts the message that starts a chat, later messages and each finished reply', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    analytics.trackMessageSent({ ...message, startsChat: true });
+    await finishReply('chat-1');
+    analytics.trackMessageSent(message);
+    await finishReply('chat-1');
+
+    expect(sentEvents()).toEqual([
+      'message_sent',
+      'reply_finished',
+      'message_sent',
+      'reply_finished',
+    ]);
+    expect(capture.mock.calls.map(([{ properties }]) => properties.starts_chat)).toEqual([
+      true,
+      undefined,
+      false,
+      undefined,
+    ]);
+    expect(capture.mock.calls[1][0].properties.workspace_id).toBe('chat-1');
+  });
+
+  it('sends only the published properties with each event', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    analytics.trackProjectOpened({ id: 'project-1', hasGitRemote: true });
+    analytics.trackWorkspaceCreated({ id: 'chat-1', projectId: 'project-1', useWorktree: true });
+    analytics.trackWorkspaceArchived('chat-1');
+    analytics.trackWorkspaceDeleted('chat-1');
+    analytics.trackPRCreated({ workspaceId: 'chat-1', prNumber: 7 });
+    analytics.trackFlowCreated(flow);
+    analytics.trackFlowRunCompleted(flowRun);
+    analytics.trackMessageSent(message);
+    await finishReply('chat-1');
+    reopenWindow();
+    refocusAfter(5);
+
+    const sentWithEveryEvent = [
+      'source',
+      'app_version',
+      'platform',
+      'arch',
+      'electron_version',
+      'node_version',
+    ];
+    const sent = capture.mock.calls.map(([{ event, properties }]) => [
+      event,
+      Object.keys(properties).filter((name) => !sentWithEveryEvent.includes(name)),
+    ]);
+    expect(sent).toEqual([
+      ['project_opened', ['project_id', 'has_git_remote']],
+      ['workspace_created', ['workspace_id', 'project_id', 'use_worktree']],
+      ['workspace_archived', ['workspace_id']],
+      ['workspace_deleted', ['workspace_id']],
+      ['pr_created', ['workspace_id', 'pr_number']],
+      ['flow_created', ['flow_id', 'trigger_type', 'created_by']],
+      ['flow_run_completed', ['flow_id', 'outcome', 'step_count', 'batch_size']],
+      ['message_sent', ['workspace_id', 'message_length', 'mode', 'starts_chat']],
+      ['reply_finished', ['workspace_id']],
+      ['desktop_opened', ['trigger']],
+      ['desktop_opened', ['trigger']],
+    ]);
+  });
+
+  it('sends nothing after shutdown', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    await analytics.shutdown();
+    analytics.trackMessageSent(message);
+
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing from an unpackaged build', async () => {
+    const analytics = await launch({ isPackaged: false });
+
+    analytics.setOptOut(false);
+    await analytics.shutdown();
+
+    expect(capture).not.toHaveBeenCalled();
+    expect(existsSync(installIdFile())).toBe(false);
+  });
+
+  it('sends nothing from a build with no key', async () => {
+    const analytics = await launch({ key: undefined });
+
+    analytics.setOptOut(false);
+
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing, and creates no install id, from a launch that switched usage analytics off', async () => {
+    const analytics = await launch({ disableUsageAnalytics: '1' });
+
+    analytics.setOptOut(false);
+    analytics.trackMessageSent(message);
+    await analytics.shutdown();
+
+    expect(capture).not.toHaveBeenCalled();
+    expect(existsSync(installIdFile())).toBe(false);
+  });
+
+  it('keeps the saved install id through a launch that switched usage analytics off', async () => {
+    const firstLaunch = await launch();
+    firstLaunch.setOptOut(false);
+    await firstLaunch.shutdown();
+    const savedId = readFileSync(installIdFile(), 'utf8');
+    const switchedOff = await launch({ disableUsageAnalytics: '1' });
+    switchedOff.setOptOut(false);
+    await switchedOff.shutdown();
+    const nextLaunch = await launch();
+    nextLaunch.setOptOut(false);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'first_launch', 'desktop_opened']);
+    expect(sentIds()).toEqual([savedId]);
+    expect(readFileSync(installIdFile(), 'utf8')).toBe(savedId);
+  });
+
+  it.each(['', '0', 'false'])('sends as usual when the off switch is %j', async (value) => {
+    const analytics = await launch({ disableUsageAnalytics: value });
+
+    analytics.setOptOut(false);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'first_launch']);
+  });
+});

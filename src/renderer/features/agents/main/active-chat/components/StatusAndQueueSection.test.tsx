@@ -1,9 +1,18 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { Chat } from '@ai-sdk/react';
+import type { UIMessage } from 'ai';
+import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { wakeHeldAtomFamily } from '../../../../../lib/stores/active-transport-registry';
 import type { SubChatFileChange } from '../../../atoms';
 import type { AgentQueueItem } from '../../../lib/queue-utils';
+import { agentChatStore } from '../../../stores/agent-chat-store';
+import {
+  messageAtomFamily,
+  perSubChatMainMessageIdsAtomFamily,
+} from '../../../stores/message-store';
 import { StatusAndQueueSection } from './StatusAndQueueSection';
 
 // SAFETY: the trpc mock below echoes this back as the resolved account type; the union is the set
@@ -174,5 +183,52 @@ describe('StatusAndQueueSection', () => {
     const column = screen.getByTestId('queue-indicator').parentElement;
     expect(column).toHaveClass('w-full', 'max-w-2xl', 'mx-auto');
     expect(column?.className).not.toMatch(/(^|\s)p[xlr]?-/);
+  });
+});
+
+describe('StatusAndQueueSection goal card', () => {
+  function storeWithGoal(): ReturnType<typeof createStore> {
+    const store = createStore();
+    store.set(messageAtomFamily('g1'), {
+      id: 'g1',
+      role: 'assistant',
+      parts: [{ type: 'data-goal', data: { state: 'active', objective: 'tests pass' } }],
+    });
+    store.set(perSubChatMainMessageIdsAtomFamily('sub-1'), ['g1']);
+    return store;
+  }
+
+  it('stacks the goal card and clears the goal through the chat', () => {
+    const chat = new Chat<UIMessage>({});
+    const sendMessage = vi.spyOn(chat, 'sendMessage').mockResolvedValue(undefined);
+    const spy = vi.spyOn(agentChatStore, 'get').mockReturnValue(chat);
+
+    const { container } = render(
+      <Provider store={storeWithGoal()}>
+        <StatusAndQueueSection {...baseProps()} />
+      </Provider>,
+    );
+
+    expect(container.firstElementChild).toHaveAttribute('data-stacked-cards');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear goal' }));
+    expect(sendMessage).toHaveBeenCalledWith({
+      role: 'user',
+      parts: [{ type: 'text', text: '/goal clear' }],
+    });
+    spy.mockRestore();
+  });
+
+  it('reads the goal as still being worked on while the chat waits on background work', () => {
+    const store = storeWithGoal();
+    const workflow = { id: 't1', label: 'Workflow', description: 'research', stoppable: true };
+    store.set(wakeHeldAtomFamily('sub-1'), { waitingOn: [workflow] });
+
+    render(
+      <Provider store={store}>
+        <StatusAndQueueSection {...baseProps()} />
+      </Provider>,
+    );
+
+    expect(screen.getByText('Keeps working until this is true')).toBeInTheDocument();
   });
 });

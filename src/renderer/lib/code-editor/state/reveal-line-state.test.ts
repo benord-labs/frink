@@ -1,9 +1,30 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import {
   consumePendingReveal,
+  dispatchEditorRevealLine,
   normalizeRevealSelection,
   shouldRevealNow,
 } from './reveal-line-state';
+
+describe('dispatchEditorRevealLine', () => {
+  it('announces the file and line to reveal, with the column range when one is given', () => {
+    const details: unknown[] = [];
+    const listen = (event: Event) => {
+      if (event instanceof CustomEvent) details.push(event.detail);
+    };
+    window.addEventListener('editor:reveal-line', listen);
+
+    dispatchEditorRevealLine('/repo/src/app.ts', 42, 5, 11);
+    dispatchEditorRevealLine('/repo/src/app.ts', 7);
+    window.removeEventListener('editor:reveal-line', listen);
+
+    expect(details).toEqual([
+      { filePath: '/repo/src/app.ts', lineNumber: 42, startColumn: 5, endColumn: 11 },
+      { filePath: '/repo/src/app.ts', lineNumber: 7, startColumn: undefined, endColumn: undefined },
+    ]);
+  });
+});
 
 describe('reveal-line-state', () => {
   it('reveals immediately when active file matches and editor is text mode', () => {

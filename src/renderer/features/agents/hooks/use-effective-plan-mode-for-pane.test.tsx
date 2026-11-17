@@ -2,6 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { ChatMode } from '../../../../shared/types/chat-mode';
 import {
   chatModeAtom,
   NEW_CHAT_PANE,
@@ -470,5 +471,37 @@ describe('cycleChatMode — debug mode in cycle', () => {
 
     act(() => result.current.cycleChatMode());
     expect(result.current.chatMode).toBe('agent');
+  });
+
+  it("skips the modes the chat's agent hides, such as Debug for OpenCode", () => {
+    const store = makeSingleStore();
+    store.set(chatModeAtom, 'plan');
+
+    const { result } = renderHook(
+      () => useEffectiveChatModeForPane(undefined, { hasProject: true, hiddenModes: ['debug'] }),
+      { wrapper: storeWrapper(store) },
+    );
+
+    act(() => result.current.cycleChatMode());
+    expect(result.current.chatMode).toBe('agent');
+  });
+
+  it('reads a saved mode the agent hides as Agent, keeping the saved choice for other providers', () => {
+    const store = makeSingleStore();
+    store.set(chatModeAtom, 'debug');
+
+    const { result, rerender } = renderHook(
+      ({ hiddenModes }: { hiddenModes: ChatMode[] }) =>
+        useEffectiveChatModeForPane(undefined, { hasProject: true, hiddenModes }),
+      { wrapper: storeWrapper(store), initialProps: { hiddenModes: ['debug'] } },
+    );
+
+    expect(result.current.chatMode).toBe('agent');
+    act(() => result.current.cycleChatMode());
+    expect(result.current.chatMode).toBe('plan');
+
+    store.set(chatModeAtom, 'debug');
+    rerender({ hiddenModes: [] });
+    expect(result.current.chatMode).toBe('debug');
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPromptWithHistory } from './prompt-history';
+import { formatPromptWithHistory, replaceCarriedWithHistory } from './prompt-history';
 
 const history = [
   { role: 'user' as const, content: 'earlier question' },
@@ -27,6 +27,48 @@ describe('formatPromptWithHistory', () => {
     expect(formatPromptWithHistory('please run /compact', history)).toContain(
       '<conversation_history>',
     );
+  });
+
+  it('recaps the tokens of a person’s turns and replays every other turn as stored', () => {
+    const selection = `@[quote:p:${Buffer.from('x'.repeat(5000)).toString('base64')}]`;
+    const out = formatPromptWithHistory('next', [
+      { role: 'user', content: `${selection} why @[file:local:a.ts]?`, personAuthored: true },
+      { role: 'assistant', content: 'see @[file:local:b.ts]' },
+      { role: 'user', content: 'Flow step: read @[file:local:c.ts]' },
+    ]);
+    expect(out).toContain(
+      `Human: [quoted an earlier message:\n${'x'.repeat(2000)}\n... (truncated)] why a.ts?`,
+    );
+    expect(out).not.toContain(selection);
+    expect(out).toContain('Assistant: see @[file:local:b.ts]');
+    expect(out).toContain('Human: Flow step: read @[file:local:c.ts]');
+  });
+
+  it('recaps a steer replayed as the person’s turn between two assistant turns', () => {
+    const preview = Buffer.from('const a = 1;').toString('base64');
+    const out = formatPromptWithHistory('next', [
+      { role: 'assistant', content: 'working on @[file:local:b.ts]' },
+      {
+        role: 'user',
+        content: `look at @[code:a.ts:3-4:preview:${preview}] then @[skill:deploy]`,
+        personAuthored: true,
+      },
+      { role: 'assistant', content: 'switching' },
+    ]);
+    expect(out).toContain(
+      'Assistant: working on @[file:local:b.ts]\n\nHuman: look at [selected lines 3-4 of a.ts:\nconst a = 1;] then [skill deploy]\n\nAssistant: switching',
+    );
+    expect(out).not.toContain(preview);
+  });
+
+  it('recaps before the budget cut, so a large selection cannot push out earlier turns', () => {
+    const selection = `@[quote:p:${Buffer.from('x'.repeat(300_000)).toString('base64')}]`;
+    const out = formatPromptWithHistory('next', [
+      { role: 'user', content: 'the first question' },
+      { role: 'user', content: `${selection} explain`, personAuthored: true },
+    ]);
+    expect(out).toContain('Human: the first question');
+    expect(out).not.toContain('Earlier conversation omitted');
   });
 
   it('returns the prompt unchanged when there is no history', () => {
@@ -61,5 +103,26 @@ describe('formatPromptWithHistory', () => {
     expect(out.length).toBeLessThan(200_000 + 500);
     expect(out).toContain('aEND');
     expect(out).toContain('Earlier conversation omitted');
+  });
+});
+
+describe('replaceCarriedWithHistory', () => {
+  const carried = 'a note and an earlier message\n\ndo the thing';
+
+  it('puts the transcript in place of what a resume would have carried', () => {
+    const out = replaceCarriedWithHistory(
+      `a prefix\n\n${carried}`,
+      carried,
+      'do the thing',
+      history,
+    );
+    expect(out.startsWith('a prefix\n\n<conversation_history>')).toBe(true);
+    expect(out).not.toContain('a note and an earlier message');
+    expect(out.endsWith('do the thing')).toBe(true);
+  });
+
+  it('keeps the prompt whole when there is no transcript to seed from', () => {
+    expect(replaceCarriedWithHistory(carried, carried, 'do the thing', [])).toBe(carried);
+    expect(replaceCarriedWithHistory(carried, carried, 'do the thing', undefined)).toBe(carried);
   });
 });

@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import {
   applyPatchOperations,
-  deepMergePatch,
   type PatchOperation,
   patchArgsSchema,
   seedDefaultProject,
 } from './flow-patch';
+import { deepMergePatch } from './deep-merge-patch';
 
 const MIN_VALID_GRAPH: FlowGraph = {
   nodes: [
@@ -232,6 +232,15 @@ describe('applyPatchOperations — success path', () => {
     expect(r.status).toBe('success');
     if (r.status !== 'success') return;
     expect(r.graph.settings?.briefing).toBe('Always use TypeScript strict mode.');
+  });
+
+  it('update_settings sets runFirst', () => {
+    const r = applyPatchOperations(MIN_VALID_GRAPH, [
+      { op: 'update_settings', settings: { runFirst: true } },
+    ]);
+    expect(r.status).toBe('success');
+    if (r.status !== 'success') return;
+    expect(r.graph.settings?.runFirst).toBe(true);
   });
 
   it('update_settings clears briefing when set to undefined', () => {

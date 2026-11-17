@@ -7,7 +7,6 @@ import { memo, type ReactElement } from 'react';
 import { RenameDialog } from '../../../../../components/rename-dialog';
 import {
   AlertDialog,
-  AlertDialogBody,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -29,7 +28,6 @@ type SidebarDialogsProps = {
   onNewFolderClose: () => void;
   onNewFolderConfirm: (name: string) => Promise<void>;
   taskAwareActionDialog: Omit<TaskAwareActionDialogState, 'chatIds'>;
-  onTaskAwareActionKeepRunning: () => void;
   onTaskAwareActionCancelAndContinue: () => void;
   onTaskAwareActionClose: () => void;
 };
@@ -45,38 +43,20 @@ function SidebarDialogsComponent({
   onNewFolderClose,
   onNewFolderConfirm,
   taskAwareActionDialog,
-  onTaskAwareActionKeepRunning,
   onTaskAwareActionCancelAndContinue,
   onTaskAwareActionClose,
 }: SidebarDialogsProps): ReactElement {
   const isBatch = taskAwareActionDialog.mode === 'batch';
-  const isArchiveAction = taskAwareActionDialog.operation.startsWith('archive');
-  const isDeleteAction = !isArchiveAction;
   const taskCount = taskAwareActionDialog.taskIds.length;
   const taskPlural = taskCount === 1 ? '' : 's';
 
-  const continueLabel = isArchiveAction
-    ? 'Archive only'
-    : isBatch
-      ? 'Delete chats only'
-      : 'Delete only';
-  const cancelAndContinueLabel = isArchiveAction ? 'Stop task + archive' : 'Stop task + delete';
+  const title = isBatch
+    ? `Delete ${taskAwareActionDialog.totalChats} chats?`
+    : 'This chat has a linked task';
 
-  const title = isDeleteAction
-    ? isBatch
-      ? `Delete ${taskAwareActionDialog.totalChats} chats?`
-      : 'This chat has a linked task'
-    : `Before you archive ${isBatch ? `${taskAwareActionDialog.totalChats} chats` : 'this chat'}`;
-
-  const description = isDeleteAction
-    ? isBatch
-      ? `${taskCount} linked task${taskPlural} will also be stopped and removed.`
-      : 'Deleting this chat will also stop and remove the linked task. This cannot be undone.'
-    : `${isBatch ? 'These chats are' : 'This chat is'} linked to ${taskCount} running or pending task${taskPlural}.`;
-
-  const bodyCopy = isDeleteAction
-    ? null
-    : 'Keep task running is the safe default. Stop it first only if you want to cancel the linked task before this action.';
+  const description = isBatch
+    ? `${taskCount} linked task${taskPlural} will also be stopped and removed.`
+    : 'Deleting this chat will also stop and remove the linked task. This cannot be undone.';
 
   return (
     <>
@@ -121,20 +101,10 @@ function SidebarDialogsComponent({
             <AlertDialogTitle>{title}</AlertDialogTitle>
             <AlertDialogDescription>{description}</AlertDialogDescription>
           </AlertDialogHeader>
-          {bodyCopy && (
-            <AlertDialogBody className="text-sm text-muted-foreground">
-              <p>{bodyCopy}</p>
-            </AlertDialogBody>
-          )}
           <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
             <AlertDialogCancel onClick={onTaskAwareActionClose}>Back</AlertDialogCancel>
-            {isArchiveAction && (
-              <Button variant="secondary" onClick={onTaskAwareActionKeepRunning}>
-                {continueLabel}
-              </Button>
-            )}
             <Button variant="destructive" onClick={onTaskAwareActionCancelAndContinue}>
-              {cancelAndContinueLabel}
+              Stop task + delete
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

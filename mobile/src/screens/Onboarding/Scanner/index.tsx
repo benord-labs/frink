@@ -125,7 +125,8 @@ function Viewfinder({
               textAlign: 'center',
             }}
           >
-            {problem ?? 'In Frink on your Mac, open Settings → Mobile and scan the code shown there.'}
+            {problem ??
+              'In Frink on your Mac, open Settings → Mobile and scan the code shown there.'}
           </Text>
         </View>
         <GlassSurface style={{ borderRadius: radius.pill }}>

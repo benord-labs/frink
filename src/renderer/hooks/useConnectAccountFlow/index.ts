@@ -24,9 +24,9 @@ type ConnectMutation<TInput> = {
 };
 
 type UseConnectAccountFlowParams<TDetection, TInput> = {
-  /** The provider's detection query result (Claude/Codex `detect*Account.useQuery(...)`). */
+  /** The provider's detection query result. */
   detectionQuery: DetectionQuery<TDetection>;
-  /** The provider's connect mutation result (Claude/Codex `connect*Passthrough.useMutation()`). */
+  /** The provider's connect mutation result. */
   connectMutation: ConnectMutation<TInput>;
   /** Maps the (validated, trimmed) label + flow context to the provider-specific mutation input. */
   buildConnectInput: (
@@ -50,12 +50,12 @@ export type ConnectAccountFlow<TDetection> = {
   setAccountLabel: (value: string) => void;
   handleBack: () => void;
   handleRefresh: () => Promise<void>;
-  handleConnect: () => Promise<void>;
+  handleConnect: (fresh?: TDetection) => Promise<void>;
   dismissError: () => void;
 };
 
 /**
- * Shared connect/reconnect flow for the Claude and Codex passthrough pages.
+ * Shared connect/reconnect flow for the Claude page and the page for every other provider.
  *
  * Owns the state + handlers both pages duplicated — flow state, account-label default,
  * the back/refresh/connect handlers, the `pendingAccountAuth`/settings/onboarding atom
@@ -114,8 +114,9 @@ export function useConnectAccountFlow<TDetection, TInput>({
     setIsRefreshing(false);
   };
 
-  const handleConnect = async () => {
-    const label = accountLabel.trim();
+  /** `fresh` is a detection read just now, before a render could give this hook its label. */
+  const handleConnect = async (fresh?: TDetection) => {
+    const label = accountLabel.trim() || (fresh ? deriveLabel(fresh) : null) || '';
     if (!label) {
       setErrorMessage('Please enter an account label.');
       setFlowState('error');
@@ -126,7 +127,9 @@ export function useConnectAccountFlow<TDetection, TInput>({
     setErrorMessage(null);
 
     try {
-      await connectMutation.mutateAsync(buildConnectInput(label, { detection, isReauthFlow }));
+      await connectMutation.mutateAsync(
+        buildConnectInput(label, { detection: fresh ?? detection, isReauthFlow }),
+      );
       await Promise.all([
         trpcUtils.claudeCode.listAccounts.invalidate(),
         trpcUtils.claudeCode.getResolvedAccount.invalidate(),

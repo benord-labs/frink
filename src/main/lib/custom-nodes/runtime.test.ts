@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  applyTemplateOptOuts,
   buildCustomNodeInputConfig,
   CUSTOM_NODE_ENTRYPOINT_EXTENSION,
   CUSTOM_NODE_RUNTIME_MIGRATION_MESSAGE,
@@ -552,6 +553,13 @@ describe('collectManifestInputWarnings', () => {
     ]);
   });
 
+  it('warns when "template" is not a boolean, since the input then keeps rendering', () => {
+    expect(collectManifestInputWarnings({ q: { type: 'string', template: 'off' } })).toEqual([
+      'Input "q" declares a non-boolean "template" ("off") — treated as templated. Use false to pass the value through unrendered.',
+    ]);
+    expect(collectManifestInputWarnings({ q: { type: 'string', template: false } })).toEqual([]);
+  });
+
   it('stays silent for well-formed inputs', () => {
     expect(
       collectManifestInputWarnings({
@@ -562,5 +570,41 @@ describe('collectManifestInputWarnings', () => {
         picker: { type: 'string', listOptions: true },
       }),
     ).toEqual([]);
+  });
+});
+
+describe('applyTemplateOptOuts (sc-3251)', () => {
+  const inputs = {
+    query: { type: 'string', template: false },
+    repo: { type: 'string' },
+    flag: { type: 'string', template: 'off' },
+  };
+
+  it('takes the authored value for "template": false inputs and the rendered value otherwise', () => {
+    expect(
+      applyTemplateOptOuts(
+        inputs,
+        { query: '{"q":""}', repo: 'org/frink', flag: 'x' },
+        { query: '{"q":"{{field}}"}', repo: 'org/{{trigger.name}}', flag: '{{y}}' },
+      ),
+    ).toEqual({ query: '{"q":"{{field}}"}', repo: 'org/frink', flag: 'x' });
+  });
+
+  it('keeps the rendered config when no authored config was passed', () => {
+    const rendered = { query: '' };
+    expect(applyTemplateOptOuts(inputs, rendered, undefined)).toBe(rendered);
+  });
+
+  it('never invents an opted-out key the node did not configure', () => {
+    expect(applyTemplateOptOuts(inputs, { repo: 'r' }, { repo: 'r' })).toEqual({ repo: 'r' });
+  });
+
+  it('feeds byte-identical opted-out values through to the script input config', () => {
+    const long = `${'x'.repeat(12_000)}{{trigger.name}}`;
+    const config = applyTemplateOptOuts(inputs, { query: 'truncated' }, { query: long });
+    expect(buildCustomNodeInputConfig(inputs, config)).toEqual({
+      ok: true,
+      config: { query: long },
+    });
   });
 });

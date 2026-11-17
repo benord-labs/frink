@@ -23,6 +23,7 @@ vi.mock('../credentials', () => ({
 import { resolveTaskAccount, resolveTaskAccountType } from './execution-account';
 
 let db: TestDb;
+const EXECUTE = { startMode: 'execute' } as const;
 const CREDENTIALS: Record<string, { type: string; token: string | null }> = {
   claude: { type: 'claude-code', token: 't' },
   codex: { type: 'codex', token: 't' },
@@ -51,25 +52,41 @@ describe('task execution account', () => {
     const account = await resolveTaskAccount('p1', 'flow-chat');
 
     expect(account?.id).toBe('claude');
-    expect(await resolveTaskAccountType(account)).toBe('claude-code');
+    expect(await resolveTaskAccountType(account, EXECUTE)).toBe('claude-code');
   });
 
   it('resolves a new chat from the project override', async () => {
     await setProjectAiAccount(db, 'p1', 'codex');
 
-    expect(await resolveTaskAccountType(await resolveTaskAccount('p1', null))).toBe('codex');
+    expect(await resolveTaskAccountType(await resolveTaskAccount('p1', null), EXECUTE)).toBe(
+      'codex',
+    );
   });
 
   it('runs on the default account when nothing is pinned', async () => {
     getDefaultClaudeCodeTokenMock.mockResolvedValue({ type: 'codex', token: 't' });
 
-    expect(await resolveTaskAccountType(await resolveTaskAccount(null, null))).toBe('codex');
+    expect(await resolveTaskAccountType(await resolveTaskAccount(null, null), EXECUTE)).toBe(
+      'codex',
+    );
   });
 
   it('fails the task when its account is not connected on this machine', async () => {
-    await expect(resolveTaskAccountType({ id: 'stale', label: 'Stale' })).rejects.toMatchObject({
+    await expect(
+      resolveTaskAccountType({ id: 'stale', label: 'Stale' }, EXECUTE),
+    ).rejects.toMatchObject({
       message: expect.stringContaining('"Stale" is not authenticated'),
       action: 'open-connect-account',
+      permanent: true,
+    });
+  });
+
+  it('fails a Plan task on a Codex project before it can touch the working tree', async () => {
+    await setProjectAiAccount(db, 'p1', 'codex');
+    const account = await resolveTaskAccount('p1', null);
+
+    await expect(resolveTaskAccountType(account, { startMode: 'plan' })).rejects.toMatchObject({
+      message: "Plan mode isn't available for OpenAI yet. Pick another mode.",
       permanent: true,
     });
   });

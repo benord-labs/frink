@@ -1,8 +1,7 @@
-import claudeLogo from '@iconify-icons/simple-icons/claude';
-import openaiLogo from '@iconify-icons/ri/openai-fill';
-import { iconifyComponent } from '@/lib/utils/iconify-component';
+import { aiProviderMark } from '@/components/AiProviderMark';
+import type { ModelVariant } from '@/lib/ai-providers/chat-options';
 import { Button } from '@benord-labs/frink-primitives';
-import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
+import { type CodexAccountTiers, codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
   formatModelPickerLabel,
   formatModelPickerLabelParts,
@@ -10,21 +9,24 @@ import {
 import type { CodexSpeed, ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
 import { ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
+import { useCodexAccountCatalog } from '../../../lib/codex/use-codex-account-catalog';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import {
   COMPOSER_MODEL_CONTROL_CLASS,
   COMPOSER_MODEL_DETAIL_CLASS,
+  COMPOSER_MODEL_EFFORT_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
+  COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+  COMPOSER_MODEL_ULTRA_EFFORT_CLASS,
+  COMPOSER_PLAIN_GLYPH_CLASS,
+  COMPOSER_ULTRA_GLYPH_CLASS,
+  COMPOSER_ULTRA_NAME_CLASS,
 } from '../main/chat-composer-shell-classes';
 import { ModelPicker } from './ModelPicker';
 import { UltraWord } from './ModelPicker/UltraSwitch';
 
-const ClaudeCodeIcon = iconifyComponent(claudeLogo);
-const CodexIcon = iconifyComponent(openaiLogo);
-
-/** Provider → trigger icon, keyed by `modelVariant`. */
-const TRIGGER_ICON = { codex: CodexIcon, claude: ClaudeCodeIcon } as const;
+type TriggerIconType = ReturnType<typeof aiProviderMark>;
 
 export type ModelItem = {
   id: string;
@@ -47,7 +49,7 @@ type ModelSelectorProps = {
   selectedModel: ModelItem | undefined;
   availableModels: readonly ModelItem[];
   onModelChange: (model: ModelItem) => void;
-  modelVariant?: 'claude' | 'codex';
+  modelVariant?: ModelVariant;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   /** Opens full-page Settings on the AI providers tab (visibility, accounts). */
@@ -68,21 +70,32 @@ type ModelSelectorProps = {
   chatId?: string;
   /** New Chat: the form's staged speed, applied to the chat it creates. */
   newChatSpeedRef?: { current: CodexSpeed };
+  /** Chat: the selected model is one the signed-in account can't use; its send will be refused. */
+  unavailable?: boolean;
+  /** A line under the list, such as how to load an agent's models. */
+  hint?: string;
 };
 
 /** Codex speed controls, or none for a model without a paid tier (incl. Claude) or with nowhere
- *  to keep the choice — never a live-but-inert control. Ultrafast is only offered beside Fast. */
+ *  to keep the choice — never a live-but-inert control. Ultrafast is only offered beside Fast.
+ *  `offered` is what the account can use; unknown tiers (loading, failed read) offer nothing. */
 function speedScope(
   modelId: string | undefined,
   chatId: string | undefined,
   newChatSpeedRef: { current: CodexSpeed } | undefined,
+  accountTiers: CodexAccountTiers | null | undefined,
 ) {
   const credits = {
     fast: codexTierCredits(modelId, 'fast'),
     ultrafast: codexTierCredits(modelId, 'ultrafast'),
   };
   if (credits.fast === null || (!chatId && !newChatSpeedRef)) return undefined;
-  return { chatId, newChatSpeedRef, credits };
+  const tiers = accountTiers ?? {};
+  const offered = {
+    fast: codexTierCredits(modelId, 'fast', tiers) !== null,
+    ultrafast: codexTierCredits(modelId, 'ultrafast', tiers) !== null,
+  };
+  return { chatId, newChatSpeedRef, credits, offered };
 }
 
 /** Flow form: middle label must shrink so long model names truncate (min-w-0 + flex-1). */
@@ -97,23 +110,51 @@ function formatTriggerLabel(m: ModelItem | undefined): string {
 /** How an Ultra row's label ends (see the Claude catalog); the trigger restyles just this word. */
 const ULTRA_LABEL_TAIL = ' · Ultra';
 
+/** The tier's effort as a token for the narrow composer, where the full tier no longer fits. */
+const EFFORT_TOKEN = {
+  low: 'L',
+  medium: 'M',
+  high: 'H',
+  xhigh: 'XH',
+  max: 'Max',
+} satisfies Record<ClaudeSdkEffortLevel, string>;
+
+/** Provider glyph; with Ultra on, an icon-only trigger swaps it for the glyph in Ultra's chroma. */
+function ComposerTriggerGlyph({ icon: Glyph, ultra }: { icon: TriggerIconType; ultra: boolean }) {
+  const plain = <Glyph className={cn('h-4 w-4 shrink-0', ultra && COMPOSER_PLAIN_GLYPH_CLASS)} />;
+  if (!ultra) return plain;
+  return (
+    <>
+      {plain}
+      <span className={COMPOSER_ULTRA_GLYPH_CLASS}>
+        <Glyph mode="mask" width="1rem" height="1rem" className="chroma-fill chroma-text-animate" />
+      </span>
+    </>
+  );
+}
+
 /** Composer trigger text: the name in the foreground and the tier muted. As the composer narrows
- *  the tier and chevron go first; the name goes only when it no longer fits. */
+ *  the tier and chevron go first, leaving an effort token, then the name, which goes only when it
+ *  no longer fits. */
 function ComposerTriggerLabel({
   label,
   suffix,
+  effort,
   ultra,
 }: {
   label: string;
   suffix?: string;
+  effort?: ClaudeSdkEffortLevel;
   ultra: boolean;
 }) {
+  const detailClass = ultra ? COMPOSER_MODEL_ULTRA_DETAIL_CLASS : COMPOSER_MODEL_DETAIL_CLASS;
+  const effortClass = ultra ? COMPOSER_MODEL_ULTRA_EFFORT_CLASS : COMPOSER_MODEL_EFFORT_CLASS;
   return (
     <>
       <span className={COMPOSER_MODEL_LABEL_CLASS}>
-        {label}
+        <span className={cn(ultra && COMPOSER_ULTRA_NAME_CLASS)}>{label}</span>
         {suffix ? (
-          <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_DETAIL_CLASS)}>
+          <span className={cn('text-muted-foreground/70', detailClass)}>
             {ultra ? (
               <>
                 {suffix.slice(0, -ULTRA_LABEL_TAIL.length)}
@@ -125,8 +166,14 @@ function ComposerTriggerLabel({
             )}
           </span>
         ) : null}
+        {suffix && effort ? (
+          <span className={cn('text-muted-foreground/70', effortClass)}>
+            {' · '}
+            {ultra ? <UltraWord>{EFFORT_TOKEN[effort]}</UltraWord> : EFFORT_TOKEN[effort]}
+          </span>
+        ) : null}
       </span>
-      <ChevronDown className={cn('h-3 w-3 shrink-0 opacity-50', COMPOSER_MODEL_DETAIL_CLASS)} />
+      <ChevronDown className={cn('h-3 w-3 shrink-0 opacity-50', detailClass)} />
     </>
   );
 }
@@ -135,6 +182,14 @@ function ComposerTriggerLabel({
 function chatTriggerText(m: ModelItem | undefined) {
   const { name, suffix } = m ? formatModelPickerLabelParts(m) : { name: 'Auto', suffix: '' };
   return { label: name + suffix, name, suffix };
+}
+
+/** Chat trigger hover text: what is selected, and why a send would be refused. */
+function chatTitle(label: string, ultra: boolean, unavailableName: string | null): string {
+  if (unavailableName !== null) {
+    return `${unavailableName} isn't available on your ChatGPT plan — pick another model`;
+  }
+  return ultra ? `${label} — runs many agents in parallel` : label;
 }
 
 function flowTriggerText(
@@ -147,8 +202,12 @@ function flowTriggerText(
   return formatTriggerLabel(selectedModel);
 }
 
+function PickerHint({ text }: { text: string | undefined }) {
+  return text ? <p className="px-2.5 pb-2 text-sm text-muted-foreground">{text}</p> : null;
+}
+
 /**
- * Model selector for Claude or Codex.
+ * Model selector for Claude, Codex, or an agent's own flat list.
  */
 export function ModelSelector({
   selectedModel,
@@ -166,6 +225,8 @@ export function ModelSelector({
   triggerId,
   chatId,
   newChatSpeedRef,
+  unavailable = false,
+  hint,
 }: ModelSelectorProps) {
   const isFlow = mode === 'flow';
   // Grey the Claude Extra High tier when the bundled CLI can't run `--effort xhigh` (< 2.1.173).
@@ -177,12 +238,13 @@ export function ModelSelector({
       staleTime: Number.POSITIVE_INFINITY,
     },
   );
+  const codexCatalog = useCodexAccountCatalog(modelVariant === 'codex' && !isFlow);
   const xhighSupported = claudeCaps?.supportsXhigh ?? true;
   const ultraSupported = claudeCaps?.supportsUltra ?? true;
   // Ultra is a mode: its word takes the animated chroma used for power keywords.
   const ultra = !isFlow && Boolean(selectedModel?.ultra);
   // biome-ignore lint/style/useNamingConvention: Renders as a component
-  const TriggerIcon = TRIGGER_ICON[modelVariant];
+  const TriggerIcon = aiProviderMark(modelVariant === 'claude' ? 'claude-code' : modelVariant);
 
   // Chat: the composer's model control (icon, name, muted tier, each shed in turn as it narrows);
   // the full label is its accessible name and hover title. Flow forms keep the labelled field.
@@ -195,6 +257,7 @@ export function ModelSelector({
   const triggerLabel = isFlow
     ? flowTriggerText(selectedModel, staleModelId, flowInheritLabel)
     : chatText.label;
+  const title = chatTitle(triggerLabel, ultra, unavailable ? chatText.name : null);
 
   return (
     <Popover open={isOpen} onOpenChange={onOpenChange}>
@@ -206,23 +269,31 @@ export function ModelSelector({
           className={cn(
             isFlow ? FLOW_FORM_TRIGGER_CLASS : chatTriggerClass,
             isFlow && 'text-foreground hover:bg-background',
+            unavailable && 'text-warning',
             triggerClassName,
           )}
           {...(isFlow
             ? {}
             : {
-                'aria-label': `Model: ${triggerLabel}${ultra ? ' — parallel agents on' : ''}`,
-                title: ultra ? `${triggerLabel} — runs many agents in parallel` : triggerLabel,
+                'aria-label': unavailable
+                  ? `Model: ${title}`
+                  : `Model: ${triggerLabel}${ultra ? ' — parallel agents on' : ''}`,
+                title,
               })}
         >
-          <TriggerIcon className="h-4 w-4 shrink-0" />
+          <ComposerTriggerGlyph icon={TriggerIcon} ultra={ultra} />
           {isFlow ? (
             <>
               <span className="min-w-0 flex-1 truncate text-left">{triggerLabel}</span>
               <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
             </>
           ) : (
-            <ComposerTriggerLabel label={chatText.name} suffix={chatText.suffix} ultra={ultra} />
+            <ComposerTriggerLabel
+              label={chatText.name}
+              suffix={chatText.suffix}
+              effort={selectedModel?.effort}
+              ultra={ultra}
+            />
           )}
         </Button>
       </PopoverTrigger>
@@ -239,7 +310,11 @@ export function ModelSelector({
           variant={modelVariant}
           hideXhigh={modelVariant === 'claude' && !xhighSupported}
           hideUltra={modelVariant === 'claude' && !ultraSupported}
-          speed={isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef)}
+          speed={
+            isFlow
+              ? undefined
+              : speedScope(selectedModel?.id, chatId, newChatSpeedRef, codexCatalog?.tiers)
+          }
           inherit={
             isFlow
               ? {
@@ -255,6 +330,7 @@ export function ModelSelector({
           onOpenModelSettings={onOpenModelSettings}
           onClose={() => onOpenChange(false)}
         />
+        <PickerHint text={hint} />
       </PopoverContent>
     </Popover>
   );

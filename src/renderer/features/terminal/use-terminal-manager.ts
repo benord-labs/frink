@@ -106,6 +106,7 @@ export function useTerminalManager({
     if (!splitLayoutVisible) return activeTerminalId;
     return keyboardFocusTerminalId ?? activeTerminalId;
   }, [splitLayoutVisible, keyboardFocusTerminalId, activeTerminalId]);
+  const keyboardTargetTerminal = terminals.find((t) => t.id === terminalKeyboardTargetId) ?? null;
 
   const killMutation = trpc.terminal.kill.useMutation();
 
@@ -559,6 +560,7 @@ export function useTerminalManager({
     splitPaneTerminalIds: splitPaneIds,
     keyboardFocusTerminalId,
     terminalKeyboardTargetId,
+    keyboardTargetTerminal,
     setTerminalKeyboardFocus,
   };
 }

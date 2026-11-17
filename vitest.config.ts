@@ -1,5 +1,48 @@
 import { resolve } from 'node:path';
+import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+
+const setupFiles = ['./vitest.setup.ts'];
+const exclude = [
+  'node_modules',
+  '**/node_modules/**',
+  'dist',
+  'release',
+  '**/*.d.ts',
+  '**/*.e2e.test.ts',
+];
+// Must equal the renderer's babel plugin in electron.vite.config.ts, so compiled tests run the
+// compiler that ships. scripts/testing/vitest-projects.test.ts fails when the two differ.
+export const reactCompilerBabelPlugin = ['babel-plugin-react-compiler', { target: '19' }];
+// Renderer tests that assert render counts or object identity. They run through the React Compiler,
+// as the shipped renderer does; every other test runs uncompiled.
+const compiledTests = 'src/renderer/**/*.compiled.{test,spec}.{ts,tsx}';
+
+// include, exclude and setupFiles are declared per project: `extends: true` concatenates arrays,
+// so a root include would make the compiled project run every test a second time.
+export const unitProject = {
+  test: {
+    name: 'unit',
+    setupFiles,
+    include: [
+      'src/**/*.{test,spec}.{ts,tsx}',
+      'relay/**/*.{test,spec}.ts',
+      'live-activity-forwarder/tests/**/*.test.ts',
+      'scripts/**/*.{test,spec}.{ts,mjs}',
+    ],
+    exclude: [...exclude, compiledTests],
+  },
+};
+
+export const compiledProject = {
+  plugins: [react({ babel: { plugins: [reactCompilerBabelPlugin] } })],
+  test: {
+    name: 'compiled',
+    setupFiles,
+    include: [compiledTests],
+    exclude,
+  },
+};
 
 export default defineConfig({
   test: {
@@ -7,10 +50,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['json'],
       reportsDirectory: './coverage',
-      thresholds: {
-        statements: 65,
-        functions: 63,
-      },
+      // No thresholds here: CI enforces the floor in scripts/testing/check-coverage-floor.mjs.
     },
     // Heavy main-process suites (tRPC, fs hooks) time out under default CPU saturation on dev machines/CI.
     maxWorkers: 2,
@@ -34,20 +74,9 @@ export default defineConfig({
       NODE_ENV: 'test',
       // FRINK_HOME + FRINK_CUSTOM_NODES_DIR: per-file temp home, set in vitest.setup.ts.
     },
-    setupFiles: ['./vitest.setup.ts'],
-    include: [
-      'src/**/*.{test,spec}.{ts,tsx}',
-      'relay/**/*.{test,spec}.ts',
-      'live-activity-forwarder/tests/**/*.test.ts',
-      'scripts/**/*.{test,spec}.{ts,mjs}',
-    ],
-    exclude: [
-      'node_modules',
-      '**/node_modules/**',
-      'dist',
-      'release',
-      '**/*.d.ts',
-      '**/*.e2e.test.ts',
+    projects: [
+      { extends: true, ...unitProject },
+      { extends: true, ...compiledProject },
     ],
   },
   esbuild: {

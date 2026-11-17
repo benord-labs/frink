@@ -354,7 +354,12 @@ export function PermissionForm({
       {action.error && <Note error>{action.error}</Note>}
       {prompt.supported ? (
         <View style={{ flexDirection: 'row', gap: space.sm, justifyContent: 'flex-end' }}>
-          <Button small variant="secondary" disabled={action.busy} onPress={() => void respond(false)}>
+          <Button
+            small
+            variant="secondary"
+            disabled={action.busy}
+            onPress={() => void respond(false)}
+          >
             Deny
           </Button>
           <Button small busy={action.busy} onPress={() => void respond(true)}>

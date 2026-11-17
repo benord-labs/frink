@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { FolderCursor, SidebarChatListItem, SidebarPolledTask } from './utils';
+import type { FolderCursor, SidebarChatListItem } from './utils';
 import {
   buildChatReasonMap,
   buildChatTaskStatusMap,
   buildPendingQuestionChatIds,
   bumpChatUpdatedAtInFolderMap,
+  cutSidebarEntries,
   extractErrorMessage,
   mergeChatsById,
   normalizeCursor,
-  sameSidebarTasks,
 } from './utils';
 
 function makeChatItem(
@@ -338,16 +338,44 @@ describe('buildChatTaskStatusMap — flow-run-authoritative badge', () => {
   });
 });
 
+describe('buildChatTaskStatusMap — finished Fan Out items', () => {
+  const pastItem = { linkedChatId: 'item', flowRunStatus: 'paused', chatLive: false } as const;
+
+  it('reads done once the loop has moved past the item, while the run continues', () => {
+    expect(buildChatTaskStatusMap([{ ...pastItem, status: 'done' }]).get('item')).toBe('done');
+  });
+
+  it('reads done when the finished item retried a failed attempt', () => {
+    const map = buildChatTaskStatusMap([
+      { ...pastItem, status: 'failed', effectiveStatus: 'running' },
+      { ...pastItem, status: 'done', effectiveStatus: 'running' },
+    ]);
+    expect(map.get('item')).toBe('done');
+  });
+
+  it('keeps a chat that still drives the run reading running', () => {
+    const map = buildChatTaskStatusMap([
+      { status: 'done', linkedChatId: 'home', flowRunStatus: 'paused', chatLive: true },
+    ]);
+    expect(map.get('home')).toBe('running');
+  });
+
+  it('lets a terminal run outcome still win', () => {
+    const map = buildChatTaskStatusMap([{ ...pastItem, status: 'done', flowRunStatus: 'failed' }]);
+    expect(map.get('item')).toBe('failed');
+  });
+});
+
 describe('buildChatReasonMap — park reason of the winning task per chat', () => {
-  it('returns the agent summary + details for a parked task', () => {
+  it('returns the agent summary for a parked task', () => {
     const map = buildChatReasonMap([
       {
         status: 'needs_attention',
         linkedChatId: 'c1',
-        result: { agentSignal: { summary: 'Approve plan #143', details: 'the full plan' } },
+        agentSignalSummary: 'Approve plan #143',
       },
     ]);
-    expect(map.get('c1')).toEqual({ summary: 'Approve plan #143', details: 'the full plan' });
+    expect(map.get('c1')).toEqual({ summary: 'Approve plan #143' });
   });
 
   it('picks the highest-priority winning task (needs_attention over running)', () => {
@@ -355,12 +383,12 @@ describe('buildChatReasonMap — park reason of the winning task per chat', () =
       {
         status: 'running',
         linkedChatId: 'c1',
-        result: { agentSignal: { summary: 'still working' } },
+        agentSignalSummary: 'still working',
       },
       {
         status: 'needs_attention',
         linkedChatId: 'c1',
-        result: { agentSignal: { summary: 'the ask' } },
+        agentSignalSummary: 'the ask',
       },
     ]);
     expect(map.get('c1')?.summary).toBe('the ask');
@@ -372,27 +400,27 @@ describe('buildChatReasonMap — park reason of the winning task per chat', () =
         status: 'done',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'done summary' } },
+        agentSignalSummary: 'done summary',
       },
       {
         status: 'plan_ready',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'plan ask' } },
+        agentSignalSummary: 'plan ask',
       },
     ]);
     expect(map.get('c1')?.summary).toBe('plan ask');
   });
 
-  it('returns undefined summary/details when the winning task has no agentSignal', () => {
+  it('returns an undefined summary when the winning task has no agentSignal', () => {
     const map = buildChatReasonMap([{ status: 'running', linkedChatId: 'c1' }]);
-    expect(map.get('c1')).toEqual({ summary: undefined, details: undefined });
+    expect(map.get('c1')).toEqual({ summary: undefined });
   });
 
   it('ignores tasks with no linkedChatId or status', () => {
     const map = buildChatReasonMap([
-      { status: 'needs_attention', result: { agentSignal: { summary: 'x' } } },
-      { linkedChatId: 'c2', result: { agentSignal: { summary: 'y' } } },
+      { status: 'needs_attention', agentSignalSummary: 'x' },
+      { linkedChatId: 'c2', agentSignalSummary: 'y' },
     ]);
     expect(map.size).toBe(0);
   });
@@ -410,20 +438,17 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'connect account', details: 'auth expired' } },
+        agentSignalSummary: 'connect account',
       },
       {
         status: 'done',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'retry running' } },
+        agentSignalSummary: 'retry running',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('failed');
-    expect(buildChatReasonMap(tasks).get('c1')).toEqual({
-      summary: 'connect account',
-      details: 'auth expired',
-    });
+    expect(buildChatReasonMap(tasks).get('c1')).toEqual({ summary: 'connect account' });
   });
 
   it('a live needs_attention sibling outranks a failed anchor in BOTH the pill and the reason', () => {
@@ -434,13 +459,13 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'stale failure' } },
+        agentSignalSummary: 'stale failure',
       },
       {
         status: 'needs_attention',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'approve plan' } },
+        agentSignalSummary: 'approve plan',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('needs_attention');
@@ -455,13 +480,13 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'cancelled',
-        result: { agentSignal: { summary: 'first attempt failed' } },
+        agentSignalSummary: 'first attempt failed',
       },
       {
         status: 'done',
         linkedChatId: 'c1',
         flowRunStatus: 'cancelled',
-        result: { agentSignal: { summary: 'retry done' } },
+        agentSignalSummary: 'retry done',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('cancelled');
@@ -476,14 +501,14 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         linkedChatId: 'c1',
         flowRunStatus: 'running',
         effectiveStatus: 'running',
-        result: { agentSignal: { summary: 'retry running' } },
+        agentSignalSummary: 'retry running',
       },
       {
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'running',
         effectiveStatus: 'running',
-        result: { agentSignal: { summary: 'first attempt failed' } },
+        agentSignalSummary: 'first attempt failed',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('running');
@@ -530,58 +555,36 @@ describe('buildPendingQuestionChatIds', () => {
   });
 });
 
-describe('sameSidebarTasks', () => {
-  const task = (overrides: Partial<SidebarPolledTask> = {}): SidebarPolledTask => ({
-    id: 'task-1',
-    status: 'running',
-    linkedChatId: 'chat-1',
-    flowRunStatus: null,
-    ...overrides,
+describe('cutSidebarEntries', () => {
+  type Entry = { type: 'sectionHeader' | 'chat'; id: string };
+  const header = (id: string): Entry => ({ type: 'sectionHeader', id });
+  const row = (id: string): Entry => ({ type: 'chat', id });
+  const ids = (entries: Entry[]) => entries.map((entry) => entry.id);
+  const noneOpen = () => false;
+  const open = (id: string) => (entry: Entry) => entry.id === id;
+
+  it('keeps the first `limit` rows and cuts the rest', () => {
+    const cut = cutSidebarEntries([row('a'), row('b'), row('c')], 2, noneOpen);
+    expect(ids(cut)).toEqual(['a', 'b']);
   });
 
-  it('treats a re-fetched list with identical content as unchanged', () => {
-    expect(sameSidebarTasks([task()], [task()])).toBe(true);
+  it('keeps an open row past the cut, after the visible page', () => {
+    const cut = cutSidebarEntries([row('a'), row('b'), row('c'), row('d')], 2, open('d'));
+    expect(ids(cut)).toEqual(['a', 'b', 'd']);
   });
 
-  it('detects length and field changes', () => {
-    expect(sameSidebarTasks([task()], [])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ status: 'done' })])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ flowRunStatus: 'failed' })])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ effectiveStatus: 'running' })])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ linkedChatId: 'chat-2' })])).toBe(false);
+  it('does not count section headers toward the limit', () => {
+    const entries = [header('Pinned'), row('a'), header('Recent'), row('b'), row('c')];
+    expect(ids(cutSidebarEntries(entries, 2, noneOpen))).toEqual(['Pinned', 'a', 'Recent', 'b']);
   });
 
-  /**
-   * Compared per index, so a reorder reads as changed. Safe only because listPaginated pages on a
-   * (createdAt, id) cursor; if ordering ever becomes unstable this is where it surfaces.
-   */
-  it('treats a reordered list as changed', () => {
-    const a = task({ id: 'task-1' });
-    const b = task({ id: 'task-2', linkedChatId: 'chat-2' });
-    expect(sameSidebarTasks([a, b], [b, a])).toBe(false);
+  it('drops a header whose rows were all cut', () => {
+    const entries = [header('Pinned'), row('a'), header('Recent'), row('b')];
+    expect(ids(cutSidebarEntries(entries, 1, noneOpen))).toEqual(['Pinned', 'a']);
   });
 
-  // The sidebar narrows the payload with optional fields, so an absent key and an explicit null
-  // describe the same task. Treating them as different would re-mint the array on every poll.
-  it('treats an absent optional field and an explicit null as the same task', () => {
-    // Built raw, not via the fixture: the fixture supplies `flowRunStatus: null` for both sides,
-    // which would make this pass without comparing anything.
-    const withNull: SidebarPolledTask = { id: 't', status: 'running', flowRunStatus: null };
-    const withAbsent: SidebarPolledTask = { id: 't', status: 'running' };
-    expect(sameSidebarTasks([withNull], [withAbsent])).toBe(true);
-    expect(sameSidebarTasks([task({ result: null })], [task({})])).toBe(true);
-  });
-
-  it('handles an empty list on both sides', () => {
-    expect(sameSidebarTasks([], [])).toBe(true);
-  });
-
-  // A re-parked task can change only its reason; missing that would freeze the pill tooltip,
-  // because the reason map is rebuilt from this list and nothing else carries the signal.
-  it('detects an agentSignal change while every other field holds', () => {
-    const parked = task({ result: { agentSignal: { summary: 'waiting', details: 'on input' } } });
-    const reparked = task({ result: { agentSignal: { summary: 'blocked', details: 'on input' } } });
-    expect(sameSidebarTasks([parked], [reparked])).toBe(false);
-    expect(sameSidebarTasks([parked], [task({ ...parked })])).toBe(true);
+  it('keeps a header whose only surviving row is an open one past the cut', () => {
+    const entries = [header('Pinned'), row('a'), header('Recent'), row('b'), row('c')];
+    expect(ids(cutSidebarEntries(entries, 1, open('c')))).toEqual(['Pinned', 'a', 'Recent', 'c']);
   });
 });

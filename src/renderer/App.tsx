@@ -26,7 +26,6 @@ import { useMcpBackgroundPrefetch } from './hooks/use-mcp-background-prefetch';
 import { useMcpImportInvalidation } from './hooks/use-mcp-import-invalidation';
 import { useComposerSettingsSync } from './hooks/use-composer-settings-sync';
 import { useSubChatModeSync } from './hooks/use-sub-chat-mode-sync';
-import { initAnalytics, shutdown } from './lib/analytics';
 import { pendingAccountAuthAtom } from './lib/atoms';
 import { appStore } from './lib/jotai-store';
 import { useSubagentTaskSync } from './lib/stores/use-subagent-task-sync';
@@ -44,9 +43,9 @@ const AgentsLayout: LazyPage = lazy(() =>
 const ConnectClaudeAccountPage: LazyPage = lazy(() =>
   import('./features/onboarding').then((m) => ({ default: m.ConnectClaudeAccountPage })),
 );
-// ConnectCodexAccountPage used by Settings → Connect Codex (dark behind LAUNCH_FLAGS.codexAccounts).
-const ConnectCodexAccountPage: LazyPage = lazy(() =>
-  import('./features/onboarding').then((m) => ({ default: m.ConnectCodexAccountPage })),
+// ConnectAgentAccountPage connects every other provider that keeps its own sign-in.
+const ConnectAgentAccountPage = lazy(() =>
+  import('./features/onboarding').then((m) => ({ default: m.ConnectAgentAccountPage })),
 );
 
 // Loading fallback for lazy components.
@@ -215,15 +214,15 @@ function GlobalEventListeners() {
 const AppContent = memo(function AppContent() {
   const pendingAccountAuth = useAtomValue(pendingAccountAuthAtom);
 
-  // Show the Connect page when a passthrough connect/reauth flow is pending.
-  // The provider discriminator routes to Codex; absent/Claude is the default.
+  // Show the provider's Connect page when a passthrough connect/reauth flow is pending.
   if (pendingAccountAuth !== null) {
+    const { provider } = pendingAccountAuth;
     return (
       <Suspense fallback={<PageLoader />}>
-        {pendingAccountAuth.provider === 'codex' ? (
-          <ConnectCodexAccountPage />
-        ) : (
+        {provider === 'claude-code' ? (
           <ConnectClaudeAccountPage />
+        ) : (
+          <ConnectAgentAccountPage provider={provider} />
         )}
       </Suspense>
     );
@@ -237,11 +236,8 @@ const AppContent = memo(function AppContent() {
 });
 
 export function App() {
-  // Initialize analytics on mount
   useEffect(() => {
-    initAnalytics();
-
-    // Sync analytics opt-out status to main process
+    // Report the saved analytics preference; the main process sends nothing until it has it
     const syncOptOutStatus = async () => {
       try {
         const optOut = localStorage.getItem('preferences:analytics-opt-out') === 'true';
@@ -249,11 +245,6 @@ export function App() {
       } catch (_error) {}
     };
     syncOptOutStatus();
-
-    // Cleanup on unmount
-    return () => {
-      shutdown();
-    };
   }, []);
 
   return (

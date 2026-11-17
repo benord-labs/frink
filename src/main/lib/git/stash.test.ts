@@ -14,18 +14,13 @@ import { applyRollbackStash, createRollbackStash } from './stash';
 type MockGit = {
   raw: ReturnType<typeof vi.fn>;
   checkIsRepo: ReturnType<typeof vi.fn>;
-  env: ReturnType<typeof vi.fn>;
 };
 
 function createMockGit(): MockGit {
-  const git: MockGit = {
+  return {
     raw: vi.fn(),
     checkIsRepo: vi.fn().mockResolvedValue(true),
-    env: vi.fn(),
   };
-  // env() returns a git-like object for chained calls (temp index)
-  git.env.mockReturnValue({ raw: vi.fn().mockResolvedValue('') });
-  return git;
 }
 
 describe('applyRollbackStash', () => {
@@ -96,26 +91,5 @@ describe('createRollbackStash', () => {
 
     // Should bail after checkIsRepo — no write-tree or update-ref calls
     expect(git.raw).not.toHaveBeenCalled();
-  });
-
-  it('creates checkpoint ref when cwd is a valid git repo', async () => {
-    const tempGitRaw = vi.fn().mockResolvedValue('worktree-tree-hash\n');
-    const git = createMockGit();
-    git.checkIsRepo.mockResolvedValue(true);
-    git.raw
-      .mockResolvedValueOnce('index-tree-hash\n') // write-tree
-      .mockResolvedValueOnce('commit-hash-abc\n') // commit-tree
-      .mockResolvedValueOnce(''); // update-ref
-    git.env.mockReturnValue({ raw: tempGitRaw });
-    simpleGitMock.mockReturnValue(git as never);
-
-    await createRollbackStash('/tmp/project', 'uuid-2');
-
-    // Should have called update-ref with the checkpoint path
-    expect(git.raw).toHaveBeenCalledWith([
-      'update-ref',
-      'refs/checkpoints/uuid-2',
-      'commit-hash-abc',
-    ]);
   });
 });

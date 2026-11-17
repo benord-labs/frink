@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import { type Operation, TRPCClientError } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { trpc } from '@/lib/trpc';
 
 export function newTestQueryClient(): QueryClient {
@@ -32,9 +32,12 @@ export function renderWithTrpc<TResult>(
           }),
     ],
   });
-  return render(
-    <trpc.Provider client={client} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
-    </trpc.Provider>,
-  );
+  // A wrapper, so `rerender` keeps the providers around the new element.
+  return render(ui, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <trpc.Provider client={client} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      </trpc.Provider>
+    ),
+  });
 }

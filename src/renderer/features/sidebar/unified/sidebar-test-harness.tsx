@@ -10,8 +10,10 @@
 import { cleanup, render } from '@testing-library/react';
 import type { Atom } from 'jotai';
 import { expect, vi } from 'vitest';
+import type { AwaitingApproval } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
+import type { ActiveFolderChat, SidebarChatListItem } from './utils';
 
 /** Type-only: erased at build, so it does not re-enter the jotai mock factory. */
 type AnyAtom = Atom<unknown>;
@@ -23,12 +25,8 @@ type ActiveTaskStub = {
 };
 /** Always empty in these suites; named so the mock hands back a contract rather than a dictionary. */
 type LocalProjectStub = { id: string; name: string; path: string; gitRemoteUrl?: string | null };
-type CursorStub = { createdAt: string; id: string } | null;
-type ActiveTasksPageStub = {
-  items: ActiveTaskStub[];
-  hasMore: boolean;
-  nextCursor: CursorStub;
-};
+type SidebarActivityStub = { chats: ActiveFolderChat[]; tasks: ActiveTaskStub[] };
+const NO_SIDEBAR_ACTIVITY: SidebarActivityStub = { chats: [], tasks: [] };
 
 const state = {
   taskCountsData: {
@@ -41,11 +39,7 @@ const state = {
     interrupted: 0,
     total: 0,
   },
-  activeTasksData: {
-    items: [] as ActiveTaskStub[],
-    hasMore: false,
-    nextCursor: null as CursorStub,
-  } as ActiveTasksPageStub,
+  sidebarActivityData: NO_SIDEBAR_ACTIVITY,
   splitViewState: {
     splitView: { chatIds: [null], activePaneIndex: 0 },
     isSplitActive: false,
@@ -63,6 +57,7 @@ const state = {
   localProjectsData: new Array<LocalProjectStub>(),
   persistedPendingPlanApprovals: [] as Array<{ subChatId: string; chatId: string }>,
   livePendingPlanApprovals: new Map<string, string>(),
+  openChatRows: new Array<{ id: string; projectId: string | null; updatedAt: Date }>(),
 };
 
 /** Chat-row shape the chat mutations resolve with; per-mutation fixtures differ only by identity. */
@@ -94,8 +89,15 @@ type MoveChatHandler = (chatId: string, target: string | null, source: string | 
 export const hoisted = {
   state,
   listCountsUseQueryMock: vi.fn(() => ({ data: state.taskCountsData })),
-  listPaginatedUseQueryMock: vi.fn(() => ({ data: state.activeTasksData })),
+  listActiveChatsUseQueryMock: vi.fn(() => ({ data: state.sidebarActivityData })),
   chatsListInvalidateMock: vi.fn(async () => undefined),
+  chatsListSetDataMock: vi.fn(),
+  searchCorpusData: new Array<Partial<SidebarChatListItem>>(),
+  chatsListUseQueryMock: vi.fn(() => ({ data: hoisted.searchCorpusData })),
+  groupedProjectsResult: new Array<{
+    displayName: string;
+    chats: Partial<SidebarChatListItem>[];
+  }>(),
   chatsListCountsInvalidateMock: vi.fn(async () => undefined),
   chatsListCountsFetchMock: vi.fn(
     async () => [] as Array<{ projectId: string | null; count: number }>,
@@ -119,6 +121,7 @@ export const hoisted = {
   // SAFETY: starts empty; the useChatDnd double stores the onMoveChat it was given.
   capturedOnMoveChat: null as null | MoveChatHandler,
   capturedProjectsTreeProps: null as null | Record<string, unknown>,
+  focusActiveItemMock: vi.fn(),
   capturedSidebarDialogsProps: null as null | Record<string, unknown>,
   // SAFETY: starts empty; the ChatSelectionChip double assigns the props it was rendered with.
   capturedChatSelectionChipProps: null as null | ChatSelectionChipProps,
@@ -134,13 +137,6 @@ export const hoisted = {
     }> => ({
       activeTasks: [],
       unresolvedTaskLinks: 0,
-    }),
-  ),
-  listPaginatedClientQueryMock: vi.fn<(input?: unknown) => Promise<ActiveTasksPageStub>>(
-    async () => ({
-      items: [],
-      hasMore: false,
-      nextCursor: null,
     }),
   ),
   chatsListByBatchFetchMock: vi.fn(async (_input?: unknown) => [] as Array<{ id: string }>),
@@ -186,6 +182,8 @@ export const hoisted = {
 /** activeOverlayAtom's identity and value for the jotai mock; a null value is the chat destination. */
 type OverlayStub = { atom: AnyAtom | null; value: null | 'workqueue' | 'settings' | 'flows' };
 export const overlayStub: OverlayStub = { atom: null, value: null };
+type FlowFilterStub = { atom: AnyAtom | null; hide: boolean };
+export const flowFilterStub: FlowFilterStub = { atom: null, hide: false };
 
 /** Real atom identities, resolved in `setupHarness` so the jotai mock can match on them. */
 export const atomRefs = {
@@ -202,18 +200,15 @@ export const makeJotaiMock = (actual: typeof import('jotai')) => ({
       ? [overlayStub.value, vi.fn()]
       : [null, hoisted.setSelectedChatIdMock],
   useAtomValue: (a: unknown) => {
-    if (a === atomRefs.splitViewChatIdsAtom) {
-      return hoisted.state.splitViewState.splitView.chatIds;
-    }
+    if (a === flowFilterStub.atom) return flowFilterStub.hide;
+    if (a === atomRefs.splitViewChatIdsAtom) return hoisted.state.splitViewState.splitView.chatIds;
     if (a === atomRefs.splitViewActivePaneIndexAtom) {
       return hoisted.state.splitViewState.splitView.activePaneIndex;
     }
     if (a === atomRefs.splitViewQuickActionsChromeAtom) {
       return hoisted.state.splitViewQuickActionsChrome;
     }
-    if (a === atomRefs.pendingPlanApprovalsAtom) {
-      return hoisted.state.livePendingPlanApprovals;
-    }
+    if (a === atomRefs.pendingPlanApprovalsAtom) return hoisted.state.livePendingPlanApprovals;
     return new Map();
   },
   useSetAtom: () => vi.fn(),
@@ -223,7 +218,10 @@ export const trpcMock = {
   trpc: {
     useUtils: () => ({
       chats: {
-        list: { invalidate: hoisted.chatsListInvalidateMock },
+        list: {
+          invalidate: hoisted.chatsListInvalidateMock,
+          setData: hoisted.chatsListSetDataMock,
+        },
         listCounts: {
           invalidate: hoisted.chatsListCountsInvalidateMock,
           fetch: hoisted.chatsListCountsFetchMock,
@@ -242,10 +240,12 @@ export const trpcMock = {
           fetch: () => hoisted.listPinnedFetchMock(),
         },
         get: { invalidate: hoisted.chatsGetInvalidateMock },
+        listByIds: { invalidate: vi.fn(async () => undefined) },
+        listActiveChats: { invalidate: vi.fn(async () => undefined) },
         getSubChatMessages: { invalidate: hoisted.chatsGetSubChatMessagesInvalidateMock },
         listArchived: { invalidate: hoisted.chatsListArchivedInvalidateMock },
       },
-      tasks: { listPaginated: { invalidate: vi.fn() }, listCounts: { invalidate: vi.fn() } },
+      tasks: { listCounts: { invalidate: vi.fn() } },
       projects: {
         list: { invalidate: hoisted.projectsListInvalidateMock, setData: vi.fn() },
       },
@@ -253,9 +253,8 @@ export const trpcMock = {
         getResolvedAccount: { invalidate: vi.fn(), fetch: vi.fn(async () => null) },
       },
     }),
-    changes: {
-      getStatus: { useQuery: () => ({ data: null }) },
-    },
+    changes: { getStatus: { useQuery: () => ({ data: null }) } },
+    flows: { workQueueApprovals: { useQuery: () => ({ data: new Array<AwaitingApproval>() }) } },
     projects: {
       list: { useQuery: () => ({ data: hoisted.state.localProjectsData }) },
       delete: { useMutation: () => ({ mutateAsync: hoisted.projectsDeleteMutateAsyncMock }) },
@@ -263,11 +262,13 @@ export const trpcMock = {
       createFolder: { useMutation: () => ({ mutateAsync: vi.fn(async () => ({})) }) },
     },
     chats: {
+      list: { useQuery: hoisted.chatsListUseQueryMock },
       listCounts: { useQuery: hoisted.chatsListCountsForSidebarQueryMock },
-      listActiveChats: { useQuery: () => ({ data: [] }) },
+      listActiveChats: { useQuery: hoisted.listActiveChatsUseQueryMock },
       getPendingPlanApprovals: { useQuery: hoisted.getPendingPlanApprovalsUseQueryMock },
       listArchived: { useQuery: () => ({ data: hoisted.archivedChatsData }) },
       listByFolder: { useQuery: () => ({ data: { chats: [], hasMore: false, nextCursor: null } }) },
+      listByIds: { useQuery: () => ({ data: state.openChatRows }) },
       listBatchGroups: { useQuery: () => ({ data: [] }) },
       archive: { useMutation: () => ({ mutateAsync: hoisted.archiveChatMutateAsyncMock }) },
       restore: { useMutation: () => ({ mutateAsync: hoisted.restoreMutateAsyncMock }) },
@@ -281,12 +282,9 @@ export const trpcMock = {
     },
     tasks: {
       listCounts: { useQuery: hoisted.listCountsUseQueryMock },
-      listPaginated: { useQuery: hoisted.listPaginatedUseQueryMock },
     },
   },
-  trpcClient: {
-    tasks: { listPaginated: { query: hoisted.listPaginatedClientQueryMock } },
-  },
+  trpcClient: {},
 };
 
 export const agentChatStoreMock = {
@@ -307,10 +305,15 @@ export const gitStatusMock = { hasModifiedFiles: () => false };
 export const groupedProjectsMock = {
   useGroupedProjects: (params: Record<string, unknown>) => {
     hoisted.capturedGroupedProjectsParams = params;
-    return [];
+    return hoisted.groupedProjectsResult;
   },
 };
-export const sidebarNavigationMock = { useSidebarNavigation: () => ({ focusedItemId: null }) };
+export const sidebarNavigationMock = {
+  useSidebarNavigation: () => ({
+    focusedItemId: null,
+    focusActiveItem: hoisted.focusActiveItemMock,
+  }),
+};
 
 export const splitViewMock = {
   MAX_PANES: 4,
@@ -375,15 +378,16 @@ export async function setupHarness() {
   atomRefs.splitViewQuickActionsChromeAtom = atoms.splitViewQuickActionsChromeAtom;
   atomRefs.pendingPlanApprovalsAtom = atoms.pendingPlanApprovalsAtom;
   overlayStub.atom = (await import('../../../lib/atoms')).activeOverlayAtom;
+  flowFilterStub.atom = (await import('../../../lib/atoms')).hideFlowChatsAtom;
   SidebarUnderTest = (await import('./UnifiedSidebar')).UnifiedSidebar;
 }
 
 /** `afterEach` body: unmounts and returns every mock to its default. */
 export function resetHarness() {
   cleanup();
+  flowFilterStub.hide = false;
   hoisted.listCountsUseQueryMock.mockClear();
-  hoisted.listPaginatedUseQueryMock.mockClear();
-  hoisted.listPaginatedClientQueryMock.mockClear();
+  hoisted.listActiveChatsUseQueryMock.mockClear();
   hoisted.chatsListInvalidateMock.mockClear();
   hoisted.chatsListCountsInvalidateMock.mockClear();
   hoisted.chatsListCountsFetchMock.mockClear();
@@ -440,6 +444,10 @@ export function resetHarness() {
   });
   hoisted.chatsListCountsForSidebarData = [];
   hoisted.chatsListCountsForSidebarQueryMock.mockClear();
+  hoisted.chatsListSetDataMock.mockClear();
+  hoisted.searchCorpusData = [];
+  hoisted.chatsListUseQueryMock.mockClear();
+  hoisted.groupedProjectsResult = [];
   hoisted.getPendingPlanApprovalsUseQueryMock.mockClear();
   hoisted.fillActivePaneMock.mockReset();
   hoisted.openChatInNewPaneMock.mockClear();
@@ -456,6 +464,7 @@ export function resetHarness() {
   hoisted.abortTaskChatStreamsBestEffortMock.mockReset();
   hoisted.cancelTasksBestEffortMock.mockReset();
   hoisted.cancelTasksBestEffortMock.mockResolvedValue({ failed: 0 });
+  hoisted.state.sidebarActivityData = NO_SIDEBAR_ACTIVITY;
   hoisted.state.localProjectsData = [];
   hoisted.state.persistedPendingPlanApprovals = [];
   hoisted.state.livePendingPlanApprovals = new Map();

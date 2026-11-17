@@ -2,7 +2,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, stat } from 'node:fs/promises';
-import { devNull } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
@@ -23,6 +22,7 @@ import {
   rollbackCreatedWorktree,
 } from './worktree/index';
 import { awaitWorktreeSetup, detectWorktreeConfig, startWorktreeSetup } from './worktree-config';
+import { copyWorktreeIncludes } from './worktree/include';
 import { generateWorktreeFolderName } from './worktree-naming';
 
 export { configureWorktreeHooks, isFrinkManagedWorktree } from './worktree/index';
@@ -117,6 +117,56 @@ export function generateBranchName(): string {
   return `${name}-${suffix}`;
 }
 
+/** Resolves to a commit hash, which avoids Windows escaping issues with `^{commit}`. */
+async function resolveStartPointCommit(mainRepoPath: string, startPoint: string): Promise<string> {
+  const git = simpleGit(mainRepoPath);
+  try {
+    return (await git.revparse([`${startPoint}^{commit}`])).trim();
+  } catch {
+    // Fallback to local branch if origin/branch doesn't exist
+    const localBranch = startPoint.replace(ORIGIN_PREFIX_REGEX, '');
+    try {
+      return (await git.revparse([`${localBranch}^{commit}`])).trim();
+    } catch {
+      return (await git.revparse([startPoint])).trim();
+    }
+  }
+}
+
+/** The error createWorktree reports, with plain guidance for git lock and LFS failures. */
+export function createWorktreeError(errorMessage: string, usesLfs: boolean): Error {
+  const lowerError = errorMessage.toLowerCase();
+
+  const isLockError =
+    lowerError.includes('could not lock') ||
+    lowerError.includes('unable to lock') ||
+    (lowerError.includes('.lock') && lowerError.includes('file exists'));
+
+  if (isLockError) {
+    return new Error(
+      `Failed to create worktree: The git repository is locked by another process. ` +
+        `This usually happens when another git operation is in progress, or a previous operation crashed. ` +
+        `Please wait for the other operation to complete, or manually remove the lock file ` +
+        `(e.g., .git/config.lock or .git/index.lock) if you're sure no git operations are running.`,
+    );
+  }
+
+  const isLfsError =
+    lowerError.includes('git-lfs') ||
+    lowerError.includes('filter-process') ||
+    lowerError.includes('smudge filter') ||
+    (lowerError.includes('lfs') && lowerError.includes('not')) ||
+    (lowerError.includes('lfs') && usesLfs);
+
+  if (isLfsError) {
+    return new Error(
+      `Failed to create worktree: This repository uses Git LFS, but git-lfs was not found or failed. ` +
+        `Please install git-lfs (e.g., 'brew install git-lfs') and run 'git lfs install'.`,
+    );
+  }
+  return new Error(`Failed to create worktree: ${errorMessage}`);
+}
+
 export async function createWorktree(
   mainRepoPath: string,
   branch: string,
@@ -141,21 +191,7 @@ export async function createWorktree(
       }
     }
 
-    // Resolve startPoint to commit hash to avoid Windows escaping issues with ^{commit}
-    const git = simpleGit(mainRepoPath);
-    let commitHash: string;
-    try {
-      commitHash = (await git.revparse([`${startPoint}^{commit}`])).trim();
-    } catch {
-      // Fallback to local branch if origin/branch doesn't exist
-      const localBranch = startPoint.replace(ORIGIN_PREFIX_REGEX, '');
-      try {
-        commitHash = (await git.revparse([`${localBranch}^{commit}`])).trim();
-      } catch {
-        commitHash = (await git.revparse([startPoint])).trim();
-      }
-    }
-
+    const commitHash = await resolveStartPointCommit(mainRepoPath, startPoint);
     const branchPreExisted = await branchExists(mainRepoPath, branch, env);
     try {
       await addWorktree(mainRepoPath, worktreePath, branch, commitHash, env);
@@ -182,38 +218,12 @@ export async function createWorktree(
       throw error;
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const lowerError = errorMessage.toLowerCase();
-
-    const isLockError =
-      lowerError.includes('could not lock') ||
-      lowerError.includes('unable to lock') ||
-      (lowerError.includes('.lock') && lowerError.includes('file exists'));
-
-    if (isLockError) {
-      throw new Error(
-        `Failed to create worktree: The git repository is locked by another process. ` +
-          `This usually happens when another git operation is in progress, or a previous operation crashed. ` +
-          `Please wait for the other operation to complete, or manually remove the lock file ` +
-          `(e.g., .git/config.lock or .git/index.lock) if you're sure no git operations are running.`,
-      );
-    }
-
-    const isLfsError =
-      lowerError.includes('git-lfs') ||
-      lowerError.includes('filter-process') ||
-      lowerError.includes('smudge filter') ||
-      (lowerError.includes('lfs') && lowerError.includes('not')) ||
-      (lowerError.includes('lfs') && usesLfs);
-
-    if (isLfsError) {
-      throw new Error(
-        `Failed to create worktree: This repository uses Git LFS, but git-lfs was not found or failed. ` +
-          `Please install git-lfs (e.g., 'brew install git-lfs') and run 'git lfs install'.`,
-      );
-    }
-    throw new Error(`Failed to create worktree: ${errorMessage}`);
+    throw createWorktreeError(error instanceof Error ? error.message : String(error), usesLfs);
   }
+
+  // Outside the rollback block: a file that fails to copy must never cost the user the worktree.
+  // Awaited so the files are there before setup commands and the first agent turn.
+  await copyWorktreeIncludes(mainRepoPath, worktreePath);
 }
 
 /** Local branch names we never delete after worktree removal (safety). */
@@ -710,18 +720,17 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
 
 /**
  * Checks if a git ref exists locally (without network access).
- * Uses --verify --quiet to only check exit code without output.
  * @param repoPath - Path to the repository
  * @param ref - The ref to check (e.g., "main", "origin/main")
  * @returns true if the ref exists locally, false otherwise
  */
-async function refExistsLocally(repoPath: string, ref: string): Promise<boolean> {
+export async function refExistsLocally(repoPath: string, ref: string): Promise<boolean> {
   const git = simpleGit(repoPath);
   try {
-    // Use --verify --quiet to check if ref exists without output
-    // Append ^{commit} to ensure it resolves to a commit-ish
-    await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-    return true;
+    // Append ^{commit} to ensure it resolves to a commit-ish. A missing ref exits non-zero with
+    // nothing on stderr, which simple-git resolves as empty output instead of throwing.
+    const sha = await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    return sha.trim() !== '';
   } catch {
     return false;
   }
@@ -873,116 +882,6 @@ export async function createWorktreeForChat(
     startWorktreeSetup(worktreePath, projectPath);
 
     return { success: true, worktreePath, branch, baseBranch };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/** Untracked files above this are listed as binary instead of diffed: a multi-hundred-MB file
- * makes each `git diff --no-index` run for minutes, and every refresh starts another. */
-const MAX_UNTRACKED_DIFF_SIZE = 1024 * 1024;
-
-/**
- * Get diff for a worktree compared to its base branch
- * @param worktreePath - Path to the worktree
- * @param baseBranch - The base branch to compare against (if not provided, uses default branch)
- */
-export async function getWorktreeDiff(
-  worktreePath: string,
-  baseBranch?: string,
-  options?: { onlyUncommitted?: boolean },
-): Promise<{ success: boolean; diff?: string; error?: string }> {
-  try {
-    const git = simpleGit(worktreePath);
-    const status = await git.status();
-    const _currentBranch = status.current;
-
-    // Has uncommitted changes - diff against HEAD
-    if (!status.isClean()) {
-      const exclusionArgs = [
-        ':!*.lock',
-        ':!*-lock.*',
-        ':!package-lock.json',
-        ':!pnpm-lock.yaml',
-        ':!yarn.lock',
-      ];
-
-      const workingDiff = await git.diff(['HEAD', '--no-color', '--', ...exclusionArgs]);
-
-      const untrackedFiles = status.not_added.filter((file) => {
-        if (file.endsWith('.lock')) return false;
-        if (file.includes('-lock.')) return false;
-        if (file.endsWith('package-lock.json')) return false;
-        if (file.endsWith('pnpm-lock.yaml')) return false;
-        if (file.endsWith('yarn.lock')) return false;
-        return true;
-      });
-
-      // git diff --no-index only accepts 2 paths, so we need to diff each file separately
-      // Also, git diff --no-index returns exit code 1 when files differ, which simple-git treats as error
-      // So we use raw() to get the output regardless of exit code
-      const untrackedDiffs: string[] = [];
-      for (const file of untrackedFiles) {
-        try {
-          if ((await stat(join(worktreePath, file))).size > MAX_UNTRACKED_DIFF_SIZE) {
-            untrackedDiffs.push(
-              `diff --git a/${file} b/${file}\nnew file mode 100644\nBinary files /dev/null and b/${file} differ`,
-            );
-            continue;
-          }
-          const fileDiff = await git.raw(['diff', '--no-color', '--no-index', devNull, file]);
-          if (fileDiff) {
-            untrackedDiffs.push(fileDiff);
-          }
-        } catch (error: unknown) {
-          // git diff --no-index returns exit code 1 when files differ
-          // simple-git throws but includes the diff output in the error
-          const gitError = error as { message?: string };
-          if (gitError.message?.includes('diff --git')) {
-            // Extract the diff from the error message
-            const diffStart = gitError.message.indexOf('diff --git');
-            if (diffStart !== -1) {
-              untrackedDiffs.push(gitError.message.substring(diffStart));
-            }
-          }
-        }
-      }
-      const untrackedDiff = untrackedDiffs.join('\n');
-
-      const combinedDiff = [workingDiff, untrackedDiff].filter(Boolean).join('\n');
-
-      return { success: true, diff: combinedDiff };
-    }
-
-    // All committed - if onlyUncommitted mode, return empty diff
-    if (options?.onlyUncommitted) {
-      return { success: true, diff: '' };
-    }
-
-    // All committed - diff against base branch
-    const targetBranch = baseBranch || (await getDefaultBranch(worktreePath));
-    const baseRef = (await refExistsLocally(worktreePath, `origin/${targetBranch}`))
-      ? `origin/${targetBranch}`
-      : targetBranch;
-
-    try {
-      const diff = await git.diff([
-        `${baseRef}...HEAD`,
-        '--no-color',
-        '--',
-        ':!*.lock',
-        ':!*-lock.*',
-        ':!package-lock.json',
-        ':!pnpm-lock.yaml',
-        ':!yarn.lock',
-      ]);
-      return { success: true, diff: diff || '' };
-    } catch {
-      return { success: true, diff: '' };
-    }
   } catch (error) {
     return {
       success: false,

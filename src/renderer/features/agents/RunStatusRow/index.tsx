@@ -1,6 +1,6 @@
 /**
  * RunStatusRow — the ONE chat-level status surface above the composer. Every end-of-run
- * affordance (accept, retry/carry-on, resume-interrupted) renders through this row so the user
+ * affordance (accept, Continue / Retry) renders through this row so the user
  * learns a single grammar: colored state dot + muted label on the left, ghost actions on the
  * right, terminal action rightmost. State identity lives in the DOT + action tint, never in
  * banner chrome. The states are mutually exclusive, so at most one row shows at a time.
@@ -20,7 +20,7 @@ type RunStatusRowProps = {
   /** Optional hint after the state; the first thing to go when the pane narrows. */
   detail?: ReactNode;
   /** Ghost buttons, each an icon + a text <span>; below the icon tier only the icon shows. */
-  children: ReactNode;
+  children?: ReactNode;
   /** The visible card, for overlays that anchor to the whole row. */
   cardRef?: Ref<HTMLDivElement>;
 };

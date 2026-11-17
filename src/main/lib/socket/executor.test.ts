@@ -14,9 +14,16 @@ import {
   registerClaudeTurnBindingTests,
   registerClaudeWarmSessionGuardTests,
   registerClaudeWarmSessionTests,
+  registerCodexSessionCacheTests,
+  registerComposerContextTests,
+  registerConformanceTests,
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
-  registerPermissionDbUnavailableTests,
+  registerFlowRunEndedTests,
+  registerOperatorReminderDeliveryTests,
+  registerTurnUsageStampTests,
+  registerUndeliveredMessageTests,
+  registerValidateToolPermissionTests,
 } from './test-suites';
 
 // Enable the flag-gated flow and work-queue paths so the dispatch and permission paths run in tests.
@@ -39,9 +46,7 @@ const claudeQueryThrowOnce = (err: Error) =>
     throw err;
   });
 
-// Project lookup moved to an inline getDatabase().select().from(projects).where().limit()
-// Drizzle query (executor.ts:1633). This holder backs the chainable db mock; the row it holds
-// is what that query resolves to.
+// The project row the executor's lookups resolve to, behind both the db and projects-repo mocks.
 const dbProjectState = vi.hoisted(() => ({
   projectRow: null as { id: string; name: string; path: string } | null,
 }));
@@ -147,6 +152,7 @@ vi.mock('../cloud-client', () => ({
 // Default: the signal target's run is still live, so arming is decided by task status alone — the
 // path every pre-existing resume/disarm test asserts. Overridden per-test for the terminal-run case.
 vi.mock('../db/repos/flow-runs', () => ({
+  getNewestFlowRunForSubChat: vi.fn(async () => null),
   isFlowRunSignalDead: vi.fn(async () => false),
 }));
 
@@ -173,6 +179,9 @@ vi.mock('../db/repos/tasks', () => ({
   // Teardown reconcile target — returns a task id so the wiring tests can assert the interrupted flag.
   cancelFlowTaskForSubChat: vi.fn(async () => 'flow-task-1'),
   parseResultRecord: (result: TaskResultRecord | null | undefined) => result ?? {},
+  // task-poller binds these into its default deps at import time, so the mock must define them.
+  getPendingTaskIds: vi.fn(async () => []),
+  claimTask: vi.fn(),
 }));
 
 // Interruption-park target — wiring tests assert (subChatId, reason) land on the parking module.
@@ -196,8 +205,11 @@ vi.mock('../flows/resume', () => ({
 // What a resume writes is covered in tasks/*.test.ts; here only which task is resumed, and when.
 vi.mock('../tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tasks')>()),
+  // A spy over the real disposal, so a test can land an abort inside its await.
+  disposeTrailingStreamErrorChunk: vi.fn(
+    (await importOriginal<typeof import('../tasks')>()).disposeTrailingStreamErrorChunk,
+  ),
   resumeParkedTaskInPlace: vi.fn(async () => true),
-  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -303,11 +315,14 @@ vi.mock('./client', () => ({
   sendStreamSettledDirect: vi.fn(),
   sendStreamChunkDirect: vi.fn(),
   sendSubChatModeChange: vi.fn(),
+  sendMessage: vi.fn(),
   sendWakeHoldChanged: vi.fn(),
 }));
 
 import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import { runCodexAgent } from '../agent-runner';
+import * as codexPermissions from '../agent-runner/codex/permissions';
+import { codexPlanUsage } from '../agent-runner/codex/usage';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import type { UIMessageChunk } from '../claude/types';
 import { getClaudeCodeTokenById, getDefaultClaudeCodeToken } from '../credentials';
@@ -330,16 +345,23 @@ import { channelOwner } from '../mcp/execution-identity';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import * as toolValidation from '../permissions/tool-validation';
 import { checkPermission } from '../permissions/v2/check';
-import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
+import { resumeParkedTaskInPlace } from '../tasks';
 import type { MessagePart } from './client';
+import type { startAcpTurn } from './execution/acp-turn';
+import type { startCopilotTurn } from './execution/copilot-turn';
 import type { PlanFallbackSend } from './executor';
 import { applyApprovedPlanContextToPrompt } from './execution/prompt-prefix/approved-plan-prompt';
+
 import {
   shouldSuppressExitPlanModeToolChunk,
   shouldSuppressNativePlanStreamChunk,
   shouldSuppressNativePlanToolChunk,
   shouldSuppressPlanTextChunk,
 } from './streaming/plan-mode-suppression';
+import {
+  drainPendingPermissions,
+  validateToolPermission,
+} from './streaming/pending-permission/validate-tool-permission';
 
 /** Reset v2 permission check mock — `mockResolvedValue` survives `clearAllMocks`. Default: allow. */
 function stubPermissionsStoreDefault() {
@@ -360,19 +382,17 @@ import {
   _hasActiveExecutionForTests,
   _registerExecutionForTests,
   _resetExecutorStateForTests,
+  abortActiveExecutionsForSubChats,
   abortActiveExecutionsForWebContents,
   buildPlanFallbackSends,
-  clearCodexSession,
-  drainPendingPermissions,
+  collectLiveSubChatIdsForChat,
   emitPlanFallbackSends,
   extractNativePlanPathFromChunks,
   getClaudeSessionPlansDir,
   handleRemoteExecute,
   handleRemoteStop,
-  hasPendingPermissionRequest,
   isAllowedClaudePlanWritePath,
   pauseActiveExecutionForSubChat,
-  validateToolPermission,
 } from './executor';
 import {
   claudePromptText,
@@ -405,9 +425,11 @@ async function firePromptSubmit(input: object): Promise<void> {
   firedReminders.set(input, await userPromptSubmitReminder(input));
 }
 
-// CLAUDE_CONFIG_DIR isolation creates dirs under app.getPath('userData') (/mock/userData).
-// Re-stub after clearAllMocks.
+// Every case starts with no pending card and a no-op card sender (cases opt in to answers),
+// and re-stubs the fs calls CLAUDE_CONFIG_DIR isolation makes under /mock/userData.
 beforeEach(() => {
+  drainPendingPermissions();
+  vi.mocked(socketClient.sendPermissionRequest).mockReset();
   stubPermissionsStoreDefault();
   dbProjectState.projectRow = null;
   vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
@@ -564,19 +586,6 @@ describe('socket file permission edge cases', () => {
     vi.spyOn(toolValidation, 'resolvePermissionProjectPath').mockImplementation(
       (pathValue) => pathValue,
     );
-
-    // Default: auto-approve all permission requests.
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation((payload) => {
-      const handler = getRegisteredPermissionResponseHandler();
-      if (!handler) return;
-      handler({
-        chatId: payload.chatId,
-        subChatId: payload.subChatId,
-        requestId: payload.requestId,
-        approved: true,
-        duration: 'always',
-      });
-    });
   });
 
   it('uses Claude native Auto Mode and delegates only the v2 ask residual', async () => {
@@ -642,6 +651,39 @@ describe('socket file permission edge cases', () => {
     expect(hookResult).toEqual({});
     expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['allow', { decision: 'allow' }],
+    ['deny', { decision: 'deny', reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' } }],
+  ] as const)(
+    'answers a Frink rule %s itself on an Auto turn, never abstaining to the reviewer',
+    async (expected, ruleResult) => {
+      // A rule's answer must reach Claude as an explicit decision: abstaining would hand it to the reviewer.
+      const { checkPermission } = await import('../permissions/v2/check');
+      vi.mocked(checkPermission).mockResolvedValueOnce(ruleResult);
+      let hookResult: Awaited<ReturnType<PreToolUseHook>> | undefined;
+      claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
+        hookResult = await getPreToolUseHook(queryInput)(
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command: 'rm -rf build' },
+          },
+          `tool-auto-rule-${expected}`,
+        );
+        yield { type: 'result', chunks: [{ type: 'finish' }] };
+      });
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'clean the build',
+        settings: { model: 'sonnet', autoReviewTools: true },
+      });
+
+      expect(hookResult?.hookSpecificOutput?.permissionDecision).toBe(expected);
+      expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+    },
+  );
 
   registerCustomNodeTransportTest({
     basePayload,
@@ -1335,7 +1377,7 @@ describe('socket file permission edge cases', () => {
     );
   });
 
-  it('flow follow-up REVIVES a restart-interrupted (cancelled) run in place — armed, no re-dispatch', async () => {
+  it('flow follow-up to a restart-interrupted (cancelled) run stays armed but never revives it in place', async () => {
     vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
     vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
       chat: { taskId: 'cancelled-driving-task' },
@@ -1364,15 +1406,12 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'carry on - limit resolved' });
 
-    // A restart-interrupted resume is NOT a dead chat — the signal apparatus stays armed.
+    // A restart-interrupted run is NOT a dead chat — the signal apparatus stays armed so the
+    // provider preflight can convert the reply into a resume ticket.
     expect(taskSignalEnabledArg(-1)).toBe(true);
-    // Reaching the revive with this run's ids is what this test owns; what the revive then WRITES
-    // (status flip, marker scrub, linkage) is covered directly in revive-interrupted-flow.test.ts.
-    expect(vi.mocked(reviveRestartInterruptedFlow)).toHaveBeenCalledWith(
-      'cancelled-driving-task',
-      'fr-restart',
-      basePayload.subChatId,
-    );
+    // Nothing is revived in place: the cancelled task and run keep their status.
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
   });
 
   it('flow follow-up does NOT revive a USER-cancelled run (no marker) — disarms, no resume', async () => {
@@ -1403,8 +1442,7 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'carry on' });
 
-    // Marker gate held: no in-place revive, no task flip, and the dead chat disarms its signal.
-    expect(vi.mocked(reviveRestartInterruptedFlow)).not.toHaveBeenCalled();
+    // Marker gate held: no task flip, and the dead chat disarms its signal.
     expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
     expect(taskSignalEnabledArg(-1)).toBe(false);
   });
@@ -1433,39 +1471,82 @@ describe('socket file permission edge cases', () => {
     expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
   });
 
-  it('prepends the disarmed reminder to the prompt on the Codex path (no in-conversation system-prompt channel; sc-996)', async () => {
-    // Codex has no in-conversation system-prompt channel, so the reminder rides the prompt as
-    // <system-reminder> text (interim fallback) rather than the Claude UserPromptSubmit hook.
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+  describe('on a free Codex account (its model/list has no GPT-6 Astra)', () => {
+    const codexCredential: Awaited<ReturnType<typeof getDefaultClaudeCodeToken>> = {
       token: null,
       isApiKey: false,
       type: 'codex',
       label: 'codex-test',
       passthrough: true,
-    });
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    mockPinnedTaskChat('task-dead-codex', { status: 'done' });
-    vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
-      yield {
-        type: 'finish',
-        messageMetadata: { sessionId: 'sess-codex-reminder' },
-      } as UIMessageChunk;
+    };
+    const finish: UIMessageChunk = { type: 'finish', messageMetadata: { sessionId: 'sess-free' } };
+    function freeCatalogCached() {
+      vi.spyOn(codexPlanUsage, 'get').mockResolvedValueOnce({
+        windows: {},
+        subscriptionType: 'free',
+        email: null,
+        available: true,
+        updatedAt: 0,
+        catalog: { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' },
+      });
+    }
+
+    it('refuses a chosen model the plan lacks with a plain message, never starting Codex', async () => {
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      freeCatalogCached();
+      freeCatalogCached(); // the fresh read a refusal is confirmed against
+      vi.mocked(runCodexAgent).mockClear();
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'hello',
+        settings: { model: 'codex-gpt-6-astra-medium' },
+      });
+
+      expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+      expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error:
+            "GPT-6 Astra isn't available on your ChatGPT plan. Pick another model from the model menu.",
+        }),
+      );
     });
 
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'codex follow-up on dead chat',
-      history: [
-        { role: 'user', content: 'do the task' },
-        { role: 'assistant', content: 'done' },
-      ],
+    it('never starts Codex when the turn is stopped while the account list is being read', async () => {
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      vi.mocked(runCodexAgent).mockClear();
+      vi.spyOn(codexPlanUsage, 'get').mockImplementationOnce(async () => {
+        handleRemoteStop({ chatId: basePayload.chatId, subChatId: basePayload.subChatId });
+        return null;
+      });
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'hello',
+        settings: { model: 'sonnet' },
+      });
+
+      expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
     });
 
-    const codexPrompt = vi.mocked(runCodexAgent).mock.calls[0]?.[0]?.prompt;
-    expect(codexPrompt).toContain('<system-reminder>');
-    expect(codexPrompt).toContain('intentionally not available');
-    // Codex does not use the Claude SDK hook path.
-    expect(claudeQueryMock).not.toHaveBeenCalled();
+    it("runs a send with no Codex model (phone, Flow step) on the account's default", async () => {
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      freeCatalogCached();
+      vi.mocked(runCodexAgent).mockClear();
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+        yield finish;
+      });
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'hello',
+        settings: { model: 'sonnet' },
+      });
+
+      expect(vi.mocked(runCodexAgent)).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'gpt-6-luna', effort: 'medium' }),
+      );
+    });
   });
 
   it('hides frink_task_signal for plain chats with no task link', async () => {
@@ -1512,78 +1593,13 @@ describe('socket file permission edge cases', () => {
     ).resolves.toEqual({});
   });
 
-  it('delivers the disarmed reminder via the UserPromptSubmit hook on a dead-chat follow-up with prior turns, but not on an armed turn', async () => {
-    // On the Claude path the disarmed notice is delivered as an in-conversation system prompt via the
-    // UserPromptSubmit hook — NOT prepended to the user prompt. It fires only when prior turns exist
-    // for the agent to have seen the now-stripped tool (here: inlined history).
-    const callOf = (callIndex: number) => claudeQueryMock.mock.calls[callIndex][0];
-    const priorTurns = [
-      { role: 'user' as const, content: 'do the task' },
-      { role: 'assistant' as const, content: 'done, signalling now' },
-    ];
-
-    vi.mocked(getMultiProjectContext).mockResolvedValue({
-      promptPrefix: '',
-      dynamicChatMcpUrl: 'http://127.0.0.1:9/mcp',
-    });
-    mockPinnedTaskChat('task-armed-reminder', { status: 'running' });
-    mockClaudeFinishTurn('sess-reminder-armed');
-
-    await handleRemoteExecute({ ...basePayload, message: 'armed turn', history: priorTurns });
-
-    expect(firedReminders.get(callOf(0))).toBeUndefined();
-
-    mockPinnedTaskChat('task-dead-reminder', { status: 'done' });
-    mockClaudeFinishTurn('sess-reminder-dead');
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'follow-up on dead chat',
-      history: priorTurns,
-    });
-
-    const reminder = firedReminders.get(callOf(1));
-    expect(reminder).toContain('intentionally not available');
-    expect(reminder).toContain('frink_task_signal');
-    // Delivered via the hook, not the user prompt.
-    expect(await claudePromptText(callOf(1).prompt)).not.toContain('intentionally not available');
-  });
-
-  it('omits the disarmed reminder on a fresh first turn with no prior context', async () => {
-    // No replayed transcript and no inlined history → the agent never saw the tool, so the notice
-    // would be vacuous. Mirrors the plan/debug exit reminders, which fire only with prior context.
-    // `history: undefined` models the real renderer transport, which sends `undefined` (not []) on a
-    // first turn — guards the optional-history crash.
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    mockPinnedTaskChat('task-dead-fresh', { status: 'done' });
-    mockClaudeFinishTurn('sess-reminder-fresh');
-
-    await handleRemoteExecute({ ...basePayload, message: 'first turn', history: undefined });
-
-    expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toBeUndefined();
-  });
-
-  it('delivers the disarmed reminder via the hook regardless of an image attachment', async () => {
-    // The hook channel is independent of prompt shape, so an image attachment (which switches
-    // buildPromptForClaude to its async-iterable form) does not affect reminder delivery.
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    mockPinnedTaskChat('task-dead-image', { status: 'done' });
-    mockClaudeFinishTurn('sess-reminder-dead-image');
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'what does this screenshot show?',
-      history: [
-        { role: 'user', content: 'do the task' },
-        { role: 'assistant', content: 'done' },
-      ],
-      userMessageParts: [{ type: 'file', mimeType: 'image/png', data: 'AAAA' }],
-    });
-
-    expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toContain(
-      'intentionally not available',
-    );
-  });
+  registerOperatorReminderDeliveryTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  describe('operator reminder delivery: the Flow run has ended (sc-4467)', () =>
+    registerFlowRunEndedTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
+  registerComposerContextTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  registerConformanceTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  describe('a message whose turn ended before the provider took it', () =>
+    registerUndeliveredMessageTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
 
   it('aborts the turn when the drive-info read faults', async () => {
     // A recorded provenance fault is rethrown at admission, ahead of any provider work — see
@@ -1615,6 +1631,7 @@ describe('socket file permission edge cases', () => {
     };
     expect(call.options?.systemPrompt?.append).toContain('## Flow Briefing');
     expect(call.options?.systemPrompt?.append).toContain('PRD: use strict mode');
+    expect(call.options?.systemPrompt?.append).not.toContain('Frink note:');
     // The whole point: it is NOT re-shipped in the user turn's transcript.
     const promptText = await claudePromptText(call.prompt);
     expect(promptText).not.toContain('## Flow Briefing');
@@ -1659,6 +1676,7 @@ describe('socket file permission edge cases', () => {
     const prompt = vi.mocked(runCodexAgent).mock.calls[0]?.[0]?.prompt;
     expect(prompt).toContain('## Flow Briefing');
     expect(prompt).toContain('PRD: use strict mode');
+    expect(prompt).not.toContain('Frink note:');
   });
 
   it('Codex: does NOT re-prepend the briefing on a resume turn (continuation inherits it via transcript replay)', async () => {
@@ -1871,11 +1889,9 @@ describe('socket file permission edge cases', () => {
       promptPrefix: '',
       dynamicChatMcpUrl: 'http://127.0.0.1:9/mcp',
     });
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce({
-      state: 'awaiting_input',
-      summary: 'Need confirmation',
-      at: new Date().toISOString(),
-    });
+    // Self-contained: this used to lean on an unconsumed Once leaked by an earlier test.
+    dynamicChatServerMocks.getLatestTaskSignal.mockReset();
+    dynamicChatServerMocks.getLatestTaskSignal.mockReturnValue(undefined);
     vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
       chat: { taskId: 'task-signal-persist-no-stop' },
       account: null,
@@ -1901,8 +1917,8 @@ describe('socket file permission edge cases', () => {
     });
 
     expect(vi.mocked(dynamicChatServer.getLatestTaskSignal)).toHaveBeenCalledWith('exec-context-1');
-    // The Once-mocked signal is consumed by an earlier getLatestTaskSignal call, so the
-    // post-stream block sees a quiet end and records the marker (no terminal status write).
+    // No signal was recorded, so the post-stream block sees a quiet end and records the marker
+    // (no terminal status write).
     expect(quietMarkerMocks.setQuietEndMarker).toHaveBeenCalledWith(
       expect.anything(),
       'task-signal-persist-no-stop',
@@ -2032,6 +2048,7 @@ describe('socket file permission edge cases', () => {
     );
   });
 
+  registerTurnUsageStampTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   it('continues execution when heartbeat restart from resume result returns false', async () => {
     vi.mocked(getMultiProjectContext).mockResolvedValue({
       promptPrefix: '',
@@ -2081,15 +2098,9 @@ describe('socket file permission edge cases', () => {
       prompt: { reason: 'no-matching-rule' },
     } as Awaited<ReturnType<typeof checkPermission>>);
 
-    const queuedRequests: QueuedPermissionRequest[] = [];
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation((payload) => {
-      queuedRequests.push(payload as QueuedPermissionRequest);
-    });
-
+    let decision: string | undefined;
     claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
-      const hook = getPreToolUseHook(queryInput);
-
-      const pending = hook(
+      const pending = getPreToolUseHook(queryInput)(
         {
           hook_event_name: 'PreToolUse',
           tool_name: 'Bash',
@@ -2097,20 +2108,9 @@ describe('socket file permission edge cases', () => {
         },
         'tool-bash-drain-pending',
       );
-
-      await Promise.resolve();
-      expect(queuedRequests).toHaveLength(1);
+      await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
       drainPendingPermissions();
-
-      // Drain must also pop the prompt from the renderer queue, mirroring the
-      // timeout path — otherwise the card lingers and a re-request stacks.
-      expect(socketClient.sendPermissionDismiss).toHaveBeenCalledWith(
-        expect.objectContaining({ requestId: queuedRequests[0].requestId }),
-      );
-
-      const res = await pending;
-      expect(res.hookSpecificOutput.permissionDecision).toBe('deny');
-
+      decision = (await pending).hookSpecificOutput.permissionDecision;
       yield {
         chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-bash-drain-pending' } }],
       };
@@ -2119,8 +2119,15 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({
       ...basePayload,
-      message: 'drain pending permissions simulates disconnect',
+      message: 'drain pending permissions at shutdown',
     });
+
+    expect(decision).toBe('deny');
+    // Drain must also pop the card from the renderer, as a timeout does, or a re-request stacks.
+    const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
+    expect(socketClient.sendPermissionDismiss).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: card?.requestId }),
+    );
   });
 
   it('worktree file op: canonical ROOT path drives BOTH the decision input and the prompt display (real PreToolUse hook + real remap)', async () => {
@@ -2146,7 +2153,7 @@ describe('socket file permission edge cases', () => {
     } as Awaited<ReturnType<typeof checkPermission>>);
 
     const requests: QueuedPermissionRequest[] = [];
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation((payload) => {
+    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
       requests.push(payload as QueuedPermissionRequest);
       getRegisteredPermissionResponseHandler()?.({
         chatId: payload.chatId,
@@ -2218,6 +2225,200 @@ describe('socket file permission edge cases', () => {
     const decisionCall = vi.mocked(checkPermission).mock.calls.find((c) => c[0]?.tool === 'Read');
     expect((decisionCall?.[0]?.input as Record<string, unknown>).file_path).toBe(externalFile);
   });
+
+  it('refuses a chat on a provider that cannot run here, never starting Claude or Codex', async () => {
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'opencode',
+      label: 'OpenCode',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello' });
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error:
+          "OpenCode can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.",
+      }),
+    );
+  });
+
+  it('refuses a GitHub Copilot chat under the shipped flags, never starting Claude or Codex', async () => {
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'copilot',
+      label: 'GitHub Copilot',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello' });
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error:
+          "GitHub Copilot can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.",
+      }),
+    );
+  });
+
+  it('streams an agent chat through its ACP turn and continues that session next turn', async () => {
+    _resetExecutorStateForTests();
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+      token: null,
+      isApiKey: false,
+      type: 'opencode',
+      label: 'OpenCode',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+    const permissionCheck = vi.spyOn(codexPermissions, 'createCodexHostPermissionCheck');
+    const turns: Parameters<typeof startAcpTurn>[0][] = [];
+    const deps = {
+      runtimeFor: (): 'acp' => 'acp',
+      async *startAcpTurn(
+        params: Parameters<typeof startAcpTurn>[0],
+      ): AsyncGenerator<UIMessageChunk, void, undefined> {
+        turns.push(params);
+        yield { type: 'text-start', id: 't1' };
+        yield { type: 'text-delta', id: 't1', delta: 'done' };
+        yield { type: 'finish', messageMetadata: { sessionId: 'oc-session-1' } };
+      },
+    };
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello' }, deps);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(turns[0]).toMatchObject({ providerId: 'opencode', mode: 'agent', prompt: 'hello' });
+    expect(turns[0]?.resumeSessionId).toBeUndefined();
+    expect(permissionCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ autoReview: false, frinkMcpInjected: false }),
+    );
+    const streamed = vi.mocked(socketClient.sendStreamChunkDirect).mock.calls;
+    expect(streamed.map(([sent]) => sent.chunk)).toContainEqual(
+      expect.objectContaining({ type: 'text-delta', delta: 'done' }),
+    );
+    expect(vi.mocked(socketClient.sendExecuteCompleteDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'oc-session-1' }),
+    );
+
+    const history: typeof basePayload.history = [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'done' },
+    ];
+    await handleRemoteExecute(
+      { ...basePayload, message: 'again', sessionId: 'oc-session-1', history },
+      deps,
+    );
+
+    expect(turns[1]?.resumeSessionId).toBe('oc-session-1');
+    // The last mode is unknown on a resumed agent turn, so the plan-exit reminder goes first.
+    expect(turns[1]?.prompt).toMatch(
+      /^<system-reminder>\nPlan mode is not active[\s\S]*\n\nagain$/,
+    );
+    expect(turns[1]?.freshSessionFallbackPrompt).toContain('hello');
+    expect(turns[1]?.freshSessionFallbackPrompt?.endsWith('again')).toBe(true);
+  });
+
+  it('streams a GitHub Copilot chat through its own turn and continues that session next turn', async () => {
+    _resetExecutorStateForTests();
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+      token: null,
+      isApiKey: false,
+      type: 'copilot',
+      label: 'GitHub Copilot',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+    const permissionCheck = vi.spyOn(codexPermissions, 'createCodexHostPermissionCheck');
+    const turns: Parameters<typeof startCopilotTurn>[0][] = [];
+    const acpTurn = vi.fn();
+    const deps = {
+      runtimeFor: (): 'copilot' => 'copilot',
+      startAcpTurn: acpTurn,
+      async *startCopilotTurn(
+        params: Parameters<typeof startCopilotTurn>[0],
+      ): AsyncGenerator<UIMessageChunk, void, undefined> {
+        turns.push(params);
+        yield { type: 'text-start', id: 't1' };
+        yield { type: 'text-delta', id: 't1', delta: 'done' };
+        yield { type: 'finish', messageMetadata: { sessionId: 'cp-session-1' } };
+      },
+    };
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello', mode: 'plan' }, deps);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(acpTurn).not.toHaveBeenCalled();
+    expect(turns[0]).toMatchObject({ mode: 'plan', resumeSessionId: undefined });
+    expect(permissionCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ autoReview: false, frinkMcpInjected: false }),
+    );
+    expect(vi.mocked(socketClient.sendExecuteCompleteDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'cp-session-1' }),
+    );
+
+    await handleRemoteExecute(
+      { ...basePayload, message: 'again', sessionId: 'cp-session-1', history: [] },
+      deps,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(turns[1]).toMatchObject({ mode: 'agent', resumeSessionId: 'cp-session-1' });
+  });
+
+  it.each([
+    ['acp', 'opencode'],
+    ['copilot', 'copilot'],
+    ['cursor', 'cursor'],
+  ] as const)(
+    'a %s turn stopped mid-way keeps its session, and the next message continues it',
+    async (runtime, type) => {
+      _resetExecutorStateForTests();
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+        token: null,
+        isApiKey: false,
+        type,
+        label: type,
+        passthrough: true,
+      });
+      vi.mocked(updateSubChatSession).mockClear();
+      const resumed: (string | undefined)[] = [];
+      async function* turn(params: { resumeSessionId?: string }): AsyncGenerator<UIMessageChunk> {
+        resumed.push(params.resumeSessionId);
+        yield { type: 'message-metadata', messageMetadata: { sessionId: 'stopped-session' } };
+        yield { type: 'text-delta', id: 't1', delta: 'partial' };
+        handleRemoteStop(basePayload);
+        yield { type: 'text-delta', id: 't1', delta: 'dropped' };
+      }
+      const turns = { startAcpTurn: turn, startCopilotTurn: turn, startCursorTurn: turn };
+      const deps = { runtimeFor: () => runtime, ...turns };
+
+      await handleRemoteExecute({ ...basePayload, message: 'hello' }, deps);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(vi.mocked(updateSubChatSession)).toHaveBeenCalledWith(
+        expect.anything(),
+        basePayload.subChatId,
+        'stopped-session',
+      );
+      // The next send reads the stored id back, as the socket client does.
+      const stored = vi.mocked(updateSubChatSession).mock.calls.at(-1)?.[2];
+      await handleRemoteExecute({ ...basePayload, message: 'again', sessionId: stored }, deps);
+      expect(resumed).toEqual([undefined, 'stopped-session']);
+    },
+  );
 });
 
 describe('validateToolPermission — worktree canonical decision path', () => {
@@ -3749,89 +3950,11 @@ describe('context isolation edge cases', () => {
 
 // The helpers below execute up to five full turns; keep their budget load-safe and their mocks local.
 describe('provider session cache helpers', () => {
-  const machineId = 'machine-1';
-  const project = {
-    id: 'project-1',
-    user_id: 'user-1',
-    name: 'Project One',
-    path: '/tmp/project',
-    git_remote: null,
-    shortcut_project_id: null,
-    is_primary: false,
-    machine_id: machineId,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    description: null,
-    rules: [],
-  };
-  const codexCredential = {
-    token: null,
-    isApiKey: false,
-    type: 'codex' as const,
-    label: 'codex-test',
-    passthrough: true,
-  };
-
-  async function runExecute(
-    chatId: string,
-    subChatId: string,
-    sessionIdFromStream: string,
-  ): Promise<void> {
-    vi.mocked(runCodexAgent).mockImplementation(async function* (input) {
-      yield {
-        type: 'finish',
-        messageMetadata: { sessionId: sessionIdFromStream, resumedFrom: input.resumeThreadId },
-      } as never;
-    });
-    await handleRemoteExecute({
-      chatId,
-      subChatId,
-      projectId: project.id,
-      message: 'hello',
-      mode: 'agent',
-      assistantMessageId: `assistant-${subChatId}`,
-      history: [],
-    });
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(runCodexAgent).mockReset();
+  registerCodexSessionCacheTests((machineId, project) => {
     claudeQueryMock.mockReset();
     stubPermissionsStoreDefault();
     applyExecutorMockDefaults(machineId, project);
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(codexCredential);
   });
-
-  afterEach(() => {
-    clearCodexSession('chat-a');
-    clearCodexSession('chat-b');
-    vi.clearAllMocks();
-  });
-
-  it('stores sessions by sub-chat ID to prevent collisions', async () => {
-    await runExecute('chat-a', 'sub-1', 'sess-1');
-    await runExecute('chat-a', 'sub-2', 'sess-2');
-    await runExecute('chat-a', 'sub-1', 'sess-1b');
-
-    expect(vi.mocked(runCodexAgent).mock.calls[0]?.[0]?.resumeThreadId).toBeUndefined();
-    expect(vi.mocked(runCodexAgent).mock.calls[1]?.[0]?.resumeThreadId).toBeUndefined();
-    expect(vi.mocked(runCodexAgent).mock.calls[2]?.[0]?.resumeThreadId).toBe('sess-1');
-  }, 25_000);
-
-  it('clears all sub-chat sessions for a parent chat ID', async () => {
-    await runExecute('chat-a', 'sub-1', 'sess-1');
-    await runExecute('chat-a', 'sub-2', 'sess-2');
-    await runExecute('chat-b', 'sub-3', 'sess-3');
-
-    clearCodexSession('chat-a');
-
-    await runExecute('chat-a', 'sub-1', 'sess-1-new');
-    await runExecute('chat-b', 'sub-3', 'sess-3-new');
-
-    expect(vi.mocked(runCodexAgent).mock.calls[3]?.[0]?.resumeThreadId).toBeUndefined();
-    expect(vi.mocked(runCodexAgent).mock.calls[4]?.[0]?.resumeThreadId).toBe('sess-3');
-  }, 25_000);
 });
 
 describe('execute-complete payload', () => {
@@ -4068,12 +4191,12 @@ describe('Claude MCP runtime loading', () => {
 
   afterEach(() => {
     delete process.env.EXA_API_KEY;
-    delete process.env.QAVIS_ARGV_SECRET_CANARY;
+    delete process.env.ARGV_SECRET_CANARY;
   });
 
   it('includes env_var MCP when required key exists in process env', async () => {
     process.env.EXA_API_KEY = 'exa-secret';
-    process.env.QAVIS_ARGV_SECRET_CANARY = 'ambient-secret-canary';
+    process.env.ARGV_SECRET_CANARY = 'ambient-secret-canary';
     vi.mocked(getGlobalMcpServers).mockImplementation(async () => ({
       exa: {
         name: 'exa',
@@ -7240,6 +7363,36 @@ describe('active execution abort (window-scoped)', () => {
       expect.anything(),
     );
   });
+
+  it("collects a chat's live sub-chats from memory so delete/archive can stop them without the DB", () => {
+    const presentation = (chatId: string) => ({ chatId, assistantMessageId: 'm' });
+    const a = new AbortController();
+    const b = new AbortController();
+    const other = new AbortController();
+    _registerExecutionForTests('sub-a', a, undefined, presentation('chat-1'));
+    _registerExecutionForTests('sub-b', b, undefined, presentation('chat-1'));
+    _registerExecutionForTests('sub-other', other, undefined, presentation('chat-2'));
+
+    const live = collectLiveSubChatIdsForChat('chat-1');
+    expect(live).toEqual(['sub-a', 'sub-b']);
+
+    abortActiveExecutionsForSubChats(live, 'chat deleted');
+    expect(a.signal.aborted).toBe(true);
+    expect(b.signal.aborted).toBe(true);
+    expect(other.signal.aborted).toBe(false);
+  });
+
+  it("includes a held chat's sub-chats, which have no active execution between bursts", () => {
+    _registerExecutionForTests('sub-a', new AbortController(), undefined, {
+      chatId: 'chat-1',
+      assistantMessageId: 'm',
+    });
+    // 'sub-a' is in both lists: an adopting turn and its hold briefly overlap.
+    const listWakeHolds = vi.fn(() => ['sub-held', 'sub-a']);
+
+    expect(collectLiveSubChatIdsForChat('chat-1', listWakeHolds)).toEqual(['sub-a', 'sub-held']);
+    expect(listWakeHolds).toHaveBeenCalledWith('chat-1');
+  });
 });
 
 describe('extractImagePartsFromMessage', () => {
@@ -7913,316 +8066,4 @@ describe('Debug-mode + worktree-backed chat (log path follows worktree)', () => 
   });
 });
 
-describe('validateToolPermission (v2 wrapper)', () => {
-  beforeEach(async () => {
-    _clearActiveExecutionsForTests();
-    vi.mocked(socketClient.sendPermissionRequest).mockClear();
-    const { getProjectByPath } = await import('../db/repos/projects');
-    vi.mocked(getProjectByPath).mockResolvedValue({
-      id: 'project-1',
-      name: 'Project One',
-      path: '/proj',
-    } as unknown as Awaited<ReturnType<typeof getProjectByPath>>);
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValue({ decision: 'allow' });
-  });
-
-  function validateWithNativeReview(tool: string, input: Record<string, unknown>) {
-    return validateToolPermission(
-      tool,
-      input,
-      '/proj',
-      'c1',
-      's1',
-      undefined,
-      undefined,
-      false,
-      true,
-    );
-  }
-
-  registerPermissionDbUnavailableTests({ clientPermissionBridge, validateWithNativeReview });
-
-  it('returns allow when projectPath is undefined (boot-window contract)', async () => {
-    const r = await validateToolPermission('Bash', { command: 'ls' }, undefined, 'c1', 's1');
-    expect(r).toEqual({ allowed: true });
-  });
-
-  it('takes the decision from the dispatcher', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'deny',
-      reason: { kind: 'db:unavailable' },
-    });
-    const r = await validateToolPermission('Bash', { command: 'ls' }, '/proj', 'c1', 's1');
-    expect(vi.mocked(checkPermission)).toHaveBeenCalled();
-    expect(r).toMatchObject({ allowed: false });
-  });
-
-  it('returns allow when dispatcher returns allow', async () => {
-    const r = await validateToolPermission('Bash', { command: 'npm test' }, '/proj', 'c1', 's1');
-    expect(r).toEqual({ allowed: true });
-  });
-
-  it('returns deny with formatDenyReason message when dispatcher returns deny', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'deny',
-      reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' },
-    });
-    const r = await validateToolPermission('Bash', { command: 'rm -rf /' }, '/proj', 'c1', 's1');
-    expect(r).toEqual({
-      allowed: false,
-      message: expect.stringMatching(/user.*Bash\(rm:\*\)/),
-    });
-  });
-
-  it('delegates only the ask residual to a provider-native reviewer', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'ask',
-      prompt: { reason: 'no-matching-rule' },
-    } as Awaited<ReturnType<typeof checkPermission>>);
-
-    const r = await validateToolPermission(
-      'Bash',
-      { command: 'npm test' },
-      '/proj',
-      'c1',
-      's1',
-      undefined,
-      undefined,
-      false,
-      true,
-    );
-
-    expect(r).toEqual({ allowed: null });
-    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
-    const allowed = await validateWithNativeReview('Bash', { command: 'npm test' });
-    expect(allowed).toEqual({ allowed: true });
-  });
-
-  it('routes a Flow MCP ask through Frink with the complete permission context', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    const { persistApprovedRule } = await import('../permissions/v2/persist-approved-rule');
-    vi.mocked(persistApprovedRule).mockClear();
-    const tool = 'mcp__frink_dynamic_chat__frink_flows_patch';
-    const input = { flowId: 'flow-1720', operations: [{ op: 'update_settings' }] };
-    const prompt = {
-      tool,
-      input,
-      reason: 'no-matching-rule' as const,
-      suggestedRules: [tool, 'mcp__frink_dynamic_chat__*'],
-    };
-    vi.mocked(checkPermission).mockResolvedValueOnce({ decision: 'ask', prompt });
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
-      expect(payload).toMatchObject({
-        chatId: 'flow-chat-1720',
-        subChatId: '11111111-1111-4111-8111-111111111111',
-        type: 'mcp_tool',
-        operation: 'mcp_tool',
-        toolName: tool,
-        projectName: 'Project One',
-        projectPath: '/proj',
-        path: 'flow tool: frink_flows_patch',
-        reason: 'Flow tool: frink_flows_patch',
-        prompt,
-      });
-      clientPermissionBridge.lastResponseHandler?.({
-        ...payload,
-        approved: true,
-        duration: 'once',
-      });
-    });
-
-    const result = await validateToolPermission(
-      tool,
-      input,
-      '/proj',
-      'flow-chat-1720',
-      '11111111-1111-4111-8111-111111111111',
-      'Flow tool: frink_flows_patch',
-      'flow tool: frink_flows_patch',
-      false,
-      false,
-    );
-
-    expect(result).toEqual({ allowed: true });
-    expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce();
-    expect(persistApprovedRule).toHaveBeenCalledWith(
-      expect.objectContaining({ promptResult: expect.objectContaining({ duration: 'once' }) }),
-    );
-  });
-
-  it('cancels a pending Flow permission from its captured execution, not a successor', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    const { persistApprovedRule } = await import('../permissions/v2/persist-approved-rule');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'ask',
-      prompt: { reason: 'no-matching-rule' },
-    } as Awaited<ReturnType<typeof checkPermission>>);
-    vi.mocked(persistApprovedRule).mockClear();
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementation(() => {});
-    const oldController = new AbortController();
-    const successorController = new AbortController();
-    _registerExecutionForTests('flow-abort-sub', successorController);
-
-    const pending = validateToolPermission(
-      'mcp__frink_dynamic_chat__frink_flows_patch',
-      { flowId: 'flow-abort' },
-      '/proj',
-      'flow-abort-chat',
-      'flow-abort-sub',
-      'Flow tool: frink_flows_patch',
-      'flow tool: frink_flows_patch',
-      false,
-      false,
-      oldController.signal,
-    );
-    await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
-    expect(hasPendingPermissionRequest('flow-abort-sub')).toBe(true);
-
-    oldController.abort();
-
-    await expect(pending).resolves.toMatchObject({ allowed: false });
-    expect(hasPendingPermissionRequest('flow-abort-sub')).toBe(false);
-    expect(successorController.signal.aborted).toBe(false);
-    expect(socketClient.sendPermissionDismiss).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chatId: 'flow-abort-chat',
-        subChatId: 'flow-abort-sub',
-      }),
-    );
-    const requestId = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0].requestId;
-    if (!requestId) throw new Error('Expected a pending permission request');
-    clientPermissionBridge.lastResponseHandler?.({
-      chatId: 'flow-abort-chat',
-      subChatId: 'flow-abort-sub',
-      requestId,
-      approved: true,
-      duration: 'always',
-    });
-    expect(persistApprovedRule).not.toHaveBeenCalled();
-  });
-
-  it('returns deny with safety:path message for SYSTEM_DENIED_PATTERNS hits', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'deny',
-      reason: { kind: 'safety:path', path: '/proj/.env' },
-    });
-    const r = await validateWithNativeReview('Read', { file_path: '/proj/.env' });
-    expect(r.allowed).toBe(false);
-    expect((r as { message: string }).message).toContain('/proj/.env');
-  });
-
-  it('passes projectPath (NOT permissionPathOverride) to getProjectByPath', async () => {
-    const { getProjectByPath } = await import('../db/repos/projects');
-    vi.mocked(getProjectByPath).mockClear();
-    await validateToolPermission(
-      'Edit',
-      { file_path: '/worktree/abc/src/foo.ts' },
-      '/proj',
-      'c1',
-      's1',
-      undefined,
-      '/proj/src/foo.ts', // permissionPathOverride is a FILE path, not project
-    );
-    expect(getProjectByPath).toHaveBeenCalledWith(expect.anything(), '/proj');
-  });
-
-  it('passes projectId+projectPath to checkPermission', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockClear();
-    await validateToolPermission('Bash', { command: 'pwd' }, '/proj', 'c1', 's1');
-    expect(checkPermission).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tool: 'Bash',
-        projectId: 'project-1',
-        projectPath: '/proj',
-      }),
-    );
-  });
-
-  it('routes a general-chat Write to an ask whose payload has no projectPath', async () => {
-    const h = os.homedir();
-    const { getProjectByPath } = await import('../db/repos/projects');
-    vi.mocked(getProjectByPath).mockResolvedValueOnce(null);
-    const { checkPermission } = await import('../permissions/v2/check');
-    const ask = { decision: 'ask', prompt: { reason: 'no-matching-rule' } };
-    vi.mocked(checkPermission).mockResolvedValueOnce(
-      ask as Awaited<ReturnType<typeof checkPermission>>,
-    );
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
-      expect(payload).not.toHaveProperty('projectPath');
-      clientPermissionBridge.lastResponseHandler?.({ ...payload, approved: false });
-    });
-    const r = await validateToolPermission('Write', { file_path: `${h}/n.md` }, h, 'c1', 's1');
-    expect(checkPermission).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: 'Write', projectId: '', projectPath: h }),
-    );
-    expect(r).toEqual({ allowed: false, message: 'User denied permission' });
-  });
-
-  function respondTimedOut(): void {
-    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
-      clientPermissionBridge.lastResponseHandler?.({
-        chatId: payload.chatId,
-        subChatId: payload.subChatId,
-        requestId: payload.requestId,
-        approved: false,
-        timedOut: true,
-      });
-    });
-  }
-
-  it('prompt wait stays under the CLI 600s per-hook abort (else the deny reason is discarded)', async () => {
-    const { PERMISSION_PROMPT_TIMEOUT_MS } = await import('../permissions/constants');
-    expect(PERMISSION_PROMPT_TIMEOUT_MS).toBeLessThan(600_000);
-  });
-
-  it('timeout deny tells the model the user did NOT deny (no flow steer outside flows)', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'ask',
-      prompt: { reason: 'no-matching-rule' },
-    } as Awaited<ReturnType<typeof checkPermission>>);
-    respondTimedOut();
-    const r = await validateToolPermission(
-      'Bash',
-      { command: 'devkit help ship' },
-      '/proj',
-      'c1',
-      's1',
-    );
-    expect(r.allowed).toBe(false);
-    const msg = (r as { message: string }).message;
-    expect(msg).toContain('timed out');
-    expect(msg).toContain('did NOT deny');
-    expect(msg).not.toContain('frink_task_signal');
-  });
-
-  it('flow-driven timeout steers the agent to park via frink_task_signal awaiting_input', async () => {
-    const { checkPermission } = await import('../permissions/v2/check');
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'ask',
-      prompt: { reason: 'no-matching-rule' },
-    } as Awaited<ReturnType<typeof checkPermission>>);
-    respondTimedOut();
-    const r = await validateToolPermission(
-      'Bash',
-      { command: 'devkit help ship' },
-      '/proj',
-      'c1',
-      's1',
-      undefined,
-      undefined,
-      true,
-    );
-    expect(r.allowed).toBe(false);
-    const msg = (r as { message: string }).message;
-    expect(msg).toContain('did NOT deny');
-    expect(msg).toContain('frink_task_signal');
-    expect(msg).toContain('awaiting_input');
-  });
-});
+registerValidateToolPermissionTests({ clientPermissionBridge });

@@ -18,33 +18,18 @@ import {
   flowGraphEdgeSchema,
   flowGraphNodeSchema,
 } from '../../../../shared/types/flow-graph-schema';
-import { isPlainObject } from '../../../../shared/lib/case-converter/is-transformable';
 import { agentProseGraphErrors } from '../../../../shared/lib/flows/agent-prose-limit';
+import { resetLayout } from '../../../../shared/lib/flows/canvas-layout';
 import type { FlowPatchReasonCode } from '../../../../shared/types/flows/flow-change-presentation';
+import { deepMergePatch } from './deep-merge-patch';
+import {
+  applyNodeUpdate,
+  buildAddedNode,
+  nestsFanOut,
+  sizeOnNonFanOutError,
+} from './patch/node-ops';
 
 const MAX_PATCH_OPERATIONS = 50;
-
-/**
- * JSON Merge Patch–style merge: objects recurse; `null` removes a key from the result.
- */
-export function deepMergePatch(
-  target: Record<string, unknown>,
-  patch: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...target };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null) {
-      delete out[key];
-      continue;
-    }
-    if (isPlainObject(value) && isPlainObject(out[key])) {
-      out[key] = deepMergePatch(out[key] as Record<string, unknown>, value);
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
 
 /**
  * Seed `settings.defaultProjectId` from the flow's DB project so nodes inherit it at
@@ -75,6 +60,7 @@ const patchOpSchema = z.discriminatedUnion('op', [
       label: z.string().optional(),
       config: z.record(z.string(), z.unknown()).optional(),
       position: z.object({ x: z.number(), y: z.number() }).optional(),
+      size: flowGraphNodeSchema.shape.size.unwrap().nullable().optional(),
     })
     /** Reject blockType and other unknown keys so agents get an explicit Zod error, not silent no-op. */
     .strict(),
@@ -104,6 +90,8 @@ const patchOpSchema = z.discriminatedUnion('op', [
     op: z.literal('update_settings'),
     settings: flowSettingsShapeSchema.partial(),
   }),
+  /** Resets every node to the default top-to-bottom layout, discarding manual arrangement. */
+  z.object({ op: z.literal('auto_layout') }).strict(),
 ]);
 
 export const patchArgsSchema = z
@@ -140,6 +128,7 @@ export const patchArgsSchema = z
   });
 
 export type PatchOperation = z.infer<typeof patchOpSchema>;
+export const PATCH_OPS = patchOpSchema.options.map((option) => option.shape.op.value);
 
 /** A single operation that failed to apply. `code` is set only where the cause is classified. */
 export type FailedOp = { index: number; error: string; code?: FlowPatchReasonCode };
@@ -179,24 +168,9 @@ export type PatchResult =
       skipped: SkippedOp[];
     };
 
-/** Applies one `update_node` op in place; `config` deep-merges, `parentId: null` clears ownership. */
-function applyNodeUpdate(node: FlowNode, op: Extract<PatchOperation, { op: 'update_node' }>): void {
-  if (op.label !== undefined) node.label = op.label;
-  if (op.position !== undefined) node.position = { ...op.position };
-  if (op.parentId === null) delete node.parentId;
-  else if (op.parentId !== undefined) node.parentId = op.parentId;
-  if (op.config === undefined) return;
-  const base = isPlainObject(node.config) ? (node.config as Record<string, unknown>) : {};
-  node.config = deepMergePatch(base, op.config as Record<string, unknown>);
-}
-
 function nodeIdSet(nodes: FlowNode[]): Set<string> {
   return new Set(nodes.map((n) => n.id));
 }
-
-/** Mirrors the save-mode nesting rule, so one bad op fails instead of the whole batch. */
-const nestsFanOut = (blockType: string, parentId: unknown): boolean =>
-  blockType === 'fan_out' && typeof parentId === 'string';
 
 /**
  * Removes a node, the nodes it owns, and every edge touching them.
@@ -287,6 +261,20 @@ function dependencySkip(
 }
 
 /**
+ * `auto_layout` runs once, on the final graph after every other op, so its place in the batch
+ * never changes the result; a repeat would be ambiguous and fails instead.
+ */
+function repeatedLayoutError(
+  operations: PatchOperation[],
+  index: number,
+  prefix: string,
+): string | undefined {
+  return operations.findIndex((op) => op.op === 'auto_layout') === index
+    ? undefined
+    : `${prefix}: auto_layout may appear only once per patch`;
+}
+
+/**
  * Applies patch operations to a clone of `graph`, continuing past individual failures.
  *
  * Returns:
@@ -302,7 +290,7 @@ function dependencySkip(
  * caller asked for never happened.
  */
 export function applyPatchOperations(graph: FlowGraph, operations: PatchOperation[]): PatchResult {
-  const next: FlowGraph = structuredClone(graph);
+  let next: FlowGraph = structuredClone(graph);
   const applied: number[] = [];
   const failed: FailedOp[] = [];
   const skipped: SkippedOp[] = [];
@@ -338,12 +326,14 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
         } else if (nestsFanOut(node.blockType, op.parentId)) {
           opError = `${prefix}: Fan Out '${op.nodeId}' cannot sit inside another Fan Out`;
         } else {
-          applyNodeUpdate(node, op);
+          opError = sizeOnNonFanOutError(prefix, node, op.size);
+          if (opError === undefined) applyNodeUpdate(node, op);
         }
         break;
       }
       case 'add_node': {
         const { node: raw } = op;
+        const sizeError = sizeOnNonFanOutError(prefix, raw, raw.size);
         if (next.nodes.some((n) => n.id === raw.id)) {
           opError = `${prefix}: node id '${raw.id}' already exists — use update_node to modify`;
         } else if (nestsFanOut(raw.blockType, raw.parentId)) {
@@ -355,16 +345,10 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
           // Mirrors the save-mode parentId rule, so one bad op fails instead of the whole batch.
           opError = `${prefix}: parentId '${raw.parentId}' is not an existing Fan Out in this flow`;
           opCode = 'stale-parent';
+        } else if (sizeError !== undefined) {
+          opError = sizeError;
         } else {
-          const added: FlowNode = {
-            id: raw.id,
-            blockType: raw.blockType,
-            ...(raw.parentId !== undefined ? { parentId: raw.parentId } : {}),
-            ...(raw.label !== undefined ? { label: raw.label } : {}),
-            ...(raw.config !== undefined ? { config: { ...raw.config } } : {}),
-            ...(raw.position !== undefined ? { position: { ...raw.position } } : {}),
-          };
-          next.nodes.push(added);
+          next.nodes.push(buildAddedNode(raw));
           // The id lives again, so no earlier absence may skip later ops on it.
           ctx.failedNodeIds.delete(raw.id);
           ctx.nodeRemovedByRemoveNodeOp.delete(raw.id);
@@ -453,6 +437,9 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
         next.settings = deepMergePatch(cur, patch) as FlowSettings;
         break;
       }
+      case 'auto_layout':
+        opError = repeatedLayoutError(operations, i, prefix);
+        break;
     }
 
     if (opError !== undefined) {
@@ -473,6 +460,8 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
       failed.length > 0 ? failed.map((f) => f.error).join('; ') : 'No operations could be applied';
     return { status: 'failure', error: errMsg, applied, failed, skipped };
   }
+
+  if (applied.some((index) => operations[index]?.op === 'auto_layout')) next = resetLayout(next);
 
   // Validate the (possibly partial) graph in save mode
   const validation = validateGraph(next, { mode: 'save' });

@@ -15,6 +15,12 @@ export const REQUIRED_CLAUDE_BINARY_ENV = [
 ];
 
 /**
+ * Env vars Frink sets whose loss only warns. CLAUDE_CODE_THRIFTY_SONIC is an undocumented opt-out
+ * of the auto/bypass steer to edit files through Bash; once gone, agents may do so again.
+ */
+export const ADVISORY_CLAUDE_BINARY_ENV = ['CLAUDE_CODE_THRIFTY_SONIC'];
+
+/**
  * The needles absent from the file, in input order. One chunked pass with an overlap, so a needle
  * can't straddle a buffer boundary.
  */

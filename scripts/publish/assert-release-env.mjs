@@ -3,7 +3,7 @@
  * Release gate: an official build must bake in a usable auto-update feed.
  *
  * The app treats a missing or invalid MAIN_VITE_UPDATE_FEED_URL as "fork build, updater off"
- * (src/main/lib/update-feed-url.ts). That is right for forks and fatal for an official
+ * (src/main/lib/platform/update-feed/index.ts). That is right for forks and fatal for an official
  * release: installed users can only move to a build that knows the feed, so a feed-less
  * release strands them for good (sc-3780). Runs before `bun run release` builds anything and
  * before CI's tag builds when R2 publishing is configured.

@@ -1,29 +1,21 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
-import { Button } from '@benord-labs/frink-primitives';
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
-import { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { attachedContextFile } from '@/lib/mentions/queued-message-text';
 import { handlePasteEvent } from '@/lib/utils/paste-text';
-import {
-  CLAUDE_CODE_MODELS,
-  CODEX_MODELS,
-  claudeModelToPickerItem,
-  codexModelToPickerItem,
-  isClaudeModelVisible,
-  isCodexModelVisible,
-} from '../../../../shared/lib/models';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import {
   PromptInput,
   PromptInputActions,
   PromptInputContextItems,
 } from '../../../components/ui/prompt-input';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useComposerPlaceholder } from '../../../lib/agent-chat/use-composer-placeholder';
+import { unsupportedChatControls } from '../../../lib/ai-providers/chat-options';
+import { useProviderModels } from '../../../lib/ai-providers/use-provider-models';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
-  hiddenModelsAtom,
 } from '../../../lib/atoms';
 import { wakeHoldAdoptedAtomFamily } from '../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../lib/trpc';
@@ -32,7 +24,7 @@ import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboar
 import { lastSelectedModelIdAtomFamily, splitViewAtom } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
+  insertPickedCommand,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
@@ -41,6 +33,7 @@ import { AttachedTask } from '../components/AttachedTask';
 import { AgentSendButton } from '../components/agent-send-button';
 import { ChatAutoModeToggle } from '../components/auto-mode-toggle';
 import { ComposerAttachButton } from '../components/ComposerAttachButton';
+import { EditorContextChip } from '../components/EditorContextChip';
 import { ModeSelector } from '../components/mode-selector';
 import { ModelSelector } from '../components/model-selector';
 import { useCommandEditor } from '../hooks/use-command-editor';
@@ -69,31 +62,6 @@ import {
   HIDE_CONTEXT_RING_TIER,
 } from './chat-composer-shell-classes';
 
-/**
- * Picker rows for one provider: filter the catalog by hidden families, map to picker items,
- * resolve the selected item (stored id → first visible → first in catalog). Called once per
- * provider (Claude / Codex) so the two share one implementation. Generic over the
- * picker-item type `P` so each provider keeps its own shape (e.g. Claude's carries `version`).
- */
-function useVisibleProviderModels<T extends { id: string }, P>(
-  all: readonly T[],
-  isVisible: (model: T, hiddenFamilyIds: string[]) => boolean,
-  toPickerItem: (model: T) => P,
-  hiddenFamilyIds: string[],
-  selectedId: string,
-): { items: P[]; selected: P } {
-  const visible = useMemo(
-    () => all.filter((m) => isVisible(m, hiddenFamilyIds)),
-    [all, isVisible, hiddenFamilyIds],
-  );
-  const items = useMemo(() => visible.map(toPickerItem), [visible, toPickerItem]);
-  const selected = useMemo(
-    () => toPickerItem(visible.find((m) => m.id === selectedId) ?? visible[0] ?? all[0]),
-    [visible, selectedId, all, toPickerItem],
-  );
-  return { items, selected };
-}
-
 type ChatInputAreaProps = ComposerForwardedProps & {
   // Diff text context from selected diff sidebar text
   diffTextContexts?: DiffTextContext[];
@@ -103,6 +71,7 @@ type ChatInputAreaProps = ComposerForwardedProps & {
   onClearCodeSelection?: () => void;
   // Active file context (auto-included current file being viewed). Click to remove from context.
   activeFileName?: string | null;
+  activeFilePath?: string | null;
   /** When true, user clicked to remove — don't show indicator or include in send */
   activeFileDismissed?: boolean;
   onDismissActiveFile?: () => void;
@@ -123,54 +92,44 @@ type ChatInputAreaProps = ComposerForwardedProps & {
  * Custom comparison for memo to prevent re-renders from unstable array references.
  * Compares messages by length and last message id, changedFiles by length and paths.
  */
+/** Props compared by identity: primitives, refs (stable) and callbacks (memoized in the parent). */
+const IDENTITY_COMPARED_PROPS = [
+  'isStreaming',
+  'isCompacting',
+  'isUploading',
+  'subChatId',
+  'parentChatId',
+  'teamId',
+  'repository',
+  'projectPath',
+  'projectId',
+  'isMobile',
+  'queueLength',
+  'firstQueueItemId',
+  'activeFileDismissed',
+  'activeFileName',
+  'activeFilePath',
+  'editorRef',
+  'fileInputRef',
+  'onSend',
+  'onForceSend',
+  'onStop',
+  'onCompact',
+  'onAddAttachments',
+  'onRemoveImage',
+  'onRemoveFile',
+  'onRemoveTextContext',
+  'onAddPastedText',
+  'onRemovePastedText',
+  'onInputContentChange',
+  'onSendFromQueue',
+  'onDismissActiveFile',
+  'onClearCodeSelection',
+  'onRemoveDiffTextContext',
+] as const satisfies readonly (keyof ChatInputAreaProps)[];
+
 function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaProps): boolean {
-  // Compare primitives and stable references first (fast path)
-  if (
-    prevProps.isStreaming !== nextProps.isStreaming ||
-    prevProps.isCompacting !== nextProps.isCompacting ||
-    prevProps.isUploading !== nextProps.isUploading ||
-    prevProps.subChatId !== nextProps.subChatId ||
-    prevProps.parentChatId !== nextProps.parentChatId ||
-    prevProps.teamId !== nextProps.teamId ||
-    prevProps.repository !== nextProps.repository ||
-    prevProps.sandboxId !== nextProps.sandboxId ||
-    prevProps.projectPath !== nextProps.projectPath ||
-    prevProps.projectId !== nextProps.projectId ||
-    prevProps.isMobile !== nextProps.isMobile ||
-    prevProps.queueLength !== nextProps.queueLength ||
-    prevProps.firstQueueItemId !== nextProps.firstQueueItemId ||
-    prevProps.activeFileDismissed !== nextProps.activeFileDismissed ||
-    prevProps.activeFileName !== nextProps.activeFileName
-  ) {
-    return false;
-  }
-
-  // Compare refs by identity (they should be stable)
-  if (
-    prevProps.editorRef !== nextProps.editorRef ||
-    prevProps.fileInputRef !== nextProps.fileInputRef
-  ) {
-    return false;
-  }
-
-  // Compare callbacks by identity (they should be memoized in parent)
-  if (
-    prevProps.onSend !== nextProps.onSend ||
-    prevProps.onForceSend !== nextProps.onForceSend ||
-    prevProps.onStop !== nextProps.onStop ||
-    prevProps.onCompact !== nextProps.onCompact ||
-    prevProps.onAddAttachments !== nextProps.onAddAttachments ||
-    prevProps.onRemoveImage !== nextProps.onRemoveImage ||
-    prevProps.onRemoveFile !== nextProps.onRemoveFile ||
-    prevProps.onRemoveTextContext !== nextProps.onRemoveTextContext ||
-    prevProps.onAddPastedText !== nextProps.onAddPastedText ||
-    prevProps.onRemovePastedText !== nextProps.onRemovePastedText ||
-    prevProps.onInputContentChange !== nextProps.onInputContentChange ||
-    prevProps.onSendFromQueue !== nextProps.onSendFromQueue ||
-    prevProps.onDismissActiveFile !== nextProps.onDismissActiveFile ||
-    prevProps.onClearCodeSelection !== nextProps.onClearCodeSelection ||
-    prevProps.onRemoveDiffTextContext !== nextProps.onRemoveDiffTextContext
-  ) {
+  if (IDENTITY_COMPARED_PROPS.some((key) => prevProps[key] !== nextProps[key])) {
     return false;
   }
 
@@ -300,6 +259,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   codeSelectionContext,
   onClearCodeSelection,
   activeFileName,
+  activeFilePath,
   activeFileDismissed = false,
   onDismissActiveFile,
   pastedTexts = [],
@@ -310,7 +270,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   parentChatId,
   teamId,
   repository,
-  sandboxId,
   projectPath,
   projectId,
   changedFiles,
@@ -341,7 +300,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [showingSkillsList, setShowingSkillsList] = useState(false);
   const [showingAgentsList, setShowingAgentsList] = useState(false);
   const [showingToolsList, setShowingToolsList] = useState(false);
-  const [showingBriefingsList, setShowingBriefingsList] = useState(false);
 
   // Slash command dropdown state
   const [showSlashDropdown, setShowSlashDropdown] = useState(false);
@@ -377,31 +335,30 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [lastSelectedModelId, setLastSelectedModelId] = useAtom(
     lastSelectedModelIdAtomFamily(parentChatId),
   );
-  const hiddenModelFamilies = useAtomValue(hiddenModelsAtom);
-  const claudeModels = useVisibleProviderModels(
-    CLAUDE_CODE_MODELS,
-    isClaudeModelVisible,
-    claudeModelToPickerItem,
-    hiddenModelFamilies,
-    lastSelectedModelId,
-  );
-  const codexModels = useVisibleProviderModels(
-    CODEX_MODELS,
-    isCodexModelVisible,
-    codexModelToPickerItem,
-    hiddenModelFamilies,
-    lastSelectedModelId,
-  );
-
   const { data: resolvedAccount, isSuccess: accountResolved } =
     trpc.claudeCode.getResolvedAccount.useQuery(
       { chatId: parentChatId },
       { enabled: !!parentChatId, staleTime: 30000 },
     );
-  const isCodexAccount = resolvedAccount?.type === 'codex';
-  const composerPlaceholder = useComposerPlaceholder(parentChatId, subChatId, isStreaming);
+  // A saved model the account can't use stays selected and named, so the trigger shows what a send
+  // would carry; the send itself is refused with a plain message.
+  const models = useProviderModels(resolvedAccount?.type, lastSelectedModelId, {
+    keepUnavailable: true,
+  });
+  const controls = unsupportedChatControls(resolvedAccount?.type);
+  const hiddenModes: ChatMode[] = projectId ? controls.modes : [...controls.modes, 'debug'];
+  const composerPlaceholder = useComposerPlaceholder(parentChatId, isStreaming);
   const stopEndsBackgroundWork = useAtomValue(wakeHoldAdoptedAtomFamily(subChatId));
   const { chatMode, commitModeChange } = useChatMode(subChatId, parentChatId);
+  // A saved mode this agent has no equivalent for becomes Agent, once per chat: a failed save
+  // leaves the send refused in plain words rather than retrying.
+  const agentHidesMode = controls.modes.includes(chatMode);
+  const modeCorrectedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!agentHidesMode || modeCorrectedForRef.current === subChatId) return;
+    modeCorrectedForRef.current = subChatId;
+    commitModeChange('agent');
+  }, [agentHidesMode, commitModeChange, subChatId]);
 
   // Refs for draft saving
   const currentSubChatIdRef = useRef<string>(subChatId);
@@ -434,10 +391,11 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   // Normalize model selection when account type changes (Codex ↔ Claude)
   useModelNormalization(
-    isCodexAccount,
+    resolvedAccount?.type,
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
+    models.codexCatalog,
   );
 
   // Content change handler
@@ -543,10 +501,6 @@ export const ChatInputArea = memo(function ChatInputArea({
           setShowingToolsList(true);
           return;
         }
-        if (mention.id === 'briefings') {
-          setShowingBriefingsList(true);
-          return;
-        }
       }
 
       // Otherwise: insert mention as normal
@@ -557,7 +511,6 @@ export const ChatInputArea = memo(function ChatInputArea({
       setShowingSkillsList(false);
       setShowingAgentsList(false);
       setShowingToolsList(false);
-      setShowingBriefingsList(false);
     },
     [editorRef],
   );
@@ -593,14 +546,13 @@ export const ChatInputArea = memo(function ChatInputArea({
     setShowingSkillsList(false);
     setShowingAgentsList(false);
     setShowingToolsList(false);
-    setShowingBriefingsList(false);
   }, []);
 
   const handleEditorShiftTab = useCallback(() => {
-    const cycle = projectId ? CHAT_MODE_CYCLE : CHAT_MODE_CYCLE.filter((m) => m !== 'debug');
+    const cycle = CHAT_MODE_CYCLE.filter((m) => !hiddenModes.includes(m));
     const idx = cycle.indexOf(chatMode);
     commitModeChange(cycle[(idx + 1) % cycle.length]);
-  }, [chatMode, commitModeChange, projectId]);
+  }, [chatMode, commitModeChange, hiddenModes]);
 
   const handleSlashSelect = useCallback(
     (command: SlashCommandOption) => {
@@ -608,42 +560,24 @@ export const ChatInputArea = memo(function ChatInputArea({
       editorRef.current?.clearSlashCommand();
       setShowSlashDropdown(false);
 
-      // Handle builtin commands
+      // Mode switches and compaction act here; every other pick is written into the composer
       if (command.category === 'builtin') {
         switch (command.name) {
           case 'plan':
             commitModeChange('plan');
-            break;
+            return;
           case 'agent':
             commitModeChange('agent');
-            break;
+            return;
           case 'debug':
             if (projectId) commitModeChange('debug');
-            break;
+            return;
           case 'compact':
-            // Trigger context compaction
             onCompact();
-            break;
-          // Prompt-based commands - insert into editor for user to review/send
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
+            return;
         }
-        return;
       }
-
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      insertPickedCommand(editorRef.current, command);
     },
     [commitModeChange, onCompact, editorRef, projectId],
   );
@@ -687,6 +621,14 @@ export const ChatInputArea = memo(function ChatInputArea({
     [taskAttachment, onAddAttachments, editorRef],
   );
 
+  // The rule the send path reads too, so the chip shows exactly what the next message carries.
+  const attachedFileName = attachedContextFile(
+    activeFileName,
+    activeFileDismissed,
+    codeSelectionContext,
+  );
+  const hasEditorContext = Boolean(codeSelectionContext || attachedFileName);
+
   return (
     <div className="relative z-10 min-w-0 px-2 pb-2" data-chat-composer-root>
       <div className="@container/composer mx-auto w-full max-w-2xl">
@@ -704,6 +646,7 @@ export const ChatInputArea = memo(function ChatInputArea({
               onSubmit={handlePromptInputSubmit}
               contextItems={
                 taskAttachment.attachedTask ||
+                hasEditorContext ||
                 images.length > 0 ||
                 files.length > 0 ||
                 textContexts.length > 0 ||
@@ -716,7 +659,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                         onRemove={taskAttachment.clearTask}
                       />
                     )}
-                    {(images.length > 0 ||
+                    {(hasEditorContext ||
+                      images.length > 0 ||
                       files.length > 0 ||
                       textContexts.length > 0 ||
                       (diffTextContexts?.length ?? 0) > 0 ||
@@ -751,9 +695,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         {files.map((f) => (
                           <AgentFileItem
                             key={f.id}
-                            id={f.id}
                             filename={f.filename}
-                            url={f.url || ''}
                             size={f.size}
                             isLoading={f.isLoading}
                             onRemove={() => onRemoveFile(f.id)}
@@ -774,7 +716,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                             preview={dtc.preview}
                             filePath={dtc.filePath}
                             lineNumber={dtc.lineNumber}
-                            lineType={dtc.lineType}
                             onRemove={
                               onRemoveDiffTextContext
                                 ? () => onRemoveDiffTextContext(dtc.id)
@@ -794,6 +735,13 @@ export const ChatInputArea = memo(function ChatInputArea({
                             }
                           />
                         ))}
+                        <EditorContextChip
+                          selection={codeSelectionContext}
+                          fileName={attachedFileName}
+                          filePath={attachedFileName ? activeFilePath : null}
+                          onRemoveSelection={() => onClearCodeSelection?.()}
+                          onRemoveFile={() => onDismissActiveFile?.()}
+                        />
                       </div>
                     )}
                   </div>
@@ -836,7 +784,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                     onTooltipChange={setModeTooltip}
                     tooltipTimeoutRef={tooltipTimeoutRef}
                     hasShownTooltipRef={hasShownTooltipRef}
-                    disableDebugMode={!projectId}
+                    hiddenModes={hiddenModes}
                   />
 
                   <ChatAutoModeToggle
@@ -847,61 +795,17 @@ export const ChatInputArea = memo(function ChatInputArea({
                   />
 
                   <ModelSelector
-                    selectedModel={isCodexAccount ? codexModels.selected : claudeModels.selected}
-                    availableModels={isCodexAccount ? codexModels.items : claudeModels.items}
+                    selectedModel={models.selected}
+                    availableModels={models.items}
                     onModelChange={(m) => setLastSelectedModelId(m.id)}
-                    modelVariant={isCodexAccount ? 'codex' : 'claude'}
+                    modelVariant={models.variant}
                     isOpen={isModelDropdownOpen}
                     onOpenChange={setIsModelDropdownOpen}
                     onOpenModelSettings={openModelSettings}
                     chatId={parentChatId}
+                    unavailable={models.unavailable}
+                    hint={models.hint}
                   />
-
-                  {/* Context indicator - shows code selection or active file */}
-                  {codeSelectionContext ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          onClick={() => {
-                            onClearCodeSelection?.();
-                            onDismissActiveFile?.();
-                          }}
-                          className="flex gap-1 h-auto px-2 py-1 text-xs rounded-md font-normal @max-[34rem]/composer:sr-only"
-                          aria-label={`Remove code selection and file from context: ${codeSelectionContext.fileName} lines ${codeSelectionContext.startLine}-${codeSelectionContext.endLine}`}
-                        >
-                          <span className="truncate max-w-[100px]">
-                            {codeSelectionContext.fileName}
-                          </span>
-                          <span className="text-muted-foreground/60">
-                            L{codeSelectionContext.startLine}-{codeSelectionContext.endLine}
-                          </span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {codeSelectionContext.fileName} (L{codeSelectionContext.startLine}-
-                        {codeSelectionContext.endLine})
-                        <br />
-                        Click to remove selection and file from context
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : activeFileName && !activeFileDismissed ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          onClick={() => onDismissActiveFile?.()}
-                          className="flex h-auto px-2 py-1 text-xs rounded-md font-normal @max-[34rem]/composer:sr-only"
-                          aria-label={`Remove ${activeFileName} from context`}
-                        >
-                          <span className="truncate max-w-[120px]">{activeFileName}</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {activeFileName} — click to remove from context
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
                 </div>
 
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -919,13 +823,15 @@ export const ChatInputArea = memo(function ChatInputArea({
                   />
 
                   {/* Context window indicator - click to compact */}
-                  <AgentContextIndicator
-                    className={HIDE_CONTEXT_RING_TIER}
-                    tokenData={messageTokenData}
-                    onCompact={onCompact}
-                    isCompacting={isCompacting}
-                    disabled={isStreaming}
-                  />
+                  {controls.commands.includes('compact') ? null : (
+                    <AgentContextIndicator
+                      className={HIDE_CONTEXT_RING_TIER}
+                      tokenData={messageTokenData}
+                      onCompact={onCompact}
+                      isCompacting={isCompacting}
+                      disabled={isStreaming}
+                    />
+                  )}
 
                   <ComposerAttachButton
                     label="Attach files"
@@ -985,9 +891,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       {/* File mention dropdown */}
       {/* Desktop: use projectPath for local file search */}
       <AgentsFileMention
-        isOpen={
-          showMentionDropdown && (!!projectPath || !!repository || !!sandboxId || !!projectId)
-        }
+        isOpen={showMentionDropdown && (!!projectPath || !!repository || !!projectId)}
         onClose={() => {
           setShowMentionDropdown(false);
           // Reset subpage state when closing
@@ -995,23 +899,19 @@ export const ChatInputArea = memo(function ChatInputArea({
           setShowingSkillsList(false);
           setShowingAgentsList(false);
           setShowingToolsList(false);
-          setShowingBriefingsList(false);
         }}
         onSelect={handleMentionSelect}
         searchText={mentionSearchText}
         position={mentionPosition}
         teamId={teamId}
         repository={repository}
-        sandboxId={sandboxId}
         projectPath={projectPath}
-        projectId={projectId ?? undefined}
         changedFiles={changedFiles}
         // Subpage navigation state
         showingFilesList={showingFilesList}
         showingSkillsList={showingSkillsList}
         showingAgentsList={showingAgentsList}
         showingToolsList={showingToolsList}
-        showingBriefingsList={showingBriefingsList}
       />
 
       {/* Slash command dropdown */}
@@ -1024,6 +924,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         projectPath={projectPath}
         hasProject={Boolean(projectId)}
         chatMode={chatMode}
+        disabledCommands={controls.commands}
         onCreateCommand={commandEditor.openCreate}
         onEditCommand={commandEditor.openEdit}
         onForkCommand={commandEditor.handleFork}

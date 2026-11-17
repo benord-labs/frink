@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as approvalHooks from '../../../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { Task } from '../../../types';
 import { getAttentionCopy } from '../../AttentionCarousel';
 import { makeTaskActions } from '../../test-fixtures';
@@ -17,6 +18,16 @@ const { toastError } = vi.hoisted(() => {
 });
 vi.mock('sonner', () => ({ toast: { error: toastError } }));
 vi.mock('../../QueuePausedBanner', () => ({ QueuePausedBanner: () => null }));
+
+beforeEach(() => {
+  vi.spyOn(approvalHooks, 'useAwaitingApprovals').mockReturnValue([]);
+  vi.spyOn(approvalHooks, 'useApprovalActions').mockReturnValue({
+    approve: vi.fn(),
+    cancel: vi.fn(),
+    openRun: vi.fn(),
+    pending: new Map(),
+  });
+});
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -51,6 +62,7 @@ describe('QueueOverview', () => {
     });
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[reviewTask, questionTask]}
         runningTasks={[makeTask()]}
@@ -123,6 +135,7 @@ describe('QueueOverview', () => {
     const task = makeTask();
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[]}
         runningTasks={[task]}
@@ -168,6 +181,7 @@ describe('QueueOverview', () => {
     const secondTask = makeTask({ id: 'second', title: 'Second review', status: 'plan_ready' });
     const renderOverview = (attentionTasks: Task[]) => (
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={attentionTasks}
         runningTasks={[]}
@@ -205,6 +219,7 @@ describe('QueueOverview', () => {
     const task = makeTask({ result: null, linkedChatId: null });
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[]}
         runningTasks={[task]}
@@ -229,6 +244,7 @@ describe('QueueOverview', () => {
     const runningLoad = vi.fn(async () => undefined);
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[makeTask({ id: 'review', status: 'plan_ready' })]}
         pagination={{

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getDatabase } from '../../../db';
 import {
   countChatsByProject,
+  getChatById,
   listAllArchivedChats as listAllArchivedChatsLocal,
   listAllChats as listAllChatsLocal,
   listChatsForProject,
@@ -48,7 +49,7 @@ export const listRouter = router({
         input.projectId === undefined
           ? await listAllChatsLocal(getDatabase())
           : await listChatsForProject(getDatabase(), input.projectId);
-      return rows.map(mapLocalChatResponse);
+      return withBatchIds(rows.map(mapLocalChatResponse));
     }),
 
   listArchived: publicProcedure.query(async () => {
@@ -60,9 +61,18 @@ export const listRouter = router({
     return countChatsByProject(getDatabase());
   }),
 
-  // Active chats with their folder and batch, loaded in the sidebar or not, so a collapsed folder can
-  // show their activity. Status still comes from the task poll; this read only places chats.
+  // Active chats with their folder, batch and task statuses, loaded in the sidebar or not: the
+  // sidebar's one source for row status pills and collapsed-folder activity.
   listActiveChats: publicProcedure.query(async () => listSidebarActiveChats(getDatabase())),
+
+  // The chats open in panes, so each keeps a sidebar row even when older than the loaded pages.
+  listByIds: publicProcedure
+    .input(z.object({ ids: z.array(z.string()).max(100) }))
+    .query(async ({ input }) => {
+      const found = await Promise.all(input.ids.map((id) => getChatById(getDatabase(), id)));
+      const live = found.flatMap((chat) => (chat && !chat.archivedAt ? [chat] : []));
+      return withBatchIds(live.map(mapLocalChatResponse));
+    }),
 
   listByFolder: publicProcedure
     .input(
@@ -76,6 +86,7 @@ export const listRouter = router({
           })
           .nullable()
           .optional(),
+        hideFlowChats: z.boolean().default(false),
       }),
     )
     .query(async ({ input }) => {
@@ -88,6 +99,7 @@ export const listRouter = router({
         projectIds,
         limit: input.limit + 1,
         cursor,
+        hideFlowChats: input.hideFlowChats,
       });
 
       const hasMore = rows.length > input.limit;
@@ -107,27 +119,34 @@ export const listRouter = router({
     }),
 
   /**
-   * Local: batch summaries aggregated from local flow_runs. Raw (no
+   * Local: summaries for the sidebar groups whose chats are loaded. Raw (no
    * caseConvert) — `SidebarBatchGroup` is snake_case end-to-end; the sidebar keys its group map on
    * `group.batch_id`, so camelCasing it would null the key and silently un-group every batch.
    */
-  listBatchGroups: publicProcedureRaw.query(async () => {
-    return listSidebarBatchGroups(getDatabase());
-  }),
+  listBatchGroups: publicProcedureRaw
+    .input(z.object({ groupIds: z.array(z.string().min(1)) }))
+    .query(async ({ input }) => {
+      return listSidebarBatchGroups(getDatabase(), input.groupIds);
+    }),
 
-  /** Local: chats in an expanded batch row, resolved via the flow_runs chat link. */
+  /** Local: chats in an expanded group row (a batch, or a Fan Out run), via the flow_runs chat link. */
   listByBatch: publicProcedure
-    .input(z.object({ batchId: z.string().uuid() }))
+    .input(z.object({ batchId: z.string().min(1) }))
     .query(async ({ input }) => {
       const rows = await listChatsByBatch(getDatabase(), input.batchId);
       return rows.map((row) => ({ ...mapLocalChatResponse(row), batchId: input.batchId }));
     }),
 
   listPinned: publicProcedure
-    .input(z.object({ projectIds: z.array(z.string()).nullable() }))
+    .input(
+      z.object({
+        projectIds: z.array(z.string()).nullable(),
+        hideFlowChats: z.boolean().default(false),
+      }),
+    )
     .query(async ({ input }) => {
       const projectIds = input.projectIds === null ? [null] : input.projectIds;
-      const rows = await listPinnedChatsForProjects(getDatabase(), projectIds);
+      const rows = await listPinnedChatsForProjects(getDatabase(), projectIds, input.hideFlowChats);
       return withBatchIds(rows.map(mapLocalChatResponse));
     }),
 });

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createQueueItem, editableQueuedImages, toQueuedPastedText } from './queue-utils';
+import {
+  createQueueItem,
+  editableQueuedImages,
+  FLOW_DISPATCH_SOURCE,
+  queuedSendMetadata,
+  toQueuedPastedText,
+} from './queue-utils';
 
 describe('editableQueuedImages', () => {
   it('keeps a live preview url untouched', () => {
@@ -64,5 +70,29 @@ describe('queued pasted texts (sc-3666)', () => {
   it('strips composer-only fields when queueing a chip', () => {
     const chip = { ...pasted, createdAt: new Date(0) };
     expect(toQueuedPastedText(chip)).toEqual(pasted);
+  });
+});
+
+describe('queuedSendMetadata', () => {
+  it('carries the source and task id of a dispatched item', () => {
+    const item = {
+      ...createQueueItem('q', 'flow prompt'),
+      source: FLOW_DISPATCH_SOURCE,
+      dispatchTaskId: 't1',
+    };
+
+    expect(queuedSendMetadata(item)).toEqual({
+      metadata: { source: 'flow-dispatch', dispatchTaskId: 't1' },
+    });
+  });
+
+  it('carries a task id alone for a non-headless dispatch', () => {
+    const item = { ...createQueueItem('q', 'task prompt'), dispatchTaskId: 't1' };
+
+    expect(queuedSendMetadata(item)).toEqual({ metadata: { dispatchTaskId: 't1' } });
+  });
+
+  it('adds no metadata key for a typed message', () => {
+    expect(queuedSendMetadata(createQueueItem('q', 'hi'))).toEqual({});
   });
 });

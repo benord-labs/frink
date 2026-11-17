@@ -15,8 +15,11 @@ import {
 } from '../../../claude';
 import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn';
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
+import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
+import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
 import type { CredentialResult } from '../../../credentials';
+import { hooksForLaunch } from '../../../provider/hooks/store';
 import {
   registerDebugSession,
   startIngestServer,
@@ -27,12 +30,15 @@ import { buildFrinkSystemPromptAppend } from '../../../frink-system-prompt';
 import { withChannelQuery } from '../../../mcp/execution-identity';
 import { resolveFrinkMcpServers } from '../../../mcp/runtime';
 import { createClaudeMcpConfigTransport } from '../../../mcp/runtime/mcp-config-transport';
+import { ensureLoginShellEnv } from '../../../platform/login-shell-env';
 import { captureMainException } from '../../../sentry/init';
 import { getAllAgentsForSdk } from '../../../trpc/routers/agent-utils';
 import { type ClaudeSession, createSession } from '../../claude-session-registry';
 import { resolvePermissionMode } from '../../streaming/plan-auto-approve';
+import { renderFlowBriefingSection } from '../prompt-prefix/flow-briefing-section';
 import { deliverProviderConfig } from '../provider-delivery';
 import { buildClaudeSessionCallbacks, type ClaudeSessionScope } from './session-callbacks';
+import { MESSAGE_PROVENANCE_RULE } from '../../../../../shared/lib/message-markers/message-provenance';
 
 /**
  * Stdio MCPs are connected in parallel batches by the bundled Claude CLI
@@ -125,9 +131,12 @@ interface ClaudeSessionSpecInputs extends Omit<ClaudeSessionScope, 'agents'> {
   dynamicChatMcpUrl: string | null;
   multiProjectPrefix: string;
   sessionFlowBriefing: string;
+  flowRunLive?: boolean;
   signalTaskId: string | null;
   isFlowExecutionTurn: boolean;
   flowPlanAutoApprove: boolean;
+  /** Set for a Frink-managed worktree: the main checkout Claude reads project config from. */
+  projectConfigRoot?: string;
 }
 
 type ClaudeSessionSpec = Awaited<ReturnType<typeof buildClaudeSessionSpec>>;
@@ -137,6 +146,9 @@ type ClaudeSessionSpec = Awaited<ReturnType<typeof buildClaudeSessionSpec>>;
 export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   const { subChatId, projectPath, mode, settings, storedCredential, signalTaskId } = inputs;
   const { nativeAutoReview, planAutoReview, dynamicChatMcpUrl, persistedSessionId } = inputs;
+  // The CLI spawns stdio MCP servers (npx, uvx...) from this env; wait for the login-shell PATH
+  // rather than start the first session after launch on the fallback one.
+  await ensureLoginShellEnv();
   const baseEnv = buildClaudeEnv({
     enableTasks: settings?.enableTasks ?? true,
   });
@@ -189,7 +201,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   }
 
   // Load ALL agents for SDK registration (Claude can proactively use via Task tool)
-  const allAgents = await getAllAgentsForSdk(projectPath);
+  const allAgents = await getAllAgentsForSdk(inputs.projectConfigRoot ?? projectPath);
   if (Object.keys(allAgents).length > 0) {
     log.info(
       `[Socket Executor] Passing ${Object.keys(allAgents).length} agent(s) to SDK: ${Object.keys(allAgents).join(', ')}`,
@@ -220,8 +232,20 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   });
 
   const shouldResumeClaudeSession = Boolean(persistedSessionId);
+  const flagSettings = {
+    // The user's hooks, which this chat's config dir hides; Claude loads the project's itself.
+    ...(await hooksForLaunch('claude-code', inputs.project ? inputs.permissionProjectPath : null)),
+    // Auto-memory belongs to the project, as outside Frink, not to this chat's config dir.
+    ...resolveClaudeAutoMemorySettings(projectPath),
+    // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
+    // run it: unattended runs have no usage disclosure surface yet.
+    ...(settings?.ultra &&
+      !inputs.isFlowExecutionTurn &&
+      claudeVersionSupportsUltra() && { ultracode: true }),
+  };
   const sdkOptions = {
     cwd: projectPath,
+    ...(inputs.projectConfigRoot && { projectConfigRoot: inputs.projectConfigRoot }),
     permissionMode: resolvePermissionMode(mode, nativeAutoReview),
     env: claudeEnv,
     pathToClaudeCodeExecutable: inputs.claudeBinaryPath,
@@ -241,9 +265,9 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       preset: 'claude_code' as const,
       append: `\n\n${frinkSystemPromptAppend}`,
     },
-    // Load skills and hooks from project (.claude/) and user (~/.claude/) directories
-    // This enables Claude to use skills via the Skill tool and hooks for lifecycle events
-    settingSources: ['project' as const, 'user' as const],
+    // Skills and hooks from every native settings file Claude Code reads; the user tier resolves to
+    // the isolated config dir, so ~/.claude hooks arrive through `settings` below.
+    settingSources: ['project' as const, 'user' as const, 'local' as const],
     // Agents from ~/.claude/agents/ and .claude/agents/ (Claude can use proactively)
     ...(Object.keys(allAgents).length > 0 && { agents: allAgents }),
     ...(claudeMcpConfig && { extraArgs: claudeMcpConfig.extraArgs }),
@@ -268,11 +292,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       if (!effort) return {};
       return { effort: effort as import('@anthropic-ai/claude-agent-sdk').Options['effort'] };
     })(),
-    // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
-    // run it: unattended runs have no usage disclosure surface yet.
-    ...(settings?.ultra &&
-      !inputs.isFlowExecutionTurn &&
-      claudeVersionSupportsUltra() && { settings: { ultracode: true } }),
+    settings: flagSettings,
     // SDK betas (e.g. 1M context window: 'context-1m-2025-08-07')
     ...(settings?.betas?.length && {
       betas: settings.betas as import('@anthropic-ai/claude-agent-sdk').SdkBeta[],
@@ -325,8 +345,9 @@ async function buildSessionPromptAppend(
   // in each user turn — the CLAUDE.md-like behaviour the flow briefing is meant to have. Rendered
   // byte-stable per run (constant context at dispatch) so it does not bust the cache across nodes.
   // Codex gets it via a first-turn prompt prepend instead. Empty for non-flow chats.
+  if (inputs.flowRunLive) frinkSystemPromptAppend += `\n\n${MESSAGE_PROVENANCE_RULE}`;
   if (sessionFlowBriefing) {
-    frinkSystemPromptAppend = `${frinkSystemPromptAppend}\n\n## Flow Briefing\n\n${sessionFlowBriefing}`;
+    frinkSystemPromptAppend = `${frinkSystemPromptAppend}\n\n${renderFlowBriefingSection(sessionFlowBriefing)}`;
   }
 
   // Debug mode (SDK path): start ingest server, register session, append debug prompt to system prompt.
@@ -365,6 +386,7 @@ export async function prepareClaudeSpawn(spec: ClaudeSessionSpec): Promise<void>
   // user's skills, agents and CLAUDE.md memory back inside the session dir.
   // Pre-create session plans/ so path checks (realpath) succeed before first Write.
   fs.mkdirSync(path.join(isolatedConfigDir, 'plans'), { recursive: true });
+  await mergeChatMemoriesOnce(path.dirname(isolatedConfigDir));
   stageClaudeConfigDir(isolatedConfigDir, spec.scope.subChatId);
 
   // Write OAuth tokens for HTTP MCPs into the isolated CLAUDE_CONFIG_DIR so the CLI
@@ -407,7 +429,7 @@ export function spawnClaudeSession(
 ): ClaudeSession {
   const spawned: { current: ClaudeSession | null } = { current: null };
   const { stopHook, ...callbacks } = buildClaudeSessionCallbacks(spec.scope, spawned);
-  return createSession(
+  const session = createSession(
     spec.scope.subChatId,
     (stream) => query({ prompt: stream, options: { ...options, ...callbacks } }),
     {
@@ -419,4 +441,9 @@ export function spawnClaudeSession(
       ref: spawned,
     },
   );
+  // A resumed session keeps the prompt recorded on its first request, so only a fresh one is known
+  // to hold the rule; for any other the hook sends it once.
+  session.provenanceRuleKnown =
+    !options.resume && options.systemPrompt.append.includes(MESSAGE_PROVENANCE_RULE);
+  return session;
 }

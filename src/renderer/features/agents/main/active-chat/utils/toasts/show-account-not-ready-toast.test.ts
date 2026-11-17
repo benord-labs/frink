@@ -40,6 +40,7 @@ describe('showAccountNotReadyToast', () => {
       mode: 'add',
       accountLabel: '',
       returnToSettings: false,
+      provider: 'claude-code',
     });
   });
 
@@ -63,6 +64,7 @@ describe('showAccountNotReadyToast', () => {
       mode: 'reauth',
       accountLabel: 'Team Claude',
       returnToSettings: false,
+      provider: 'claude-code',
     });
   });
 

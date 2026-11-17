@@ -7,19 +7,23 @@ const RELATIVE_PATH_ESCAPE_REGEX = /^\.\.(?:[\\/]|$)/;
 
 type BuildOpenWorktreeFileInput = {
   filePath: string;
+  /** The folder the chat works in: its worktree, or the project itself when it has none. */
   worktreePath: string | null | undefined;
+  /** False when that folder is the project itself. */
+  isWorktreeContext?: boolean;
   chatId: string;
 };
 
 export function buildOpenWorktreeFileInput({
   filePath,
   worktreePath,
+  isWorktreeContext = true,
   chatId,
 }: BuildOpenWorktreeFileInput): {
   path: string;
   name: string;
   projectPath: string;
-  isWorktreeContext: true;
+  isWorktreeContext: boolean;
   sourceChatId: string;
   intent: 'pinned';
 } | null {
@@ -41,7 +45,7 @@ export function buildOpenWorktreeFileInput({
     path: relativePath,
     name: fileName,
     projectPath: worktreePath,
-    isWorktreeContext: true,
+    isWorktreeContext,
     sourceChatId: chatId,
     intent: 'pinned',
   };

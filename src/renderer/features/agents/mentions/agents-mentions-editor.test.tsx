@@ -378,7 +378,7 @@ describe('AgentsMentionsEditor placeholder', () => {
       <AgentsMentionsEditor
         onTrigger={vi.fn()}
         onCloseTrigger={vi.fn()}
-        placeholder="Press Re-run step to restart this step — typing will not resume it"
+        placeholder="Type to continue with new instructions — or press Continue"
       />,
     );
     const editor = getEditorRoot(container);
@@ -386,7 +386,7 @@ describe('AgentsMentionsEditor placeholder', () => {
     const placeholder = wrapper?.firstElementChild;
 
     expect(wrapper).toHaveClass('grid', 'grid-cols-1');
-    expect(placeholder).toHaveTextContent('typing will not resume it');
+    expect(placeholder).toHaveTextContent('or press Continue');
     expect(placeholder).toHaveClass('col-start-1', 'row-start-1', 'pointer-events-none');
     expect(placeholder).not.toHaveClass('absolute', 'truncate');
     expect(editor).toHaveClass('col-start-1', 'row-start-1', 'relative');

@@ -14,9 +14,19 @@ vi.mock('../event-emit', () => ({
 }));
 vi.mock('../../sentry/init', () => ({ captureMainException: mocks.capture }));
 
-import { flowRunAdmissions, flowRuns, flows, flowVersions, nodeRuns, tasks } from '../../db/schema';
+import {
+  chats,
+  flowRunAdmissions,
+  flowRuns,
+  flows,
+  flowVersions,
+  nodeRuns,
+  subChatMessages,
+  subChats,
+  tasks,
+} from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
-import { beginFlowResourceActivity } from './activity';
+import { beginFlowResourceActivity, scheduleFlowReconcile } from './activity';
 import { FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS } from './drain';
 import { beginTerminalRelease } from './recovery-store';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
@@ -31,9 +41,11 @@ import {
   registerTerminalFlowResumeDispatcher,
   requestFlowAdmissionRelease,
   requestFlowStart,
+  transitionFlowRun,
   updateFlowAdmissionSettings,
 } from './runtime';
 import { stageContinuationResume } from './terminal-resume/continuation';
+import { startPlanExecutionCommand } from '../transitions';
 
 let queuePaused = false;
 let maxConcurrentRuns = 1;
@@ -76,6 +88,65 @@ function persistWait(flowRunId: string, taskStatus?: string): void {
   }
   db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, flowRunId)).run();
 }
+
+/** An agent step parked on a `needs_attention` task the watcher applied, its session answered. */
+function persistHumanWait(flowRunId: string, cacheExpiresAt?: number): void {
+  const nodeRunId = `${flowRunId}-step`;
+  const taskId = `${flowRunId}-task`;
+  db.insert(chats)
+    .values({ id: `${flowRunId}-chat` })
+    .onConflictDoNothing()
+    .run();
+  db.insert(subChats)
+    .values({ id: `${flowRunId}-sub`, chatId: `${flowRunId}-chat`, sessionId: 'session-1' })
+    .run();
+  db.insert(nodeRuns)
+    .values({
+      id: nodeRunId,
+      flowRunId,
+      nodeId: 'step',
+      blockType: 'agent',
+      status: 'blocked',
+      completedAt: new Date('2026-10-20T10:00:02Z'),
+    })
+    .run();
+  db.insert(tasks)
+    .values({
+      id: taskId,
+      description: 'Flow step',
+      source: 'flow',
+      flowRunId,
+      nodeRunId,
+      sourceId: nodeRunId,
+      status: 'needs_attention',
+      completedAt: new Date('2026-10-20T10:00:00Z'),
+      result: {
+        subChatId: `${flowRunId}-sub`,
+        turnUsage: { promptCacheExpiresAt: cacheExpiresAt },
+      },
+    })
+    .run();
+  const prompt = {
+    id: `${taskId}-u`,
+    role: 'user',
+    parts: [],
+    metadata: { dispatchTaskId: taskId },
+  };
+  db.insert(subChatMessages)
+    .values([
+      { subChatId: `${flowRunId}-sub`, seq: 0, message: JSON.stringify(prompt) },
+      {
+        subChatId: `${flowRunId}-sub`,
+        seq: 1,
+        message: JSON.stringify({ id: `${taskId}-a`, role: 'assistant', parts: [] }),
+      },
+    ])
+    .run();
+  db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, flowRunId)).run();
+}
+
+const admissionOf = (flowRunId: string) =>
+  db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.flowRunId, flowRunId)).get();
 
 let db: TestDb;
 let controller: FlowAdmissionController;
@@ -191,6 +262,7 @@ describe('Flow admission runtime recovery', () => {
       concurrency_limit_enabled: true,
       max_concurrent_runs: 2,
       occupied_runs: 2,
+      held_by_waiting_runs: 0,
       queued_runs: 0,
       draining: false,
     });
@@ -492,6 +564,124 @@ describe('Flow admission runtime recovery', () => {
     });
     expect(mocks.dispatcher).toHaveBeenCalledOnce();
   });
+  it('gives the slot of a run waiting only for a person to the queued start', async () => {
+    mocks.dispatcher.mockImplementationOnce(async (flowRunId) => persistHumanWait(flowRunId));
+    const first = await requestFlowStart(startInput('human-wait'));
+    const second = await requestFlowStart(startInput('after-human-wait'));
+
+    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledTimes(2));
+    expect(mocks.dispatcher).toHaveBeenLastCalledWith(second.run.id, expect.any(Number));
+    expect(admissionOf(first.run.id)).toMatchObject({ state: 'released' });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, first.run.id)).get()?.status).toBe(
+      'paused',
+    );
+  });
+  // A live owner (a wake hold, a click's own token) keeps the slot; the release lands when it ends.
+  it('frees a human wait slot only once its last live activity ends', async () => {
+    let releaseActivity!: () => void;
+    mocks.dispatcher.mockImplementationOnce(async (flowRunId) => {
+      persistHumanWait(flowRunId);
+      releaseActivity = beginFlowResourceActivity(flowRunId);
+    });
+    const first = await requestFlowStart(startInput('held-human-wait'));
+    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledOnce());
+    const second = await requestFlowStart(startInput('behind-held-human-wait'));
+    expect(admissionOf(first.run.id)).toMatchObject({ state: 'active' });
+
+    releaseActivity();
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenLastCalledWith(second.run.id, expect.any(Number)),
+    );
+    expect(admissionOf(first.run.id)).toMatchObject({ state: 'released' });
+  });
+  describe('a human wait whose prompt cache is still warm', () => {
+    const SETTLED = Date.parse('2026-10-20T10:00:00Z');
+    const COLD_AT = SETTLED + 15 * 60_000;
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      vi.setSystemTime(SETTLED + 60_000);
+    });
+    afterEach(() => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    });
+
+    async function parkWarmAheadOfAStart() {
+      mocks.dispatcher.mockImplementationOnce(async (id) => persistHumanWait(id, COLD_AT));
+      const warm = await requestFlowStart(startInput('warm-human-wait'));
+      const next = await requestFlowStart(startInput('behind-warm-human-wait'));
+      await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledOnce());
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+      return { warm, next };
+    }
+
+    it('keeps its slot until the cache is cold, then gives it to the queued start', async () => {
+      const { warm, next } = await parkWarmAheadOfAStart();
+      await vi.advanceTimersByTimeAsync(COLD_AT - Date.now() - 1_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.waitFor(() =>
+        expect(mocks.dispatcher).toHaveBeenLastCalledWith(next.run.id, expect.any(Number)),
+      );
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+
+    // Timers stop while the machine sleeps: the wall clock is re-read within a minute of waking.
+    it('releases within a minute when the machine wakes past the cold time', async () => {
+      const { warm } = await parkWarmAheadOfAStart();
+      vi.setSystemTime(COLD_AT + 30 * 60_000);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+
+    it('retries a check that failed at the cold time, reporting the failure once', async () => {
+      const { warm } = await parkWarmAheadOfAStart();
+      const locked = new Error('database is locked');
+      vi.spyOn(controller, 'getLiveForRun')
+        .mockRejectedValueOnce(locked)
+        .mockRejectedValueOnce(locked);
+      const reported = () =>
+        mocks.capture.mock.calls.filter(([, ctx]) => ctx?.stage === 'scheduled-reconcile').length;
+      await vi.advanceTimersByTimeAsync(COLD_AT - Date.now() + 1_000);
+      expect(reported()).toBe(1);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+      expect(reported()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+
+    it('keeps one check per run: a later schedule replaces the earlier one', async () => {
+      const { warm } = await parkWarmAheadOfAStart();
+      const ticket = admissionOf(warm.run.id)!.ticket;
+      scheduleFlowReconcile(warm.run.id, ticket, COLD_AT + 10 * 60_000);
+      await vi.advanceTimersByTimeAsync(COLD_AT - Date.now() + 5 * 60_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+  });
+  it('releases a human wait still holding its slot at boot, and gives a dead release its slot back', async () => {
+    const held = await requestFlowStart(startInput('held-at-boot'));
+    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledOnce());
+    persistHumanWait(held.run.id);
+    expect(admissionOf(held.run.id)).toMatchObject({ state: 'active' });
+    const queued = await requestFlowStart(startInput('queued-at-boot'));
+
+    await recoverFlowAdmissions();
+    expect(admissionOf(held.run.id)).toMatchObject({ state: 'released' });
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenLastCalledWith(queued.run.id, expect.any(Number)),
+    );
+
+    persistHumanWait(queued.run.id);
+    const live = await controller.getLiveForRun(queued.run.id);
+    await controller.beginRelease(live!.ticket);
+    await recoverFlowAdmissions();
+    expect(admissionOf(queued.run.id)).toMatchObject({ state: 'active' });
+  });
   it('keeps an agent hand-off active while its Flow task is pending', async () => {
     mocks.dispatcher.mockImplementationOnce(async (flowRunId) => persistWait(flowRunId, 'pending'));
     const first = await requestFlowStart(startInput('agent-handoff'));
@@ -648,7 +838,6 @@ describe('Flow admission runtime recovery', () => {
       expect.objectContaining({
         action: 'resume',
         node_run_id: 'resume-node-run',
-        continuation: true,
       }),
       expect.any(Number),
     );
@@ -948,5 +1137,56 @@ describe('beginTerminalRelease', () => {
     const newer = admit(settled.flowRunId, 'active');
     expect(beginTerminalRelease(db, settled.ticket)).toBeNull();
     expect(slot(newer)?.state).toBe('active');
+  });
+});
+
+describe('starting a reviewed Flow plan (sc-4986)', () => {
+  async function planReadyRun(key: string) {
+    mocks.dispatcher.mockImplementationOnce(async (flowRunId) =>
+      persistWait(flowRunId, 'plan_ready'),
+    );
+    const { run } = await requestFlowStart(startInput(key));
+    await vi.waitFor(async () => expect(await hasActiveFlowAdmission(run.id)).toBe(true));
+    return { flowRunId: run.id, taskId: `${run.id}-task` };
+  }
+  const taskStatus = (taskId: string) =>
+    db.select().from(tasks).where(eq(tasks.id, taskId)).get()?.status;
+  const startPlan = (taskId: string) =>
+    transitionFlowRun(() => startPlanExecutionCommand(db, taskId, 'machine'));
+
+  it('refuses a plan whose admission is lost after the check and before the write', async () => {
+    const { flowRunId, taskId } = await planReadyRun('lost-between');
+    // The old router's separate check passes here...
+    expect(await hasActiveFlowAdmission(flowRunId)).toBe(true);
+    // ...then a Cancel commits and releases before the write.
+    db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+    await requestFlowAdmissionRelease(flowRunId);
+    expect(await hasActiveFlowAdmission(flowRunId)).toBe(false);
+
+    await expect(startPlan(taskId)).resolves.toEqual({
+      task: null,
+      reason: 'flow_admission_lost',
+    });
+    expect(taskStatus(taskId)).toBe('plan_ready');
+  });
+
+  it('refuses a paused run whose slot was released, with the run itself still live', async () => {
+    const { flowRunId, taskId } = await planReadyRun('paused-release');
+    // Release takes an active slot whatever the run status; the paused run stays un-terminal.
+    await requestFlowAdmissionRelease(flowRunId);
+    expect(await controller.getLiveForRun(flowRunId)).toMatchObject({ state: 'releasing' });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get()?.status).toBe(
+      'paused',
+    );
+
+    await expect(startPlan(taskId)).resolves.toMatchObject({ reason: 'flow_admission_lost' });
+    expect(taskStatus(taskId)).toBe('plan_ready');
+  });
+
+  it('starts the plan while the paused run still holds its slot', async () => {
+    const { flowRunId, taskId } = await planReadyRun('held');
+    const { task } = await startPlan(taskId);
+    expect(task).toMatchObject({ status: 'running' });
+    expect(await hasActiveFlowAdmission(flowRunId)).toBe(true);
   });
 });

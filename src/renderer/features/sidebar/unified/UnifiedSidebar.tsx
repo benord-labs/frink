@@ -1,13 +1,14 @@
 /* eslint-disable max-lines, max-lines-per-function */
 /** Unified chat sidebar with navigation, project tree, drag-and-drop, and footer controls. */
 
-import * as Sentry from '@sentry/electron/renderer';
+import { keepPreviousData } from '@tanstack/react-query';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
   forwardRef,
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -16,21 +17,25 @@ import {
 import { toast } from 'sonner';
 import type { SidebarBatchGroup } from '../../../../shared/types/flows/sidebar-batch-group';
 import { useSettingsNavigation } from '../../../hooks/useSettingsNavigation';
-import { activeOverlayAtom } from '../../../lib/atoms';
+import { activeOverlayAtom, hideFlowChatsAtom } from '../../../lib/atoms';
 import {
   exitDestinationForSidebarNavigationAtom,
   flowsDashboardActiveAtom,
 } from '../../../lib/atoms/agent-navigation-atoms';
 import { cleanupChatScopedState } from '../../../lib/atoms/atom-family-factory';
 import { useArchiveWindowEvents } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
-import { useTaskAwareArchive } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
+import { useChatArchive } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
+import { useOpenChatRows } from '../../../lib/hooks/sidebar-open-chats/use-open-chat-rows';
 import { usePendingPlanIds } from '../../../lib/hooks/use-sidebar-pending-plan-ids';
 import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
-import { trpc, trpcClient } from '../../../lib/trpc';
+import { trpc } from '../../../lib/trpc';
+import { fuzzyFilter } from '../../../lib/utils/fuzzy-match';
 import { hasModifiedFiles } from '../../../lib/utils/git-status';
+import { useAwaitingApprovals } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import { useWorkQueueExitAction } from '../../../lib/work-queue/use-work-queue-exit-action';
 import {
+  agentsSidebarOpenAtom,
   agentsUnseenChangesAtom,
   loadingSubChatsAtom,
   NEW_CHAT_PANE,
@@ -59,13 +64,13 @@ import {
   SidebarHeader,
   SidebarNav,
 } from './components';
-import { PAGINATION, SIDEBAR_TRACKED_TASK_STATUSES, STRINGS, TIMING } from './constants';
+import { PAGINATION, STRINGS, TIMING } from './constants';
 import {
   toastPartialFailure,
   useBulkChatActions,
 } from '../../../lib/hooks/sidebar-bulk-chats/use-bulk-chat-actions';
 import { useChatDnd } from './hooks/use-chat-dnd';
-import { useDeleteConfirm } from './hooks/use-delete-confirm';
+import { useDeleteConfirm } from '../../../lib/hooks/sidebar-delete-confirm/use-delete-confirm';
 import { useExpansionState } from './hooks/use-expansion-state';
 import { useGroupedProjects } from './hooks/use-grouped-projects';
 import {
@@ -73,13 +78,16 @@ import {
   applyChatRenameToSidebarMaps,
   applyChatRestoreToSidebarMaps,
   applyForkInsertToSidebarMaps,
+  applyOpenChatActivityToSidebarMaps,
   applyPinToggleToSidebarMaps,
+  buildChatCountByProjectMap,
   computeFolderSnapshot,
   forkMutationResultToSidebarItem,
   invalidateBatchViews,
   refetchListCountsAndSyncFolderSnapshots,
   removeChatIdsFromSidebarMaps,
   resolveSidebarFolderKeyForProjectId,
+  shouldShowFlowChatsFilter,
   SIDEBAR_GENERAL_COUNT_KEY,
 } from './hooks/use-sidebar-chat-cache';
 import { useSidebarNavigation } from './hooks/use-sidebar-navigation';
@@ -92,7 +100,12 @@ import type {
   UnifiedSidebarHandle,
   UnifiedSidebarProps,
 } from './types';
-import type { FolderCursor, SidebarChatListItem, SidebarPolledTask } from './utils';
+import type {
+  ActiveFolderChat,
+  FolderCursor,
+  SidebarChatListItem,
+  SidebarPolledTask,
+} from './utils';
 import {
   buildChatReasonMap,
   buildSidebarActivityMaps,
@@ -101,7 +114,6 @@ import {
   extractErrorMessage,
   mergeChatsById,
   normalizeCursor,
-  sameSidebarTasks,
 } from './utils';
 import { unifiedSidebarPropsAreEqual } from './utils/chat-equality';
 import { createFolderLoadMoreSyncGuard } from './utils/folder-load-more-sync-guard';
@@ -110,9 +122,9 @@ export type { UnifiedSidebarHandle } from './types';
 const GENERAL_FOLDER_KEY = STRINGS.GENERAL_CHATS;
 const SIDEBAR_CHAT_LOAD_TOAST_ID = 'sidebar-chat-load-error';
 const CHAT_LOAD_TOAST_COOLDOWN_MS = 5000;
-const SIDEBAR_TASK_STATUS_QUERY_LIMIT = 200;
-const SIDEBAR_ACTIVE_TASK_MAX_PAGES = 3;
-const SIDEBAR_ACTIVE_TASK_MAX_ITEMS = 600;
+/** Stable identities for the pre-load render, so the activity maps don't rebuild every render. */
+const NO_ACTIVE_TASKS: SidebarPolledTask[] = [];
+const NO_ACTIVE_CHATS: ActiveFolderChat[] = [];
 /** `listPinned.fetch` failed; used so delete flows can show a specific toast (not generic project/folder). */
 const CHAT_PIN_LIST_LOAD_ERROR = 'CHAT_PIN_LIST_LOAD_ERROR';
 /** Stable identity for the pre-load render, so the archived section and footer badge don't churn. */
@@ -121,12 +133,18 @@ const NO_ARCHIVED_CHATS: Array<{ id: string; name: string | null }> = [];
 function isChatPinListLoadError(err: unknown): boolean {
   return err instanceof Error && (err as { code?: string }).code === CHAT_PIN_LIST_LOAD_ERROR;
 }
+function chatSearchText(chat: { name?: string | null; branch?: string | null }): string {
+  return `${chat.name ?? ''} ${chat.branch ?? ''}`;
+}
 const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps>(
+  // Reason: pre-existing size; the audit misreads it as new whenever coverage data is supplied.
+  // fallow-ignore-next-line complexity
   function UnifiedSidebar({ onToggleSidebar, isMobileFullscreen = false, onChatSelect }, ref) {
     const [searchQuery, setSearchQuery] = useState('');
+    const isSearchActive = searchQuery.trim().length > 0;
     const searchInputRef = useRef<HTMLInputElement>(null);
     const treeContainerRef = useRef<HTMLDivElement>(null);
-    const { askDelete, confirmDialog } = useDeleteConfirm();
+    const { askDelete, confirmDialog } = useDeleteConfirm(STRINGS.UNTITLED_CHAT);
     const [chatSelection] = useState(createIdSelectionStore);
     const workQueueTriggerRef = useRef<HTMLButtonElement>(null);
     const flowsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -152,13 +170,11 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const [taskAwareActionDialog, setTaskAwareActionDialog] = useState<TaskAwareActionDialogState>({
       open: false,
       mode: 'single',
-      operation: 'archive',
+      operation: 'delete',
       chatIds: [],
       taskIds: [],
       totalChats: 0,
     });
-    const [activeTasks, setActiveTasks] = useState<SidebarPolledTask[]>([]);
-    const [activeTasksHasMore, setActiveTasksHasMore] = useState(false);
     const taskAwareActionDialogRef = useRef(taskAwareActionDialog);
     taskAwareActionDialogRef.current = taskAwareActionDialog;
 
@@ -171,18 +187,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       setFolderCountSnapshotByKey({});
       setFolderLoadingByKey({});
     }, []);
-
-    const activityBump = useAtomValue(sidebarChatActivityBumpAtom);
-    useEffect(() => {
-      if (!activityBump) return;
-      const bumpDate = new Date(activityBump.at);
-      setFolderChatsByKey((prev) =>
-        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
-      );
-      setPinnedChatsByKey((prev) =>
-        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
-      );
-    }, [activityBump]);
 
     // Async chat-name generation: patch in-memory sidebar maps when the main
     // process broadcasts a new title. The tRPC cache invalidation handled by
@@ -215,9 +219,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     }, []);
 
     useImperativeHandle(ref, () => ({
-      focus: () => {
-        treeContainerRef.current?.focus();
-      },
+      focus: () => focusActiveItem(),
       focusWorkQueueTrigger: () => {
         workQueueTriggerRef.current?.focus();
       },
@@ -227,6 +229,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     // Atoms
     const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom);
     const setShowNewChatForm = useSetAtom(showNewChatFormAtom);
+    const setSidebarOpen = useSetAtom(agentsSidebarOpenAtom);
     const { openSettings, openSettingsTab } = useSettingsNavigation();
     const [activeOverlay, setActiveOverlay] = useAtom(activeOverlayAtom);
     // Only the Flows dashboard renders beside the sidebar; the editor is a full-width takeover.
@@ -239,6 +242,11 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const pendingQuestions = useAtomValue(pendingUserQuestionsAtom);
     const [isFilesSidebarOpen, setIsFilesSidebarOpen] = useAtom(filesSidebarOpenAtom);
     const selectedProject = useAtomValue(selectedProjectAtom);
+    const hideFlowChats = useAtomValue(hideFlowChatsAtom);
+    const hideFlowChatsRef = useRef(hideFlowChats);
+    hideFlowChatsRef.current = hideFlowChats;
+    /** Bumped on every filter flip, so a fetch begun under an earlier flip is dropped. */
+    const filterGenerationRef = useRef(0);
     const chatIds = useAtomValue(splitViewChatIdsAtom);
     const splitViewChatIdsRef = useRef(chatIds);
     splitViewChatIdsRef.current = chatIds;
@@ -268,6 +276,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       }
       return map;
     }, [chatIds]);
+    const openChats = useOpenChatRows(isSplitActive ? chatPaneMap : null, selectedChatId, TIMING);
 
     // Show files button when a project is selected AND not in split view.
     const showFilesButton = Boolean(selectedProject?.path) && !isSplitActive;
@@ -288,50 +297,36 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       refetchInterval: TIMING.CHAT_POLL_INTERVAL_MS,
       structuralSharing: true,
     });
-    const chatCountByProject = useMemo(() => {
-      const map = new Map<string, number>();
-      const counts = Array.isArray(rawChatCounts) ? rawChatCounts : [];
-      for (const item of counts) {
-        const key = item.projectId ?? SIDEBAR_GENERAL_COUNT_KEY;
-        map.set(key, item.count);
-      }
-      return map;
-    }, [rawChatCounts]);
-    const chatCountByProjectRef = useRef(chatCountByProject);
-    chatCountByProjectRef.current = chatCountByProject;
+    const chatCountByProject = useMemo(
+      () => buildChatCountByProjectMap(rawChatCounts, hideFlowChats),
+      [rawChatCounts, hideFlowChats],
+    );
+    const rawChatCountsRef = useRef(rawChatCounts);
+    rawChatCountsRef.current = rawChatCounts;
 
-    /**
-     * Batch group summaries — conditionally polled only when batches exist.
-     * Returns [] initially; once fetched, polls on the standard interval only when
-     * the last result was non-empty (avoids unnecessary queries for users without batches).
-     */
-    const { data: rawBatchGroups } = trpc.chats.listBatchGroups.useQuery(undefined, {
-      refetchInterval: (query) => {
-        const data = query.state.data;
-        const hasBatches = Array.isArray(data) && data.length > 0;
-        return hasBatches ? TIMING.CHAT_POLL_INTERVAL_MS : false;
-      },
-      structuralSharing: true,
-    });
-    const batchGroupsMap = useMemo(() => {
-      const map = new Map<string, SidebarBatchGroup>();
-      if (!Array.isArray(rawBatchGroups)) return map;
-      for (const group of rawBatchGroups) {
-        map.set(group.batch_id, group);
-      }
-      return map;
-    }, [rawBatchGroups]);
-    const chats = useMemo(
+    const loadedChats = useMemo(
       () =>
         mergeChatsById([
+          // First, so a loaded row (patched locally on rename, pin and activity) wins.
+          ...openChats,
           ...Object.values(folderChatsByKey).flat(),
           ...Object.values(pinnedChatsByKey).flat(),
         ]),
-      [folderChatsByKey, pinnedChatsByKey],
+      [openChats, folderChatsByKey, pinnedChatsByKey],
     );
-    const pendingPlanIds = usePendingPlanIds(chats, livePlanApprovals, TIMING);
+    // Search covers every chat, not only each folder's loaded pages; loaded rows still win.
+    const { data: searchCorpus } = trpc.chats.list.useQuery({}, { enabled: isSearchActive });
+    const chats = useMemo(() => {
+      if (!isSearchActive || !Array.isArray(searchCorpus)) return loadedChats;
+      const corpus = hideFlowChats ? searchCorpus.filter((chat) => !chat.taskId) : searchCorpus;
+      return mergeChatsById([...corpus, ...loadedChats]);
+    }, [isSearchActive, searchCorpus, loadedChats, hideFlowChats]);
+    const pendingPlanIds = usePendingPlanIds(loadedChats, livePlanApprovals, TIMING);
     const { data: rawArchivedChats } = trpc.chats.listArchived.useQuery(undefined);
-    const archivedChats = Array.isArray(rawArchivedChats) ? rawArchivedChats : NO_ARCHIVED_CHATS;
+    const archivedChats = useMemo(() => {
+      if (!Array.isArray(rawArchivedChats)) return NO_ARCHIVED_CHATS;
+      return hideFlowChats ? rawArchivedChats.filter((chat) => !chat.taskId) : rawArchivedChats;
+    }, [rawArchivedChats, hideFlowChats]);
     // Collapse per-flow so the sidebar work-queue badge numbers match the Work Queue's own counts.
     const { data: taskCounts } = trpc.tasks.listCounts.useQuery(
       { collapseByFlow: true },
@@ -340,108 +335,38 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         structuralSharing: true,
       },
     );
-    const { data: rawActiveTasksPage } = trpc.tasks.listPaginated.useQuery(
-      {
-        statuses: [...SIDEBAR_TRACKED_TASK_STATUSES],
-        limit: SIDEBAR_TASK_STATUS_QUERY_LIMIT,
-        cursor: null,
-      },
-      {
-        refetchInterval: TIMING.CHAT_POLL_INTERVAL_MS,
-        structuralSharing: true,
-      },
-    );
-    // Active chats with folder + batch (listActiveChats); its live-flow flag keeps the 'Run' badge on a
-    // flow chat through taskless windows, and folder dots count chats whose rows are not loaded.
-    const { data: activeChats } = trpc.chats.listActiveChats.useQuery(undefined, {
+    const approvalCount = useAwaitingApprovals().length;
+    // Every non-archived chat with unfinished work or a live flow run, with its tasks' statuses.
+    // Uncapped, so a chat's pill never depends on how many other tasks are waiting.
+    const { data: sidebarActivity } = trpc.chats.listActiveChats.useQuery(undefined, {
       refetchInterval: TIMING.CHAT_POLL_INTERVAL_MS,
       structuralSharing: true,
     });
-    useEffect(() => {
-      let isCancelled = false;
-
-      const loadAllActiveTaskPages = async () => {
-        try {
-          // SAFETY: tasks.listPaginated selects the full task row; SidebarPolledTask names the
-          // subset the sidebar reads, all of it optional, so a missing column narrows to undefined.
-          const firstItems = Array.isArray(rawActiveTasksPage?.items)
-            ? (rawActiveTasksPage.items as SidebarPolledTask[])
-            : [];
-          const byId = new Map(firstItems.map((task) => [task.id, task]));
-
-          let cursor = rawActiveTasksPage?.nextCursor ?? null;
-          const seenCursors = new Set<string>();
-          let pagesLoaded = 1;
-          let truncatedByLimit = false;
-          let hasMore = Boolean(rawActiveTasksPage?.hasMore || cursor);
-          while (cursor) {
-            const cursorKey = `${cursor.createdAt}:${cursor.id}`;
-            if (seenCursors.has(cursorKey)) {
-              hasMore = true;
-              break;
-            }
-            seenCursors.add(cursorKey);
-            if (
-              pagesLoaded >= SIDEBAR_ACTIVE_TASK_MAX_PAGES ||
-              byId.size >= SIDEBAR_ACTIVE_TASK_MAX_ITEMS
-            ) {
-              truncatedByLimit = true;
-              hasMore = true;
-              break;
-            }
-
-            const nextPage = await trpcClient.tasks.listPaginated.query({
-              statuses: [...SIDEBAR_TRACKED_TASK_STATUSES],
-              limit: SIDEBAR_TASK_STATUS_QUERY_LIMIT,
-              cursor,
-            });
-            // SAFETY: same procedure as the first page above, so the same row shape.
-            const nextItems = Array.isArray(nextPage?.items)
-              ? (nextPage.items as SidebarPolledTask[])
-              : [];
-            for (const task of nextItems) {
-              if (byId.size >= SIDEBAR_ACTIVE_TASK_MAX_ITEMS) {
-                truncatedByLimit = true;
-                hasMore = true;
-                break;
-              }
-              byId.set(task.id, task);
-            }
-            pagesLoaded += 1;
-            if (!nextPage?.hasMore || !nextPage.nextCursor) {
-              hasMore = false;
-              break;
-            }
-            if (truncatedByLimit) break;
-            cursor = nextPage.nextCursor;
-            hasMore = true;
-          }
-
-          if (isCancelled) return;
-          const nextTasks = Array.from(byId.values());
-          setActiveTasks((prev) => (sameSidebarTasks(prev, nextTasks) ? prev : nextTasks));
-          setActiveTasksHasMore(hasMore || truncatedByLimit);
-        } catch (error) {
-          if (isCancelled) return;
-          // The walk degrades to page 1 in silence, so a persistent failure would just look like
-          // stale task badges. Capture it; the truncation is otherwise invisible.
-          Sentry.captureException(error, {
-            tags: { source: 'UnifiedSidebar', area: 'sidebar-task-pagination' },
-          });
-          // SAFETY: same procedure as the first page above, so the same row shape.
-          const fallbackTasks = Array.isArray(rawActiveTasksPage?.items)
-            ? (rawActiveTasksPage.items as SidebarPolledTask[])
-            : [];
-          setActiveTasks((prev) => (sameSidebarTasks(prev, fallbackTasks) ? prev : fallbackTasks));
-          setActiveTasksHasMore(Boolean(rawActiveTasksPage?.hasMore));
-        }
-      };
-
-      void loadAllActiveTaskPages();
-      return () => {
-        isCancelled = true;
-      };
-    }, [rawActiveTasksPage]);
+    const activeTasks = sidebarActivity?.tasks ?? NO_ACTIVE_TASKS;
+    const activeChats = sidebarActivity?.chats ?? NO_ACTIVE_CHATS;
+    // Group summaries for the groups on screen: loaded rows, and active chats beyond the loaded page.
+    const groupIds = useMemo(
+      () =>
+        [...new Set([...loadedChats, ...activeChats].flatMap((chat) => chat.batchId ?? []))].sort(),
+      [loadedChats, activeChats],
+    );
+    const { data: rawBatchGroups } = trpc.chats.listBatchGroups.useQuery(
+      { groupIds },
+      {
+        enabled: groupIds.length > 0,
+        refetchInterval: TIMING.CHAT_POLL_INTERVAL_MS,
+        placeholderData: keepPreviousData,
+        structuralSharing: true,
+      },
+    );
+    const batchGroupsMap = useMemo(() => {
+      const map = new Map<string, SidebarBatchGroup>();
+      if (!Array.isArray(rawBatchGroups)) return map;
+      for (const group of rawBatchGroups) {
+        map.set(group.batch_id, group);
+      }
+      return map;
+    }, [rawBatchGroups]);
     const utils = trpc.useUtils();
     /** tRPC `utils.*` procedure objects are new references most renders — callbacks that list them in deps churn and defeat CodebaseItem memo. */
     const utilsRef = useRef(utils);
@@ -461,13 +386,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const pendingReviewCount = (taskCounts?.planReady ?? 0) + (taskCounts?.done ?? 0);
     const runningTaskCount = taskCounts?.running ?? 0;
     const needsAttentionTaskCount =
-      (taskCounts?.needsAttention ?? 0) + (taskCounts?.interrupted ?? 0);
+      (taskCounts?.needsAttention ?? 0) + (taskCounts?.interrupted ?? 0) + approvalCount;
     const failedTaskCount = taskCounts?.failed ?? 0;
 
     // Live flow runs keep their chats `running`, never a premature "Done" (buildChatTaskStatusMap).
     const [chatTaskStatusByChatId, activeChatsByFolder] = useMemo(
-      () => buildSidebarActivityMaps(activeTasks, activeChats ?? []),
-      [activeTasks, activeChats],
+      () => buildSidebarActivityMaps(activeTasks, activeChats, hideFlowChats),
+      [activeTasks, activeChats, hideFlowChats],
     );
     // The park reason of the task that wins each chat's pill, for its tooltip (buildChatReasonMap).
     const chatReasonByChatId = useMemo(() => buildChatReasonMap(activeTasks), [activeTasks]);
@@ -476,6 +401,30 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       () => (Array.isArray(rawLocalProjects) ? rawLocalProjects : []),
       [rawLocalProjects],
     );
+
+    // An open chat no loaded page holds joins its folder's list as that folder's newest chat.
+    const insertBumpedOpenChat = useEffectEvent((chatId: string, updatedAt: Date) => {
+      applyOpenChatActivityToSidebarMaps(
+        setFolderChatsByKey,
+        openChats,
+        transformedProjects,
+        GENERAL_FOLDER_KEY,
+        chatId,
+        updatedAt,
+      );
+    });
+    const activityBump = useAtomValue(sidebarChatActivityBumpAtom);
+    useEffect(() => {
+      if (!activityBump) return;
+      const bumpDate = new Date(activityBump.at);
+      setFolderChatsByKey((prev) =>
+        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
+      );
+      setPinnedChatsByKey((prev) =>
+        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
+      );
+      insertBumpedOpenChat(activityBump.chatId, bumpDate);
+    }, [activityBump]);
 
     const folderDescriptors = useMemo(() => {
       const byKey = new Map<string, FolderDescriptor>();
@@ -549,24 +498,19 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       pendingQuestions: pendingQuestionIds,
     });
 
-    // Filter by search
+    // Filter by search: a folder stays when it has matching chats or its own name matches.
     const filteredCodebases = useMemo(() => {
-      if (!searchQuery.trim()) return groupedCodebases;
-      const query = searchQuery.toLowerCase();
-      return groupedCodebases
-        .map((codebase) => ({
-          ...codebase,
-          chats: codebase.chats.filter(
-            (chat) =>
-              chat.name?.toLowerCase().includes(query) ||
-              chat.branch?.toLowerCase().includes(query),
-          ),
-        }))
-        .filter(
-          (codebase) =>
-            codebase.displayName.toLowerCase().includes(query) || codebase.chats.length > 0,
-        );
-    }, [groupedCodebases, searchQuery]);
+      if (!isSearchActive) return groupedCodebases;
+      const namedFolders = new Set(
+        fuzzyFilter(groupedCodebases, searchQuery, (codebase) => codebase.displayName),
+      );
+      return groupedCodebases.flatMap((codebase) => {
+        const matches = fuzzyFilter(codebase.chats, searchQuery, chatSearchText);
+        return matches.length > 0 || namedFolders.has(codebase)
+          ? [{ ...codebase, chats: matches }]
+          : [];
+      });
+    }, [groupedCodebases, searchQuery, isSearchActive]);
 
     // ========== Expansion State ==========
     const { isCodebaseExpanded, toggleCodebase, collapseAll } = useExpansionState();
@@ -612,6 +556,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refs + setters only; see comment above
     const fetchFolderPage = useCallback(async (folder: FolderDescriptor, reset: boolean) => {
       const folderKey = folder.key;
+      const generation = filterGenerationRef.current;
       setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: true }));
       try {
         const cursor = reset
@@ -626,7 +571,10 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           projectIds: folder.projectIds,
           limit: PAGINATION.FOLDER_CHAT_PAGE_SIZE,
           cursor,
+          hideFlowChats: hideFlowChatsRef.current,
         });
+        // The filter flipped mid-fetch: this page belongs to a list the reset already dropped.
+        if (generation !== filterGenerationRef.current) return;
 
         setFolderChatsByKey((prev) => {
           const existing = reset ? [] : (prev[folderKey] ?? []);
@@ -648,15 +596,21 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           setFolderCountSnapshotByKey((prev) => ({ ...prev, [folderKey]: snapshot }));
         }
       } finally {
-        setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: false }));
+        // A flip's reset already cleared this flag, and a newer fetch may have set it again.
+        if (generation === filterGenerationRef.current) {
+          setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: false }));
+        }
       }
     }, []);
 
     const fetchPinnedForFolder = useCallback(async (folder: FolderDescriptor) => {
+      const generation = filterGenerationRef.current;
       try {
         const result = await utilsRef.current.chats.listPinned.fetch({
           projectIds: folder.projectIds,
+          hideFlowChats: hideFlowChatsRef.current,
         });
+        if (generation !== filterGenerationRef.current) return;
         setPinnedChatsByKey((prev) => ({ ...prev, [folder.key]: result }));
       } catch (err) {
         // Display-only: avoid stale PINNED rows. Bulk delete / project delete use
@@ -680,6 +634,15 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         description: detail && detail !== fallback ? detail : undefined,
       });
     }, []);
+
+    // Flipping the Flow-chat filter starts every folder's pages over under the new filter.
+    const lastHideFlowChatsRef = useRef(hideFlowChats);
+    useEffect(() => {
+      if (lastHideFlowChatsRef.current === hideFlowChats) return;
+      lastHideFlowChatsRef.current = hideFlowChats;
+      filterGenerationRef.current += 1;
+      resetFolderPaginationState();
+    }, [hideFlowChats, resetFolderPaginationState]);
 
     // Load initial page for each folder with chats.
     useEffect(() => {
@@ -791,6 +754,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         u.chats.listCounts.invalidate(),
         u.chats.listByFolder.invalidate(),
         u.chats.listPinned.invalidate(),
+        u.chats.listByIds.invalidate(),
         u.chats.listBatchGroups.invalidate(),
         u.chats.listByBatch.invalidate(),
         u.chats.listArchived.invalidate(),
@@ -806,12 +770,14 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const syncSidebarCountsOrFullRefresh = useCallback(
       async (warningTitle: string) => {
         try {
+          void utilsRef.current.chats.listByIds.invalidate();
           await utilsRef.current.chats.listArchived.invalidate();
           await refetchListCountsAndSyncFolderSnapshots(
             utilsRef.current,
             folderDescriptors,
             setFolderCountSnapshotByKey,
             SIDEBAR_GENERAL_COUNT_KEY,
+            hideFlowChatsRef.current,
           );
         } catch (refetchErr) {
           toast.warning(`${warningTitle}; refreshing sidebar`, {
@@ -943,6 +909,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     );
     const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
     const [showArchived, setShowArchived] = useState(false);
+    const showFlowChatsFilter = shouldShowFlowChatsFilter({
+      hideFlowChats,
+      showArchived,
+      chatCounts: rawChatCounts,
+      archivedChats: rawArchivedChats,
+    });
 
     // Archive-mode toggle from the `toggle-archived` hotkey; the footer button flips the same state.
     useWindowEvent('sidebar:toggle-archived', () => setShowArchived((shown) => !shown));
@@ -1039,6 +1011,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         await Promise.all([
           u.chats.list.invalidate(),
           u.chats.get.invalidate({ id: updated.id }),
+          u.chats.listByIds.invalidate(),
           invalidateBatchViews(u),
         ]);
         setChatToRename(null);
@@ -1127,7 +1100,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     );
     const invalidateSidebarTrackedTasks = useCallback(async () => {
       const u = utilsRef.current;
-      await Promise.all([u.tasks.listPaginated.invalidate(), u.tasks.listCounts.invalidate()]);
+      await Promise.all([u.chats.listActiveChats.invalidate(), u.tasks.listCounts.invalidate()]);
     }, []);
 
     const {
@@ -1145,20 +1118,25 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       (chatIds: Iterable<string>) => {
         const ids = [...chatIds];
         removeChatIdsFromSidebarMaps(setFolderChatsByKey, setPinnedChatsByKey, ids);
+        utilsRef.current.chats.list.setData({}, (prev) => prev?.filter((c) => !ids.includes(c.id)));
       },
-      // setState dispatchers are stable for the component lifetime.
+      // setState dispatchers and utilsRef are stable for the component lifetime.
       [],
     );
 
     const archiveSingleChat = useCallback(
-      async (chatId: string, options?: { killTerminals?: boolean }) => {
+      async (chatId: string) => {
         // Clear panes eagerly before async mutation to avoid stale splitView snapshot
-        clearPanesForChat(chatId);
-        await archiveChatMutRef.current.mutateAsync({
-          id: chatId,
-          ...(options?.killTerminals !== undefined ? { killTerminals: options.killTerminals } : {}),
-        });
+        const clearedPanes = clearPanesForChat(chatId);
+        try {
+          await archiveChatMutRef.current.mutateAsync({ id: chatId });
+        } catch (error) {
+          // Archive refuses when it can't stop the chat's task; the chat is still live, so reopen it.
+          for (const paneIndex of clearedPanes) restorePaneAt(paneIndex, chatId);
+          throw error;
+        }
         removeChatsFromLoadedFolders([chatId]);
+        setSelectedChatId((current) => (current === chatId ? null : current));
         // The local map patch above covers folder + pinned; batch views drop the chat on refetch.
         const u = utilsRef.current;
         await Promise.allSettled([
@@ -1167,39 +1145,34 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           syncSidebarCountsOrFullRefresh('Chat archived'),
         ]);
         setShowArchived(true);
-        setSelectedChatId((current) => (current === chatId ? null : current));
         // Last: dropping per-chat atom state while a pane is still mounted on this id
         // would let its next render re-create the entry we just removed.
         cleanupChatScopedState(chatId);
       },
       [
         clearPanesForChat,
+        restorePaneAt,
         removeChatsFromLoadedFolders,
         syncSidebarCountsOrFullRefresh,
         setSelectedChatId,
       ],
     );
 
-    /**
-     * Warns when a chat's task links can't be resolved, and hands off to the task-aware
-     * confirm dialog when live tasks would be affected. Returns true when the dialog has
-     * taken over, meaning the caller must not proceed with the destructive action.
-     */
+    /** Delete only: true when the task-aware dialog took over, so the caller must not delete. */
     const deferToTaskAwareDialog = useCallback(
-      async (chatId: string, operation: 'archive' | 'delete'): Promise<boolean> => {
+      async (chatId: string): Promise<boolean> => {
         const { activeTasks, unresolvedTaskLinks } =
           await getActiveLinkedTasksForChatIdsWithFallback([chatId]);
-        const verb = operation === 'archive' ? 'Archiving' : 'Deleting';
         if (unresolvedTaskLinks > 0) {
           toast.warning('Linked task details unavailable', {
-            description: `${verb} chat only. Open Work Queue to manage task state manually.`,
+            description: 'Deleting chat only. Open Work Queue to manage task state manually.',
           });
         }
         if (activeTasks.length === 0) return false;
         setTaskAwareActionDialog({
           open: true,
           mode: 'single',
-          operation,
+          operation: 'delete',
           chatIds: [chatId],
           taskIds: activeTasks.map((task) => task.taskId),
           totalChats: 1,
@@ -1209,21 +1182,21 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       [getActiveLinkedTasksForChatIdsWithFallback],
     );
 
-    const handleChatArchive = useTaskAwareArchive(deferToTaskAwareDialog, archiveSingleChat);
+    const handleChatArchive = useChatArchive(archiveSingleChat);
 
     const deleteSingleChat = useCallback(
       async (chatId: string, checkActiveTasks = false) => {
-        if (checkActiveTasks && (await deferToTaskAwareDialog(chatId, 'delete'))) return;
+        if (checkActiveTasks && (await deferToTaskAwareDialog(chatId))) return;
         const clearedPanes = clearPanesForChat(chatId);
         try {
           await deleteChatMutRef.current.mutateAsync({ id: chatId });
           removeChatsFromLoadedFolders([chatId]);
+          setSelectedChatId((current) => (current === chatId ? null : current));
           // A stale batch row outlives its tasks and reads as a grey "cancelled" row.
           await Promise.all([
             invalidateBatchViews(utilsRef.current),
             syncSidebarCountsOrFullRefresh('Chat deleted'),
           ]);
-          setSelectedChatId((current) => (current === chatId ? null : current));
           cleanupChatScopedState(chatId);
         } catch (error) {
           for (const paneIndex of clearedPanes) restorePaneAt(paneIndex, chatId);
@@ -1365,7 +1338,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const archiveFocusedChat = useArchiveWindowEvents({
       focusedChatId: effectiveSelectedChatId === NEW_CHAT_PANE ? null : effectiveSelectedChatId,
       isChatCovered: activeOverlay !== null,
-      deferToTaskAwareDialog,
       archiveSingleChat,
       restoreChat: handleChatRestore,
     });
@@ -1387,7 +1359,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       getActiveLinkedTasks: getActiveLinkedTasksForChatIdsWithFallback,
       openTaskAwareDialog: setTaskAwareActionDialog,
     });
-    const { deleteChatsBatch } = bulk;
+    const { deleteChatsBatch, runChatsAtomically } = bulk;
     const {
       activeChat,
       overProjectId,
@@ -1400,12 +1372,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       () => ({ handleDragStart, handleDragOver, handleDragEnd, handleDragCancel }),
       [handleDragStart, handleDragOver, handleDragEnd, handleDragCancel],
     );
-    const { focusedItemId } = useSidebarNavigation(treeContainerRef, {
+    const { focusedItemId, focusActiveItem } = useSidebarNavigation(treeContainerRef, {
       onSelectChat: wrapWorkQueueExitAction(handleChatSelect),
       onToggleCodebase: toggleCodebase,
       isCodebaseExpanded,
       isDragging: !!activeChat,
       selectedChatId: effectiveSelectedChatId,
+      codebases: filteredCodebases,
       onSelectionKey: (action) => {
         const ids = [...chatSelection.getSnapshot()];
         if (ids.length === 0) return false;
@@ -1413,6 +1386,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         else void bulk.requestDelete(ids);
         return true;
       },
+    });
+
+    // A pane-header cmd-click activates that pane first; wait two frames so its composer autofocus
+    // runs before the sidebar takes focus.
+    useWindowEvent('sidebar:reveal-active-chat', () => {
+      setSidebarOpen(true);
+      requestAnimationFrame(() => requestAnimationFrame(focusActiveItem));
     });
 
     const fetchAllChatsForFolder = useCallback(async (projectIds: string[] | null) => {
@@ -1454,52 +1434,41 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
 
     const handleProjectDelete = useCallback(
       async (projectId: string) => {
-        const chatCount = chatCountByProjectRef.current.get(projectId) ?? 0;
-
+        // Deleting a project deletes every chat in it, hidden Flow chats included.
+        const chatCount = buildChatCountByProjectMap(rawChatCountsRef.current).get(projectId) ?? 0;
         if (!(await askDelete.project(chatCount))) return;
         try {
-          // Delete chats then the project; refuse while a linked task is still running.
           const { allChats: projectChats } = await fetchAllChatsForFolder([projectId]);
-          const { activeTasks: linkedActiveTasks } =
-            await getActiveLinkedTasksForChatIdsWithFallback(projectChats.map((chat) => chat.id));
-          if (linkedActiveTasks.length > 0) {
+          const chatIds = projectChats.map((chat) => chat.id);
+          const { activeTasks } = await getActiveLinkedTasksForChatIdsWithFallback(chatIds);
+          if (activeTasks.length > 0) {
             toast.error('Project has active task-linked chats', {
               description:
                 'Cancel or finish linked tasks from Work Queue before deleting this project.',
             });
             return;
           }
-          // Optimistic removal: we're committed to deleting now (guards passed), and the
-          // backend delete + chat-batch + folder refresh below can take a moment. Drop the row
-          // from every project-list cache immediately so the sidebar feels instant. The finally
-          // block's invalidate re-fetches the truth — restoring the row if the delete throws.
-          const u = utilsRef.current;
-          const dropDeleted = <T extends { id: string }>(rows: T[] | undefined): T[] | undefined =>
-            Array.isArray(rows) ? rows.filter((p) => p.id !== projectId) : rows;
-          u.projects.list.setData(undefined, dropDeleted);
-
-          await deleteChatsBatch(projectChats, { clearPanesBefore: true });
-          await deleteProjectMutRef.current.mutateAsync({ id: projectId });
+          // Optimistic: drop the row now; `finally` re-fetches it back if the delete throws.
+          utilsRef.current.projects.list.setData(undefined, (rows) =>
+            rows?.filter((p) => p.id !== projectId),
+          );
+          // One transactional delete, never chat-by-chat first; it reports which chats went.
+          const remove = () => deleteProjectMutRef.current.mutateAsync({ id: projectId, chatIds });
+          await runChatsAtomically(projectChats, async () => (await remove()).deletedChatIds);
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Failed to delete project';
-          if (isChatPinListLoadError(err)) {
-            toast.error('Could not load pinned chat list', { description: message });
-            return;
-          }
-          toast.error('Failed to delete project', { description: message });
-          return;
+          const title = isChatPinListLoadError(err)
+            ? 'Could not load pinned chat list'
+            : 'Failed to delete project';
+          toast.error(title, { description: message });
         } finally {
-          // Full reset (not targeted) is required here: deleting a project removes a whole
-          // folder plus N chats at once, so that folder's pagination snapshot is invalid and
-          // refreshSidebarFolders resets it. The optimistic project-list removal above keeps
-          // the UI instant; this re-fetches the truth.
           await invalidateProjectLists();
           await refreshSidebarFolders();
         }
       },
       [
         askDelete,
-        deleteChatsBatch,
+        runChatsAtomically,
         fetchAllChatsForFolder,
         invalidateProjectLists,
         refreshSidebarFolders,
@@ -1641,67 +1610,41 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       setTaskAwareActionDialog((current) => ({ ...current, open: false }));
     }, []);
 
-    const executeTaskAwareAction = useCallback(
-      async (cancelLinkedTasks: boolean) => {
-        const currentDialog = taskAwareActionDialogRef.current;
-        if (!currentDialog.open) return;
+    const executeTaskAwareAction = useCallback(async () => {
+      const currentDialog = taskAwareActionDialogRef.current;
+      if (!currentDialog.open) return;
 
-        closeTaskAwareActionDialog();
+      closeTaskAwareActionDialog();
 
-        const isDeleteOp =
-          currentDialog.operation === 'delete' || currentDialog.operation === 'delete_batch';
-        const shouldCancelTasks = isDeleteOp || cancelLinkedTasks;
-        const keepsTasksRunning = currentDialog.taskIds.length > 0 && !shouldCancelTasks;
-
-        if (shouldCancelTasks && currentDialog.taskIds.length > 0) {
-          await abortTaskChatStreamsBestEffort(currentDialog.chatIds);
-          const { failed } = await cancelTasksBestEffort(currentDialog.taskIds);
-          if (failed > 0) {
-            toast.warning('Some task cancellations failed', {
-              description: `${failed} task${failed === 1 ? '' : 's'} could not be cancelled.`,
-            });
-          }
+      if (currentDialog.taskIds.length > 0) {
+        await abortTaskChatStreamsBestEffort(currentDialog.chatIds);
+        const { failed } = await cancelTasksBestEffort(currentDialog.taskIds);
+        if (failed > 0) {
+          toast.warning('Some task cancellations failed', {
+            description: `${failed} task${failed === 1 ? '' : 's'} could not be cancelled.`,
+          });
         }
+      }
 
-        if (currentDialog.mode === 'single') {
-          const chatId = currentDialog.chatIds[0];
-          if (!chatId) return;
+      if (currentDialog.mode === 'single') {
+        const chatId = currentDialog.chatIds[0];
+        if (!chatId) return;
+        await deleteSingleChat(chatId);
+        return;
+      }
 
-          if (currentDialog.operation === 'archive') {
-            try {
-              await archiveSingleChat(chatId, { killTerminals: !keepsTasksRunning });
-            } catch (error) {
-              toast.error('Failed to archive chat', {
-                description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-              });
-            }
-            return;
-          }
-
-          await deleteSingleChat(chatId);
-          return;
-        }
-
-        if (currentDialog.operation === 'archive_batch') {
-          await bulk.archiveChatsBatch(currentDialog.chatIds, !keepsTasksRunning);
-          return;
-        }
-        const batchChats = currentDialog.chatIds.map((id) => ({ id }));
-        await deleteChatsBatch(batchChats, {
-          clearPanesBefore: true,
-          onPartialFailure: toastPartialFailure('Deleted'),
-        });
-      },
-      [
-        closeTaskAwareActionDialog,
-        abortTaskChatStreamsBestEffort,
-        cancelTasksBestEffort,
-        archiveSingleChat,
-        deleteSingleChat,
-        deleteChatsBatch,
-        bulk.archiveChatsBatch,
-      ],
-    );
+      const batchChats = currentDialog.chatIds.map((id) => ({ id }));
+      await deleteChatsBatch(batchChats, {
+        clearPanesBefore: true,
+        onPartialFailure: toastPartialFailure('Deleted'),
+      });
+    }, [
+      closeTaskAwareActionDialog,
+      abortTaskChatStreamsBestEffort,
+      cancelTasksBestEffort,
+      deleteSingleChat,
+      deleteChatsBatch,
+    ]);
 
     // ========== Render ==========
     return (
@@ -1716,6 +1659,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           onSearchChange={setSearchQuery}
           searchInputRef={searchInputRef}
           showArchived={showArchived}
+          showFlowChatsFilter={showFlowChatsFilter}
           onToggleSidebar={onToggleSidebar}
         />
         {/* Top nav — actions + flag-gated destinations as one borderless vertical list */}
@@ -1747,7 +1691,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           runningTaskCount={runningTaskCount}
           needsAttentionTaskCount={needsAttentionTaskCount}
           failedTaskCount={failedTaskCount}
-          activeTasksHasMore={activeTasksHasMore}
         />
 
         {/* Separator between the nav destinations (Flows / Work Queue) and the projects tree. */}
@@ -1776,7 +1719,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
               <ProjectsTree
                 filteredCodebases={filteredCodebases}
                 searchQuery={searchQuery}
-                isSearchActive={searchQuery.trim().length > 0}
+                isSearchActive={isSearchActive}
                 isCodebaseExpanded={isCodebaseExpanded}
                 toggleCodebase={toggleCodebase}
                 selectedChatId={selectedChatId}
@@ -1785,7 +1728,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
                 onRenameProject={handleProjectRename}
                 onDeleteAllChatsInFolder={handleDeleteAllChatsInFolder}
                 onDeleteBatch={handleDeleteBatch}
-                chatPaneMap={chatPaneMap}
+                chatPaneMap={isSplitActive ? chatPaneMap : undefined}
                 activeDropTargetId={overProjectId}
                 activeChat={activeChat}
                 dndHandlers={dndHandlers}
@@ -1833,8 +1776,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           onNewFolderClose={() => setIsNewFolderDialogOpen(false)}
           onNewFolderConfirm={handleNewFolder}
           taskAwareActionDialog={taskAwareActionDialog}
-          onTaskAwareActionKeepRunning={() => executeTaskAwareAction(false)}
-          onTaskAwareActionCancelAndContinue={() => executeTaskAwareAction(true)}
+          onTaskAwareActionCancelAndContinue={() => void executeTaskAwareAction()}
           onTaskAwareActionClose={closeTaskAwareActionDialog}
         />
         {confirmDialog}

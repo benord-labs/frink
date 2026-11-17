@@ -13,6 +13,7 @@ import { BrowserWindow } from 'electron';
 import log from 'electron-log';
 import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
+import type { AgentRuntime } from '../../../shared/lib/ai-providers';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { getDatabase } from '../db';
 import {
@@ -23,7 +24,7 @@ import {
 } from '../db/repos/chats';
 import {
   getProjectById as getProjectByIdLocal,
-  listProjects as listProjectsLocal,
+  listRealProjects,
 } from '../db/repos/projects';
 import { gitCache } from '../git/cache';
 import { resolveTargetWorktreeForMove } from '../git/resolve-target-worktree';
@@ -33,6 +34,7 @@ import {
   requestMoveChatApproval,
 } from '../socket/streaming/pending-permission/move-chat';
 import * as taskSignal from '../trpc/routers/frink-task-signal';
+import { handleRequestSecretToolCall as handleRequestSecret } from './secret-request';
 import * as toolCatalog from './dynamic-chat-tool-catalog';
 import {
   appendIdentityToEndpointUrl,
@@ -76,15 +78,11 @@ import { type McpToolResult, toolResult } from './tool-result';
  * have to load without). This file already carries that lazy executor
  * dependency, so adding a third module to the chain only widens the cycle.
  */
-const validateFlowWriteViaExecutor: ValidateFlowWrite = async (...args) => {
-  const { validateToolPermission } = await import('../socket/executor');
-  return validateToolPermission(...args);
-};
-
-const requestFlowConsentViaExecutor: RequestFlowConsent = async (request) => {
-  const { requestFlowInvocationConsent } = await import('../socket/executor');
-  return requestFlowInvocationConsent(request);
-};
+const promptGate = () => import('../socket/streaming/pending-permission/validate-tool-permission');
+const validateFlowWriteViaExecutor: ValidateFlowWrite = async (...args) =>
+  (await promptGate()).validateToolPermission(...args);
+const requestFlowConsentViaExecutor: RequestFlowConsent = async (request) =>
+  (await promptGate()).requestFlowInvocationConsent(request);
 
 const flowConsentStore: FlowConsentStore = {
   getFlow: async (id) => (await import('../flows/mcp-cloud-shim')).getFlow(id),
@@ -111,7 +109,7 @@ type ExecutionContext = {
    * the handler refuse a signal whose target can no longer consume it instead of answering ok. */
   signalTaskId?: string | null;
   /** A channel resolves only to a context of its token's runtime. */
-  runtime?: 'claude' | 'codex';
+  runtime?: AgentRuntime;
   /** Per-send Auto consent; never inherited across sends. */
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
@@ -451,13 +449,13 @@ async function handleToolsCall(
       return toolResult(`Invalid arguments: ${parsed.error.message}`, true);
     }
     const query = parsed.data.query;
-    const rows = await listProjectsLocal(getDatabase());
+    const rows = await listRealProjects(getDatabase());
     const list = filterProjectsByQuery(rows, query, 10);
     return toolResult(JSON.stringify({ projects: list }, null, 2));
   }
 
   if (name === 'fetchAllProjects') {
-    const rows = await listProjectsLocal(getDatabase());
+    const rows = await listRealProjects(getDatabase());
     const list = rows.map((p) => ({
       id: p.id,
       name: p.name,
@@ -834,11 +832,10 @@ async function handleToolsCall(
     );
   }
 
-  if (name === 'frink_task_signal') {
-    if (!executionId || !ctx) {
-      return toolResult('frink_task_signal requires an active execution context.', true);
-    }
-    return handleTaskSignalToolCall(ctx, a);
+  if (name === 'frink_task_signal' || name === 'frink_request_secret') {
+    if (!executionId || !ctx) return toolResult(`${name} requires an active execution context.`, true);
+    const handler = name === 'frink_task_signal' ? handleTaskSignalToolCall : handleRequestSecret;
+    return handler(ctx, a);
   }
 
   const flowResult = dispatchFlowToolCall({

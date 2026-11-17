@@ -36,6 +36,87 @@ no OpenAI credentials and makes no model calls on its own account.
   (`scripts/binaries/download-claude-binary.mjs`) into `resources/bin/`, used under Anthropic's
   terms. Claude authenticates with the user's own Anthropic account; Frink stores no key.
 
+## Cursor SDK (`@cursor/sdk`)
+
+- **Source:** https://cursor.com
+- **Bundled:** the `@cursor/sdk` package inside the app, and its macOS and Linux platform packages
+  (`@cursor/sdk-darwin-*`, `@cursor/sdk-linux-*`) in the app's `resources/node_modules/@cursor/`, as
+  Cursor publishes them, under Cursor's terms. Cursor signs in with the user's own Cursor account. The
+  SDK's `LICENSE.md` ships with it and reads:
+
+```text
+# Cursor SDK License
+
+© Anysphere Inc. All rights reserved. Use is subject to Cursor's [Terms of Service](https://cursor.com/terms-of-service).
+```
+
+## T3 Code
+
+- **License:** MIT License (text below)
+- **Source:** https://github.com/pingdotgg/t3code
+- **Copyright:** Copyright (c) 2026 T3 Tools Inc.
+
+Frink adapts T3 Code's rules for recognising file paths in chat markdown
+(`src/renderer/lib/file-links/`) and the proportions of its context chip
+(`src/renderer/lib/mentions/mention-chip-class.ts`).
+
+```text
+MIT License
+
+Copyright (c) 2026 T3 Tools Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Orca
+
+- **License:** MIT License (text below)
+- **Source:** https://github.com/stablyai/orca
+- **Copyright:** Copyright (c) 2026 Lovecast Inc.
+
+Frink adapts Orca's way of running Claude's own sign-in in the background (start it with stdin
+held open, time it out, stop it on request) in `src/main/lib/claude/login/`.
+
+```text
+MIT License
+
+Copyright (c) 2026 Lovecast Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Apache License 2.0
 
 ```text

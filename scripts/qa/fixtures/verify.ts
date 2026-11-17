@@ -1,10 +1,40 @@
 /** The seed’s self-check: row counts and the shape every scenario relies on. */
+import { existsSync } from 'node:fs';
 import * as schema from '../../../src/main/lib/db/schema';
 import { RESTART_INTERRUPTION_REASON } from '../../../src/shared/types/flow';
 import { verifyCodexFixture } from './codex';
-import { FIXTURE_ACCOUNT_ID, FIXTURE_CHAT_SEEDED_ID, FIXTURE_HISTORY_CANCELLED_ID, FIXTURE_HISTORY_COMPLETED_ID, FIXTURE_PROJECT_ID, FIXTURE_TASK_ID, type SqliteDb } from './base';
-import { FIXTURE_INTERRUPTED, FIXTURE_PAUSED_CHAT_ID, FIXTURE_PAUSED_MODEL_ID, FIXTURE_PAUSED_RUN_ID, FIXTURE_PAUSED_SUB_CHAT_ID, FIXTURE_PAUSED_TASK_ID, FIXTURE_QUEUED_RESUME_RUN_ID, FIXTURE_QUEUED_START_RUN_ID, FIXTURE_RUNNING_CHAT_ID, FIXTURE_RUNNING_MODEL_ID, FIXTURE_RUNNING_RUN_ID, FIXTURE_RUNNING_SUB_CHAT_ID, FIXTURE_RUNNING_TASK_ID } from './flows';
-import { FIXTURE_FLOW_CHAT_ID, FIXTURE_FLOW_TASK_DONE_ID, FIXTURE_FLOW_TASK_PARKED_ID } from './messages';
+import { verifyContinueAllFixture } from './continue-all';
+import {
+  FIXTURE_ACCOUNT_ID,
+  FIXTURE_CHAT_SEEDED_ID,
+  FIXTURE_HISTORY_CANCELLED_ID,
+  FIXTURE_HISTORY_COMPLETED_ID,
+  FIXTURE_PROJECT_ID,
+  FIXTURE_TASK_ID,
+  type SqliteDb,
+} from './base';
+import {
+  FIXTURE_INTERRUPTED,
+  FIXTURE_PAUSED_CHAT_ID,
+  FIXTURE_PAUSED_MODEL_ID,
+  FIXTURE_PAUSED_RUN_ID,
+  FIXTURE_PAUSED_SUB_CHAT_ID,
+  FIXTURE_PAUSED_TASK_ID,
+  FIXTURE_QUEUED_RESUME_RUN_ID,
+  FIXTURE_QUEUED_START_RUN_ID,
+  FIXTURE_RUNNING_CHAT_ID,
+  FIXTURE_RUNNING_MODEL_ID,
+  FIXTURE_RUNNING_RUN_ID,
+  FIXTURE_RUNNING_SUB_CHAT_ID,
+  FIXTURE_RUNNING_TASK_ID,
+} from './flows';
+import {
+  FIXTURE_FLOW_CHAT_ID,
+  FIXTURE_FLOW_TASK_DONE_ID,
+  FIXTURE_FLOW_TASK_PARKED_ID,
+} from './messages';
+
+const FILE_SCHEME = 'file://';
 
 /**
  * The seeded account MUST be the authenticated default passthrough shape, or the chat surface stays
@@ -13,12 +43,26 @@ import { FIXTURE_FLOW_CHAT_ID, FIXTURE_FLOW_TASK_DONE_ID, FIXTURE_FLOW_TASK_PARK
  */
 function isSeededAccountShapeOk(
   account:
-    | { source?: string | null; isDefault?: boolean | null; needsReauthAt?: Date | null }
+    | {
+        source?: string | null;
+        sourcePath?: string | null;
+        isDefault?: boolean | null;
+        needsReauthAt?: Date | null;
+      }
     | undefined,
 ): boolean {
   if (!account) return false;
+  // A passthrough row whose source the probe cannot find is flagged on its first resolution, so
+  // the file has to be there, not just named.
+  const sourceFile = account.sourcePath?.startsWith(FILE_SCHEME)
+    ? account.sourcePath.slice(FILE_SCHEME.length)
+    : null;
   return (
-    account.source === 'claude-passthrough' && account.isDefault === true && !account.needsReauthAt
+    account.source === 'claude-passthrough' &&
+    sourceFile !== null &&
+    existsSync(sourceFile) &&
+    account.isDefault === true &&
+    !account.needsReauthAt
   );
 }
 
@@ -108,7 +152,7 @@ function verifyRunningFlow(r: FixtureRows): boolean {
 
 /**
  * The marker and the session are asserted explicitly: without the marker the row does not render at
- * all, and without the session it silently downgrades from "Resume" to "Re-run step".
+ * all, and without the session the step can only ever recover as "Retry", never "Continue".
  */
 function verifyInterruptedFlow(r: FixtureRows): boolean {
   const task = r.tasks.find((t) => t.id === FIXTURE_INTERRUPTED.taskId);
@@ -169,10 +213,10 @@ export function verifyFixtures(db: SqliteDb): { ok: boolean; detail: string } {
     flowRunAdmissions: db.select().from(schema.flowRunAdmissions).all(),
     nodeRuns: db.select().from(schema.nodeRuns).all(),
   };
-  // Every fixture seeds on every run: 13 chats (incl. two batch members and three background-work
-  // chats) / 10 sub-chats / 8 tasks
-  // (2 parked + 1 paused + 1 running + 1 interrupted, the plan-ready task, two History examples).
-  const expectedCounts = { projects: 2, chats: 13, subChats: 10, tasks: 8 };
+  // Every fixture seeds on every run: 17 chats (incl. two batch members, three background-work
+  // chats and four Continue all runs) / 14 sub-chats / 12 tasks (2 parked + 1 paused + 1 running +
+  // 1 interrupted + 4 Continue all, the plan-ready task, two History examples).
+  const expectedCounts = { projects: 2, chats: 17, subChats: 14, tasks: 12 };
   const ok =
     projects.length === expectedCounts.projects &&
     projects[0]?.id === FIXTURE_PROJECT_ID &&
@@ -187,6 +231,7 @@ export function verifyFixtures(db: SqliteDb): { ok: boolean; detail: string } {
     verifyInterruptedFlow(r) &&
     verifyQueuedAdmissions(r) &&
     verifyCodexFixture(db) &&
+    verifyContinueAllFixture(db) &&
     isSeededAccountShapeOk(accounts.find((a) => a.id === FIXTURE_ACCOUNT_ID));
   return {
     ok,

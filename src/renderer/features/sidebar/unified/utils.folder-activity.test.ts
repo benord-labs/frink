@@ -211,6 +211,16 @@ describe('groupActiveChatsByFolder', () => {
     expect(statuses.get('flow-1')).toBe('running');
     expect(statuses.has('task-chat')).toBe(false);
   });
+
+  it('keeps hidden Flow chats out of folder activity but keeps their row status', () => {
+    const chats = [
+      active('flow-1', { projectId: 'p1', taskId: 't1', hasLiveFlowRun: true }),
+      active('mine', { projectId: 'p1' }),
+    ];
+    const [statuses, byFolder] = buildSidebarActivityMaps([], chats, true);
+    expect(byFolder.get('p1')?.map((chat) => chat.chatId)).toEqual(['mine']);
+    expect(statuses.get('flow-1')).toBe('running');
+  });
 });
 
 describe('getFolderActiveChats', () => {

@@ -383,9 +383,13 @@ function buildGraphIndex(edges: FlowGraph['edges']): GraphIndex {
  * Unresolvable {{variable}} references — reuse the design-time template analyzer (grounded in the
  * real per-node output/trigger schemas) rather than re-deriving variable scope here.
  */
-function templateFindings(graph: FlowGraph, nodeById: Map<string, FlowNode>): RehearsalFinding[] {
+function templateFindings(
+  graph: FlowGraph,
+  nodeById: Map<string, FlowNode>,
+  customNodeInputs: CustomNodeInputsByType | undefined,
+): RehearsalFinding[] {
   const out: RehearsalFinding[] = [];
-  for (const w of validateFlowTemplateVariables(graph)) {
+  for (const w of validateFlowTemplateVariables(graph, undefined, { customNodeInputs })) {
     const node = nodeById.get(w.nodeId);
     if (!node) continue;
     if (w.shellHazard === 'blank-path') {
@@ -440,7 +444,7 @@ export function analyzeFlow(
     const label = formatFlowNodeLabel(node);
     for (const f of nodeFindings) findings.push({ nodeId: node.id, nodeLabel: label, ...f });
   }
-  findings.push(...templateFindings(graph, nodeById));
+  findings.push(...templateFindings(graph, nodeById, customNodeInputs));
 
   return findings.sort((a, b) => a.nodeId.localeCompare(b.nodeId) || a.rule.localeCompare(b.rule));
 }

@@ -38,6 +38,8 @@ describe('supportsNativeAutoReview', () => {
     'claude-opus-5-5',
     'sonnet-5.5',
     'claude-sonnet-5-5',
+    'haiku-5.5',
+    'claude-haiku-5-5',
   ])('supports current Claude model %s', (model) => {
     expect(supportsNativeAutoReview('claude-code', model)).toBe(true);
   });
@@ -64,43 +66,86 @@ describe('supportsNativeAutoReview', () => {
 
 describe('normalizeModelIdForExecutionAccount', () => {
   it('maps an id from a retired provider to sonnet', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'cursor-auto')).toBe('sonnet');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'cursor-auto')).toBe('sonnet');
   });
 
   it('preserves valid Claude id', () => {
     const id = CLAUDE_MODEL_IDS[0];
-    expect(normalizeModelIdForExecutionAccount(false, id)).toBe(id);
+    expect(normalizeModelIdForExecutionAccount('claude-code', id)).toBe(id);
   });
 
   it('preserves Fable 5.1 picker ids for Claude Code account', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5.1')).toBe('fable-5.1');
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5.1-max')).toBe('fable-5.1-max');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5.1')).toBe('fable-5.1');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5.1-max')).toBe(
+      'fable-5.1-max',
+    );
   });
 
   it('preserves Fable 5 picker ids for Claude Code account (or falls back when gated)', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5')).toBe(
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5')).toBe(
       LAUNCH_FLAGS.fable5 ? 'fable-5' : 'sonnet',
     );
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5-1m-max')).toBe(
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5-1m-max')).toBe(
       LAUNCH_FLAGS.fable5 ? 'fable-5-1m-max' : 'sonnet',
     );
   });
 
   it('snaps a non-Codex id to the Codex default when a Codex account is active', () => {
-    expect(normalizeModelIdForExecutionAccount(true, 'sonnet')).toBe(CODEX_DEFAULT_MODEL_ID);
+    expect(normalizeModelIdForExecutionAccount('codex', 'sonnet')).toBe(CODEX_DEFAULT_MODEL_ID);
+  });
+
+  describe('with a free account catalog (no GPT-6 Astra)', () => {
+    const free = { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' };
+
+    it("snaps a non-Codex id to the account's default", () => {
+      expect(normalizeModelIdForExecutionAccount('codex', 'sonnet', free)).toBe(
+        'codex-gpt-6-luna-medium',
+      );
+    });
+
+    it("snaps a model the account can't use, for a new chat", () => {
+      expect(normalizeModelIdForExecutionAccount('codex', CODEX_DEFAULT_MODEL_ID, free)).toBe(
+        'codex-gpt-6-luna-medium',
+      );
+    });
+
+    it("keeps a saved model the account can't use when asked to", () => {
+      expect(
+        normalizeModelIdForExecutionAccount('codex', CODEX_DEFAULT_MODEL_ID, free, {
+          keepUnavailable: true,
+        }),
+      ).toBe(CODEX_DEFAULT_MODEL_ID);
+    });
+
+    it('keeps a model the account lists', () => {
+      expect(normalizeModelIdForExecutionAccount('codex', 'codex-gpt-5.5-high', free)).toBe(
+        'codex-gpt-5.5-high',
+      );
+    });
   });
 
   it('preserves a valid Codex id for a Codex account', () => {
     const id = CODEX_MODELS[0]?.id;
     expect(id).toBeDefined();
     if (id === undefined) expect.fail('CODEX_MODELS[0].id must exist');
-    expect(normalizeModelIdForExecutionAccount(true, id)).toBe(id);
+    expect(normalizeModelIdForExecutionAccount('codex', id)).toBe(id);
   });
 
   it('snaps a codex-looking id that is not in the catalog to the codex default', () => {
     // Guards a future .startsWith('codex') slip: only catalog membership may preserve an id.
-    expect(normalizeModelIdForExecutionAccount(true, 'codex-not-a-real-model')).toBe(
+    expect(normalizeModelIdForExecutionAccount('codex', 'codex-not-a-real-model')).toBe(
       CODEX_DEFAULT_MODEL_ID,
+    );
+  });
+
+  it.each([
+    ['claude-code', 'sonnet'],
+    [null, 'sonnet'],
+    ['codex', CODEX_DEFAULT_MODEL_ID],
+    ['opencode', 'anthropic/claude-sonnet-4-5'],
+  ])('on %s, an agent-qualified id normalises to %s', (provider, expected) => {
+    expect(normalizeModelIdForExecutionAccount(provider, 'anthropic/claude-sonnet-4-5')).toBe(
+      expected,
     );
   });
 });
@@ -233,6 +278,8 @@ describe('CLAUDE_CODE_MODELS data integrity', () => {
       ['opus-1m', '4.6'],
       ['sonnet', '4.6'],
       ['sonnet-1m', '4.6'],
+      ['haiku-5.5', '5.5'],
+      ['haiku-5.5-max', '5.5'],
       ['haiku', '4.5'],
     ] as const) {
       const m = CLAUDE_CODE_MODELS.find((x) => x.id === id);
@@ -273,10 +320,12 @@ describe('Edge Case: Model ID Mapping Gaps (High)', () => {
     expect(getClaudeCliModel('opus-4.7-max')).toBe('claude-opus-4-7');
     expect(getClaudeCliModel('opus-4.7-1m')).toBe('claude-opus-4-7');
     expect(getClaudeCliModel('opus-4.7-1m-max')).toBe('claude-opus-4-7');
-    // Sonnet / Haiku keep short aliases (single-version families)
+    // Sonnet 4.6 keeps its short alias
     expect(getClaudeCliModel('sonnet')).toBe('sonnet');
     expect(getClaudeCliModel('sonnet-1m-high')).toBe('sonnet');
-    expect(getClaudeCliModel('haiku')).toBe('haiku');
+    // The CLI's `haiku` alias follows the newest Haiku, so each Haiku row pins its own id.
+    expect(getClaudeCliModel('haiku')).toBe('claude-haiku-4-5');
+    expect(getClaudeCliModel('haiku-5.5')).toBe('claude-haiku-5-5');
   });
 
   it('CLAUDE_MODEL_ID_MAP pins Opus ids to version-specific Anthropic model IDs', () => {
@@ -310,7 +359,7 @@ describe('Edge Case: Model ID Mapping Gaps (High)', () => {
     expect(CLAUDE_MODEL_ID_MAP.opus).toBe('claude-opus-4-6');
     expect(CLAUDE_MODEL_ID_MAP['opus-4.7']).toBe('claude-opus-4-7');
     expect(CLAUDE_MODEL_ID_MAP.sonnet).toBe('sonnet');
-    expect(CLAUDE_MODEL_ID_MAP.haiku).toBe('haiku');
+    expect(CLAUDE_MODEL_ID_MAP.haiku).toBe('claude-haiku-4-5');
   });
 });
 
@@ -379,7 +428,9 @@ describe('Ultra', () => {
   });
 
   it('keeps an Ultra picker id through account normalization (a real catalog member)', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'opus-5.5-ultra')).toBe('opus-5.5-ultra');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'opus-5.5-ultra')).toBe(
+      'opus-5.5-ultra',
+    );
   });
 });
 
@@ -566,9 +617,41 @@ describe.each([
   });
 });
 
+describe('Haiku 5.5 catalog (1M-native, Medium default, full effort ladder)', () => {
+  const haiku55 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'haiku-5.5' && !m.ultra);
+
+  it('exposes one 1M row per effort, pinned to claude-haiku-5-5', () => {
+    expect(haiku55().map((m) => m.id)).toEqual([
+      'haiku-5.5',
+      'haiku-5.5-low',
+      'haiku-5.5-high',
+      'haiku-5.5-xhigh',
+      'haiku-5.5-max',
+    ]);
+    for (const m of haiku55()) {
+      expect(m.contextWindow).toBe('1M context');
+      expect(claudeModelRequires1M(m.id), m.id).toBe(false);
+      expect(CLAUDE_MODEL_ID_MAP[m.id], m.id).toBe('claude-haiku-5-5');
+    }
+  });
+
+  it('resolves effort: bare → medium, suffixed tiers to their own level', () => {
+    expect(getClaudeSdkEffort('haiku-5.5')).toBe('medium');
+    expect(getClaudeSdkEffort('haiku-5.5-low')).toBe('low');
+    expect(getClaudeSdkEffort('haiku-5.5-xhigh')).toBe('xhigh');
+    expect(getClaudeSdkEffort('haiku-5.5-max')).toBe('max');
+  });
+
+  it('sits directly above Haiku 4.5, which keeps its legacy id', () => {
+    const families = CLAUDE_MODEL_FAMILIES.map((f) => f.id);
+    expect(families.indexOf('haiku-5.5')).toBe(families.indexOf('haiku') - 1);
+  });
+});
+
 describe('claudeModelUsesAdaptiveThinking', () => {
   it('is true for adaptive-thinking families (manual budget_tokens would 400)', () => {
     for (const cli of [
+      'claude-fable-5-2',
       'claude-fable-5-1',
       'claude-fable-5',
       'claude-opus-5-5',
@@ -577,13 +660,14 @@ describe('claudeModelUsesAdaptiveThinking', () => {
       'claude-opus-4-7',
       'claude-sonnet-5-5',
       'claude-sonnet-5',
+      'claude-haiku-5-5',
     ]) {
       expect(claudeModelUsesAdaptiveThinking(cli), cli).toBe(true);
     }
   });
 
   it('is false for manual-thinking families and unknown/cross-provider values', () => {
-    for (const cli of ['sonnet', 'claude-opus-4-6', 'haiku', 'gpt-5.3', '']) {
+    for (const cli of ['sonnet', 'claude-opus-4-6', 'claude-haiku-4-5', 'gpt-5.3', '']) {
       expect(claudeModelUsesAdaptiveThinking(cli), cli).toBe(false);
     }
   });
@@ -818,51 +902,44 @@ describe('Edge Case: Picker Item Shape for Unified Trigger (High)', () => {
   });
 });
 
-describe('Fable 5.1 catalog (1M-native, High default)', () => {
-  const FABLE_5_1_VARIANTS = [
-    'fable-5.1',
-    'fable-5.1-low',
-    'fable-5.1-medium',
-    'fable-5.1-xhigh',
-    'fable-5.1-max',
-  ];
+describe.each([
+  { family: 'fable-5.2', cli: 'claude-fable-5-2', olderFamily: 'fable-5.1' },
+  { family: 'fable-5.1', cli: 'claude-fable-5-1', olderFamily: 'fable-5' },
+])('$family catalog (1M-native, High default)', ({ family, cli, olderFamily }) => {
+  const variants = ['', '-low', '-medium', '-xhigh', '-max'].map((s) => `${family}${s}`);
 
   it('has exactly 5 variants plus Ultra twins: single 1M row × full effort ladder', () => {
-    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'fable-5.1' && !m.ultra).map(
+    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === family && !m.ultra).map(
       (m) => m.id,
     );
-    expect(ids).toEqual(FABLE_5_1_VARIANTS);
+    expect(ids).toEqual(variants);
   });
 
-  it('pins every variant cliValue to claude-fable-5-1 with a 1M context label', () => {
-    for (const id of FABLE_5_1_VARIANTS) {
+  it('pins every variant cliValue with a 1M context label', () => {
+    for (const id of variants) {
       const model = CLAUDE_CODE_MODELS.find((m) => m.id === id);
-      expect(model?.cliValue, id).toBe('claude-fable-5-1');
+      expect(model?.cliValue, id).toBe(cli);
       expect(model?.contextWindow, id).toBe('1M context');
     }
   });
 
   it('getClaudeSdkEffort maps all 5 variants to correct effort levels (High default)', () => {
-    expect(getClaudeSdkEffort('fable-5.1')).toBe('high');
-    expect(getClaudeSdkEffort('fable-5.1-low')).toBe('low');
-    expect(getClaudeSdkEffort('fable-5.1-medium')).toBe('medium');
-    expect(getClaudeSdkEffort('fable-5.1-xhigh')).toBe('xhigh');
-    expect(getClaudeSdkEffort('fable-5.1-max')).toBe('max');
+    expect(variants.map(getClaudeSdkEffort)).toEqual(['high', 'low', 'medium', 'xhigh', 'max']);
   });
 
   it('never requests the 1M beta header (1M is native)', () => {
-    for (const id of FABLE_5_1_VARIANTS) {
+    for (const id of variants) {
       expect(claudeModelRequires1M(id), id).toBe(false);
     }
   });
 
-  it('surfaces before Fable 5 in the picker', () => {
+  it('surfaces before the previous Fable in the picker', () => {
     const families = CLAUDE_CODE_MODELS_CATALOG.map((m) => m.familyId);
-    expect(families.indexOf('fable-5.1')).toBeLessThan(families.indexOf('fable-5'));
+    expect(families.indexOf(family)).toBeLessThan(families.indexOf(olderFamily));
   });
 
   it('is live regardless of the fable5 launch flag (that flag gates Fable 5 only)', () => {
-    expect(CLAUDE_CODE_MODELS.some((m) => m.familyId === 'fable-5.1')).toBe(true);
+    expect(CLAUDE_CODE_MODELS.some((m) => m.familyId === family)).toBe(true);
   });
 });
 
@@ -946,14 +1023,14 @@ describe('splitNewestFamilies', () => {
   // Pins what the page shows today, so a catalog edit shows up in review.
   it('splits the shipped catalogs as expected', () => {
     expect(names(splitNewestFamilies(CLAUDE_MODEL_FAMILIES).newest)).toEqual([
-      'Fable 5.1',
+      'Fable 5.2',
       'Opus 5.5',
       'Sonnet 5.5',
-      'Haiku 4.5',
+      'Haiku 5.5',
     ]);
     expect(names(splitNewestFamilies(CODEX_MODEL_FAMILIES).newest)).toEqual([
-      'GPT-6 Astra',
-      'GPT-6.1 Sol',
+      'GPT-6.2 Astra',
+      'GPT-6.2 Sol',
       'GPT-6 Luna',
       'GPT-5.6 Terra',
       'GPT-5.5',

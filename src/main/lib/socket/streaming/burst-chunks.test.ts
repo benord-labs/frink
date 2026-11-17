@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as planPaths from '../../claude/session-plan-paths';
 import type { UIMessageChunk } from '../../claude/types';
 import { burstPlanSubmissionAttempt, emitBurstPlanCard } from './burst-chunks';
 
@@ -99,11 +101,46 @@ describe('emitBurstPlanCard', () => {
     };
   };
 
-  it('skips an auto-approved flow node: it has no human approver to show a card to', async () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const withPlanFile = (text: string) => {
+    vi.spyOn(planPaths, 'resolveLatestSessionPlanFile').mockResolvedValue('/plans/plan.md');
+    // SAFETY: isPlanFromThisWait reads only `mtimeMs` from the stats.
+    vi.spyOn(fs.promises, 'stat').mockResolvedValue({ mtimeMs: 10 } as fs.Stats);
+    vi.spyOn(fs.promises, 'readFile').mockResolvedValue(text);
+  };
+
+  const cardStatus = (streamChunk: ReturnType<typeof vi.fn>) =>
+    streamChunk.mock.calls
+      .map(([, chunk]) => chunk)
+      .find((chunk) => chunk.type === 'tool-input-available')?.input?.status;
+
+  it('cards an auto-approved plan as approved and returns the carded text for its approval turn', async () => {
+    withPlanFile('  # Plan\n\nShip it.\n');
     const { args, streamChunk, onSubmitted } = params({ planAutoApprove: true });
-    await emitBurstPlanCard(args);
+
+    await expect(emitBurstPlanCard(args)).resolves.toBe('# Plan\n\nShip it.');
+    expect(cardStatus(streamChunk)).toBe('approved');
+    expect(onSubmitted).toHaveBeenCalledOnce();
+  });
+
+  it('cards a human-approved plan for approval and leaves nothing to send', async () => {
+    withPlanFile('# Plan');
+    const { args, streamChunk, onSubmitted } = params({});
+
+    await expect(emitBurstPlanCard(args)).resolves.toBeNull();
+    expect(cardStatus(streamChunk)).toBe('awaiting_approval');
+    expect(onSubmitted).toHaveBeenCalledOnce();
+  });
+
+  it('approves nothing when the plan file is empty: no card reached the transcript', async () => {
+    withPlanFile('   ');
+    const { args, streamChunk, onSubmitted } = params({ planAutoApprove: true });
+
+    await expect(emitBurstPlanCard(args)).resolves.toBeNull();
     expect(streamChunk).not.toHaveBeenCalled();
-    // Raising the halt here would strand the node tool-less with nobody able to approve it.
     expect(onSubmitted).not.toHaveBeenCalled();
   });
 

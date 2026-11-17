@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeLocalChat } from './test-factories';
 
 const {
+  getChatByIdMock,
   pageChatsForProjectsMock,
   countChatsByProjectMock,
   listAllArchivedChatsMock,
@@ -9,6 +10,7 @@ const {
   listChatsByBatchMock,
   listSidebarBatchGroupsMock,
 } = vi.hoisted(() => ({
+  getChatByIdMock: vi.fn(),
   pageChatsForProjectsMock: vi.fn(),
   countChatsByProjectMock: vi.fn(),
   listAllArchivedChatsMock: vi.fn(),
@@ -20,6 +22,7 @@ const {
 vi.mock('../../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../db/repos/chats', () => ({
   pageChatsForProjects: pageChatsForProjectsMock,
+  getChatById: getChatByIdMock,
   countChatsByProject: countChatsByProjectMock,
   listAllArchivedChats: listAllArchivedChatsMock,
   // Other procedures in listRouter import these; stub so the module loads.
@@ -35,7 +38,10 @@ vi.mock('../../../flows/batch-summaries', () => ({
   listSidebarBatchGroups: listSidebarBatchGroupsMock,
 }));
 
+import * as chatsRepo from '../../../db/repos/chats';
 import { listRouter } from './list';
+
+type GetChatById = typeof import('../../../db/repos/chats').getChatById;
 
 // Default: no chat belongs to a batch, so withBatchIds leaves batchId at the mapper's null.
 beforeEach(() => getBatchIdByChatIdMock.mockResolvedValue(new Map<string, string>()));
@@ -113,6 +119,16 @@ describe('listRouter.listByFolder', () => {
     );
   });
 
+  it('passes the Flow-chat filter through to the repo, off unless asked', async () => {
+    pageChatsForProjectsMock.mockResolvedValue([]);
+
+    await caller().listByFolder({ projectIds: null, limit: 30 });
+    await caller().listByFolder({ projectIds: null, limit: 30, hideFlowChats: true });
+
+    const filters = pageChatsForProjectsMock.mock.calls.map(([, args]) => args.hideFlowChats);
+    expect(filters).toEqual([false, true]);
+  });
+
   it('converts the serialized cursor (ISO string) into a Date before querying', async () => {
     pageChatsForProjectsMock.mockResolvedValue([]);
 
@@ -154,15 +170,36 @@ describe('listRouter.listByFolder', () => {
   });
 });
 
+describe('listRouter.listByIds', () => {
+  it('returns the live chats among the ids, each with its batchId', async () => {
+    const stored = new Map([
+      ['a', makeLocalChat({ id: 'a' })],
+      ['b', makeLocalChat({ id: 'b' })],
+      ['archived', makeLocalChat({ id: 'archived', archivedAt: new Date('2026-01-01') })],
+    ]);
+    getChatByIdMock.mockImplementation(
+      async (...[, id]: Parameters<GetChatById>) => stored.get(id) ?? null,
+    );
+    getBatchIdByChatIdMock.mockResolvedValue(new Map([['b', 'batch-1']]));
+
+    const rows = await caller().listByIds({ ids: ['a', 'b', 'archived', 'deleted'] });
+
+    expect(rows.map((r) => [r.id, r.batchId])).toEqual([
+      ['a', null],
+      ['b', 'batch-1'],
+    ]);
+  });
+});
+
 describe('listRouter.listBatchGroups', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('returns the local flow_runs batch summaries verbatim', async () => {
+  it('returns the local flow_runs summaries for the requested groups verbatim', async () => {
     const groups = [{ batch_id: 'b1', flow_name: 'Triage', run_count: 3, completed_count: 1 }];
     listSidebarBatchGroupsMock.mockResolvedValue(groups);
 
-    await expect(caller().listBatchGroups()).resolves.toEqual(groups);
-    expect(listSidebarBatchGroupsMock).toHaveBeenCalledTimes(1);
+    await expect(caller().listBatchGroups({ groupIds: ['b1'] })).resolves.toEqual(groups);
+    expect(listSidebarBatchGroupsMock).toHaveBeenCalledWith(expect.anything(), ['b1']);
   });
 });
 
@@ -228,5 +265,20 @@ describe('listRouter.listArchived', () => {
     listAllArchivedChatsMock.mockResolvedValue([]);
 
     await expect(caller().listArchived()).resolves.toEqual([]);
+  });
+});
+
+describe('listRouter.listPinned', () => {
+  it('passes the Flow-chat filter through to the repo, off unless asked', async () => {
+    const listPinned = vi.mocked(chatsRepo.listPinnedChatsForProjects);
+    listPinned.mockResolvedValue([]);
+
+    await caller().listPinned({ projectIds: null });
+    await caller().listPinned({ projectIds: ['p1'], hideFlowChats: true });
+
+    expect(listPinned.mock.calls.map(([, ids, hide]) => [ids, hide])).toEqual([
+      [[null], false],
+      [['p1'], true],
+    ]);
   });
 });

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { normalizePathSlashes } from '../../../../shared/lib/path-normalization';
 
 type CacheEntry<T> = {
   data: T;
@@ -233,12 +232,6 @@ const CACHE_CONFIGS = {
     maxEntries: 100,
     maxSizeBytes: 50 * 1024 * 1024, // 50MB
   },
-  // File contents - content-addressed, longer TTL
-  fileContents: {
-    maxAge: 300000, // 5 minutes
-    maxEntries: 500,
-    maxSizeBytes: 100 * 1024 * 1024, // 100MB
-  },
 } as const;
 
 /**
@@ -248,12 +241,12 @@ const CACHE_CONFIGS = {
 class GitCache {
   private statusCache: LRUCache<unknown>;
   private parsedDiffCache: LRUCache<unknown>;
-  private fileContentsCache: LRUCache<string>;
+  /** Bumped by every status invalidation, so a read that started before one cannot cache. */
+  private statusGenerations = new Map<string, number>();
 
   constructor() {
     this.statusCache = new LRUCache(CACHE_CONFIGS.status);
     this.parsedDiffCache = new LRUCache(CACHE_CONFIGS.parsedDiff);
-    this.fileContentsCache = new LRUCache(CACHE_CONFIGS.fileContents);
   }
 
   // Status cache methods
@@ -261,13 +254,24 @@ class GitCache {
     return this.statusCache.get(worktreePath) as T | null;
   }
 
-  setStatus<T>(worktreePath: string, status: T): void {
+  statusGeneration(worktreePath: string): number {
+    return this.statusGenerations.get(worktreePath) ?? 0;
+  }
+
+  /** Drops `status` when the cache was invalidated after `generation` was read. */
+  setStatus<T>(
+    worktreePath: string,
+    status: T,
+    generation = this.statusGeneration(worktreePath),
+  ): void {
+    if (generation !== this.statusGeneration(worktreePath)) return;
     const hash = computeContentHash(JSON.stringify(status));
     this.statusCache.set(worktreePath, status, hash);
   }
 
   invalidateStatus(worktreePath: string): void {
     this.statusCache.delete(worktreePath);
+    this.statusGenerations.set(worktreePath, this.statusGeneration(worktreePath) + 1);
   }
 
   // Parsed diff cache methods
@@ -286,61 +290,20 @@ class GitCache {
     return this.parsedDiffCache.invalidateByPrefix(worktreePath);
   }
 
-  // File contents cache methods
-  getFileContent(worktreePath: string, filePath: string): string | null {
-    const key = `${normalizePathSlashes(worktreePath)}:${normalizePathSlashes(filePath)}`;
-    return this.fileContentsCache.get(key);
-  }
-
-  getFileContentIfHashMatches(
-    worktreePath: string,
-    filePath: string,
-    contentHash: string,
-  ): string | null {
-    const key = `${normalizePathSlashes(worktreePath)}:${normalizePathSlashes(filePath)}`;
-    return this.fileContentsCache.getIfHashMatches(key, contentHash);
-  }
-
-  setFileContent(worktreePath: string, filePath: string, content: string): void {
-    const key = `${normalizePathSlashes(worktreePath)}:${normalizePathSlashes(filePath)}`;
-    const hash = computeContentHash(content);
-    this.fileContentsCache.set(key, content, hash, content.length * 2);
-  }
-
-  invalidateFileContent(worktreePath: string, filePath: string): void {
-    const key = `${normalizePathSlashes(worktreePath)}:${normalizePathSlashes(filePath)}`;
-    this.fileContentsCache.delete(key);
-  }
-
-  invalidateAllFileContents(worktreePath: string): number {
-    return this.fileContentsCache.invalidateByPrefix(normalizePathSlashes(worktreePath));
-  }
-
-  invalidateFileContentsByPath(worktreePath: string, filePath: string): number {
-    const normalizedWorktreePath = normalizePathSlashes(worktreePath);
-    const normalizedPath = normalizePathSlashes(filePath);
-    return this.fileContentsCache.invalidateByPrefix(
-      `${normalizedWorktreePath}:${normalizedPath}:`,
-    );
-  }
-
   // Invalidate all caches for a worktree
   invalidateWorktree(worktreePath: string): void {
     this.statusCache.delete(worktreePath);
     this.parsedDiffCache.invalidateByPrefix(worktreePath);
-    this.fileContentsCache.invalidateByPrefix(worktreePath);
   }
 
   // Get statistics for monitoring
   getStats(): {
     status: ReturnType<LRUCache<unknown>['getStats']>;
     parsedDiff: ReturnType<LRUCache<unknown>['getStats']>;
-    fileContents: ReturnType<LRUCache<string>['getStats']>;
   } {
     return {
       status: this.statusCache.getStats(),
       parsedDiff: this.parsedDiffCache.getStats(),
-      fileContents: this.fileContentsCache.getStats(),
     };
   }
 
@@ -348,7 +311,6 @@ class GitCache {
   clearAll(): void {
     this.statusCache.clear();
     this.parsedDiffCache.clear();
-    this.fileContentsCache.clear();
   }
 }
 

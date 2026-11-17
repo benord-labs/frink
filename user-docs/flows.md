@@ -2,6 +2,8 @@
 
 Flows are visual automation pipelines that connect triggers, commands, agents, and logic into repeatable workflows. You build them in the Flow Editor by wiring blocks together, and they run on your machines whenever their trigger fires.
 
+Flow steps run on Claude or OpenAI. A project that uses OpenCode, GitHub Copilot or Cursor, or that uses your default account when that default is one of them, can't run Flows yet: pick Claude or OpenAI for that project.
+
 This guide covers how flows work, with particular emphasis on how data moves between blocks — the most common source of confusion.
 
 ## Anatomy of a flow
@@ -20,6 +22,15 @@ Open a flow row's **⋯** menu and choose **Duplicate** to copy its latest saved
 
 Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. Trigger-binding configuration is also preserved, but every copied binding starts inactive and must be explicitly reactivated before it can fire.
 
+## When a flow changes while you are editing it
+
+An agent (through `frink_flows_patch`) or another window can save a new version of a flow you have open. The editor hears about it straight away.
+
+- **No unsaved edits:** the editor switches to the new version on its own.
+- **Unsaved edits:** your edits are kept and a notice stays on screen until you choose. **Reload latest** drops your edits and shows the new version. **Overwrite with mine** saves your copy as the newest version, replacing what was saved meanwhile (earlier versions are still kept). The notice goes away once your copy matches a saved version again.
+
+If you press Save on a copy that has fallen behind, the same two choices appear in a dialog. A draft of unsaved edits survives a crash, including edits you made while a save was in progress.
+
 ## Project defaults
 
 Steps that run in a project (`start_task`, `run_command`, your own custom nodes) resolve their project as **node override → flow default** (`graph.settings.defaultProjectId`, set in **flow settings → Project**). A node override may be a `{{…}}` template, letting an upstream step decide the target project at run time; the flow default then applies only when the node's field is left blank — an override that renders to nothing fails the step rather than inheriting it. Picking a project when creating a flow seeds the flow default automatically, so new steps inherit it without per-node setup. When a step has no project from either source, its amber warning and the node config panel both link straight to the flow settings Project field. Integration steps from an installed plugin are the exception: they run through the plugin's connected account, take no project, and show no project field or warning. Agents creating flows via MCP get the same behavior: the creation `projectId` (or, when omitted, the chat session's project) becomes the flow default.
@@ -36,7 +47,7 @@ Registration is agent-mediated: the agent registers a simple node inline in one 
 
 ## Run history
 
-The **Run history** panel lists **executable steps**, not the trigger block — the trigger is what started the run; execution begins on the first connected block. Saving the flow stores **canvas positions** for every node (including auto-layout), so step order matches the diagram; older saved graphs without positions are ordered by walking **edges from the trigger** instead.
+The **Run history** panel lists **executable steps**, not the trigger block — the trigger is what started the run; execution begins on the first connected block. Steps are listed in the order they started during the run, whatever their position on the canvas. If a step is retried, each attempt gets its own row where it started, and each parallel lane of a Fan Out is listed separately in the same way.
 
 Deleting a flow is permanent: Frink stops its active work and removes the flow, its run history, and its work-queue tasks. Stashed briefings remain available.
 
@@ -111,9 +122,11 @@ Not every field in a block's config is template-rendered. Only these fields reso
 | `start_task` | `label`, `branch`, `projectId` |
 | `chat_reply` | `messageTemplate` in Text mode, or `artifactTitleTemplate` and `artifactBodyHtmlTemplate` in Interactive view mode |
 | `http_request` | `url`, each string `headers` value, and `body` (the body is not sent for GET) |
-| Custom node | Every declared top-level input (resolved text is converted to the input's declared type) |
+| Custom node | Every declared top-level input (resolved text is converted to the input's declared type), except an input whose manifest declaration sets `"template": false` — that value reaches the script exactly as written |
 
 Other fields (like `method` and nested strings) are used as-is.
+
+A placeholder that is not a Flow variable (such as `{{column}}`) renders as an **empty string** in a rendered field. If a custom node input carries the script's **own** template syntax — Handlebars, Jinja, or a JSON body with `{{...}}` — declare `"template": false` on that input in the node's `manifest.json`. Frink then passes the value through untouched, and the flow editor warns about non-Flow placeholders in inputs that are still rendered.
 
 A rendered `projectId` is matched against your registered projects by id **or by exact name**, so a
 trigger payload can route a run to the project it names (`{{trigger.project}}` → `devkit`). It never
@@ -124,7 +137,7 @@ projects fails the step with a message naming the value. Custom nodes are unchan
 
 A **Chat Reply** block posts a templated message into an existing Frink chat. At run time the engine needs a **`chatId`**. The graph validator enforces one of:
 
-1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`), or  
+1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`) when that task ran in a chat of the same project. A Start Task on the path takes precedence, and a task with no chat needs one, or  
 2. **Upstream Start Task** on the same path — Start Task creates the flow chat before any Chat Reply on that branch.
 
 So **`manual_trigger → run_command → chat_reply`** is invalid unless you insert **Start Task** before the reply (or use a post-task flow). Use **End** or **HTTP Request** if you only need to stop or call an external URL without a chat.
@@ -240,14 +253,16 @@ What's available depends on the trigger type:
 | `trigger.taskId` | UUID of the completed task |
 | `trigger.taskTitle` | Title of the completed task |
 | `trigger.taskStatus` | Final status |
-| `trigger.result` | Result summary |
-| `trigger.branch` | Git branch the task ran on |
-| `trigger.baseBranch` | Base branch the task branched from |
-| `trigger.worktreePath` | Absolute path to the task worktree |
-| `trigger.projectId` | UUID of the project |
-| `trigger.chatId` | Chat session ID |
-| `trigger.projectPath` | Main project directory path |
 | `trigger.source` | How the task was created |
+| `trigger.projectId` | UUID of the project |
+| `trigger.taskCompletedAt` | ISO time the task finished |
+| `trigger.result` | Summary the task's agent reported when it finished (not always present) |
+| `trigger.branch` | Git branch the task ran on (not always present) |
+| `trigger.baseBranch` | Base branch the task branched from (not always present) |
+| `trigger.worktreePath` | Absolute path to the task worktree (not always present) |
+| `trigger.chatId` | Chat session ID (not always present) |
+| `trigger.subChatId` | Chat tab the task ran in (not always present) |
+| `trigger.projectPath` | Main project directory path (not always present) |
 
 ### schedule_trigger
 
@@ -388,7 +403,7 @@ All stages are created as **`pending`** — execution does not begin until you c
 
 **Flow version during planning:** `frink_flows_define_stages` validates the graph and creates pending stages — it does **not** choose which published flow version will execute. `frink_flows_start_batch` resolves and pins the flow version before it queues the first eligible run; machine admission may leave that run queued without changing its pinned version. Until `start_batch`, the batch is still in the planning window. If you publish graph changes after `frink_flows_define_stages` but before `frink_flows_start_batch`, those edits affect which version runs when the batch starts. To guarantee a specific graph for execution, publish or freeze your final graph **before** `frink_flows_start_batch`.
 
-If `frink_flows_define_stages` returns `success: "partial"`, some stage INSERTs succeeded and others failed. The response includes `failedStages: [{ stageNumber, error }]`. Re-call `frink_flows_define_stages` with the **full run list** for each failed stage number — existing runs for those stages are automatically replaced, so no cleanup is needed before retrying. For any stage that failed mid-definition, the server cancels partial `batch_stage_runs` rows and sets that stage back to **`pending`**, so orphan re-enqueue does not pick up abandoned `queued` rows and the next `define_stages` call can safely retry those stage numbers.
+If `frink_flows_define_stages` returns an error, nothing from that call was saved — stage definition is all-or-nothing per call, and stages from earlier successful calls are unchanged. Fix the input and re-send the same stages. A stage number that already exists in the batch is rejected and cannot be replaced through `frink_flows_define_stages`; add runs to it with `frink_flows_add_stage_runs` while the stage is still **`pending`**. Define a dependency in the same or an earlier call than the stage that depends on it.
 
 For a concise in-repo reminder (including clearing briefing), see the **Frink Flows** section at the root **`AGENTS.md`** when working inside this repository.
 
@@ -398,13 +413,13 @@ Frink limits the number of top-level Flow runs using machine resources at once. 
 
 Changes to the limit toggle and maximum stay in the settings panel until you choose **Save**. Choose **Discard** to restore the latest saved settings. The live capacity counts keep refreshing while you edit. Saving changes preserves whether the Work Queue is paused, and disabling the limit keeps your numeric preference for later.
 
-When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. Paused runs and runs waiting for approval or a question continue to hold their slot in this release. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
+When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. A run paused on an agent step that is waiting for your reply keeps its slot for up to an hour, while the agent can still pick up quickly and cheaply, so a quick answer carries straight on. After that it gives the slot up; when you reply, continue or retry it, it takes a slot back, ahead of new runs, and carries on where it stopped. If every slot is busy, it waits under **Resuming** until one frees up. Runs waiting for an approval or a plan review keep their slot, and **Settings → Preferences → Flows** shows how many slots runs waiting on you still hold. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
 
-Open **Work Queue** to see waiting runs under **Queued to run**. Resumptions always stay ahead of fresh starts. Within either group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. Reordering queued work never interrupts an active run.
+Open **Work Queue** to see waiting runs under **Queued to run**, in the order they will start: **Resuming** first, then the **Priority queue** (new runs that the [priority queue](#runfirst) setting puts first), then **Starting**. Within each group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. While the priority queue has runs, the **Starting** group shows when its oldest run started waiting. Reordering queued work never interrupts an active run.
 
 To hold everything that is waiting, choose **Pause queue** in the Work Queue header. While the queue is paused, no queued run is admitted on this machine, resumptions included; each one stays in **Queued to run**, marked *On hold*, and you can still reorder or remove it. Runs that are already active keep going. The pause survives restarting Frink. A banner at the top of the Work Queue shows the queue is paused and holds the **Resume queue** button, which starts admitting queued runs again in their current order.
 
-Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
+Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** or **Priority queue** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
 
 This outer limit is separate from a Flow's `maxBatchConcurrency`, fan-out limits, and node dispatch behavior. Those controls can further restrict a batch, but cannot raise the machine-wide limit.
 
@@ -492,7 +507,7 @@ If `customInstructions` is empty for a run, the placeholder resolves to an empty
 
 ### Re-running a terminal batch
 
-Recovery is per member, from that member's chat, with the same **Retry** and **Carry on** every flow has: Retry re-runs the member from its last step through the normal run queue and re-opens its stage; Carry on resumes a paused member's session in place. A member whose stage has already settled — completed on a tolerated failure, or cancelled — can't be retried, and the button says so: the batch has moved on. A stage that is at its concurrency limit makes a retry wait for a member to finish. Successor stages the failure had cancelled run again once the retried member completes its stage. There is no whole-batch "retry everything" action; the Flow editor's run button only starts a batch that has never run. Restart-interrupted members, like other runs, continue on their own after a restart (see *Restart recovery*).
+Recovery is per member, from that member's chat, with the same single **Continue** / **Retry** button every flow has: Continue resumes a member's session in place; Retry re-runs the member from its last step through the normal run queue and re-opens its stage. A member whose stage has already settled — completed on a tolerated failure, or cancelled — can't be retried, and the button says so: the batch has moved on. A stage that is at its concurrency limit makes a retry wait for a member to finish. Successor stages the failure had cancelled run again once the retried member completes its stage. There is no whole-batch "retry everything" action; the Flow editor's run button only starts a batch that has never run. Restart-interrupted members, like other runs, continue on their own after a restart (see *Restart recovery*).
 
 ## Pausing and stopping a flow from the chat
 
@@ -558,6 +573,32 @@ frink_flows_patch({
 
 **Use case:** Running multiple flows in parallel and you want each batch to submit fewer runs at once so others aren't starved.
 
+### runFirst
+
+**Priority queue** decides which new runs of this flow start ahead of other waiting new runs while your machine is running as many flows as it allows. Resuming runs still go first, nothing already running is stopped, and runs already waiting keep their place.
+
+- **Off:** new runs wait in the normal queue.
+- **Every new run:** every new run joins the priority queue. Useful for scheduled flows, such as a daily digest, that should not wait behind a long backlog.
+- **Only runs that match:** a run joins the priority queue when its own trigger details match every row you add, for example `trigger.story.title` *contains* `[Follow-up]`. A detail is a trigger variable, named as in the **Available variables** panel; the box suggests the ones your trigger has. Text, numbers and true/false values can be checked; *equals* and *not equals* compare exactly, *contains* ignores case. A run is checked once, when it joins the queue. Until every row has a detail and a value, runs keep their normal place, and a run without the detail never matches. Runs you start with **Run** carry no details, so they never match; a scheduled flow can choose **Every new run** or **Off**. Anyone who can change a checked detail, such as a story's title, can move that run ahead; this changes queue order only.
+
+**Where to set it:** Flow Editor → open **Settings** (toolbar) → **Priority queue**.
+
+You can also set it via MCP:
+
+```
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: { runFirst: true } }]
+})
+
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: {
+    runFirstWhen: [{ detail: "trigger.story.title", operator: "contains", value: "[Follow-up]" }]
+  } }]
+})
+```
+
 ### pauseOnFailure
 
 Enable **Pause on failure** in the Flow Settings panel to change this behaviour. When enabled:
@@ -599,9 +640,9 @@ frink_flows_patch({
 
 ### Fast mode (Codex)
 
-**Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
+**Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-6.2 Astra and Sol and GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
 
-It applies only to Codex models that advertise the tier; steps on any other model — including GPT-5.4 Mini and Claude — run normally and are unaffected. Direct command and custom-node steps are unaffected too.
+The switch appears only when your signed-in Codex account offers Fast (a free ChatGPT plan does not). It applies only to Codex models that advertise the tier; steps on any other model — including GPT-5.4 Mini and Claude — run normally and are unaffected. Direct command and custom-node steps are unaffected too.
 
 The setting is flow-wide, deliberately: there is no per-step override, so a flow's spending rate stays readable from one place instead of hiding in an individual node. While a run is driving a chat, the status strip's **Fast** chip shows it is active (see the status strip section above) — the chat's own Fast switch is hidden behind the run surface at that point.
 
@@ -618,7 +659,7 @@ frink_flows_patch({
 
 **Ultrafast mode** asks Codex for its **ultrafast** service tier: up to **8× model speed** for **8× ChatGPT credits** on GPT-6 Astra. It needs a ChatGPT Pro 500 plan or an eligible Enterprise/Edu plan; on other accounts Codex runs the steps at standard speed. Fast and Ultrafast replace each other, and both are off unless you turn them on.
 
-The switch appears under **Fast mode** when the flow's default model is GPT-6 Astra. Remember that it applies to every Agent step of every run, even when nobody is watching. A step on a model without Ultrafast runs at standard speed, never quietly at Fast. While a run drives a chat, the status strip shows an **Ultrafast** chip with its credit cost.
+The switch appears under **Fast mode** when the flow's default model, or a step's model, is GPT-6 Astra and your signed-in Codex account offers Ultrafast. Remember that it applies to every Agent step of every run, even when nobody is watching. A step on a model without Ultrafast runs at standard speed, never quietly at Fast. While a run drives a chat, the status strip shows an **Ultrafast** chip with its credit cost.
 
 ```
 frink_flows_patch({
@@ -631,27 +672,27 @@ frink_flows_patch({
 
 When a flow is paused on failure, expand the run in the **Run history** panel. Each failed node shows two buttons:
 
-- **Retry** — re-dispatches the node from scratch (increments attempt count, preserves fan-out state so iteration position is maintained). Use this when the failure was transient (network blip, machine offline, rate limit).
+- **Continue** or **Retry** — the run's stopped step reads **Continue** when its agent had already answered the step (the session picks up where it stopped, nothing is redone) and **Retry** otherwise (re-dispatches the node from its instructions, preserving fan-out state so iteration position is maintained). Retrying a command or HTTP step that had already started asks you to confirm first, because running it again may repeat actions it already took.
 - **Skip** — marks the node as skipped and advances the flow as if the node completed with no outputs. Downstream `{{previous.*}}` references will resolve to empty. Use this when the step is non-critical and you want the flow to continue regardless.
 
-### Carry on and Retry in the agent's chat
+### Continue or Retry in the agent's chat
 
-A failed or parked task shows one recovery row with two controls, under the last response. Read the pair as **"continue" vs "start over"**:
+A failed or parked task shows **one** recovery button under the last response:
 
-- **Carry on** — continues the resumed agent session in the same chat and worktree; the agent picks up from where it left off, so finished work is never redone and nothing is rolled back. If in doubt and it's available, carry on.
-- **Retry** — for a **standalone task**, this is the "start over" option: a fresh session, behind a confirmation that spells out what is abandoned. For a **Flow run**, Retry is gentler: it re-enters Flow admission and retries the last invoked step *continuation-first* — a surviving session picks up with its prior work, todo state, and current mode intact (no repeated instructions, no reset back to plan mode); only a step with nothing left to continue is re-run from its full instructions.
+- **Continue** — the agent's session had already answered this step. It resumes in the same chat and worktree and picks up where it stopped; finished work is never redone and nothing is rolled back. Typing a message does the same, with your message as the nudge.
+- **Retry** — the agent never answered this step, its session is gone, or the step isn't an agent step. The step runs again from its instructions. A command or HTTP step that had already started asks you to confirm first.
 
-**For a Flow task the two are never active together.** The run's state picks the live control — a *paused* run that still holds its admission slot offers **Carry on**; a *settled* run (failed, cancelled, or completed), whose slot is gone, offers **Retry** — and the other button's tooltip explains why it's disabled. Only a failed *standalone* task genuinely offers both at once, where they mean continue vs start over. Want a deliberate clean re-run of a Flow step regardless of whether its session survived? That's **Re-run step** / **Re-run from previous node** in the Flow surfaces, which always restart from the instructions.
+The choice is checked again when you click: if the step can no longer be continued, Frink says so and the button refreshes instead of silently doing something else. For a Flow run that has already settled (failed or cancelled), the button re-enters the run queue first. An ordinary chat whose reply failed shows the same single button: **Continue** if the reply had started (any text, thinking or tool call), **Retry** if it failed before any reply.
 
 If the chat the flow started in has been **deleted**, Retry is refused with "This run's chat was deleted — start the flow again to re-run it." Deleting the chat abandons the run, so start a fresh run instead. An *archived* chat still retries, because archiving can be undone.
 
-Work Queue opens the Flow chat for these slot-sensitive actions rather than duplicating Carry on. Both controls work for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see *Re-running a terminal batch*).
+The Work Queue row menu offers the same single action (**Continue task** or **Retry task**) once the run has paused or settled. It works for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see *Re-running a terminal batch*).
 
 ### Usage-limit and API-error pauses
 
-A flow can also pause without anything failing: if an agent node's chat hits the provider's usage limit (e.g. Claude's "You've hit your limit · resets 2:20pm"), the node parks at **Needs Attention** and the run pauses rather than failing — the interruption is resumable, not an error. The run panel shows the limit message (including the reset time) as the pause reason, with the same Retry/Skip controls. Once the limit resets, resume by sending a follow-up message in the agent's chat or pressing **Retry** on the node.
+A flow can also pause without anything failing: if an agent node's chat hits the provider's usage limit (e.g. Claude's "You've hit your limit · resets 2:20pm"), the node parks at **Needs Attention** and the run pauses rather than failing — the interruption is resumable, not an error. The run panel shows the limit message (including the reset time) as the pause reason, with the same Continue (or Retry) and Skip controls. Once the limit resets, resume by sending a follow-up message in the agent's chat or pressing the node's **Continue** (or **Retry**) button.
 
-Transient provider errors get the same treatment: an authentication error (expired token), rate limit (429), or a temporary server error (5xx/529) first retries once automatically — when the turn had produced no work yet — and otherwise parks the node at **Needs Attention** with the error as the pause reason. Fix the cause if needed (e.g. reconnect the account in Settings → AI providers for an auth error) and press **Retry** to continue where it stopped. Batch members park the same way and their stage waits for them; reply in the member's chat, or press **Retry** / **Carry on**, exactly as for any flow.
+Transient provider errors get the same treatment: an authentication error (expired token), rate limit (429), or a temporary server error (5xx/529) first retries once automatically — when the turn had produced no work yet — and otherwise parks the node at **Needs Attention** with the error as the pause reason. Fix the cause if needed (e.g. reconnect the account in Settings → AI providers for an auth error) and press **Continue** to pick up where it stopped. Batch members park the same way and their stage waits for them; reply in the member's chat, or press its **Continue** / **Retry** button, exactly as for any flow.
 
 ### Quiet waits and the idle ceiling
 
@@ -677,7 +718,7 @@ Paused flows wait indefinitely. There is no timeout. State persists across:
 - Electron going offline
 - Machine reboots
 
-When the system comes back up, the paused flow is still there. Open run history and retry or skip to continue.
+When the system comes back up, the paused flow is still there. Open run history and press the step's **Continue** (or **Retry**) or **Skip** button.
 
 ### Restart recovery
 
@@ -687,23 +728,25 @@ On macOS, closing Frink's window without quitting the app leaves a main-owned st
 
 If the app or machine restarts (or a window reloads) while a flow's agent is mid-run, that run is marked **cancelled** with a recovery marker — a restart is treated as a recoverable interruption, not a failure, so it never surfaces an alarming red badge. The work up to the interrupted node (its worktree and the prior nodes' outputs) survives on the same run.
 
-**Finding one.** Interrupted runs appear under **Active → Needs attention** in the work queue, marked *Interrupted* — the same place you look for any run waiting on you, alongside runs paused for your input. They are deliberately kept out of History: an interrupted run is work still waiting on you, not a finished record, and History is where you would never look for it. Opening the card takes you to the run's chat, where you resume it. An interrupted run stays in Needs attention until you resume it — or, if you'd rather abandon it, choose **Cancel** from its row menu: the run moves to History as *Cancelled* (deletable there like any other cancelled row) while staying under **Flows → Runs** history. Deleting its chat clears it as well. (Before this existed, an interrupted run sat in History labelled "Cancelled" and was only reachable if you already knew which chat it was.) A run interrupted inside a **parallel/fan-out step** is the one exception — those can't be resumed, so they stay in History as *Cancelled*, same as before.
+**Finding one.** Interrupted runs appear under **Active → Needs attention** in the work queue, marked *Interrupted* — the same place you look for any run waiting on you, alongside runs paused for your input. They are deliberately kept out of History: an interrupted run is work still waiting on you, not a finished record, and History is where you would never look for it. Opening the card takes you to the run's chat, where you resume it. An interrupted run stays in Needs attention until you resume it — or, if you'd rather abandon it, choose **Cancel** from its row menu: the run moves to History as *Cancelled* (deletable there like any other cancelled row) while staying under **Flows → Runs** history. Deleting its chat clears it as well. (Before this existed, an interrupted run sat in History labelled "Cancelled" and was only reachable if you already knew which chat it was.) A run interrupted inside a **parallel/fan-out step** waits here too; resuming it also restarts every other branch of the same item that had not finished, so the item can complete.
 
 **Continuing automatically.** After an app restart, Frink carries every interrupted agent step on by itself: the run re-enters the run queue as a resumption — ahead of any fresh starts that were waiting — in the same chat and worktree. How the step continues depends on how far it got:
 
-- **The agent had already started the step** (its session received and answered the step's instructions): the agent wakes up where it stopped. A tool call that was cut off mid-flight may run again — the same as pressing Carry on yourself.
-- **The step's instructions never reached the agent** (for example, the app stopped between one step finishing and the next one being sent, or the agent's session didn't survive): the step is sent its full instructions, exactly as if it were starting fresh. Nothing is skipped — Frink never tells an agent to "carry on" with a step it was never given.
+- **The agent had already started the step** (its session received and answered the step's instructions): the agent wakes up where it stopped. A tool call that was cut off mid-flight may run again — the same as pressing Continue yourself.
+- **The step's instructions never reached the agent** (for example, the app stopped between one step finishing and the next one being sent, or the agent's session didn't survive): the step is sent its full instructions, exactly as if it were starting fresh. Nothing is skipped — Frink never tells an agent to continue a step it was never given.
 
 While it waits for a free slot the chat shows *Waiting for a free slot to resume this step* instead of a button; cancelling the run from the work queue during that wait still works and stops the resumption. Steps that can't be continued this way (a non-agent step, a batch member whose stage already settled, a parallel/fan-out lane) stay *Interrupted* and wait for you, as below.
 
-**Continuing one by hand.** In the flow's chat, a button appears just above the message box, next to a "Flow run interrupted" note. It reads one of two ways, depending on what can actually be recovered:
+**Continuing one by hand.** In the flow's chat, one button appears just above the message box, next to a "Flow run interrupted" note:
 
-- **Re-run step** — offered whenever Resume can't be: the agent's session is gone, *or* the run lost its place in the run queue. The step restarts from its instructions in the same worktree — the run re-enters the run queue properly first, so it can't collide with the concurrency limit. You'll see the step's prompt in the chat again, and any work the step already did may happen again.
-- **Resume** — offered when the interrupted agent's session survives, the agent had already received this step's instructions, *and* the run still holds its place in the run queue (in practice: the interruption was caught before the run's slot was released). The agent simply wakes up and carries on in the same chat and worktree, with nothing repeated. Sending a follow-up message does the same thing here, and lets you add new instructions while you're at it.
+- **Continue** — the agent had already answered this step's instructions and its session survived. The agent wakes up where it stopped in the same chat and worktree, with nothing repeated. Typing a message does the same and lets you add new instructions while you're at it.
+- **Retry** — the agent never answered the instructions, its session is gone, or the step isn't an agent step. The step restarts from its instructions in the same worktree, after the run re-enters the run queue, so it can't collide with the concurrency limit. A command or HTTP step that had already started asks you to confirm first, because running it again may repeat actions it already took.
 
-Either way, typing into the chat is never a dead end — and when the run has *lost* its place in the queue but its session survived (the usual case a while after a restart), typing is the better option: the button above reads **Re-run step** and would repeat the step from its instructions, but a typed message instead re-enters the run queue and *continues* the surviving session with your message, nothing repeated. Only when no session survived, or the agent never received this step's instructions, does a typed message get a "This flow run has ended" notice pointing you to **Re-run step** — continuing would have the agent carry on a step it was never given.
+The message box hint says which applies. On a Retry step, a typed message gets a "This flow run has ended" notice pointing you to the button — continuing would have the agent carry on a step it was never given.
 
-The **Re-run from previous node** button in the run-history panel always re-runs from instructions, whichever behaviour the chat offers. It needs the run's chat: if that chat was deleted, the re-run is refused with the same "chat was deleted" message and the run stays as it was.
+The run-history panel shows the same single button for an interrupted run, with the same confirm rule. It needs the run's chat: if that chat was deleted, the recovery is refused with the same "chat was deleted" message and the run stays as it was.
+
+The interrupted run's Work Queue row menu offers it too, as **Continue task** or **Retry task** beside **Cancel**. For a command or HTTP step that had already started, **Retry task** asks you to confirm first, as the other buttons do.
 
 A run you stopped yourself — the **Stop** button, or deleting/archiving the chat — carries no recovery marker, so it shows no button at all; start a fresh run instead.
 
@@ -715,7 +758,7 @@ If a retried node fails again and `pauseOnFailure` is still enabled, the flow pa
 
 ### Not yet available
 
-A **Continue** (override) action — advancing the flow with user-supplied synthetic outputs — is deferred to a follow-up. It requires UX design for providing override data safely.
+An **override outputs** action — advancing the flow with user-supplied synthetic outputs — is deferred to a follow-up. It requires UX design for providing override data safely.
 
 ## Tips
 

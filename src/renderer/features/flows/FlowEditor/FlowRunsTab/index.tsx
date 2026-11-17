@@ -8,7 +8,9 @@
  */
 
 import { Activity } from 'lucide-react';
-import { type ReactElement, useState } from 'react';
+import { type ReactElement, useEffect, useState } from 'react';
+import { flowsFocusRunAtom } from '../../../../lib/atoms';
+import { appStore } from '../../../../lib/jotai-store';
 import { trpc } from '../../../../lib/trpc';
 import { cn } from '../../../../lib/utils';
 import { BatchMonitor } from '../BatchMonitor';
@@ -67,13 +69,24 @@ export function FlowRunsTab({
   onRequestEditorTab,
   railShellClassName,
 }: FlowRunsTabProps): ReactElement {
+  // A run opened from outside the editor stays shown even when it is older than the loaded list.
+  const [focusedRunId] = useState(() => {
+    const focus = appStore.get(flowsFocusRunAtom);
+    return focus?.flowId === flowId ? focus.runId : null;
+  });
+  useEffect(() => {
+    appStore.set(flowsFocusRunAtom, null);
+  }, []);
   // Explicit run selection; null = follow the default (batch monitor if a batch exists,
   // else the newest run — the pane is never empty when there is anything to show).
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(focusedRunId);
 
   // Same query key as the rail — deduped by react-query, feeds default selection + empty state.
   const { data: runs } = trpc.flows.listRuns.useQuery({ flowId, limit: 20 }, { staleTime: 30_000 });
-  const effectiveRunId = resolveEffectiveRunId(selectedRunId, runs, selectedBatchId);
+  const effectiveRunId =
+    selectedRunId !== null && selectedRunId === focusedRunId
+      ? selectedRunId
+      : resolveEffectiveRunId(selectedRunId, runs, selectedBatchId);
   const effectiveRun = runs?.find((run) => run.id === effectiveRunId);
 
   const handleSelectBatch = (batchId: string) => {

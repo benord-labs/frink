@@ -39,12 +39,20 @@ import {
   hasFlowResourceActivity,
   setFlowAdmissionLifecycleHooks,
 } from '../../flows/admission/activity';
+import {
+  dropStagedContinuation,
+  stageContinuationResume,
+} from '../../flows/admission/terminal-resume/continuation';
+import * as recoveryKind from '../../flows/rerun/recovery-kind';
 import { registerFlowProviderExecution, resolveFlowResourceRunId } from './flow-resource-cleanup';
+
+const stepRecoveryKind = vi.spyOn(recoveryKind, 'stepRecoveryKind').mockReturnValue('continue');
 
 beforeEach(() => {
   vi.clearAllMocks();
   setFlowAdmissionLifecycleHooks({
     reconcile: reconcileFlowAdmission,
+    reconcileTicket: vi.fn(async () => {}),
     requestRelease: vi.fn(async () => {}),
   });
   providerPreflightMocks.getTaskById.mockResolvedValue({
@@ -119,21 +127,23 @@ describe('Flow provider execution preflight', () => {
     await vi.waitFor(() => expect(hasFlowResourceActivity('flow-run')).toBe(false));
   });
 
-  it('registers restart recovery before revival, then validates the revived task and run', async () => {
-    let revived = false;
-    providerPreflightMocks.getTaskById.mockImplementation(async () => ({
+  // Nothing revives a restart-interrupted run in place, so a reply while it holds its slot converts.
+  it('converts a restart-interrupted reply into a resume while the run still holds its slot', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
       id: 'flow-task',
       source: 'flow',
       flowRunId: 'flow-run',
-      status: revived ? 'running' : 'cancelled',
-    }));
-    providerPreflightMocks.getFlowRun.mockImplementation(async () => ({
-      id: 'flow-run',
-      status: revived ? 'running' : 'cancelled',
-    }));
+      status: 'cancelled',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'cancelled' });
+    conversionMocks.resolveTerminalResumeTarget.mockResolvedValue({
+      node: { id: 'work', blockType: 'agent' },
+      nodeRunId: 'node-run-1',
+      continues: true,
+    });
+    conversionMocks.resolveSessionResumeSeed.mockResolvedValue({ config: { resumeSession: true } });
     const prepareForExecution = vi.fn(async () => {
       expect(providerPreflightMocks.registerNodeAbort).toHaveBeenCalledOnce();
-      revived = true;
     });
 
     const registration = await registerFlowProviderExecution({
@@ -145,13 +155,17 @@ describe('Flow provider execution preflight', () => {
         effectiveSignalTaskId: 'flow-task',
       },
       controller: new AbortController(),
+      chatId: 'chat-1',
     });
 
     expect(prepareForExecution).not.toHaveBeenCalled();
-    await registration?.prepareAndValidate(prepareForExecution);
-    expect(prepareForExecution).toHaveBeenCalledOnce();
-    expect(providerPreflightMocks.getTaskById).toHaveBeenCalledOnce();
-    expect(providerPreflightMocks.getFlowRun).toHaveBeenCalledOnce();
+    await expect(registration?.prepareAndValidate(prepareForExecution)).rejects.toMatchObject({
+      category: 'FLOW_RUN_RESUMING',
+    });
+    expect(registration?.takePendingContinuationResume()).toEqual({
+      flowRunId: 'flow-run',
+      nodeRunId: 'node-run-1',
+    });
     registration?.unregisterAbort();
     registration?.release();
     await vi.waitFor(() => expect(hasFlowResourceActivity('flow-run')).toBe(false));
@@ -388,6 +402,7 @@ describe('typed-reply decline-and-convert', () => {
       ctx: {},
       node: { id: 'work', blockType: 'agent' },
       nodeRunId: 'node-run-1',
+      continues: true,
     });
     conversionMocks.resolveSessionResumeSeed.mockResolvedValue({
       config: { resumeSession: true, resumeSubChatId: 'sub-1' },
@@ -416,11 +431,127 @@ describe('typed-reply decline-and-convert', () => {
     registration?.release();
   });
 
+  // The session answered an earlier attempt of the node, but not the step's own prompt.
+  it('declines as FLOW_RUN_ENDED on a Retry step even when a seed exists', async () => {
+    conversionMocks.resolveTerminalResumeTarget.mockResolvedValue({
+      node: { id: 'work', blockType: 'agent' },
+      nodeRunId: 'node-run-1',
+      continues: false,
+    });
+    const { registration, outcome } = await declineWith('chat-1');
+    expect(outcome?.category).toBe('FLOW_RUN_ENDED');
+    expect(registration?.takePendingContinuationResume()).toBeNull();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
   it('never converts a COMPLETED run (shape-dependent anchor) — the gate is not even consulted', async () => {
     providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'completed' });
     const { registration, outcome } = await declineWith('chat-1');
     expect(outcome?.category).toBe('FLOW_RUN_ENDED');
     expect(conversionMocks.resolveSessionResumeSeed).not.toHaveBeenCalled();
+    expect(registration?.takePendingContinuationResume()).toBeNull();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
+  it('converts a reply into a paused run that gave its slot up, continuing the replied-to step', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
+      id: 'flow-task',
+      source: 'flow',
+      flowRunId: 'flow-run',
+      nodeRunId: 'parked-step',
+      status: 'needs_attention',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    const { registration, outcome } = await declineWith('chat-1');
+    expect(outcome?.category).toBe('FLOW_RUN_RESUMING');
+    expect(registration?.takePendingContinuationResume()).toEqual({
+      flowRunId: 'flow-run',
+      nodeRunId: 'parked-step',
+      admit: expect.any(Function),
+    });
+    expect(conversionMocks.resolveTerminalResumeTarget).not.toHaveBeenCalled();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
+  // Only a chat turn carries a user reply; any other decline must not queue a resume.
+  it('never converts a chat-less decline into a paused run, queueing nothing', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
+      id: 'flow-task',
+      source: 'flow',
+      flowRunId: 'flow-run',
+      nodeRunId: 'parked-step',
+      status: 'needs_attention',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    const { registration, outcome } = await declineWith(undefined);
+    expect(outcome?.category).toBe('FLOW_RUN_ENDED');
+    expect(registration?.takePendingContinuationResume()).toBeNull();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
+  // A Skip or Retry already staged decides the step; the reply must not report it continues the run.
+  it('declines a reply into a paused run with a Runs-panel action already staged', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
+      id: 'flow-task',
+      source: 'flow',
+      flowRunId: 'flow-run',
+      nodeRunId: 'parked-step',
+      status: 'needs_attention',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    stageContinuationResume(
+      { flowRunId: 'flow-run', nodeRunId: 'parked-step', action: 'skip' },
+      vi.fn(),
+    );
+    try {
+      const { registration, outcome } = await declineWith('chat-1');
+      expect(outcome?.category).toBe('FLOW_RUN_ENDED');
+      expect(registration?.takePendingContinuationResume()).toBeNull();
+      registration?.unregisterAbort();
+      registration?.release();
+    } finally {
+      dropStagedContinuation('flow-run');
+    }
+  });
+
+  // A release that kept a cleanup error never settles on its own, so a staged reply would never fire.
+  it('declines a reply into a paused run whose release is retained', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
+      id: 'flow-task',
+      source: 'flow',
+      flowRunId: 'flow-run',
+      nodeRunId: 'parked-step',
+      status: 'needs_attention',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    providerPreflightMocks.liveAdmissionForRun.mockReturnValue({
+      flowRunId: 'flow-run',
+      state: 'releasing',
+      error: 'cleanup timed out',
+    });
+    const { registration, outcome } = await declineWith('chat-1');
+    expect(outcome?.category).toBe('FLOW_RUN_ENDED');
+    expect(registration?.takePendingContinuationResume()).toBeNull();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
+  it('declines a reply into a paused step whose session never answered it', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
+      id: 'flow-task',
+      source: 'flow',
+      flowRunId: 'flow-run',
+      nodeRunId: 'parked-step',
+      status: 'needs_attention',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'paused' });
+    stepRecoveryKind.mockReturnValueOnce('retry');
+    const { registration, outcome } = await declineWith('chat-1');
+    expect(outcome?.category).toBe('FLOW_RUN_ENDED');
     expect(registration?.takePendingContinuationResume()).toBeNull();
     registration?.unregisterAbort();
     registration?.release();

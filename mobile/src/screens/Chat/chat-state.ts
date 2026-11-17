@@ -1,7 +1,4 @@
-import type {
-  MobileActivity,
-  MobileChatDetail,
-} from '@frink/shared/types/remote/mobile';
+import type { MobileActivity, MobileChatDetail } from '@frink/shared/types/remote/mobile';
 
 /**
  * What the composer's trailing button does right now.
@@ -66,7 +63,8 @@ export function composerPlaceholder(
   return executionReady ? 'Message Frink' : 'Open Frink on your Mac to chat';
 }
 
-export const STEER_NOT_DELIVERED = 'Frink can’t take this mid-step. It’s kept for when it finishes.';
+export const STEER_NOT_DELIVERED =
+  'Frink can’t take this mid-step. It’s kept for when it finishes.';
 
 /** Busy chats refresh quickly so steps and Stop feel live; idle ones settle down. */
 export function chatPollInterval(activity: MobileActivity | undefined): number {

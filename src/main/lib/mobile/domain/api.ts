@@ -26,6 +26,7 @@ import { readMobileChats, readMobileOverview, readMobileProjects } from './read'
 import { steerMobileMessage } from './steer';
 import { runMobileTaskAction } from './tasks';
 import { captureContained } from '../../sentry';
+import { PhoneSafeRefusal } from '../../trpc/routers/task-refusals';
 
 // Reason: An exhaustive command switch keeps this transport boundary explicit.
 // fallow-ignore-next-line complexity
@@ -105,7 +106,13 @@ export async function executeMobileRequest(
     if (error instanceof TRPCError && error.code === 'NOT_FOUND')
       throw new MobileApiError(404, 'This item no longer exists.');
     if (error instanceof TRPCError && ['CONFLICT', 'PRECONDITION_FAILED'].includes(error.code)) {
-      throw new MobileApiError(409, 'This item changed. Refresh and try again.');
+      // Only an authored refusal marked phone-safe shows its own message; any other stays generic.
+      throw new MobileApiError(
+        409,
+        error instanceof PhoneSafeRefusal
+          ? error.message
+          : 'This item changed. Refresh and try again.',
+      );
     }
     // The phone only sees this generic message, so the real fault is reported here.
     captureContained(error, { surface: 'mobile-api', stage: parsed.data.type });

@@ -9,6 +9,13 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { SplitPane } from './SplitPane';
 import type { SplitPaneData } from './types';
 
+// The pane's Back button imports `lib/trpc`, which wires its ipc client at import time.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
+  });
+});
+
 // The file-tree subtree reaches trpc at module load; stub it out so these tests stay scoped to
 // pane activation. dnd-kit is deliberately NOT mocked: PaneDropSection's useDroppable works
 // without a DndContext ancestor, and mocking it would stub the very element under test.

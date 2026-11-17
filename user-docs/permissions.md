@@ -144,7 +144,7 @@ The validator surfaces errors inline:
 
 ## What's always blocked (system deny list)
 
-No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
+No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, OpenCode, GitHub Copilot and Cursor file reads inside the chat's folder (opening a `.env` file by name is covered; their searches are not), MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
 
 - `**/.ssh/**` — SSH keys + known_hosts
 - `**/.aws/**` — AWS credentials
@@ -176,20 +176,20 @@ The auto-allow is **Read-only** (editing or writing a skill file always prompts)
 
 When you connect a plugin, your agents get that provider’s tools. They are not auto-allowed: they are reviewed exactly like any other tool. With **Auto permission mode** on, the active provider’s reviewer decides each call. With it off, a tool asks you the first time and you can choose "always allow" so it stops asking.
 
-An **unattended flow** (triggered by a webhook, with nobody watching) would otherwise stall on that question. Two things prevent it: **Flow settings → Auto Mode** is on by default, so the flow’s agent steps run under the provider's reviewer; or you can add an allow rule for the tools that flow needs.
+An **unattended flow** (triggered by a webhook, with nobody watching) would otherwise stall on that question. Two things prevent it: **Flow settings → Auto Mode** is on by default, so the flow’s agent steps run under the provider's reviewer; or you can add an allow rule for the tools that flow needs. If Auto blocks a step the flow needs, turn **Auto Mode** off for that flow and add allow rules for the tools the step uses: with Auto off, your allow rules always apply.
 
 ## Auto permission mode
 
 Normally, a tool call that needs approval asks you. **Auto permission mode** delegates eligible approval requests to the active provider’s built-in AI reviewer: Claude Code Auto Mode for Claude, or Codex auto-review for Codex. Frink does not run a second home-grown judging model.
 
-Auto is a **per-chat** setting, and it is always yours to change. Its permanent **Auto** control sits beside the chat mode selector in the composer. New chats start off; the choice you make before sending is saved to that newly created chat. When Auto cannot run — for example with an unsupported provider or model, or before your account has been checked — the same control stays visible as **Auto unavailable** and explains why. A project is not required: Auto works in a general chat too, where the folder it works in is your home folder. Plan mode is not one of those cases — Auto reviews the planning phase too: see **Auto in Plan mode** below.
+Auto is a **per-chat** setting, and it is always yours to change. Its permanent **Auto** control sits beside the chat mode selector in the composer. New chats start with Auto on; the choice you make before sending is saved to that newly created chat. When Auto cannot run — for example with an unsupported provider or model, or before your account has been checked — the same control stays visible as **Auto unavailable** and explains why. A project is not required: Auto works in a general chat too, where the folder it works in is your home folder. Plan mode is not one of those cases — Auto reviews the planning phase too: see **Auto in Plan mode** below.
 
-Flows own their own setting in **Flow settings → Auto Mode**. It defaults on, including for existing flows that do not yet store a value, and it does not affect direct command or custom-node steps. When a Flow dispatches an Agent step into a chat, **it sets that chat’s Auto control to the Flow’s value** — so the whole chat runs the way the Flow does: the dispatched step, your answers to its questions, a Resume, and any reply you type yourself. While a run is on screen the readout above the input shows which way Auto is set. The Flow re-applies its value each time it dispatches another step, so a change you make mid-run holds only until the Flow’s next step; once the run finishes the setting stays where the Flow left it until you change it. There is no application-wide Auto master switch.
+Flows own their own setting in **Flow settings → Auto Mode**. It defaults on, including for existing flows that do not yet store a value, and it does not affect direct command or custom-node steps. When a Flow dispatches an Agent step into a chat, **it sets that chat’s Auto control to the Flow’s value** — so the whole chat runs the way the Flow does: the dispatched step, your answers to its questions, a Resume, and any reply you type yourself. While a run is on screen, the **Auto** switch on the run card shows which way Auto is set, and you can flip it there: if Auto blocks a step you want to run, turn Auto off, reply to the agent, and approve the step yourself when it asks. A change applies from your next message. The Flow re-applies its value each time it dispatches another step, so a change you make mid-run holds only until the Flow’s next step; once the run finishes the setting stays where the Flow left it until you change it. There is no application-wide Auto master switch.
 
 Auto changes who reviews an eligible request; it does not remove the surrounding controls:
 
 - Claude and Codex keep their provider sandbox and managed policies.
-- Frink’s explicit permission allows and denies are applied before Claude’s reviewer. Server authorization remains enforced.
+- Frink’s deny rules and the system deny list are applied first, so the reviewer can never allow something they block. Your allow rules are applied first too: a call they allow skips Codex’s reviewer, and today skips Claude’s as well. Claude can change that on its side and still send an allowed call to its reviewer, so for a step that must never be reviewed, turn Auto off. Server authorization remains enforced.
 - Auto covers every tool type the same way — Bash, file operations, MCP tools, and Frink’s own flow tools. With Auto on, an eligible request never raises a manual prompt; with Auto off, flow writes and other MCP tools ask through the standard prompt with “always allow” options.
 - One exception: letting an agent **run** a Flow is a decision about that Flow, not about a tool, so it always asks you. With Auto on the card still appears and the run does not start until you answer — the agent is told the approval is pending rather than being left waiting. Turning on “Allow agents to run this flow” in Flow settings, or choosing “Always allow this Flow” on the card, stops it asking again.
 - A reviewer decision is per request. Auto does not create lasting Frink permission rules.
@@ -202,6 +202,44 @@ Claude Auto is available only on Claude Sonnet and Opus models that Frink report
 Auto reviews tool requests in Plan mode too — both the **planning phase** (the reading and running the agent does to build its plan) and, when the plan is accepted, the implementing phase. So a Plan-mode chat or Flow with Auto on runs without stopping to ask you for eligible tools throughout. Auto is still **not** the same as approving the plan: the plan itself still stops for you unless the Flow step is set to **auto-approve** (that separate checkbox is what skips the plan review). Turning Auto on never auto-approves a plan.
 
 Two things worth knowing. First, if the provider's reviewer cannot run for a plan step — for example on an unsupported model — Auto fails safe: an unattended Flow denies the tool rather than silently allowing it, while an attended chat may show denials instead of prompts in that rare case. Second, for a Flow's Plan step that is set to auto-approve, you will see the readout above the input switch from **Plan** to **Agent** with **Auto on** beside it once the plan is accepted, and the implementing half is reviewed the same way — on every kind of plan card.
+
+## OpenCode
+
+OpenCode chats (macOS and Linux) use the same cards and the same rules as any other chat.
+
+- **OpenCode asks Frink before every command, file change, web fetch or web search**, and before it touches anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and OpenCode carries on.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. Searching the folder doesn't ask, so a search can still show lines from a `.env` file.
+- **Frink also holds every command until its check has allowed it**, so no command runs that Frink didn't allow.
+- **If OpenCode ever finishes an action without asking, Frink stops the chat.**
+- **Frink ignores your OpenCode config files while it runs OpenCode, for safety**, and won't start OpenCode at all when an organisation, company sign-in or administrator sends it settings.
+- **Auto and hooks don't apply to OpenCode chats yet.**
+
+## GitHub Copilot
+
+GitHub Copilot chats (macOS and Linux) use the same cards and the same rules as any other chat.
+
+- **Copilot asks Frink before every command, file change, web fetch or web search**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Copilot carries on. Helper agents that Copilot starts inside a chat ask the same way.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. Listing file names doesn't ask. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file.
+- **Some of Copilot's own bookkeeping doesn't ask**: its notes for the chat, checking on a command it started, and handing work to its helper agents. None of these change your files.
+- **Copilot's plan file usually doesn't ask.** Copilot saves its plan in Frink's own Copilot folder, not in your project, and Frink lets only that one file through without a question, in any mode. You may still see a card when Copilot first writes or reads it.
+- **A tool or option Frink can't check is refused**, so it never runs without asking. Copilot is told and usually tries another way.
+- **If Copilot ever finishes an action without asking, Frink stops the chat.**
+- **Your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety**, and Frink won't start Copilot at all when an organisation or your device manages its settings.
+- **Auto and Frink's hooks don't apply to Copilot chats yet.**
+
+## Cursor
+
+Cursor chats (macOS and Linux) use the same cards and the same rules as any other chat.
+
+- **Cursor asks Frink before every command and file change**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Cursor carries on.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. In a general chat, a search of your whole home folder is refused, because it holds your Cursor sign-in; search a folder inside it instead. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. Listing file names doesn't ask. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file.
+- **Some of Cursor's own bookkeeping doesn't ask**: files it keeps for the chat in Frink's own Cursor folder, such as an image you paste, and its to-do list. None of these change your files.
+- **Cursor only searches for text inside the chat's folder.** A text search of a folder outside it is refused. When a text search would follow a link that leads outside the folder, Frink asks about each place the link leads, and refuses the search if it can't work that out in time.
+- **Cursor's file and search tools never read or change Cursor's own settings folder or your Cursor sign-in.** A command that touches them asks like any other command. A path Cursor would rewrite before opening it, such as one starting with `~` or `file:`, is refused too.
+- **A tool or option Frink can't check is refused**, so it never runs without asking. Web fetch, web search and helper agents aren't offered to Cursor at all for now.
+- **If Cursor ever finishes an action without asking, or doesn't load Frink's check, Frink stops the chat.**
+- **Your own Cursor hooks, MCP servers, rules and skills, and the project's `AGENTS.md` and `.cursor/rules`, don't apply inside Frink, for safety.**
+- **Auto and Frink's hooks don't apply to Cursor chats yet.**
 
 ## Agent tool limits
 

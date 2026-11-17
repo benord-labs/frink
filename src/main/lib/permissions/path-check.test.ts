@@ -1,8 +1,17 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isPathWithinProject } from './path-check';
+import { isPathWithinProject, isProcessRelative } from './path-check';
 
 // The dev workspace path itself contains spaces ("Personal and learning"), so agents that
 // copy a shell-escaped path (`/…/Personal\ and\ learning/…`) from a prior bash command into
@@ -82,4 +91,57 @@ describe('isPathWithinProject', () => {
       }
     },
   );
+
+  // These resolve in whichever process opens them, so Frink's answer is not the agent's.
+  describe.skipIf(process.platform === 'win32')('process-relative paths', () => {
+    let fd = -1;
+    let file = '';
+    beforeEach(() => {
+      file = join(projectRoot, 'open.ts');
+      writeFileSync(file, '// x');
+      fd = openSync(file, 'r');
+    });
+    afterEach(() => closeSync(fd));
+
+    it('counts every spelling of an open project file as outside', () => {
+      const spellings = [
+        `/proc/self/fd/${fd}`,
+        `/proc/thread-self/fd/${fd}`,
+        `/proc/${process.pid}/fd/${fd}`,
+        `/proc/${process.pid}/root${file}`,
+        `/dev/fd/${fd}`,
+        '/dev/stdin',
+      ];
+      for (const spelling of spellings)
+        expect(isPathWithinProject(spelling, projectRoot)).toBe(false);
+    });
+
+    it('counts /proc/self/cwd as outside while Frink runs in the project', () => {
+      const before = process.cwd();
+      process.chdir(projectRoot);
+      try {
+        expect(isPathWithinProject('/proc/self/cwd/open.ts', projectRoot)).toBe(false);
+      } finally {
+        process.chdir(before);
+      }
+    });
+
+    it('counts a project link into /proc or /dev/fd as outside, however it is reached', () => {
+      symlinkSync(`/proc/self/fd/${fd}`, join(projectRoot, 'proc.ts'));
+      symlinkSync('/dev/fd', join(projectRoot, 'fds'));
+      symlinkSync('proc.ts', join(projectRoot, 'hop.ts'));
+      symlinkSync('open.ts', join(projectRoot, 'alias.ts'));
+      for (const name of ['proc.ts', `fds/${fd}`, 'hop.ts']) {
+        expect(isPathWithinProject(join(projectRoot, name), projectRoot)).toBe(false);
+      }
+      expect(isPathWithinProject('alias.ts', projectRoot)).toBe(true);
+    });
+
+    it('follows .. on the real folders, after a link too', () => {
+      const up = '/..'.repeat(projectRoot.split('/').length);
+      expect(isProcessRelative(`${projectRoot}${up}/proc/self/cwd/x`)).toBe(true);
+      symlinkSync('/usr', join(projectRoot, 'usr'));
+      expect(isPathWithinProject('usr/../proc/self/cwd', projectRoot)).toBe(false);
+    });
+  });
 });

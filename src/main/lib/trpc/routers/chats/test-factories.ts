@@ -1,4 +1,4 @@
-import type { Chat, SubChat } from '../../../db/schema';
+import type { Chat, SubChat, Task } from '../../../db/schema';
 import { createId } from '../../../db/utils';
 
 /**
@@ -52,6 +52,30 @@ export function makeLocalSubChat(overrides: Partial<SubChat> = {}): SubChat {
     fileCount: 0,
     createdAt: now,
     updatedAt: now,
+    ...overrides,
+  };
+}
+
+export function makeLocalTask(overrides: Partial<Task> = {}): Task {
+  const now = new Date();
+  return {
+    id: createId(),
+    projectId: null,
+    title: null,
+    description: 'Test task',
+    source: 'manual',
+    sourceId: null,
+    executionTarget: 'local',
+    requiresFilesystem: true,
+    status: 'pending',
+    result: null,
+    triggerContext: null,
+    flowRunId: null,
+    nodeRunId: null,
+    createdAt: now,
+    startedAt: null,
+    completedAt: null,
+    executedBy: null,
     ...overrides,
   };
 }

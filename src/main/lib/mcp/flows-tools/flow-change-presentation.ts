@@ -19,6 +19,8 @@ const SETTING_LABELS: Record<string, string> = {
   defaultModel: 'Default model',
   defaultProjectId: 'Default project',
   briefing: 'Flow briefing',
+  runFirst: 'Priority queue',
+  runFirstWhen: 'Priority queue rule',
   pauseOnFailure: 'Failure handling',
   maxBatchConcurrency: 'Batch concurrency',
   batchTriggerSchema: 'Batch trigger inputs',
@@ -86,6 +88,8 @@ function nodeUpdateDetail(op: Extract<PatchOperation, { op: 'update_node' }>): s
   if (op.label !== undefined) details.push('Step label');
   if (op.config !== undefined) details.push(describeFlowNodeConfigChange(op.config));
   if (op.position !== undefined) details.push('Canvas position');
+  if (op.size !== undefined)
+    details.push(op.size === null ? 'Container size cleared' : 'Container size');
   return details.length > 0 ? details.join(' · ') : undefined;
 }
 
@@ -203,6 +207,8 @@ function describeOperation(
         label: 'Flow settings',
         detail: settingsDetail(op),
       };
+    case 'auto_layout':
+      return { ...common, label: 'Canvas layout', detail: 'Reset to automatic layout' };
   }
 }
 

@@ -20,7 +20,7 @@ import * as socketClient from '../client';
 import * as flowCleanup from '../execution/flow-resource-cleanup';
 import { abortActiveExecutionsForSubChats, handleRemoteStop } from '../executor';
 import { steerActiveTurn } from '../steering';
-import { mockQuery, never, UNCLEAN_RESULT } from './claude-turn-abort';
+import { mockQuery, never, UNCLEAN_RESULT } from './claude-query-fake';
 import {
   expireQuestion,
   flowDriven,

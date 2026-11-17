@@ -3,6 +3,7 @@ import { extname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { z } from 'zod';
 import {
   isBlankConfigValue,
+  isTemplateRenderedInput,
   type JsonValue,
   type ManifestInputDeclaration,
   parseManifestInputDeclarations,
@@ -169,6 +170,14 @@ function nonBooleanRequiredWarning(key: string, schema: RawManifestInput): strin
   return `Input "${key}" declares a non-boolean "required" (${describeValue(schema.required)}) — treated as optional. Use true or false.`;
 }
 
+/** Template opt-out is strictly boolean, so anything else would silently keep rendering. */
+function nonBooleanTemplateWarning(key: string, schema: RawManifestInput): string | null {
+  if (!Object.hasOwn(schema, 'template') || z.boolean().safeParse(schema.template).success) {
+    return null;
+  }
+  return `Input "${key}" declares a non-boolean "template" (${describeValue(schema.template)}) — treated as templated. Use false to pass the value through unrendered.`;
+}
+
 /** A default that cannot become its own declared type would fail every run that relies on it. */
 function mismatchedDefaultWarning(key: string, schema: RawManifestInput): string | null {
   if (!Object.hasOwn(schema, 'default')) return null;
@@ -193,6 +202,7 @@ function manifestInputWarnings(key: string, rawSchema: JsonValue): string[] {
   return [
     unsupportedTypeWarning(key, schema.data),
     nonBooleanRequiredWarning(key, schema.data),
+    nonBooleanTemplateWarning(key, schema.data),
     mismatchedDefaultWarning(key, schema.data),
   ].filter((w): w is string => w !== null);
 }
@@ -280,6 +290,27 @@ function resolveInputDefault(
     return coerced;
   }
   return { kind: 'omit', renderedEmpty };
+}
+
+/** Configured values keyed by input name, as a flow node stores them. */
+type CustomNodeConfigValues = Parameters<typeof buildCustomNodeInputConfig>[1];
+
+/**
+ * Inputs declared `"template": false` take their authored value instead of the rendered one. The
+ * executor calls this under its read lease, so the opt-out comes from the manifest it will run.
+ */
+export function applyTemplateOptOuts(
+  inputs: Parameters<typeof buildCustomNodeInputConfig>[0],
+  rendered: CustomNodeConfigValues,
+  authored: CustomNodeConfigValues | undefined,
+): CustomNodeConfigValues {
+  if (!authored) return rendered;
+  // SAFETY: manifest JSON from disk; parseManifestInputDeclarations is the parsing boundary.
+  const declarations = parseManifestInputDeclarations(inputs as JsonValue);
+  const optedOut = Object.entries(declarations).filter(
+    ([key, declaration]) => !isTemplateRenderedInput(declaration) && Object.hasOwn(authored, key),
+  );
+  return { ...rendered, ...Object.fromEntries(optedOut.map(([key]) => [key, authored[key]])) };
 }
 
 /**

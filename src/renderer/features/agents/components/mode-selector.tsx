@@ -38,8 +38,8 @@ type ModeSelectorProps = {
   onTooltipChange: (tooltip: ModeSelectorProps['modeTooltip']) => void;
   tooltipTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   hasShownTooltipRef: React.MutableRefObject<boolean>;
-  /** Hide the debug option (e.g. general chats without a project) */
-  disableDebugMode?: boolean;
+  /** Modes this chat can't use: Debug without a project, or ones the chat's agent lacks. */
+  hiddenModes?: readonly ChatMode[];
 };
 
 /**
@@ -55,7 +55,7 @@ export function ModeSelector({
   onTooltipChange,
   tooltipTimeoutRef,
   hasShownTooltipRef,
-  disableDebugMode,
+  hiddenModes = [],
 }: ModeSelectorProps) {
   const clearTooltipTimeout = () => {
     if (tooltipTimeoutRef.current) {
@@ -137,7 +137,7 @@ export function ModeSelector({
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
         {(['agent', 'plan', 'debug'] as ChatMode[])
-          .filter((m) => !disableDebugMode || m !== 'debug')
+          .filter((m) => !hiddenModes.includes(m))
           .map((mode) => {
             const config = MODE_CONFIG[mode];
             // biome-ignore lint/style/useNamingConvention: Renders as a component

@@ -9,7 +9,6 @@
  * data.onDelete — called when the user confirms deletion.
  */
 
-import { Button } from '@benord-labs/frink-primitives';
 import {
   BaseEdge,
   type Edge,
@@ -17,8 +16,8 @@ import {
   type EdgeProps,
   getBezierPath,
 } from '@xyflow/react';
-import { Check, X } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
+import { EdgeRemoveControl } from '../../../../EdgeRemoveControl';
 
 const HOVER_LEAVE_MS = 180;
 
@@ -113,67 +112,12 @@ export function BatchPlanEdge({
             onMouseEnter={() => setHoverPinned(true)}
             onMouseLeave={() => scheduleHoverOff()}
           >
-            {pendingDelete ? (
-              <div
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-                className="flex items-center gap-0.5"
-              >
-                <span className="px-1.5 text-[11px] text-muted-foreground select-none">
-                  Remove?
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 rounded-[5px] text-destructive hover:text-destructive"
-                  aria-label="Confirm remove dependency"
-                  // eslint-disable-next-line jsx-a11y/no-autofocus
-                  autoFocus
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPendingDelete(false);
-                    data?.onDelete?.();
-                  }}
-                  iconOnly
-                >
-                  <Check className="h-3.5 w-3.5" aria-hidden />
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 rounded-[5px] text-muted-foreground hover:text-foreground"
-                  aria-label="Cancel remove dependency"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPendingDelete(false);
-                  }}
-                  iconOnly
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden />
-                </Button>
-              </div>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 w-7 rounded-[5px] text-muted-foreground hover:text-destructive"
-                aria-label="Remove this dependency"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setPendingDelete(true);
-                }}
-                iconOnly
-              >
-                <X className="h-3.5 w-3.5" aria-hidden />
-              </Button>
-            )}
+            <EdgeRemoveControl
+              noun="dependency"
+              pending={pendingDelete}
+              onPendingChange={setPendingDelete}
+              onConfirm={() => data?.onDelete?.()}
+            />
           </div>
         </EdgeLabelRenderer>
       ) : null}

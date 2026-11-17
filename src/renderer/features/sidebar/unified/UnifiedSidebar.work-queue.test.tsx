@@ -7,7 +7,7 @@ import { activeOverlayAtom } from '../../../lib/atoms';
 import { exitDestinationForSidebarNavigationAtom } from '../../../lib/atoms/agent-navigation-atoms';
 import { selectedAgentChatIdAtom } from '../../agents/atoms';
 import { filesSidebarOpenAtom } from '../../files-sidebar/atoms';
-import { resetHarness, setupHarness } from './sidebar-test-harness';
+import { resetHarness, setupHarness, trpcMock } from './sidebar-test-harness';
 import { UnifiedSidebar, type UnifiedSidebarHandle } from './UnifiedSidebar';
 
 const local = vi.hoisted(() => ({
@@ -216,5 +216,26 @@ describe('UnifiedSidebar Work Queue destination', () => {
     nav.onNewChat();
 
     expectOverlayClosedBefore(local.setSelectedChatId);
+  });
+
+  it('counts a Flow waiting on an approval as needing attention', () => {
+    const approvals = vi.spyOn(trpcMock.trpc.flows.workQueueApprovals, 'useQuery').mockReturnValue({
+      data: [
+        {
+          flowRunId: 'run-1',
+          flowId: 'flow-1',
+          flowName: 'Nightly release',
+          projectName: null,
+          gateCount: 1,
+          nodeRunId: 'gate-1',
+          message: null,
+          waitingSince: new Date('2026-10-14T07:00:00.000Z'),
+        },
+      ],
+    });
+    render(<UnifiedSidebar />);
+
+    expect(local.sidebarNavProps?.needsAttentionTaskCount).toBe(1);
+    approvals.mockRestore();
   });
 });

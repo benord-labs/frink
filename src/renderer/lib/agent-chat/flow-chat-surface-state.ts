@@ -17,7 +17,7 @@ import { isRetryableParkedResult } from '../../../shared/lib/task-retry-policy';
 import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { type CodexSpeed, isCodexSpeed } from '../../../shared/types/execution';
-import type { AgentUserQuestion } from '../../../shared/types/task-signal';
+import type { AgentUserQuestion, SecretRequest } from '../../../shared/types/task-signal';
 import { taskResultSchema, type TaskResultRecord } from '../../../shared/types/task-result';
 
 type ParkedTask =
@@ -52,6 +52,7 @@ const DEFAULT_PARK_ASK = 'The agent needs your input to continue.';
 
 export type ParkSurfaceState =
   | { kind: 'none' }
+  | { kind: 'secret'; request: SecretRequest }
   | { kind: 'questions'; questions: AgentUserQuestion[] }
   | { kind: 'reply'; summary: string };
 
@@ -76,7 +77,6 @@ function readTaskAgentInfo(
 ): {
   modelId?: string;
   mode?: ChatMode;
-  autoReviewTools?: boolean;
   codexSpeed?: CodexSpeed;
 } {
   if (!task) return {};
@@ -84,26 +84,21 @@ function readTaskAgentInfo(
   const result = task.result ?? null;
   const model = config?.model ?? result?.model;
   const startMode = result?.startMode ?? config?.startMode;
-  // Auto consent comes from `Config`: tRPC transports what the flow dispatcher wrote at creation,
-  // so it reports what the FLOW asked for over the whole run. The chat's own seeded Auto setting is the
-  // value that actually governs each turn; the two agree unless a human has since changed it.
-  const autoReviewTools = config?.autoReviewTools;
   const codexSpeed = config?.codexSpeed;
   return {
     modelId: typeof model === 'string' ? model : undefined,
     mode:
       liveMode ??
       (typeof startMode === 'string' ? toChatMode(startMode as ResolvedTaskStartMode) : 'agent'),
-    autoReviewTools: typeof autoReviewTools === 'boolean' ? autoReviewTools : undefined,
     codexSpeed: isCodexSpeed(codexSpeed) ? codexSpeed : undefined,
   };
 }
 
 /**
- * Which park answer surface a parked driving task should render: structured `questions` get the
- * clickable card; every OTHER user-input park gets a summary + free-text reply box, so no park is
+ * Which park answer surface a parked driving task should render: a secret request gets the secret
+ * form, structured `questions` get the clickable card; every OTHER user-input park gets a summary + free-text reply box, so no park is
  * ever left without an in-chat answer affordance. Two carve-outs return `none`: transient parks
- * (usage limit / API error — TaskControls owns their Carry on / Retry) and user-pause parks
+ * (usage limit / API error — TaskControls owns their Continue / Retry) and user-pause parks
  * (the paused bar owns those).
  */
 export function deriveParkSurfaceState(task: ParkedTask): ParkSurfaceState {
@@ -115,8 +110,17 @@ export function deriveParkSurfaceState(task: ParkedTask): ParkSurfaceState {
     return { kind: 'none' };
   }
   const agentSignal = record?.agentSignal as
-    | { state?: string; summary?: string; questions?: AgentUserQuestion[] }
+    | {
+        state?: string;
+        summary?: string;
+        questions?: AgentUserQuestion[];
+        secretRequest?: SecretRequest;
+      }
     | undefined;
+  // The secret form, never a free-text box: a typed reply would put the secret in the chat.
+  if (agentSignal?.state === 'awaiting_input' && agentSignal.secretRequest) {
+    return { kind: 'secret', request: agentSignal.secretRequest };
+  }
   if (agentSignal?.state === 'awaiting_input' && agentSignal.questions?.length) {
     return { kind: 'questions', questions: agentSignal.questions };
   }
@@ -132,7 +136,6 @@ export type FlowChatBottomSurface =
       canPause: boolean;
       modelId?: string;
       mode?: ChatMode;
-      autoReviewTools?: boolean;
       codexSpeed?: CodexSpeed;
     }
   | {
@@ -140,7 +143,6 @@ export type FlowChatBottomSurface =
       flowRunId: string;
       modelId?: string;
       mode?: ChatMode;
-      autoReviewTools?: boolean;
       codexSpeed?: CodexSpeed;
     }
   | { kind: 'park' };
@@ -155,11 +157,11 @@ export function deriveFlowChatBottomSurface(data: FlowChatSurfaceData): FlowChat
       return { kind: 'paused', flowRunId: run.id, ...readTaskAgentInfo(task, subChatMode) };
     }
     // Transient parks derive to 'none' — those keep the composer (TaskControls owns their
-    // Carry on / Retry), so the chat is never left input-less.
+    // Continue / Retry), so the chat is never left input-less.
     return deriveParkSurfaceState(task).kind === 'none' ? { kind: 'composer' } : { kind: 'park' };
   }
   // States that own a recovery/approval affordance elsewhere, which the strip must not hide: the
-  // plan card approves plan_ready; TaskControls owns failed (Carry on / Retry); a restart-interrupted
+  // plan card approves plan_ready; TaskControls owns failed (Continue / Retry); a restart-interrupted
   // run resumes via a chat reply + InterruptedRunControls (decision flow-run-restart-recovery) and
   // reaches here LIVE, because the boot sweep cancels the TASK while its flow_run stays `paused`.
   if (task?.status === 'plan_ready' || task?.status === 'failed' || task?.status === 'cancelled') {
@@ -178,6 +180,16 @@ export function deriveFlowChatBottomSurface(data: FlowChatSurfaceData): FlowChat
   };
 }
 
+/** The chat whose Auto switch a flow surface shows: only where a next message can follow, since a
+ * flip reaches that message alone and between steps the next dispatch resets it. */
+export function flowAutoSwitchChatId(
+  surface: FlowChatBottomSurface,
+  chatId: string | null,
+): string | null {
+  if (surface.kind === 'running') return surface.canPause ? chatId : null;
+  return surface.kind === 'composer' ? null : chatId;
+}
+
 /**
  * Poll policy for the query feeding the bottom surface. Keyed off RUN LIVENESS, never off the derived
  * surface: a live run must keep polling even while it shows the composer (a transient park, a plan
@@ -192,7 +204,7 @@ export function getFlowSurfaceRefetchInterval(data: FlowChatSurfaceData): number
   }
   // `cancelled` joins `needs_attention` as a poll-worthy dead state. A restart-interrupted run is
   // cancelled (terminal), so there is no live run and the surface correctly shows the composer +
-  // Resume — but the RESUME runs in the main process (the executor's follow-up turn, or rerunRun),
+  // Resume — but the RESUME runs in the main process (a typed reply's or Continue's resume ticket),
   // and the renderer has no invalidation for it. Stopping the poll here means the run going live
   // again is never observed and the composer sticks for the rest of the session. The docstring's
   // "invalidations keep things fresh" holds for a finished run, not for a resumable one.

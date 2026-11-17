@@ -5,21 +5,22 @@
 import { createExecutionSenders } from './streaming/live-stream/execution-senders';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { eq } from 'drizzle-orm';
 import { app } from 'electron';
 import log from 'electron-log';
+import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
+import { aiProvider, runtimeFor } from '../../../shared/lib/ai-providers';
 import { resolveCodexCliModel } from '../../../shared/lib/codex-cli-models';
 import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-message-markers';
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
 import type { ChatMode } from '../../../shared/types/chat-mode';
-import type { ExecutionSettings } from '../../../shared/types/execution';
-import type { PermissionPresentation } from '../../../shared/types/permissions';
+import type { ConversationTurn, ExecutionSettings } from '../../../shared/types/execution';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
+import { codexCatalogForModel } from '../agent-runner/codex/usage';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
 import { relaunchWithCredential } from '../claude/credential-fd-spawn';
@@ -37,6 +38,7 @@ import {
   claudeErrorText,
   isResumeFailureText,
 } from '../claude/stream-classifiers';
+import { recoverSpilledFlowPatchChunk } from '../claude/tool-result-spill';
 import type { MessageMetadata, UIMessageChunk } from '../claude/types';
 import {
   getClaudeCodeTokenById,
@@ -45,24 +47,12 @@ import {
 } from '../credentials';
 import { getDatabase } from '../db';
 import { getChatWithProjectAccount } from '../db/repos/chats';
-import { getProjectByPath } from '../db/repos/projects';
 import { projects as projectsTable } from '../db/schema';
 import { stageContinuationResume } from '../flows/admission/terminal-resume/continuation';
 import { createRollbackStash } from '../git/stash';
-import {
-  type FlowConsentDecision,
-  type FlowConsentRequest,
-  readFlowConsentDecision,
-} from '../mcp/flows-tools/gating/flow-invocation-consent';
 import { resolveFrinkMcpServers } from '../mcp/runtime';
 import type { createClaudeMcpConfigTransport } from '../mcp/runtime/mcp-config-transport';
-import { getOperationFromToolName } from '../permissions';
-import { isValidPermissionPresentation } from '../permissions/presentation-schema';
-import { permissionTimeoutMessage } from '../permissions/prompt-timeout';
-import { buildPermissionDecisionInput } from '../permissions/v2';
-import { checkPermission } from '../permissions/v2/check';
-import { formatDenyReason } from '../permissions/v2/deny-reason-format';
-import { persistApprovedRule } from '../permissions/v2/persist-approved-rule';
+import { hooksForLaunch } from '../provider/hooks/store';
 import { captureMainMessage } from '../sentry/init';
 import {
   disposeCleanStreamEnd,
@@ -71,7 +61,6 @@ import {
   latchAbortReason,
   resolveErrorPayloadCategory,
   resumeParkedTaskInPlace,
-  reviveRestartInterruptedFlow,
   stampedErrorCategory,
 } from '../tasks';
 import { broadcastWriteToolFileChangedIpc } from '../trpc/routers/claude-file-changed';
@@ -108,11 +97,8 @@ import {
 import { armWakePump, hasWakeHold, releaseWakeHold, takeWakeHold } from './claude-wake-hold';
 import {
   type MessagePart,
-  onPermissionResponse,
-  type PermissionRequestPayload,
   sendExecuteCompleteDirect,
-  sendPermissionDismiss,
-  sendPermissionRequest,
+  sendMessage,
   sendSubChatModeChange,
   sendWakeHoldChanged,
 } from './client';
@@ -130,20 +116,39 @@ import {
 import { runTurn as runClaudeTurn } from './execution/claude-session-loop';
 import * as flow from './execution/flow-resource-cleanup';
 import { deliverProviderConfig } from './execution/provider-delivery';
+import { startAcpTurn } from './execution/acp-turn';
+import { startCopilotTurn } from './execution/copilot-turn';
+import { startCursorTurn } from './execution/cursor-turn';
+import { lastFinishMetadata, stampTurnUsage } from './execution/turn-usage';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
-
 import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
+  carryUndeliveredMessages,
+  codexComposerContext,
+  forgetUndeliveredOnClear,
+  isPersonAuthored,
+  projectComposerContext,
+  replaceCarriedWithHistory,
 } from './execution/prompt-prefix';
-import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
+import type { MessageDelivery } from './execution/message-provenance/origin';
+import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
+import { renderFlowBriefingSection } from './execution/prompt-prefix/flow-briefing-section';
+import { listWakeHoldSubChatIdsForChat } from './execution/wake-hold-registry-view';
+import { logAdoptedTurnEnd, turnEndDisposition } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
   requiresStrictSignalFinalization,
   resolveFlowSignalArming,
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
 } from './flow-signal';
-import { buildOperatorReminders, wrapRemindersForPrompt } from './operator-reminders';
+import {
+  clearFlowRunEndedAnnouncementsForTests,
+  FLOW_RUN_ENDED_NOTICE,
+  isFlowRunEndedNoticeDue,
+  markFlowRunEndAnnounced,
+} from './flow-signal/flow-run-ended';
+import { prepareTurnReminders } from './operator-reminders';
 import { shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
 import { acquireRuntimeSlot } from './runtime-gate';
 import { reportIfControlChannelClosed } from './stream-closed-sentinel';
@@ -154,6 +159,7 @@ import {
   getExecutionStreamEpoch,
   hasActiveExecutions,
   listExecutionsForWebContents,
+  listSubChatIdsForChat,
   setActiveExecution,
 } from './streaming/execution-registry';
 
@@ -167,9 +173,9 @@ export {
 import { extractImagePartsFromMessage, writeImagePartsToTempFiles } from './streaming/image-parts';
 import { recordLiveStreamStart } from './streaming/live-stream';
 import {
-  createPendingPermissionRequestBroker,
-  generatePermissionRequestId,
-} from './streaming/pending-permission/request';
+  hasPendingPermissionRequest,
+  validateToolPermission,
+} from './streaming/pending-permission/validate-tool-permission';
 import {
   adoptedTurnBeforePush,
   armAutoDuringPlan,
@@ -185,12 +191,10 @@ import { buildFinalPartsForPersist, emitPlanFallbackSends } from './streaming/pl
 import { resolvePlanModeChunkSuppression } from './streaming/plan-mode-suppression';
 import { buildWakeHoldIo } from './streaming/wake-hold-io';
 import { storedExecutionSettings } from '../chat-composer';
+import { beginCodexTurn, endCodexTurn, getCodexSession, setCodexSession } from './codex-session';
 
-// Provider session cache: subChatId → sessionId for native resume on follow-up messages.
-// Capped to prevent unbounded growth over long-running sessions.
-const codexSessionCache = new Map<string, string>();
-const codexSessionParentChat = new Map<string, string>();
-const SESSION_CACHE_MAX = 100;
+export { clearCodexSession } from './codex-session';
+
 export const executionAbortSources = new Map<string, string>();
 
 /**
@@ -203,14 +207,14 @@ export const executionAbortSources = new Map<string, string>();
  * out of plan mode while resuming the SDK session, the persisted transcript still contains the
  * SDK's `<system-reminder>Plan mode is active</system-reminder>`. Without an exit reminder the
  * model parrots that stale state. We mirror Claude Code TUI's `plan_mode_exit` attachment by
- * detecting the transition here and delivering a one-shot exit reminder — via the UserPromptSubmit
- * hook on the Claude path, or a prompt prepend on Codex (see `operator-reminders.ts`).
+ * detecting the transition here and delivering a one-shot exit reminder (`operator-reminders.ts`).
  */
 const lastExecutedModeBySubChat = new Map<string, ChatMode>();
 
 /** Test-only: reset module-level executor state so test order doesn't matter. */
 export function _resetExecutorStateForTests(): void {
   lastExecutedModeBySubChat.clear();
+  clearFlowRunEndedAnnouncementsForTests();
   _resetConfigDirStagingForTests();
   _resetClaudeDebugSessionsForTests();
 }
@@ -242,7 +246,7 @@ const USER_VISIBLE_CHUNK_TYPES = new Set<UIMessageChunk['type']>([
 ]);
 
 /** Fire-and-forget persist of the first session id a stream announces — a turn that dies
- * mid-stream never reaches the finish-path persist, and Carry on then has no session to resume. */
+ * mid-stream never reaches the finish-path persist, and Continue then has no session to resume. */
 function persistEarlySessionId(subChatId: string, sessionId: string): void {
   void import('../db/repos/sub-chats')
     .then(({ updateSubChatSession }) => updateSubChatSession(getDatabase(), subChatId, sessionId))
@@ -252,33 +256,6 @@ function persistEarlySessionId(subChatId: string, sessionId: string): void {
 }
 
 const PLAN_MUTATION_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
-
-/** Clear the cached Codex resume thread for a chat (e.g., when the chat is deleted). */
-export function clearCodexSession(chatId: string): void {
-  for (const [subChatId, parentChatId] of codexSessionParentChat.entries()) {
-    if (parentChatId !== chatId) continue;
-    codexSessionParentChat.delete(subChatId);
-    codexSessionCache.delete(subChatId);
-  }
-}
-
-/** Cache a Codex resume thread, evicting the oldest entry if at capacity. LRU: delete-then-set refreshes insertion order. */
-function setCodexSession(chatId: string, subChatId: string, sessionId: string): void {
-  const sizeBefore = codexSessionCache.size;
-  codexSessionCache.delete(subChatId); // Refresh insertion order for LRU
-  if (codexSessionCache.size >= SESSION_CACHE_MAX) {
-    const oldest = codexSessionCache.keys().next().value;
-    if (oldest) {
-      codexSessionCache.delete(oldest);
-      codexSessionParentChat.delete(oldest);
-      log.info(
-        `[Socket Executor] Session cache eviction: removed oldest subChatId=${oldest}, inserted subChatId=${subChatId} (sizeBefore=${sizeBefore}, sizeAfterEvict=${codexSessionCache.size}, max=${SESSION_CACHE_MAX})`,
-      );
-    }
-  }
-  codexSessionParentChat.set(subChatId, chatId);
-  codexSessionCache.set(subChatId, sessionId);
-}
 
 // Dynamic import for Claude SDK (ESM module)
 let cachedClaudeQuery: typeof import('@anthropic-ai/claude-agent-sdk').query | null = null;
@@ -291,195 +268,6 @@ const getClaudeQuery = async () => {
   return cachedClaudeQuery;
 };
 
-// Permission Types
-// ============================================================================
-
-const permissionRequests = createPendingPermissionRequestBroker({
-  getExecutionSignal: (subChatId) => getActiveExecution(subChatId)?.controller.signal,
-  onResponse: onPermissionResponse,
-  sendDismiss: sendPermissionDismiss,
-  sendRequest: sendPermissionRequest,
-});
-export const drainPendingPermissions = permissionRequests.drain;
-export const hasPendingPermissionRequest = permissionRequests.hasPending;
-
-/**
- * Ask the user whether an agent may run a specific flow.
- *
- * Rides the existing permission transport rather than adding a second approval
- * system: same pending map, same socket event, same timeout and dismissal. It
- * runs strictly AFTER the v2 tool decision, so it can only narrow — a deny rule
- * has already blocked the call before this is reached.
- */
-export async function requestFlowInvocationConsent(
-  request: FlowConsentRequest,
-): Promise<FlowConsentDecision> {
-  const response = await permissionRequests.request(
-    {
-      chatId: request.chatId,
-      subChatId: request.subChatId,
-      requestId: generatePermissionRequestId(),
-      type: 'flow_consent',
-      path: request.flowId,
-      operation: 'flow_consent',
-      reason: `Run flow: ${request.flowName}`,
-      flowConsent: {
-        flowId: request.flowId,
-        flowName: request.flowName,
-        summary: request.summary,
-        allowOnce: request.allowOnce,
-      },
-    },
-    // `null` detaches deliberately; `undefined` would fall back to the live
-    // execution and let an ordinary next turn dismiss the card.
-    request.abortSignal ?? null,
-  );
-  return readFlowConsentDecision(response);
-}
-
-// ============================================================================
-// Permission Scope Resolution
-// ============================================================================
-
-/**
- * Validate tool permission via the v2 dispatcher for provider hooks, MCP calls,
- * and Codex host-permission requests.
- */
-export async function validateToolPermission(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  projectPath: string | undefined,
-  chatId: string,
-  subChatId: string,
-  reason?: string,
-  permissionPathOverride?: string,
-  isFlowDrivenTurn?: boolean,
-  deferAskToProvider = false,
-  executionSignal?: AbortSignal,
-  trustedFrinkOwnedMcp?: boolean,
-  mcpIdentity?: { server: string; tool: string },
-  presentation?: PermissionPresentation,
-): Promise<{ allowed: true } | { allowed: false; message: string } | { allowed: null }> {
-  if (!isValidPermissionPresentation(toolName, presentation)) {
-    log.error('[executor] Rejected invalid permission presentation', { toolName });
-    return { allowed: false, message: 'Invalid permission presentation — tool blocked' };
-  }
-
-  if (!projectPath) return { allowed: true };
-
-  // From here every tool call is decided by the permission rules, which prompt when
-  // no rule matches and deny outright when the rule store cannot be read.
-
-  // permissionPathOverride is a FILE-level remap (worktree → canonical project
-  // FILE path), not a project-root override. PATH tools feed it into the decision
-  // input (rule matching against the canonical root); Bash/MCP keep it display-only.
-  //
-  // This read runs before checkPermission's own rule-store guard, so it carries the
-  // same posture: a DB we cannot read denies instead of throwing past the gate.
-  let project: Awaited<ReturnType<typeof getProjectByPath>>;
-  try {
-    project = await getProjectByPath(getDatabase(), projectPath);
-  } catch (err) {
-    log.error('[executor] Could not read project for permission check — denying', err);
-    return { allowed: false, message: formatDenyReason({ kind: 'db:unavailable' }) };
-  }
-
-  // Session-dir auto-allow root: THIS chat's CLAUDE_CONFIG_DIR. `check-edit`
-  // short-circuits Reads under its allow-listed subtrees (pasted/ + tool-result
-  // spills) without prompting. Guarded by the same validator as planDirRoot.
-  const sessionDirRoot = isValidSubChatIdForSessionPaths(subChatId)
-    ? path.join(app.getPath('userData'), 'claude-sessions', subChatId)
-    : undefined;
-
-  // Plan-mode auto-allow: the SDK keeps plans under $CLAUDE_CONFIG_DIR/plans,
-  // classified `outside` the project — pass the dir so check-edit short-circuits
-  // plan reads/writes instead of prompting each one.
-  const planDirRoot = isValidSubChatIdForSessionPaths(subChatId)
-    ? getClaudeSessionPlansDir(subChatId)
-    : undefined;
-
-  const decisionInput = buildPermissionDecisionInput(toolName, toolInput, permissionPathOverride);
-  const result = await checkPermission({
-    tool: toolName,
-    input: decisionInput,
-    projectId: project?.id ?? '',
-    projectPath,
-    sessionDirRoot,
-    planDirRoot,
-    trustedFrinkOwnedMcp,
-    mcpIdentity,
-  });
-  if (result.decision === 'allow') return { allowed: true };
-  if (result.decision === 'deny') {
-    return { allowed: false, message: formatDenyReason(result.reason) };
-  }
-
-  // Provider Auto Mode reviews the remaining `ask` bucket, uniformly across every tool
-  // class — vendor plugin MCP servers included (auto-mode-tool-approval 2026-09-03 Target).
-  if (deferAskToProvider) return { allowed: null };
-
-  // ask → prompt the renderer in-process, persist + (for bash) sync cursor on approval.
-  const isBash = toolName === 'Bash';
-  const isMcp = toolName.startsWith('mcp__');
-  const fallbackPath = isBash
-    ? String((toolInput as { command?: string }).command ?? '')
-    : String((toolInput as { file_path?: string }).file_path ?? '');
-  // Apply worktree FILE-path override here only — for prompt rendering + rule.
-  const remappedPath = permissionPathOverride ?? fallbackPath;
-  const requestId = generatePermissionRequestId();
-  const payload: PermissionRequestPayload = {
-    chatId,
-    subChatId,
-    requestId,
-    type: isMcp ? 'mcp_tool' : isBash ? 'bash' : 'file',
-    path: remappedPath,
-    operation: isMcp
-      ? 'mcp_tool'
-      : isBash
-        ? 'bash'
-        : (getOperationFromToolName(toolName) ?? 'read'),
-    reason: reason ?? `Tool: ${toolName}`,
-    prompt: presentation ? { ...result.prompt, presentation } : result.prompt,
-    // projectPath enables the "Allow for project" button in FourButtonView
-    // (`hasProject = !!request.projectPath`). Omitted when no project row
-    // matches (general chat / virtual folder, where projectPath is the home
-    // dir): persistApprovedRule cannot write a project rule there, so the
-    // button must render disabled and steer the user to "On this machine".
-    ...(project ? { projectPath } : {}),
-    ...(project?.name ? { projectName: project.name } : {}),
-    // MCP payloads include the tool name so the renderer can render the full identifier.
-    ...(isMcp ? { toolName } : {}),
-  };
-
-  const promptResult = await permissionRequests.request(payload, executionSignal);
-
-  // Timeout ≠ deny: the user may never have seen the prompt (rule writes gate on duration==='always').
-  if (promptResult.timedOut) {
-    log.info('[executor] Permission request timed out', { remappedPath, toolName, requestId });
-    return { allowed: false, message: permissionTimeoutMessage(remappedPath, isFlowDrivenTurn) };
-  }
-  if (!promptResult.approved) {
-    return { allowed: false, message: 'User denied permission' };
-  }
-
-  // The user approved this call; a failed rule write only means the next call prompts
-  // again, so it must not turn the approval into a deny or a rejected promise.
-  try {
-    await persistApprovedRule({
-      db: getDatabase(),
-      projectPath,
-      project: project ?? null,
-      promptResult,
-      isBash,
-      logTag: '[executor]',
-    });
-  } catch (err) {
-    log.warn('[executor] Could not persist approved rule', err);
-  }
-
-  return { allowed: true };
-}
-
 type ExecuteRequestPayload = {
   chatId: string;
   subChatId: string;
@@ -489,7 +277,7 @@ type ExecuteRequestPayload = {
   userMessageParts?: MessagePart[];
   mode: ChatMode;
   /** Conversation history for context */
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   /** Execution settings from the requesting machine (validated by socket server) */
   settings?: ExecutionSettings;
   /** Assistant message ID (provided by server for new architecture) */
@@ -517,6 +305,8 @@ type ExecuteRequestPayload = {
    * only that window's agents on reload/crash).
    */
   sourceWebContentsId?: number;
+  /** Main-owned delivery facts, absent on unclassified entrypoints. */
+  delivery?: MessageDelivery;
   /** Main-only send admission acknowledgement; never accepted from an IPC/network schema. */
   onExecutionStarted?: (error?: Error) => void;
 };
@@ -524,24 +314,6 @@ type ExecuteRequestPayload = {
 /**
  * Format conversation history as context for Claude
  */
-type TasksRepo = typeof import('../db/repos/tasks');
-type SignalTaskRow = Awaited<ReturnType<TasksRepo['getTaskById']>>;
-
-/**
- * Resume reads reuse the disarm-check prefetch when it already holds the target row, so a
- * follow-up turn does a single task read; a different target (the flow-driving task) fetches
- * its own row.
- */
-async function getTaskRowForResume(
-  db: Parameters<TasksRepo['getTaskById']>[0],
-  targetTaskId: string,
-  prefetched: SignalTaskRow,
-): Promise<SignalTaskRow> {
-  if (prefetched?.id === targetTaskId) return prefetched;
-  const { getTaskById } = await import('../db/repos/tasks');
-  return getTaskById(db, targetTaskId);
-}
-
 export {
   buildPlanFallbackSends,
   emitPlanFallbackSends,
@@ -549,13 +321,19 @@ export {
   type PlanFallbackSend,
 } from './streaming/plan-fallback';
 
+const EXECUTE_DEPS = { runtimeFor, startAcpTurn, startCopilotTurn, startCursorTurn };
+
 /**
  * Handle incoming execution request from another machine.
  * Verifies we have the project locally, then executes Claude and streams results back.
  * For general chats (empty projectId), executes in the home directory.
  */
-/** Image extracted from user message parts for Claude SDK */
-export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promise<void> {
+export async function handleRemoteExecute(
+  payload: ExecuteRequestPayload,
+  // Swapped by tests to run an agent the shipped flags keep off.
+  overrides: Partial<typeof EXECUTE_DEPS> = {},
+): Promise<void> {
+  const deps = { ...EXECUTE_DEPS, ...overrides };
   const {
     chatId,
     subChatId,
@@ -575,7 +353,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
   } = payload;
 
   // Markers persist for the renderer (hide the bubble, or draw it as a card) — never for the model.
-  const message = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
+  const unmarked = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
+  const composer = isPersonAuthored(payload.delivery, rawMessage)
+    ? projectComposerContext(unmarked)
+    : { text: unmarked, notes: [] };
+  const message = composer.text;
 
   if (continuity?.status === 'degraded') {
     log.warn(
@@ -663,6 +445,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     });
     await linkedTaskSignalFinalization;
   };
+  const codexTurn = beginCodexTurn(chatId);
   try {
     /** Bind to a local BrowserWindow only when the request carried an originating window. */
     const localRendererWebContentsId: number | undefined =
@@ -755,6 +538,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     });
     executionAdmissionAcknowledged = true;
     payload.onExecutionStarted?.();
+    // Owed from registration on: only a registered run can be stopped before its prompt is taken.
+    const undelivered = carryUndeliveredMessages(
+      subChatId,
+      { raw: unmarked, prompt: message },
+      isPersonAuthored(payload.delivery, rawMessage),
+    );
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');
     recordLiveStreamStart({
@@ -777,11 +566,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     strictSignalFinalization = requiresStrictSignalFinalization(armed);
     const prefetchedSignalTask = armed.prefetchedSignalTask;
     effectiveSignalTaskId = armed.effectiveSignalTaskId;
-    // Flow Briefing rides the SESSION system-prompt channel (injected once, prompt-cached, like
-    // CLAUDE.md), not the per-turn message. Resolved from the newest flow task on this sub-chat (any
-    // status) so it persists for the chat's life — including a manual follow-up typed after the flow
-    // completes. Kept in its OWN try so a briefing-read fault never disarms the flow-signal logic
-    // above; stays '' for interactive (non-flow) chats and on any fault (fail-open).
+    // Briefings persist for the chat's life, including follow-ups after the Flow completes.
     let sessionFlowBriefing = '';
     if (subChatId) {
       try {
@@ -801,6 +586,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     // today's armed behavior (fail-open).
     const signalTaskId = taskSignalDisarmed ? null : (effectiveSignalTaskId ?? taskIdForExecution);
     linkedTaskSignalTaskId = signalTaskId;
+    const provenance = provenanceForTurn(armed, payload.delivery ?? {}, signalTaskId);
     // Auto-approve plan node: once the plan card is emitted the agent implements in-turn, so flip the
     // sub-chat out of plan mode (input-bar label reflects the real execution state). One-time + called
     // from every card-emit path (inline ExitPlanMode + post-stream fallbacks) so the label is correct
@@ -812,30 +598,20 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // Resume the FLOW-DRIVING task, not the pinned upstream one: the agent's signal lands there
       // and drops unless 'running'. plan_ready resumes only on the reply-as-approval agent turn.
       const resumeTargetTaskId = signalTaskId;
-      if (!resumeTargetTaskId) return;
+      // A restart-interrupted run is never revived in place: its provider preflight declines this
+      // turn and converts it into a resume ticket that continues the session.
+      if (!resumeTargetTaskId || restartInterruptedFlowRunId) return;
       const { getDatabase } = await import('../db');
       const db = getDatabase();
-      // Restart-recovery: the driving task is a `cancelled` row whose run was interrupted by a
-      // restart/reload. THIS follow-up turn is the continuation, so revive it in place (helper keeps
-      // the closure's complexity in check; see reviveRestartInterruptedFlow).
-      if (restartInterruptedFlowRunId) {
-        await reviveRestartInterruptedFlow(
-          resumeTargetTaskId,
-          restartInterruptedFlowRunId,
-          subChatId,
-        );
-        return;
-      }
       // The race-recovery retry must NOT trust the turn-start prefetch: the sweep's park happened
       // after that snapshot, so a cached 'running' row would make the retry a silent no-op.
-      const latestTask = await getTaskRowForResume(
-        db,
-        resumeTargetTaskId,
-        forceFreshRead ? null : prefetchedSignalTask,
-      );
+      const reuse = !forceFreshRead && prefetchedSignalTask?.id === resumeTargetTaskId;
+      const { getTaskById } = await import('../db/repos/tasks');
+      const latestTask = reuse ? prefetchedSignalTask : await getTaskById(db, resumeTargetTaskId);
       if (!latestTask) return;
       if (latestTask.status === 'plan_ready' && mode !== 'agent') return;
-      await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
+      const resumed = await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
+      if (provenance) await recordProvenanceResume(provenance, resumed, latestTask);
     };
     const prepareLinkedTaskForExecution = async (): Promise<void> => {
       if (linkedTaskPreparedForExecution) return;
@@ -909,27 +685,22 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       return;
     }
 
-    // Codex is machine-local passthrough: confirm the `codex` binary is actually
-    // logged in on THIS machine before doing any work. Catches a cross-machine
-    // project account and a login that lapsed after connect — a clean message
-    // instead of a cryptic deep app-server spawn failure. Runs before the runtime
-    // slot so an unauthenticated codex never holds one.
     if (storedCredential.type === 'codex') {
-      const { detectCodexAccount } = await import('../credentials/detect-codex');
-      if (!detectCodexAccount().available) {
-        log.error('[Socket Executor] Codex is not authenticated on this machine');
-        sendRunErrorDirect({
-          chatId,
-          subChatId,
-          assistantMessageId: msgId,
-          error:
-            'Codex isn’t authenticated on this machine. Run `codex login` (or use this project on a machine where Codex is signed in).',
-        });
+      const { codexLoginMissingError } = await import('../credentials/codex-spawn-gate');
+      const error = await codexLoginMissingError();
+      if (error) {
+        sendRunErrorDirect({ chatId, subChatId, assistantMessageId: msgId, error });
         return;
       }
     }
 
-    const agentRuntime: 'codex' | 'claude' = storedCredential.type === 'codex' ? 'codex' : 'claude';
+    const agentRuntime = deps.runtimeFor(storedCredential.type, LAUNCH_FLAGS, process.platform);
+    if (agentRuntime === undefined) {
+      const name = aiProvider(storedCredential.type)?.name ?? 'This AI provider';
+      const error = `${name} can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.`;
+      sendRunErrorDirect({ chatId, subChatId, assistantMessageId: msgId, error });
+      return;
+    }
     const autoReviewRequested = settings?.autoReviewTools === true;
     const autoReviewSupported = isAutoReviewSupported(settings, storedCredential.type);
     const { nativeAutoReview, codexAutoReview, planAutoReview, autoReviewArmable } =
@@ -982,43 +753,47 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             signalTaskId,
           )
         : undefined;
-    // Native Codex/Claude resumes already own the transcript; shipping Frink history duplicates it.
-    const codexResumeThreadId =
-      agentRuntime === 'codex'
-        ? (codexSessionCache.get(subChatId) ?? persistedSessionId ?? undefined)
-        : undefined;
-    const willReplayHistoryViaResume =
-      agentRuntime === 'codex'
-        ? Boolean(codexResumeThreadId)
-        : agentRuntime === 'claude' && Boolean(persistedSessionId);
-    const hasResumeSession = Boolean(codexResumeThreadId ?? persistedSessionId);
-    let fullPrompt = willReplayHistoryViaResume
-      ? message
+    // Native resumes already own the transcript; shipping Frink history duplicates it.
+    const resumeSessionId =
+      agentRuntime === 'claude'
+        ? undefined
+        : ((agentRuntime === 'codex' ? getCodexSession(subChatId) : undefined) ??
+          persistedSessionId ??
+          undefined);
+    const hasResumeSession = Boolean(resumeSessionId ?? persistedSessionId);
+    let fullPrompt = hasResumeSession
+      ? undelivered.prompt
       : formatPromptWithHistory(message, history);
-    // Operator reminders to inject this turn (mode-exit transitions + the disarmed task-signal notice).
-    // Gating + copy live in ./operator-reminders. Claude delivers them as an in-conversation system
-    // prompt via the UserPromptSubmit hook (the session's callbacks); Codex has no such channel
-    // yet (sc-996) and gets a <system-reminder> prompt prepend.
-    const { reminders: pendingReminders, isExitingDebugMode } = buildOperatorReminders({
+    const agentSawPriorTurns = hasResumeSession || (history?.length ?? 0) > 0;
+    // Written once the provider accepts the turn: Claude's first prompt hook, Codex's turn/start.
+    // Flows run only on Claude and Codex, so other agents have no Flow run to be told about.
+    const flowRunEnded =
+      (agentRuntime === 'claude' || agentRuntime === 'codex') &&
+      armed.endedFlowRunId &&
+      isFlowRunEndedNoticeDue({
+        subChatId,
+        endedFlowRunId: armed.endedFlowRunId,
+        hasResumeSession,
+        agentSawPriorTurns,
+        hasBriefing: Boolean(sessionFlowBriefing),
+      })
+        ? { runId: armed.endedFlowRunId, text: FLOW_RUN_ENDED_NOTICE }
+        : undefined;
+    const turnReminders = prepareTurnReminders({
       mode,
       previousMode: lastExecutedModeBySubChat.get(subChatId),
       hasResumeSession,
       taskSignalDisarmed,
-      agentSawPriorTurns: willReplayHistoryViaResume || (history?.length ?? 0) > 0,
+      agentSawPriorTurns,
+      flowRunEndedNoticeDue: Boolean(flowRunEnded),
       planOwesNoFinishSignal: mode === 'plan' && Boolean(signalTaskId) && !isFlowExecutionTurn,
+      agentRuntime,
+      subChatId,
+      prompt: fullPrompt,
     });
+    fullPrompt = turnReminders.prompt;
     // Debug-exit cleanup: drop the ingest debug session. Side effect kept here, out of the pure util.
-    if (isExitingDebugMode) releaseClaudeDebugSession(subChatId);
-    if (pendingReminders.length > 0) {
-      if (agentRuntime !== 'claude') {
-        fullPrompt = `${wrapRemindersForPrompt(pendingReminders)}\n\n${fullPrompt}`;
-      }
-      log.info(
-        `[Socket Executor] ${pendingReminders.length} operator reminder(s) for ${subChatId} via ${
-          agentRuntime === 'claude' ? 'UserPromptSubmit hook' : 'prompt prepend'
-        }`,
-      );
-    }
+    if (turnReminders.isExitingDebugMode) releaseClaudeDebugSession(subChatId);
     // Inject approved plan context at the start of execution turns.
     // This is the compression-safe handoff — the agent always knows what plan was approved
     // even when provider session memory is stale or missing.
@@ -1029,17 +804,14 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       );
     }
 
-    let codexFreshThreadFallbackPrompt =
-      agentRuntime === 'codex' && codexResumeThreadId
-        ? fullPrompt.endsWith(message)
-          ? `${fullPrompt.slice(0, fullPrompt.length - message.length)}${formatPromptWithHistory(message, history)}`
-          : fullPrompt
-        : undefined;
+    let freshSessionFallbackPrompt = resumeSessionId
+      ? replaceCarriedWithHistory(fullPrompt, undelivered.prompt, message, history)
+      : undefined;
     if (sessionFlowBriefing && agentRuntime !== 'claude' && !hasResumeSession) {
-      fullPrompt = `## Flow Briefing\n\n${sessionFlowBriefing}\n\n---\n\n${fullPrompt}`;
+      fullPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${fullPrompt}`;
     }
-    if (sessionFlowBriefing && codexFreshThreadFallbackPrompt !== undefined) {
-      codexFreshThreadFallbackPrompt = `## Flow Briefing\n\n${sessionFlowBriefing}\n\n---\n\n${codexFreshThreadFallbackPrompt}`;
+    if (sessionFlowBriefing && freshSessionFallbackPrompt !== undefined) {
+      freshSessionFallbackPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${freshSessionFallbackPrompt}`;
     }
     const { dynamicChatMcpUrl } = workspace;
     // Independent of the dynamic-chat MCP mount (gated on 2+ projects): an unsignalled linked task
@@ -1059,14 +831,16 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         sendRunExecuteCompleteDirect(deferredPayload);
       });
     };
-    // Codex uses a persistent app-server; Manual and Auto retain the write sandbox.
-    if (storedCredential.type === 'codex') {
-      await deliverProviderConfig(project, projectPath, 'codex');
+    // Codex keeps a warm app-server and its write sandbox; other agents run one process a turn.
+    if (agentRuntime !== 'claude') {
+      const isCodex = agentRuntime === 'codex';
+      const agentLabel = aiProvider(storedCredential.type)?.longName ?? agentRuntime;
+      if (isCodex) await deliverProviderConfig(project, projectPath, 'codex');
       await flowResources.prepareProviderExecution(prepareLinkedTaskForExecution);
 
       let codexFullPrompt = fullPrompt;
-      let codexFreshFallbackPrompt = codexFreshThreadFallbackPrompt;
-      if (imageParts.length > 0) {
+      let codexFreshFallbackPrompt = freshSessionFallbackPrompt;
+      if (isCodex && imageParts.length > 0) {
         const imagePaths = writeImagePartsToTempFiles(imageParts).join('\n');
         const imagePromptPrefix = `The user attached the following image(s). View them at these file paths:\n${imagePaths}\n\n`;
         codexFullPrompt = `${imagePromptPrefix}${codexFullPrompt}`;
@@ -1075,19 +849,18 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         }
       }
 
-      const codexDynamicChatMcpUrl = buildCodexDynamicChatMcpUrl({
-        baseUrl: dynamicChatMcpUrl,
-        subChatId,
-        projectPath,
-        hasSignalTask: Boolean(signalTaskId),
-      });
+      const codexDynamicChatMcpUrl = isCodex
+        ? buildCodexDynamicChatMcpUrl({
+            baseUrl: dynamicChatMcpUrl,
+            subChatId,
+            projectPath,
+            hasSignalTask: Boolean(signalTaskId),
+          })
+        : null;
       const frinkMcpInjected = codexDynamicChatMcpUrl !== null;
-      const codexMcpRuntime = await resolveFrinkMcpServers({
-        projectId,
-        projectPath,
-        dynamicChatMcpUrl: codexDynamicChatMcpUrl,
-      });
 
+      // A card opened in this turn closes when the turn ends, even if the app-server just died.
+      const turnDone = new AbortController();
       const checkApproval = createCodexHostPermissionCheck({
         chatId,
         subChatId,
@@ -1095,8 +868,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         permissionProjectPath,
         isFlowExecutionTurn,
         frinkMcpInjected,
-        autoReview: codexAutoReview,
-        executionSignal: abortController.signal,
+        autoReview: isCodex && codexAutoReview,
+        executionSignal: AbortSignal.any([abortController.signal, turnDone.signal]),
         validateToolPermission,
       });
 
@@ -1106,41 +879,107 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       let codexMetadata: MessageMetadata = {}; // session id + latest token usage, persisted below
       // settings.model carries the RAW codex picker id (e.g. codex-gpt-5.3-codex-high); the executor
       // is the single conversion boundary that splits it into the slug, effort and service tier the
-      // v2 app-server wants.
-      const codexModel = resolveCodexCliModel(settings?.model, settings?.codexSpeed);
+      // v2 app-server wants. A model the account can't use throws into the catch below.
       const codexId = storedCredential.label ?? 'codex-default';
-      const unbindCodex = flowResources.bindCodex(abortController, projectPath, codexId, subChatId);
+      const unbindCodex = isCodex
+        ? flowResources.bindCodex(abortController, projectPath, codexId, subChatId)
+        : () => {};
       try {
-        flowResources.assertLive(abortController.signal, 'Codex');
-        for await (const chunk of runCodexAgent({
-          prompt: codexFullPrompt,
-          freshThreadFallbackPrompt: codexFreshFallbackPrompt,
-          cwd: projectPath,
-          // Registry key component: stable per-account. label is the account identity
-          // (CredentialResult has no id); falls back to a constant so a label-less default still
-          // shares one warm server rather than spawning per turn.
-          credentialId: codexId,
-          // Registry key component: the dynamic Frink MCP URL is sub-chat-scoped, so a server
-          // spawned for one sub-chat must never be handed to another (its tools would resolve into
-          // the wrong chat's execution context).
-          sessionKey: subChatId,
-          env: process.env as Record<string, string>,
-          abortController,
+        let stream: AsyncGenerator<UIMessageChunk, void, undefined>;
+        const agentTurn = {
+          projectPath,
+          prompt: fullPrompt,
+          freshSessionFallbackPrompt,
+          resumeSessionId,
+          model: settings?.model,
           mode,
-          model: codexModel.model,
-          effort: codexModel.effort,
-          serviceTier: codexModel.serviceTier,
-          resumeThreadId: codexResumeThreadId,
-          canonicalMcpServers: codexMcpRuntime.servers,
-          canonicalMcpEnvByServer: codexMcpRuntime.envByServer,
-          taskSignalEnabled: Boolean(signalTaskId),
-          hasOpenPermission: () => hasPendingPermissionRequest(subChatId),
+          images: imageParts,
+          composerNotes: composer.notes.map((note) => note.text),
+          abortController,
           checkApproval,
-          autoReview: codexAutoReview,
-        })) {
+        };
+        if (agentRuntime === 'acp') {
+          stream = deps.startAcpTurn({
+            ...agentTurn,
+            providerId: storedCredential.type,
+            configRoot: workspace.projectConfigRoot,
+          });
+        } else if (agentRuntime === 'copilot') {
+          stream = deps.startCopilotTurn(agentTurn);
+        } else if (agentRuntime === 'cursor') {
+          stream = deps.startCursorTurn({ ...agentTurn, chatKey: subChatId });
+        } else {
+          // A runtime added later fails to compile here instead of running as Codex.
+          const codexOnly: 'codex' = agentRuntime;
+          void codexOnly;
+          const codexCatalog = await codexCatalogForModel(settings?.model);
+          const codexMcpRuntime = await resolveFrinkMcpServers({
+            projectId,
+            projectPath,
+            dynamicChatMcpUrl: codexDynamicChatMcpUrl,
+          });
+          // Claude-format hooks locate their scripts through CLAUDE_PROJECT_DIR, the main checkout.
+          const hookRoot = project ? permissionProjectPath : null;
+          const codexHooks = await hooksForLaunch('codex', hookRoot);
+          // After the reads: a cancel during any read must not start the turn.
+          flowResources.assertLive(abortController.signal, 'Codex');
+          const codexModel = resolveCodexCliModel(
+            settings?.model,
+            settings?.codexSpeed,
+            codexCatalog,
+          );
+          stream = runCodexAgent({
+            prompt: codexFullPrompt,
+            messageProvenance: provenance,
+            composerContext: codexComposerContext(composer.notes),
+            operatorReminders: turnReminders.codexContext,
+            freshThreadFallbackPrompt: codexFreshFallbackPrompt,
+            ...(flowRunEnded && {
+              flowRunEnded: {
+                text: flowRunEnded.text,
+                onAccepted: () => markFlowRunEndAnnounced(subChatId, flowRunEnded.runId),
+              },
+            }),
+            cwd: projectPath,
+            // Registry key component: stable per-account. label is the account identity
+            // (CredentialResult has no id); falls back to a constant so a label-less default still
+            // shares one warm server rather than spawning per turn.
+            credentialId: codexId,
+            // Registry key component: the dynamic Frink MCP URL is sub-chat-scoped, so a server
+            // spawned for one sub-chat must never be handed to another (its tools would resolve into
+            // the wrong chat's execution context).
+            sessionKey: subChatId,
+            env: {
+              // SAFETY: the app-server spawn drops unset entries, so every value it reads is a string.
+              ...(process.env as Record<string, string>),
+              ...(hookRoot && { CLAUDE_PROJECT_DIR: hookRoot }),
+            },
+            abortController,
+            mode,
+            model: codexModel.model,
+            effort: codexModel.effort,
+            serviceTier: codexModel.serviceTier,
+            resumeThreadId: resumeSessionId,
+            canonicalMcpServers: codexMcpRuntime.servers,
+            canonicalMcpEnvByServer: codexMcpRuntime.envByServer,
+            taskSignalEnabled: Boolean(signalTaskId),
+            userHooks: codexHooks.hooks,
+            hasOpenPermission: () => hasPendingPermissionRequest(subChatId),
+            checkApproval,
+            autoReview: codexAutoReview,
+          });
+        }
+        for await (const chunk of stream) {
           if (abortController.signal.aborted) break;
-          if ('messageMetadata' in chunk)
+          // An agent that answers took the prompt; an error alone proves nothing.
+          if (USER_VISIBLE_CHUNK_TYPES.has(chunk.type) && !chunk.type.endsWith('error')) {
+            undelivered.accepted();
+          }
+          if ('messageMetadata' in chunk) {
+            const sessionId = chunk.messageMetadata?.sessionId;
+            if (sessionId && !codexMetadata.sessionId) persistEarlySessionId(subChatId, sessionId);
             codexMetadata = { ...codexMetadata, ...chunk.messageMetadata };
+          }
           codexChunks.push(chunk);
           applyChunkToParts(codexPartsState, chunk);
           sendRunStreamChunkDirect({
@@ -1152,7 +991,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             messageIndex: codexIdx++,
           });
         }
-        flowResources.assertLive(abortController.signal, 'Codex');
+        flowResources.assertLive(abortController.signal, agentLabel);
 
         completionHasProviderError = await disposeTrailingStreamErrorChunk(
           subChatId,
@@ -1161,21 +1000,26 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         );
 
         const codexSessionId = codexMetadata.sessionId;
-        if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId);
+        if (isCodex && codexSessionId) {
+          setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
+        }
+        const codexFinalParts = buildFinalPartsForPersist(mode, codexChunks);
         sendExecuteCompleteDeferred({
           chatId,
           subChatId,
           assistantMessageId: msgId,
           sessionId: codexSessionId,
           metadata: codexMetadata,
-          finalParts: buildFinalPartsForPersist(mode, codexChunks),
+          finalParts: codexFinalParts,
         });
-        log.info(`[Socket Executor] Codex execution complete for ${subChatId}`);
+        // No provider on this path reports compactions to Frink yet.
+        await stampTurnUsage(linkedTaskSignalTaskId, msgId, codexMetadata, codexFinalParts, false);
+        log.info(`[Socket Executor] ${agentLabel} execution complete for ${subChatId}`);
       } catch (err) {
         if (abortController.signal.aborted) throw err;
-        log.error('[Socket Executor] Codex execution failed', err);
+        log.error(`[Socket Executor] ${agentLabel} execution failed`, err);
         // This catch swallows the throw, so the outer catch's disposition never runs — without
-        // parking here a thrown Codex failure strands its flow task `running`.
+        // parking here a thrown failure strands its flow task `running`.
         await disposeFlowStreamError(
           subChatId,
           err instanceof Error ? err.message : String(err),
@@ -1188,6 +1032,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
+        turnDone.abort();
         unbindCodex();
       }
       if (!flowResources.admitted) {
@@ -1234,6 +1079,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       projectId,
       projectPath,
       permissionProjectPath,
+      projectConfigRoot: workspace.projectConfigRoot,
       mode,
       settings,
       storedCredential,
@@ -1244,6 +1090,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       dynamicChatMcpUrl,
       multiProjectPrefix: workspace.multiProjectPrefix,
       sessionFlowBriefing,
+      flowRunLive: Boolean(armed.liveFlowRunId),
       signalTaskId,
       isFlowExecutionTurn,
       flowPlanAutoApprove,
@@ -1283,12 +1130,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     };
     const ownExecution = turn.execution;
 
-    // The session's streaming-input queue (its stdin / permission control channel) lives on the
-    // registry session and is closed ONLY by endClaudeSession — never at a turn boundary. Closing
-    // early is the "Stream closed" bug AND kills pending background work (the CLI stops
-    // backgrounded tasks on stdin close), so turn-end disposition is decided post-stream:
-    // pending work → wake pump holds the session; a clean end → retained; else endClaudeSession.
-
+    // The session's input queue is closed ONLY by endClaudeSession, never at a turn boundary: closing
+    // early is the "Stream closed" bug and kills pending background work. Disposition is post-stream.
     const isExecutionAborted = (): boolean => abortController.signal.aborted;
     turn.isAborted = isExecutionAborted;
 
@@ -1309,7 +1152,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     let claudeResultErrored = false; // the last result read is the turn's own
     turn.lastCollectedChunks = collectedChunks;
     turn.nextMessageIndex = () => messageIndex++;
-    turn.pendingReminders = pendingReminders;
+    turn.pendingReminders = turnReminders.reminders;
+    turn.pendingFlowRunEnded = flowRunEnded && { ...flowRunEnded, subChatId };
+    turn.onPromptAccepted = undelivered.accepted;
+    turn.messageProvenance = provenance;
+    turn.composerNotes = composer.notes.map((note) => note.text);
 
     const shouldResumeClaudeSession = Boolean(persistedSessionId);
     const delivery = trackUserMessageDelivery(subChatId, msgId, () => fullPrompt.length);
@@ -1320,7 +1167,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       claimed = false,
     ): Promise<void> => {
       // Create transformer for SDK messages -> UI chunks
-      const transform = createTransformer();
+      const transform = createTransformer(() => session.stopHook?.defersGoalCheck === true);
 
       // Stream messages as they come
       const toolNameByCallId = new Map<string, string>();
@@ -1349,7 +1196,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         ? { suppressNativePlanTools: true, suppressPlanText: true }
         : null;
       // Session id normally persists at stream FINISH; a turn dying mid-stream leaves
-      // sub_chats.session_id NULL and Carry on has nothing to resume — persist on first
+      // sub_chats.session_id NULL and Continue has nothing to resume — persist on first
       // announcement instead (the finish-path persist stays the authoritative overwrite).
       let earlySessionIdPersisted = false;
       /** tool-input bookkeeping + plan-mode stream tracking: records name/input for the broadcast
@@ -1475,6 +1322,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         // An aborted turn's session is already closing (bindTurnAbort); its late frames are dropped.
         if (abortController.signal.aborted) return;
         if (sdkMessage.type === 'result') claudeResultErrored = sdkMessage.is_error;
+        forgetUndeliveredOnClear(subChatId, fullPrompt, sdkMessage);
 
         // First live frame of a plan-auto turn: arm the during-plan reviewer (plan→default→plan flip)
         // before the model emits any tool. The query stays in 'plan' throughout — never 'auto'.
@@ -1483,7 +1331,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           await armAutoDuringPlan(session);
         }
 
-        for (const chunk of transform(sdkMessage)) {
+        for (const rawChunk of transform(sdkMessage)) {
+          const chunk = recoverSpilledFlowPatchChunk(rawChunk, {
+            subChatId,
+            toolName:
+              'toolCallId' in rawChunk ? toolNameByCallId.get(rawChunk.toolCallId) : undefined,
+          });
           if (!earlySessionIdPersisted) {
             const chunkSessionId = sessionIdFromFrame(sdkMessage, chunk);
             if (chunkSessionId) {
@@ -1624,6 +1477,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             planFilePath = planWritePathFromInput(c.input, projectPath, subChatId) ?? planFilePath;
           }
           let planEmittedPostStream = false;
+          const submitted = turn.submittedPlan;
           const emitFromPlanFile = async (path: string, planText?: string): Promise<boolean> => {
             const advancedIndex = await emitInlinePlanCard({
               chatId,
@@ -1634,15 +1488,14 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
               collectedChunks,
               messageIndex,
               flowDriven: isFlowDrivenExecution,
-              autoApproved: flowPlanAutoApprove,
+              autoApproved: flowPlanAutoApprove && (planCompletedByExitPlanMode || !!submitted),
               send: sendRunStreamChunkDirect,
             });
             if (advancedIndex === null) return false;
             messageIndex = advancedIndex;
-            flipToAgentModeForAutoApprove();
+            if (planCompletedByExitPlanMode || submitted) flipToAgentModeForAutoApprove();
             return true;
           };
-          const submitted = turn.submittedPlan;
           if (submitted)
             planEmittedPostStream = await emitFromPlanFile(submitted.path, submitted.text);
           for (const path of submitted ? [] : new Set([planFilePath, lastPlanFilePathInStream])) {
@@ -1774,15 +1627,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // Superseded (a duplicate-request registered its own session under this key) → the
       // successor owns disposition; touching the key here would destroy its live session.
       if (!session || getClaudeSession(subChatId) !== session) return;
-      const pendingWork = session.stopHook?.lastPendingWork ?? null;
-      // Plan turns hold like any turn (bursts inherit the plan locks). A submitted plan never holds,
-      // but with no pending work it is kept idle so the approval reuses this CLI.
-      const mustDispose = turnEndMustDispose(subChatId, session, turn, abortController.signal);
-      if (!pendingWork || mustDispose) {
-        const flowTurn = flowResources.admitted || isFlowExecutionTurn;
-        // Never kept: an error result, a dropped follower, or a steer the turn may not have read.
-        const unclean = claudeResultErrored || session.stopHook?.droppedFollower || turn.steered;
-        if (mustDispose || flowTurn || unclean) endClaudeSession(subChatId);
+      // Never kept idle: a Flow turn or an error result (a steer and a dropped follower too).
+      const noKeep = flowResources.admitted || isFlowExecutionTurn || claudeResultErrored;
+      const verdict = turnEndDisposition(subChatId, session, turn, abortController.signal, noKeep);
+      const { pendingWork } = verdict;
+      if (verdict.disposition !== 'hold' || !pendingWork) {
+        if (verdict.disposition === 'end') endClaudeSession(subChatId);
         else {
           // The registry's now: this execute's teardown must not end it or a later send's claim.
           retainClaudeSession(session);
@@ -1808,15 +1658,18 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             chatId,
             subChatId,
             flowDriven: isFlowDrivenExecution,
-            planAutoApprove: flowPlanAutoApprove,
+            planAutoApproval:
+              flowPlanAutoApprove && mode === 'plan' ? { projectId, settings, signalTaskId } : null,
             nextMessageIndex: turn.nextMessageIndex,
             buildFinalParts: (chunks) => buildFinalPartsForPersist(mode, chunks),
+            usageTaskId: signalTaskId,
             // Injected, not imported there: see the wake-hold-io module doc (import cycle).
             send: {
               sendStreamChunkDirect: sendRunStreamChunkDirect,
               sendExecuteCompleteDirect: sendRunExecuteCompleteDirect,
               sendStreamSettledDirect: sendRunStreamSettledDirect,
               sendWakeHoldChanged,
+              sendMessage,
             },
             clearPendingApprovals,
             getLatestTaskSignal: chatServer.getLatestTaskSignal,
@@ -1847,10 +1700,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       );
       const retryOptions: Record<string, unknown> = { ...sdkOptions };
       delete retryOptions.resume;
-      if (willReplayHistoryViaResume && fullPrompt.endsWith(message)) {
-        fullPrompt =
-          fullPrompt.slice(0, fullPrompt.length - message.length) +
-          formatPromptWithHistory(message, history);
+      if (hasResumeSession) {
+        fullPrompt = replaceCarriedWithHistory(fullPrompt, undelivered.prompt, message, history);
       }
       await runClaudeQueryAttempt(retryOptions as typeof sdkOptions);
       log.info(
@@ -1953,22 +1804,14 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
 
     // 5. Extract metadata from finish chunk if present (use last: failed resume can leave an earlier `finish` before retry succeeds)
-    let finishChunk: UIMessageChunk | undefined;
-    for (let i = collectedChunks.length - 1; i >= 0; i--) {
-      const c = collectedChunks[i];
-      if (c.type === 'finish') {
-        finishChunk = c;
-        break;
-      }
-    }
-    const metadata =
-      finishChunk && 'messageMetadata' in finishChunk ? finishChunk.messageMetadata : undefined;
+    const metadata = lastFinishMetadata(collectedChunks);
 
     // 6a. Clean-stream park (usage limit / API error as the final text part) — awaited before any
     // IPC emit so the renderer's completion refetch reads the parked status.
     const finalParts = buildFinalPartsForPersist(mode, collectedChunks);
     completionHasProviderError =
       (await disposeCleanStreamEnd(subChatId, finalParts)) || claudeResultErrored;
+    await stampTurnUsage(linkedTaskSignalTaskId, msgId, metadata, finalParts, true);
     // Finalize the linked signal before session disposition, then snapshot the resulting hold state.
     // Reading hasWakeHold before this await races the async wake-pump arm and can publish a terminal
     // completion for an epoch that is about to stream another burst.
@@ -2083,6 +1926,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
     }
   } finally {
+    endCodexTurn(codexTurn);
     logAdoptedTurnEnd(turn, subChatId, executionFailed ? 'failed' : 'ended without a disposition');
     if (!executionAdmissionAcknowledged) {
       payload.onExecutionStarted?.(new Error('The chat could not start. Refresh and try again.'));
@@ -2170,6 +2014,14 @@ export function handleRemoteStop(payload: { chatId: string; subChatId: string })
     record.controller.abort();
     deleteActiveExecution(payload.subChatId);
   }
+}
+
+/** A chat's sub-chats with a live turn or wake hold, read from memory so abort survives a DB failure. */
+export function collectLiveSubChatIdsForChat(
+  chatId: string,
+  listWakeHolds: (chatId: string) => string[] = listWakeHoldSubChatIdsForChat,
+): string[] {
+  return [...new Set([...listSubChatIdsForChat(chatId), ...listWakeHolds(chatId)])];
 }
 
 /**

@@ -298,11 +298,11 @@ export function FlowEditorHeader({
               onChange={(e) => onTitleChange(e.target.value)}
               onBlur={onTitleBlur}
               size="xs"
-              className="font-semibold border-transparent bg-transparent hover:border-border/60 focus:border-border px-1.5 min-w-0"
+              className="w-auto max-w-lg min-w-0 border-transparent bg-transparent px-1.5 font-semibold field-sizing-content hover:border-border/60 focus:border-border"
               aria-label="Flow name"
             />
             {versionLabel && (
-              <span className="text-[10px] text-muted-foreground/60 bg-muted/60 rounded px-1 py-0.5 shrink-0 font-mono">
+              <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-xs tabular-nums text-muted-foreground">
                 {versionLabel}
               </span>
             )}

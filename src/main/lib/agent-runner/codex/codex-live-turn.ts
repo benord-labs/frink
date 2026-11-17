@@ -3,7 +3,13 @@ import { ResponseError } from 'vscode-jsonrpc/node';
 import type { UIMessageChunk } from '../../claude/types';
 import { registerCodexLiveTurnCountReader } from '../../diagnostics/provider-topology';
 import type { CodexAppServerClient } from './app-server-client';
+import { randomUUID } from 'node:crypto';
+import {
+  type CodexContextEntry,
+  codexMessageContext,
+} from '../../../../shared/lib/message-markers/message-provenance';
 import type { CodexCommandOutputs } from './command-output';
+import * as provenanceRule from './provenance-rule';
 
 /**
  * The live Codex turn for one sub-chat, published so a STEER can reach it.
@@ -16,6 +22,7 @@ import type { CodexCommandOutputs } from './command-output';
  */
 export type CodexLiveTurn = {
   client: CodexAppServerClient;
+  hasFlowProvenance?: boolean;
   threadId: string;
   turnId: string;
   /** The turn's own chunk sink, so a delivered steer can leave a marker in the assistant message it
@@ -87,7 +94,11 @@ export type CodexSteerOutcome = 'delivered' | 'not-steerable' | 'unsupported';
  * never saw. Review and compaction turns reject steering outright; both refusals surface here as
  * `not-steerable` so the caller queues the message instead.
  */
-export async function steerCodexTurn(subChatId: string, text: string): Promise<CodexSteerOutcome> {
+export async function steerCodexTurn(
+  subChatId: string,
+  text: string,
+  composerContext: Record<string, CodexContextEntry> = {},
+): Promise<CodexSteerOutcome> {
   const live = liveTurns.get(subChatId);
   if (!live) return 'not-steerable';
   // `turn/steer` validates only `expectedTurnId`, so a turn parked on an approval prompt would
@@ -96,13 +107,20 @@ export async function steerCodexTurn(subChatId: string, text: string): Promise<C
   if (live.hasOpenApproval()) return 'not-steerable';
   if (steerSupport.get(live.client) === false) return 'unsupported';
 
+  const record = { v: 1, delivery_id: randomUUID(), source: 'person', kind: 'steer' } as const;
+  const additionalContext = {
+    ...(live.hasFlowProvenance && codexMessageContext(record)),
+    ...composerContext,
+  };
   try {
     await live.client.sendRequest('turn/steer', {
       threadId: live.threadId,
       expectedTurnId: live.turnId,
       input: [{ type: 'text', text }],
+      ...(Object.keys(additionalContext).length > 0 && { additionalContext }),
     });
     steerSupport.set(live.client, true);
+    provenanceRule.recordSteer(live.client, live.threadId);
     return 'delivered';
   } catch (err) {
     if (isMethodNotFound(err)) {

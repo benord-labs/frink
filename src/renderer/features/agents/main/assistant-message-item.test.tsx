@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
@@ -16,8 +16,23 @@ vi.mock('../ui/agent-edit-tool', () => ({
   AgentEditTool: () => null,
 }));
 
+// The reply's file-link scope asks where the chat works and which file a bare name stands for.
+const { resolveNameInputs } = vi.hoisted(() => {
+  const inputs: Array<{ names: string[] }> = [];
+  return { resolveNameInputs: inputs };
+});
 vi.mock('../../../lib/trpc', () => ({
-  trpc: {},
+  trpc: {
+    chats: { get: { useQuery: () => ({ data: undefined }) } },
+    files: {
+      resolveNames: {
+        useQuery: (input: { names: string[] }) => {
+          resolveNameInputs.push(input);
+          return { data: undefined };
+        },
+      },
+    },
+  },
 }));
 
 vi.mock('../../../hooks/useFlowBaseSnapshot', () => ({
@@ -524,6 +539,20 @@ describe('AssistantMessageItem rendering', () => {
     expect(screen.queryByText(UNKNOWN_TOOL_LABEL)).toBeNull();
   });
 
+  // `isStreaming` is the chat's status; only the last message is the reply still being written.
+  it('looks up the bare file names of an earlier reply while a later one streams', async () => {
+    render(
+      <AssistantMessageItem
+        {...baseProps}
+        isStreaming
+        isLastMessage={false}
+        message={buildAssistantMessage('msg-earlier-reply', [textPart('Edit `socket.ts`.')])}
+      />,
+    );
+
+    await waitFor(() => expect(resolveNameInputs.at(-1)?.names).toEqual(['socket.ts']));
+  });
+
   it('renders exploring-group inside collapsed steps for consecutive exploring tools', () => {
     render(
       <AssistantMessageItem
@@ -716,6 +745,50 @@ describe('AssistantMessageItem streaming thinking', () => {
     );
 
     expect(screen.getByText('First tokens and more streamed reasoning')).toBeInTheDocument();
+  });
+});
+
+describe('AssistantMessageItem memoization', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Two store writers can briefly hand the row an older copy as the stream ends; the final copy
+  // must still render even though it repeats content the row showed before the status flip.
+  it('renders the final text after an older copy arrives with the streaming-to-ready flip', () => {
+    const messageId = 'msg-memo-content-flap';
+    const partial = 'STREAM SHOT is in your test window, and';
+    const full = `${partial} Vite reloaded it with no errors.`;
+    const streamingProps = { ...baseProps, isStreaming: true, status: 'streaming' };
+    const readyProps = { ...baseProps, isStreaming: false, status: 'ready' };
+    const { rerender } = render(
+      <AssistantMessageItem
+        {...streamingProps}
+        message={buildAssistantMessage(messageId, [textPart(partial)])}
+      />,
+    );
+
+    rerender(
+      <AssistantMessageItem
+        {...streamingProps}
+        message={buildAssistantMessage(messageId, [textPart(full)])}
+      />,
+    );
+    rerender(
+      <AssistantMessageItem
+        {...readyProps}
+        message={buildAssistantMessage(messageId, [textPart(partial)])}
+      />,
+    );
+    rerender(
+      <AssistantMessageItem
+        {...readyProps}
+        message={buildAssistantMessage(messageId, [textPart(full)])}
+      />,
+    );
+
+    expect(screen.getByText(full)).toBeInTheDocument();
+    expect(screen.queryByText(partial)).not.toBeInTheDocument();
   });
 });
 

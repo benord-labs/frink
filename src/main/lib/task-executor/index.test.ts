@@ -4,13 +4,12 @@ import type { Task as DbTask } from '../db/schema';
 import {
   assertReuseWorktreeHasPath,
   buildInitialTaskChatName,
-  buildRetryContinuationPrompt,
-  buildTaskPrompt,
   isStartTaskFallbackMode,
   resolveTaskExecutionOptions,
   resolveTaskStartInWorktree,
   shouldForwardTaskModel,
 } from './index';
+import { buildRetryContinuationPrompt, buildTaskPrompt } from './task-prompt';
 import { toTaskAccountType } from './execution-account';
 
 const WAIT_MODE_ERROR_REGEX = /must remain queued/i;
@@ -62,14 +61,41 @@ describe('shouldForwardTaskModel', () => {
 
 describe('toTaskAccountType', () => {
   // Regression guard: a codex credential must map to a codex account, NOT collapse to claude-code
-  // (which would drop the codex model in flows). NULL/legacy/unknown types fall back to claude-code.
+  // (which would drop the codex model in flows).
   it.each([
     ['codex', 'codex'],
     ['claude-code', 'claude-code'],
-    ['', 'claude-code'],
-    ['something-new', 'claude-code'],
   ] as const)('toTaskAccountType(%s) === %s', (credType, expected) => {
-    expect(toTaskAccountType(credType)).toBe(expected);
+    expect(toTaskAccountType(credType, 'execute')).toBe(expected);
+  });
+
+  it.each([
+    ['opencode', 'OpenCode'],
+    ['copilot', 'GitHub Copilot'],
+    ['cursor', 'Cursor'],
+    ['something-new', 'This AI provider'],
+    ['', 'This AI provider'],
+  ])('fails a Flow on "%s" for good instead of running it on Claude', (credType, name) => {
+    expect(() => toTaskAccountType(credType, 'plan')).toThrow(
+      expect.objectContaining({
+        message: `${name} can't run Flows yet. Pick Claude or OpenAI for this project.`,
+        permanent: true,
+      }),
+    );
+  });
+
+  // Codex is sent no plan mode, so a Plan step would edit files before anyone approved a plan.
+  it('fails a Plan step on Codex for good instead of running it with write access', () => {
+    expect(() => toTaskAccountType('codex', 'plan')).toThrow(
+      expect.objectContaining({
+        message: "Plan mode isn't available for OpenAI yet. Pick another mode.",
+        permanent: true,
+      }),
+    );
+  });
+
+  it('runs a Plan step on Claude', () => {
+    expect(toTaskAccountType('claude-code', 'plan')).toBe('claude-code');
   });
 });
 

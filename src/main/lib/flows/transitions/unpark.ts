@@ -12,7 +12,7 @@ import { batchStageRuns, flowRuns, flowVersions, type NodeRun, nodeRuns } from '
 import { liveAdmissionForRun } from '../admission/store';
 import { parseGraph } from '../graph';
 import { siblingBranchResumeTargets } from '../rerun/fan-out-lane-resume';
-import { lastUnfinishedNodeRun } from '../rerun/resume-point';
+import { type AttemptRow, lastUnfinishedNodeRun } from '../rerun/resume-point';
 import { type RunFence, readRunFence } from './fence';
 import { readRun } from './run-rows';
 
@@ -29,10 +29,11 @@ type UnparkTarget = {
 
 const PARKED_NODE_STATUSES: NodeRunStatus[] = ['awaiting_input', 'blocked'];
 
-const hasActiveSlot = (db: Db, flowRunId: string): boolean =>
+export const hasActiveSlot = (db: Db, flowRunId: string): boolean =>
   liveAdmissionForRun(db, flowRunId)?.state === 'active';
 
-const readNodeRuns = (db: Db, flowRunId: string): NodeRun[] =>
+/** A run's node_runs, oldest first, read synchronously for a transaction. */
+export const readNodeRuns = (db: Db, flowRunId: string): NodeRun[] =>
   db
     .select()
     .from(nodeRuns)
@@ -40,16 +41,72 @@ const readNodeRuns = (db: Db, flowRunId: string): NodeRun[] =>
     .orderBy(asc(nodeRuns.createdAt), asc(drizzleSql`rowid`))
     .all();
 
-/** The run's last unfinished node_run when it carries the restart-interruption marker. */
-export function restartMarkedNode(db: Db, flowRunId: string): NodeRun | undefined {
-  const last = lastUnfinishedNodeRun(readNodeRuns(db, flowRunId));
+/** One run's last unfinished node_run when it carries the restart-interruption marker. */
+function markedAmong<T extends AttemptRow>(nodeRunsForRun: T[]): T | undefined {
+  const last = lastUnfinishedNodeRun(nodeRunsForRun);
   const output = last?.nodeOutput as NodeOutput | null | undefined;
   return output?.error?.message === RESTART_INTERRUPTION_REASON ? last : undefined;
+}
+
+export const restartMarkedNode = (db: Db, flowRunId: string): NodeRun | undefined =>
+  markedAmong(readNodeRuns(db, flowRunId));
+
+/** A settled run whose stopped step may still recover. */
+export type SettledRun = { id: string; status: 'failed' | 'cancelled' };
+
+/** A settled run's stop candidate: only the fields the stop rule and its recovery read. */
+export type StopNode = AttemptRow & Pick<NodeRun, 'id' | 'flowRunId' | 'blockType' | 'startedAt'>;
+
+/** Only the parts of node_output the stop rule reads (a sweep's status, a restart's marker), so a
+ * Work Queue page never loads every step's output blob. */
+const stopRuleOutput = drizzleSql<NodeRun['nodeOutput']>`json_object(
+  'status', json_extract(${nodeRuns.nodeOutput}, '$.status'),
+  'error', json_object('message', json_extract(${nodeRuns.nodeOutput}, '$.error.message'))
+)`.mapWith(nodeRuns.nodeOutput);
+
+/** The step each settled run stopped on, in a single read for any number of runs: a failed run's
+ * last unfinished step, a cancelled run's restart-marked one (a user Stop has none). */
+export function settledStopNodes(db: Db, runs: readonly SettledRun[]): StopNode[] {
+  const byRun = new Map<string, StopNode[]>();
+  const rows = db
+    .select({
+      id: nodeRuns.id,
+      flowRunId: nodeRuns.flowRunId,
+      nodeId: nodeRuns.nodeId,
+      status: nodeRuns.status,
+      blockType: nodeRuns.blockType,
+      startedAt: nodeRuns.startedAt,
+      parentFanOutNodeRunId: nodeRuns.parentFanOutNodeRunId,
+      laneIndex: nodeRuns.laneIndex,
+      nodeOutput: stopRuleOutput,
+    })
+    .from(nodeRuns)
+    .where(
+      inArray(
+        nodeRuns.flowRunId,
+        runs.map((run) => run.id),
+      ),
+    )
+    .orderBy(asc(nodeRuns.createdAt), asc(drizzleSql`rowid`))
+    .all();
+  for (const row of rows) {
+    const runRows = byRun.get(row.flowRunId) ?? [];
+    runRows.push(row);
+    byRun.set(row.flowRunId, runRows);
+  }
+  return runs.flatMap((run) => {
+    const runRows = byRun.get(run.id) ?? [];
+    return (run.status === 'failed' ? lastUnfinishedNodeRun(runRows) : markedAmong(runRows)) ?? [];
+  });
 }
 
 /** Cancelled by a restart, not by the user: the run is `cancelled` and still carries the marker. */
 export const isRestartInterrupted = (db: Db, flowRunId: string): boolean =>
   readRun(db, flowRunId)?.status === 'cancelled' && restartMarkedNode(db, flowRunId) !== undefined;
+
+/** Cancelled by the user: `cancelled` without a restart's marker, so only a fresh run may follow. */
+export const isUserCancelled = (db: Db, flowRunId: string): boolean =>
+  readRun(db, flowRunId)?.status === 'cancelled' && restartMarkedNode(db, flowRunId) === undefined;
 
 /** A fan-out lane stays paused while a sibling lane of the same iteration is still parked. */
 function hasParkedFanOutSibling(db: Db, node: NodeRun): boolean {
@@ -112,11 +169,11 @@ function leavesSiblingBranchesBehind(
   return siblingBranchResumeTargets(parseGraph(version.graph), attempts, anchor).length > 0;
 }
 
-/** Un-parks a failed or paused run's last unfinished node, or a restart-interrupted run's marked
- * node. A batch member only while its stage still waits for it; a deliberate Cancel never. */
+/** Un-parks a failed or paused run's last unfinished node; never a cancelled run. A batch member
+ * only while its stage still waits for it. */
 export function unparkFailedRunCommand(db: Db, flowRunId: string): NodeRun | null {
   const run = readRun(db, flowRunId);
-  if (!run) return null;
+  if (!run || run.status === 'cancelled') return null;
   if (run.batchId != null) {
     const stage = db
       .select({ status: batchStageRuns.status })
@@ -125,7 +182,6 @@ export function unparkFailedRunCommand(db: Db, flowRunId: string): NodeRun | nul
       .get();
     if (stage?.status !== 'dispatched') return null;
   }
-  if (run.status === 'cancelled') return reviveMarkedNode(db, flowRunId);
   const attempts = readNodeRuns(db, flowRunId);
   const last = lastUnfinishedNodeRun(attempts);
   if (!last) return null;
@@ -165,16 +221,6 @@ export function flowStillRunning(db: Db, flowRunId: string, nodeRunId: string | 
   if (!nodeRunId || readRun(db, flowRunId)?.status !== 'running') return false;
   const node = db.select().from(nodeRuns).where(eq(nodeRuns.id, nodeRunId)).get();
   return node?.status === 'running';
-}
-
-/** Revives a restart-interrupted (cancelled + marker) run's marked node in place. */
-export function reviveMarkedNode(db: Db, flowRunId: string): NodeRun | null {
-  const marked = restartMarkedNode(db, flowRunId);
-  if (!marked) return null;
-  return unparkNode(db, flowRunId, marked.id, {
-    nodeStatuses: ['cancelled'],
-    runStatuses: ['cancelled'],
-  });
 }
 
 export type ReopenDeclined = 'run-changed' | 'node-changed' | 'no-slot';

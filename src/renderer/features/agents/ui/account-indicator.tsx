@@ -1,10 +1,18 @@
-import openaiLogo from '@iconify-icons/ri/openai-fill';
-import { iconifyComponent } from '@/lib/utils/iconify-component';
+import { aiProviderMark } from '@/components/AiProviderMark';
+import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
 /* eslint-disable max-lines, max-lines-per-function */
 import { useSetAtom } from 'jotai';
 import { Check, ChevronDown, Plus, RefreshCw, Settings, User } from 'lucide-react';
 import { Fragment, memo, useCallback } from 'react';
 import { toast } from 'sonner';
+import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
+import {
+  AI_PROVIDERS,
+  type AiProviderId,
+  aiProvider,
+  isInstalledAgent,
+  selectableProviderIds,
+} from '../../../../shared/lib/ai-providers';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,27 +33,14 @@ import { cn } from '../../../lib/utils';
 import { RetryActionButton } from '../main/active-chat/components/RetryActionButton';
 import { HeaderBadge } from './header-badge';
 
-const CodexIcon = iconifyComponent(openaiLogo);
-
-const PROVIDER_LABEL = {
-  'claude-code': 'Claude Code',
-  codex: 'OpenAI',
-} as const satisfies Record<'claude-code' | 'codex', string>;
-
-/** Provider glyph for the trigger badge and each dropdown row. Codex has a brand mark; Claude falls back to the generic user icon. */
-function ProviderGlyph({
-  type,
-  className,
-}: {
-  type?: 'claude-code' | 'codex' | null;
-  className?: string;
-}) {
-  if (type === 'codex') return <CodexIcon className={className} aria-hidden />;
-  return <User className={className} aria-hidden />;
+/** Provider glyph for the trigger badge and each dropdown row: Claude shows the generic user icon. */
+function ProviderGlyph({ type, className }: { type?: AiProviderId | null; className?: string }) {
+  if (aiProvider(type)?.id === 'claude-code') return <User className={className} aria-hidden />;
+  const Mark = aiProviderMark(type);
+  return <Mark className={className} aria-hidden />;
 }
 
-type AccountType = 'claude-code' | 'codex';
-type PickableAccount = { id: string; label: string; type: AccountType; isAuthenticated: boolean };
+type PickableAccount = { id: string; label: string; type: AiProviderId; isAuthenticated: boolean };
 
 /** One signed-in login under its provider's heading. */
 function AccountRow({
@@ -80,11 +75,6 @@ function useOpenAccountsSettings() {
   }, [setSettingsActiveTab, setSettingsOpen]);
 }
 
-const ADD_LOGIN_LABEL = {
-  'claude-code': 'Add a Claude Code login…',
-  codex: 'Add an OpenAI login…',
-} as const satisfies Record<AccountType, string>;
-
 /**
  * The logins a blocked chat can retry on, or null for no recovery rows. A usage limit moves only to
  * another Claude login; a removed login moves to any signed-in login of the chat's provider.
@@ -92,7 +82,7 @@ const ADD_LOGIN_LABEL = {
 function recoveryLogins(
   usageLimited: boolean,
   loginRemoved: boolean,
-  provider: AccountType,
+  provider: AiProviderId | undefined,
   currentId: string | undefined,
   all: PickableAccount[],
 ) {
@@ -129,14 +119,15 @@ export function ContinueAfterUsageLimit({
   const { data: chat } = trpc.chats.get.useQuery({ id: chatId });
   const { data: account } = trpc.claudeCode.getResolvedAccount.useQuery({ chatId });
   const { data: accounts = [] } = trpc.claudeCode.listAccounts.useQuery();
-  const provider = chat?.provider === 'codex' ? 'codex' : 'claude-code';
+  const provider = aiProvider(chat?.provider)?.id;
   const loginRemoved = isLoginRemoved(account);
   const others = chat
     ? recoveryLogins(usageLimited, loginRemoved, provider, account?.id, accounts)
     : null;
   if (!others) return null;
   if (others.length === 0) {
-    const label = loginRemoved ? ADD_LOGIN_LABEL[provider] : 'Add account…';
+    const label =
+      loginRemoved && provider ? `Sign in to ${AI_PROVIDERS[provider].name}…` : 'Add account…';
     return (
       <RetryActionButton
         icon={Plus}
@@ -179,14 +170,14 @@ function groupSignedIn(accounts: PickableAccount[]) {
   const signedIn = accounts
     .filter((a) => a.isAuthenticated)
     .sort((a, b) => a.label.localeCompare(b.label));
-  return (['claude-code', 'codex'] as const)
+  return selectableProviderIds(LAUNCH_FLAGS, window.desktopApi?.platform)
     .map((type) => ({ type, rows: signedIn.filter((a) => a.type === type) }))
     .filter((group) => group.rows.length > 0);
 }
 
 type ShownAccount = {
   label: string;
-  type?: AccountType | null;
+  type?: AiProviderId | null;
   isAuthenticated: boolean;
   source?: string | null;
   isProjectOverride?: boolean;
@@ -200,7 +191,7 @@ function badgeCopy(
   isPicked: boolean,
   projectId?: string,
 ) {
-  const providerLabel = PROVIDER_LABEL[account.type ?? 'claude-code'];
+  const providerLabel = AI_PROVIDERS[account.type ?? 'claude-code'].name;
   const menuLabel = `AI accounts menu, ${account.label}, ${providerLabel}`;
   if (chatId) {
     return {
@@ -236,8 +227,9 @@ function NewChatAccountRows({
       ) : (
         groups.map((group) => (
           <Fragment key={group.type}>
-            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
-              {PROVIDER_LABEL[group.type]}
+            <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground leading-snug">
+              {AI_PROVIDERS[group.type].name}
+              <ProviderPreviewTag provider={group.type} />
             </DropdownMenuLabel>
             {group.rows.map((a) => (
               <AccountRow key={a.id} row={a} isActive={a.id === activeId} onPick={onPick} />
@@ -248,6 +240,28 @@ function NewChatAccountRows({
       <DropdownMenuSeparator />
     </>
   );
+}
+
+/** The provider row of a passthrough login (one Frink stores no token for), else undefined. */
+function passthroughRow(account: ShownAccount) {
+  const row = aiProvider(account.type);
+  return row && account.source === row.passthroughSource ? row : undefined;
+}
+
+/** What Reconnect brings back: "Claude Code login", "OpenAI login", or an installed agent's name. */
+function reconnectName(row: NonNullable<ReturnType<typeof passthroughRow>>): string {
+  if (isInstalledAgent(row)) return row.name;
+  return `${row.id === 'claude-code' ? row.longName : row.name} login`;
+}
+
+/** Why a signed-out login needs action. */
+function signedOutText(account: ShownAccount): string {
+  const row = passthroughRow(account);
+  if (!row) return 'Not authenticated on this machine — open Settings to update the API key.';
+  if (isInstalledAgent(row)) {
+    return `${row.name} is no longer installed on this computer. Click for the Reconnect option.`;
+  }
+  return `${reconnectName(row)} expired on this machine. Click for the Reconnect option.`;
 }
 
 /** The badge tooltip: the login, its provider and scope, and why a signed-out login needs action. */
@@ -268,13 +282,7 @@ function AccountTooltipBody({
       <div className="text-muted-foreground">{providerLabel}</div>
       <div className="text-muted-foreground">{scope}</div>
       {!account.isAuthenticated && (
-        <div className="text-warning mt-1">
-          {account.source === 'claude-passthrough'
-            ? 'Claude Code login expired on this machine. Click for the Reconnect option.'
-            : account.source === 'codex-passthrough'
-              ? 'OpenAI login expired on this machine. Click for the Reconnect option.'
-              : 'Not authenticated on this machine — open Settings to update the API key.'}
-        </div>
+        <div className="text-warning mt-1">{signedOutText(account)}</div>
       )}
       <div className="text-muted-foreground mt-1.5 pt-1.5 border-t border-border/60">
         Click for menu. {hint}
@@ -286,10 +294,8 @@ function AccountTooltipBody({
 /** Re-runs the sign-in for an expired passthrough login; nothing for any other login. */
 function ReconnectItem({ account }: { account: ShownAccount }) {
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
-  const isPassthrough =
-    account.source === 'claude-passthrough' || account.source === 'codex-passthrough';
-  if (!isPassthrough || account.isAuthenticated) return null;
-  const isCodex = account.source === 'codex-passthrough';
+  const row = passthroughRow(account);
+  if (!row || account.isAuthenticated) return null;
   return (
     <DropdownMenuItem
       className="text-xs gap-2 text-foreground"
@@ -298,12 +304,12 @@ function ReconnectItem({ account }: { account: ShownAccount }) {
           mode: 'reauth',
           accountLabel: account.label,
           returnToSettings: false,
-          provider: isCodex ? 'codex' : undefined,
+          provider: row.id,
         })
       }
     >
       <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span>Reconnect {isCodex ? 'OpenAI' : 'Claude Code'} login</span>
+      <span>Reconnect {reconnectName(row)}</span>
     </DropdownMenuItem>
   );
 }

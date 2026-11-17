@@ -19,12 +19,15 @@ export function makeSidebarComponentsMock(captured: CapturedComponentProps) {
     SidebarHeader: ({
       searchQuery,
       onSearchChange,
+      showFlowChatsFilter,
     }: {
       searchQuery: string;
       onSearchChange: (query: string) => void;
+      showFlowChatsFilter: boolean;
     }) => (
       <input
         data-testid="sidebar-header"
+        data-flow-filter={String(showFlowChatsFilter)}
         value={searchQuery}
         onChange={(event) => onSearchChange(event.target.value)}
       />
@@ -52,17 +55,15 @@ export function makeSidebarComponentsMock(captured: CapturedComponentProps) {
       runningTaskCount,
       needsAttentionTaskCount,
       failedTaskCount,
-      activeTasksHasMore,
     }: {
       inboxTaskCount: number;
       pendingReviewCount: number;
       runningTaskCount: number;
       needsAttentionTaskCount: number;
       failedTaskCount: number;
-      activeTasksHasMore?: boolean;
     }) => (
       <div data-testid="sidebar-nav-counts">
-        {`${inboxTaskCount}:${pendingReviewCount}:${runningTaskCount}:${needsAttentionTaskCount}:${failedTaskCount}:${activeTasksHasMore ? 'more' : 'none'}`}
+        {`${inboxTaskCount}:${pendingReviewCount}:${runningTaskCount}:${needsAttentionTaskCount}:${failedTaskCount}`}
       </div>
     ),
     SidebarFooter: ({ onToggleArchived }: { onToggleArchived?: () => void }) => (

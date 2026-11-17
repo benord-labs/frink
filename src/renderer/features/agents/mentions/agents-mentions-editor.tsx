@@ -9,20 +9,20 @@ import {
   useState,
 } from 'react';
 import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/command-block-format';
-import { type FileMentionOption, MENTION_PREFIXES } from '@/lib/mentions/agents-mentions-types';
-import { parseBriefingMentionLabel } from '@/lib/mentions/briefing-mention-from-id';
+import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
+import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
+import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
 import {
-  SERIALIZED_MENTION_PATTERN_SRC,
-  serializedMentionMatchEndIndex,
-} from '@/lib/mentions/serialized-mention-scan-index';
+  MENTION_PREFIXES,
+  MENTION_TOKEN_PATTERN_SRC,
+} from '../../../../shared/lib/mentions/mention-grammar';
+import { pathLabel } from '../../../../shared/lib/mentions/parse-mention';
 import { cn } from '../../../lib/utils';
 import { createFileIconElement } from './agents-file-mention';
 
 // Threshold for skipping expensive trigger detection (characters)
 // Should be >= MAX_PASTE_LENGTH from paste-text.ts to avoid processing large pasted content
 const LARGE_TEXT_THRESHOLD = 10000;
-
-export { MENTION_PREVIEW_SANITIZE_REGEX } from '@/lib/mentions/agents-mentions-types';
 
 type TriggerPayload = {
   searchText: string;
@@ -91,17 +91,12 @@ function createMentionNode(option: FileMentionOption): HTMLSpanElement {
   span.setAttribute('contenteditable', 'false');
   span.setAttribute('data-mention-id', option.id);
   span.setAttribute('data-mention-type', option.type || 'file');
-  span.className =
-    'inline-flex items-center gap-1 px-[6px] py-px rounded-[4px] text-sm align-middle bg-black/4 dark:bg-white/8 text-foreground/80 [&.mention-selected]:bg-primary/70 [&.mention-selected]:text-primary-foreground';
-
-  // Create icon element (pass type for folder icon)
-  const iconElement = createFileIconElement(option.label, option.type);
-  span.appendChild(iconElement);
+  span.className = mentionChipClass();
+  span.title = option.path;
 
   const label = document.createElement('span');
   label.textContent = option.label;
-
-  span.appendChild(label);
+  span.append(createFileIconElement(option.label, option.type), label);
   return span;
 }
 
@@ -160,7 +155,7 @@ function serializeContent(root: HTMLElement): string {
 }
 
 // Regex patterns for parsing mentions - hoisted to module level for performance
-const MENTION_PARSE_REGEX = new RegExp(SERIALIZED_MENTION_PATTERN_SRC, 'g');
+const MENTION_PARSE_REGEX = new RegExp(MENTION_TOKEN_PATTERN_SRC, 'g');
 const WHITESPACE_REGEX = /\s/;
 const COMMAND_INSERT_TRAILING_TEXT = '\n\u200B';
 const ZERO_WIDTH_SPACE_REGEX = /\u200B/g;
@@ -263,7 +258,7 @@ function buildMentionsInto(
         const type = parts[0] as 'file' | 'folder';
         const repo = parts[1];
         const path = parts.slice(2).join(':');
-        const name = path.split('/').pop() || path;
+        const name = pathLabel(path);
         option = { id, label: name, path, repository: repo, type };
       }
     }
@@ -288,10 +283,6 @@ function buildMentionsInto(
         .replace(/\b\w/g, (c) => c.toUpperCase())
         .trim();
       option = { id, label: displayName, path: toolPath, repository: '', type: 'tool' };
-    }
-    if (!option && id.startsWith(MENTION_PREFIXES.BRIEFING)) {
-      const label = parseBriefingMentionLabel(id) ?? 'Briefing';
-      option = { id, label, path: '', repository: '', type: 'briefing' };
     }
     if (option) {
       root.appendChild(createMentionNode(option));
@@ -557,7 +548,7 @@ export const AgentsMentionsEditor = memo(
           const type = parts[0] as 'file' | 'folder';
           const repo = parts[1];
           const path = parts.slice(2).join(':');
-          const name = path.split('/').pop() || path;
+          const name = pathLabel(path);
           return { id, label: name, path, repository: repo, type };
         }
       }
@@ -579,10 +570,6 @@ export const AgentsMentionsEditor = memo(
           .replace(/\b\w/g, (c) => c.toUpperCase())
           .trim();
         return { id, label: displayName, path: toolPath, repository: '', type: 'tool' };
-      }
-      if (id.startsWith(MENTION_PREFIXES.BRIEFING)) {
-        const label = parseBriefingMentionLabel(id) ?? 'Briefing';
-        return { id, label, path: '', repository: '', type: 'briefing' };
       }
       return null;
     }, []);
@@ -628,8 +615,7 @@ export const AgentsMentionsEditor = memo(
           // Clear all highlights when no selection
           const mentions = editorRef.current.querySelectorAll('[data-mention-id]');
           mentions.forEach((mention) => {
-            const mentionEl = mention as HTMLElement;
-            mentionEl.classList.remove('mention-selected');
+            mention.className = mentionChipClass();
           });
           return;
         }
@@ -650,14 +636,7 @@ export const AgentsMentionsEditor = memo(
         const mentions = editorRef.current.querySelectorAll('[data-mention-id]');
 
         mentions.forEach((mention) => {
-          const mentionEl = mention as HTMLElement;
-
-          // Check if mention is within selection range
-          if (range.intersectsNode(mentionEl)) {
-            mentionEl.classList.add('mention-selected');
-          } else {
-            mentionEl.classList.remove('mention-selected');
-          }
+          mention.className = mentionChipClass({ selected: range.intersectsNode(mention) });
         });
       };
 

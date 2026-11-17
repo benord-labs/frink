@@ -4,17 +4,15 @@ on:
   pull_request:
     paths:
       - 'mobile/**'
-      - 'src/shared/types/remote/mobile.ts'
-      - 'src/shared/types/remote/notifications.ts'
-      - 'src/shared/types/task-signal.ts'
+      # The phone and its UI fixtures import shared code (and its deps) from here.
+      - 'src/shared/**'
       - '.github/workflows/mobile.yml'
   push:
     branches: [main]
     paths:
       - 'mobile/**'
-      - 'src/shared/types/remote/mobile.ts'
-      - 'src/shared/types/remote/notifications.ts'
-      - 'src/shared/types/task-signal.ts'
+      # The phone and its UI fixtures import shared code (and its deps) from here.
+      - 'src/shared/**'
       - '.github/workflows/mobile.yml'
   workflow_dispatch:
 

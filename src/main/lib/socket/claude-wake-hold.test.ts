@@ -1,4 +1,5 @@
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import log from 'electron-log';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../claude', () => ({
@@ -57,6 +58,8 @@ const msg = (type: string, extra: Record<string, unknown> = {}): SDKMessage =>
 const resultMsg = (extra: Record<string, unknown> = {}): SDKMessage =>
   msg('result', { subtype: 'success', total_cost_usd: 0, ...extra });
 
+const turnStart = (): SDKMessage => msg('system', { subtype: 'init' }); // every turn's first frame
+
 /** A `Query` the test feeds live — mirrors claude-session-registry.test.ts's channelQuery. */
 function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () => void } {
   const buffer: SDKMessage[] = [];
@@ -65,6 +68,10 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
   const release = () => {
     wake?.();
     wake = null;
+  };
+  const end = () => {
+    ended = true;
+    release();
   };
   async function* gen(): AsyncGenerator<SDKMessage, void> {
     while (true) {
@@ -76,10 +83,8 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
     }
   }
   const query = Object.assign(gen(), {
-    interrupt: async () => {
-      ended = true;
-      release();
-    },
+    interrupt: async () => end(),
+    close: end,
   }) as unknown as Query;
   return {
     query,
@@ -87,10 +92,7 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
       buffer.push(m);
       release();
     },
-    end: () => {
-      ended = true;
-      release();
-    },
+    end,
   };
 }
 
@@ -191,9 +193,7 @@ const armFlowHold = (subChatId: string, canClearPendingApprovals?: () => boolean
 };
 
 describe('claude-wake-hold — disposal identity guards (ABA)', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('handles cancellation persistence rejection before hold classification', async () => {
     const missingError = new Error('missing hold persistence failed');
@@ -381,6 +381,7 @@ describe('claude-wake-hold — disposal identity guards (ABA)', () => {
 
     // Wake burst: a tool call whose PreToolUse denial (recorded on the burst's turn context by
     // the session's hook closures) never gets a tool_result from the SDK.
+    ch.emit(turnStart());
     ch.emit(msg('tool-input-available', { toolCallId: 'denied-1', toolName: 'Bash' }));
     await new Promise((r) => setTimeout(r, 0));
     held.currentTurn?.deniedToolIdsWithMessages.set('denied-1', 'Denied by policy.');
@@ -472,6 +473,7 @@ describe('claude-wake-hold — disposal identity guards (ABA)', () => {
     const stopHook = Object.assign(async () => ({}), {
       reset: () => {},
       lastPendingWork: pendingWork,
+      carryForwardPendingWork: () => pendingWork,
     });
     const held = createSession('w3', () => ch.query, { stopHook });
     armWakePump({
@@ -546,9 +548,7 @@ describe('claude-wake-hold — disposal identity guards (ABA)', () => {
 });
 
 describe('claude-wake-hold — Flow resource ownership', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('releases after normal pump and MCP cleanup', async () => {
     const { ch, io, releaseFlowResourceActivity, releaseRuntimeSlot, unregisterFlowRunAbort } =
@@ -883,9 +883,7 @@ describe('claude-wake-hold — Flow resource ownership', () => {
 });
 
 describe('claude-wake-hold — burst streaming', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('ships a cumulative parts snapshot with each chunk', async () => {
     const ch = channelQuery();
@@ -900,6 +898,7 @@ describe('claude-wake-hold — burst streaming', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'one ' }));
     ch.emit(msg('text-delta', { delta: 'two' }));
     await new Promise((r) => setTimeout(r, 0));
@@ -929,9 +928,11 @@ describe('claude-wake-hold — burst streaming', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'first wake' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'second wake' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
@@ -983,12 +984,14 @@ describe('claude-wake-hold — burst streaming', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'waiting on the last agent' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
     expect(held.queue.closed).toBe(true); // the wait ended — and the reader carried on anyway
 
     ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'all agents done — the full picture' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
@@ -1051,9 +1054,7 @@ describe('claude-wake-hold — burst streaming', () => {
  * claiming to be busy, with nothing able to clear it short of a restart.
  */
 describe('claude-wake-hold — held-state publication', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   const arm = (subChatId: string, io: WakeHoldIo, session: ReturnType<typeof createSession>) =>
     armWakePump({
@@ -1190,9 +1191,7 @@ describe('claude-wake-hold — held-state publication', () => {
  * never retracts); a Stop is too (it deliberately keeps the entry so the live pump stays adoptable).
  */
 describe('claude-wake-hold — wait detail republish', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   const stopHookWith = (work: unknown): TaskStopHook =>
     ({ lastPendingWork: work, reset: () => {} }) as unknown as TaskStopHook;
@@ -1328,7 +1327,7 @@ describe('claude-wake-hold — wait detail republish', () => {
 
     ch.emit(msg('assistant'));
     releaseWakeHold('d5', 'test-user-stop'); // retracts eagerly, keeps the entry
-    ch.emit(resultMsg()); // closing the queue does not truncate the in-flight burst
+    ch.emit(resultMsg()); // a frame the SDK buffered before close() still drains
     await settle();
 
     // A re-appearing row after Stop reads as "Stop did not work" on the one surface proving it did.
@@ -1535,6 +1534,7 @@ describe('claude-wake-hold — stand-down policy', () => {
 
   it('finalizes a burst the stream death cut short', async () => {
     const { ch, io } = armWith('sd9', stopHookWith(pendingWork), null);
+    ch.emit(turnStart());
     ch.emit(msg('text-start', { id: 'partial' }));
     ch.emit(msg('text-delta', { id: 'partial', delta: 'got this far' }));
     await new Promise((r) => setTimeout(r, 0));
@@ -1563,6 +1563,7 @@ describe('claude-wake-hold — stand-down policy', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(turnStart());
     ch.emit(msg('text-start', { id: 'late' }));
     ch.emit(msg('text-delta', { id: 'late', delta: 'the compiled answer' }));
     await new Promise((r) => setTimeout(r, 0));
@@ -1596,13 +1597,18 @@ describe('claude-wake-hold — stand-down policy', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('tool-input-available', { toolCallId: 'denied-cut-short', toolName: 'Bash' }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     session.currentTurn?.deniedToolIdsWithMessages.set('denied-cut-short', 'Denied by policy.');
     ch.end();
 
     await vi.waitFor(() => expect(releaseFlowResourceActivity).toHaveBeenCalledWith(backfillError));
-    expect(io.completeBurst).toHaveBeenCalledOnce();
+    // Once for the cut-short burst, then once for the notice that the stream death lost the work.
+    expect(io.completeBurst).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(vi.mocked(io.completeBurst).mock.calls[1])).toContain(
+      'Background work stopped',
+    );
   });
 });
 
@@ -1736,6 +1742,7 @@ describe('claude-wake-hold — standing down on a declared done', () => {
   };
 
   it('stands down on the burst that declared it, with work still listed', async () => {
+    const warn = vi.spyOn(log, 'warn');
     const { ch, io, declare } = armSignalled('sig1', stopHookWith(pendingWork));
     await wake(ch);
     expect(hasWakeHold('sig1')).toBe(true);
@@ -1745,6 +1752,10 @@ describe('claude-wake-hold — standing down on a declared done', () => {
     await wake(ch);
     await new Promise((r) => setTimeout(r, 0));
     expect(heldCalls(io).at(-1)).toBe(false);
+    // Closing stdin ends the listed task, so the stand-down names it — once.
+    const drops = warn.mock.calls.map(([l]) => String(l)).filter((l) => l.includes('(wait-over)'));
+    warn.mockRestore();
+    expect(drops).toEqual([expect.stringContaining('sig1')]);
   });
 
   it('does not re-advertise the wait on that burst', async () => {
@@ -1828,9 +1839,7 @@ describe('claude-wake-hold — standing down on a declared done', () => {
 });
 
 describe('claude-wake-hold — app-quit sweep', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('stands a plain chat hold down through its session queue', () => {
     const { io } = armChatHold('quit-chat');
@@ -1884,9 +1893,7 @@ describe('claude-wake-hold — app-quit sweep', () => {
 });
 
 describe('claude-wake-hold — enumerating live holds for a booting renderer', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   const stopHookWith = (work: unknown): TaskStopHook =>
     ({ lastPendingWork: work, reset: () => {} }) as unknown as TaskStopHook;

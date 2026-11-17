@@ -162,7 +162,11 @@ describe('frink_flows_get_batch (dispatch routing)', () => {
     mockListFlowBatchRuns.mockReset();
     mockListFlowBatchStages.mockReset();
     mockListFlowRuns.mockResolvedValue([makeDbFlowRun()]);
-    mockListFlowBatchRuns.mockResolvedValue({ runs: [makeBatchRunRow()], total: 1 });
+    mockListFlowBatchRuns.mockResolvedValue({
+      runs: [makeBatchRunRow()],
+      total: 1,
+      statusCounts: { running: 1 },
+    });
     mockListFlowBatchStages.mockResolvedValue({ stages: [] });
   });
 
@@ -223,6 +227,7 @@ describe('frink_flows_get_batch', () => {
         makeBatchRunRow({ id: RUN_ID_2, status: 'failed' }),
       ],
       total: 2,
+      statusCounts: { completed: 1, failed: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -249,6 +254,7 @@ describe('frink_flows_get_batch', () => {
         makeBatchRunRow({ status: 'pending', id: 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55' }),
       ],
       total: 3,
+      statusCounts: { running: 1, paused: 1, pending: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -269,6 +275,7 @@ describe('frink_flows_get_batch', () => {
         makeBatchRunRow({ status: 'cancelled', id: RUN_ID_2 }),
       ],
       total: 2,
+      statusCounts: { failed: 1, cancelled: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -280,12 +287,16 @@ describe('frink_flows_get_batch', () => {
     expect(data.failed).toBe(2);
   });
 
-  it('total reflects full batch even when runs list is paged', async () => {
+  it('counts every run in the batch, not just the returned page', async () => {
     const pageRuns = Array.from({ length: 20 }, (_, i) => ({
       ...makeBatchRunRow({ status: 'completed' }),
       id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
     }));
-    mockListFlowBatchRuns.mockResolvedValueOnce({ runs: pageRuns, total: 150 });
+    mockListFlowBatchRuns.mockResolvedValueOnce({
+      runs: pageRuns,
+      total: 150,
+      statusCounts: { completed: 100, failed: 10, cancelled: 5, running: 20, paused: 5, pending: 10 },
+    });
 
     const result = await callTool('frink_flows_get_batch', {
       flowId: FLOW_ID,
@@ -295,11 +306,35 @@ describe('frink_flows_get_batch', () => {
     const data = parseToolResultJson(result);
     expect(data.total).toBe(150);
     expect(data.runs).toHaveLength(20);
-    expect(data.completed).toBe(20); // only from returned page
+    expect(data.batch_total).toBe(150);
+    expect(data.completed).toBe(100);
+    expect(data.failed).toBe(15);
+    expect(data.active).toBe(35);
+    expect(data.completed + data.failed + data.active).toBe(data.total);
+  });
+
+  it('keeps the counts whole-batch under a status filter, where total is the filtered count', async () => {
+    mockListFlowBatchRuns.mockResolvedValueOnce({
+      runs: [makeBatchRunRow({ status: 'failed' })],
+      total: 5,
+      statusCounts: { completed: 40, failed: 5, running: 15 },
+    });
+
+    const result = await callTool('frink_flows_get_batch', {
+      flowId: FLOW_ID,
+      batchId: BATCH_ID,
+      status: 'failed',
+      limit: 1,
+    });
+
+    const data = parseToolResultJson(result);
+    expect(data.total).toBe(5);
+    expect(data.batch_total).toBe(60);
+    expect([data.completed, data.failed, data.active]).toEqual([40, 5, 15]);
   });
 
   it('passes status filter to listFlowBatchRuns', async () => {
-    mockListFlowBatchRuns.mockResolvedValueOnce({ runs: [], total: 0 });
+    mockListFlowBatchRuns.mockResolvedValueOnce({ runs: [], total: 0, statusCounts: {} });
 
     await callTool('frink_flows_get_batch', {
       flowId: FLOW_ID,
@@ -363,7 +398,7 @@ describe('frink_flows_get_batch', () => {
   });
 
   it('enforces the shared rate limit of 40 per session', async () => {
-    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0 });
+    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0, statusCounts: {} });
     const session = 'rate-limit-test-batch';
     for (let i = 0; i < 40; i++) {
       await callTool('frink_flows_get_batch', { flowId: FLOW_ID, batchId: BATCH_ID }, session);
@@ -380,7 +415,7 @@ describe('frink_flows_get_batch', () => {
   });
 
   it('different sessions have independent rate limits', async () => {
-    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0 });
+    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0, statusCounts: {} });
     const session1 = 'batch-session-a';
     const session2 = 'batch-session-b';
     for (let i = 0; i < 40; i++) {
@@ -400,6 +435,7 @@ describe('frink_flows_get_batch', () => {
     mockListFlowBatchRuns.mockResolvedValueOnce({
       runs: [makeBatchRunRow({ chat_id: CHAT_ID })],
       total: 1,
+      statusCounts: { running: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -793,72 +829,19 @@ describe('frink_flows_define_stages', () => {
     expect(result?.content[0].text).toMatch(/Failed to define batch stages/);
   });
 
-  it('sc-647: returns partial success shape with retry guidance when server returns 207', async () => {
-    mockDefineFlowBatchStages.mockResolvedValueOnce({
-      partial: true,
-      stages: [
-        { id: 'stage-1-id', stageNumber: 1, name: 'Planning', status: 'running', runCount: 1 },
-      ],
-      rootStageCount: 1,
-      maxDepth: 1,
-      failedStages: [{ stageNumber: 2, error: 'stage_insert_failed' }],
-    });
+  it('passes the rejection reason through so the agent can see how to recover', async () => {
+    const reason =
+      'Stage(s) 1 already exist for batch b; use frink_flows_add_stage_runs to add runs';
+    mockDefineFlowBatchStages.mockRejectedValueOnce(new Error(reason));
 
     const result = await callTool('frink_flows_define_stages', {
       flowId: FLOW_ID,
       batchId: BATCH_ID,
-      stages: [
-        { stageNumber: 1, runs: [STAGE_1_RUN] },
-        { stageNumber: 2, runs: [STAGE_2_RUN] },
-      ],
+      stages: [{ stageNumber: 1, runs: [STAGE_1_RUN] }],
     });
 
-    expect(result?.isError).toBe(false);
-    const data = parseToolResultJson(result);
-    expect(data.success).toBe('partial');
-    expect(data.stageCount).toBe(1);
-    expect(data.stages[0].stageNumber).toBe(1);
-    expect(data.stages[0].status).toBe('running');
-    expect(data.failedStages).toHaveLength(1);
-    expect(data.failedStages[0].stageNumber).toBe(2);
-    expect(data.failedStages[0].error).toBe('stage_insert_failed');
-    expect(data.message).toMatch(/1 stage\(s\) defined, 1 failed/);
-    expect(data.message).toMatch(/\[2\]/);
-    expect(data.message).toMatch(/full run list/);
-    expect(data.message).toMatch(/will be replaced/);
-  });
-
-  it('sc-647: partial success maps every failedStages entry with per-stage error codes', async () => {
-    mockDefineFlowBatchStages.mockResolvedValueOnce({
-      partial: true,
-      stages: [
-        { id: 'stage-1-id', stageNumber: 1, name: 'Planning', status: 'running', runCount: 1 },
-      ],
-      rootStageCount: 1,
-      maxDepth: 1,
-      failedStages: [
-        { stageNumber: 2, error: 'stage_insert_failed' },
-        { stageNumber: 5, error: 'stage_insert_failed' },
-      ],
-    });
-
-    const result = await callTool('frink_flows_define_stages', {
-      flowId: FLOW_ID,
-      batchId: BATCH_ID,
-      stages: [
-        { stageNumber: 1, runs: [STAGE_1_RUN] },
-        { stageNumber: 2, runs: [STAGE_2_RUN] },
-        { stageNumber: 5, runs: [STAGE_2_RUN] },
-      ],
-    });
-
-    expect(result?.isError).toBe(false);
-    const data = parseToolResultJson(result);
-    expect(data.success).toBe('partial');
-    expect(data.failedStages).toHaveLength(2);
-    expect(data.failedStages[0]).toEqual({ stageNumber: 2, error: 'stage_insert_failed' });
-    expect(data.failedStages[1]).toEqual({ stageNumber: 5, error: 'stage_insert_failed' });
-    expect(data.message).toMatch(/\[2, 5\]/);
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0].text).toBe(`Failed to define batch stages: ${reason}`);
   });
 });
 

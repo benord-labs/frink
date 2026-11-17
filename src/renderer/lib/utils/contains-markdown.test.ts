@@ -68,4 +68,26 @@ describe('containsMarkdown', () => {
       expect(containsMarkdown(input)).toBe(false);
     });
   });
+
+  describe('mention tokens', () => {
+    it.each([
+      '@[file:local:.oxlintrc.json] how are you?',
+      '@[file:local:src/__tests__/foo.test.ts] fix this',
+      'use @[tool:mcp__figma__get_design] here',
+    ])('does not read a bare token as markdown: %s', (input) => {
+      expect(containsMarkdown(input)).toBe(false);
+    });
+
+    it('still detects markdown next to a token', () => {
+      expect(containsMarkdown('@[file:local:a.ts] fix the **thing**')).toBe(true);
+    });
+
+    it.each([
+      'Review these:\n- @[file:local:src/a.ts]\n- @[file:local:src/b.ts]',
+      '1. @[file:local:a.ts]\n2. @[file:local:b.ts]',
+      '**@[file:local:a.ts]** is the culprit',
+    ])('detects markdown whose only content is tokens: %s', (input) => {
+      expect(containsMarkdown(input)).toBe(true);
+    });
+  });
 });

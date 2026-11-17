@@ -126,23 +126,28 @@ function BatchPlanCanvasInner({
 
   // Layer 3: node data overlay — cheap, merges selection + navigation callbacks + editability.
   // Workstream data lives on stage objects (visual-only, no topology impact).
-  const rfNodes = useMemo(
-    () =>
-      layoutGraph.nodes.map((n) => ({
+  const rfNodes = useMemo(() => {
+    // layoutGraph is keyed on topology only, so its node.data.stage goes stale between layouts:
+    // take the latest stage (status, progress, linked chat) from the stages prop.
+    const stageById = new Map(stages.map((s) => [s.id, s] as const));
+    return layoutGraph.nodes.map((n) => {
+      const stage = stageById.get(n.id) ?? n.data.stage;
+      return {
         ...n,
         data: {
           ...n.data,
+          stage,
           isSelected: n.id === selectedStageId,
           onSelect: onSelectStage,
           // Only wire onOpenChat when the stage has a linked chat (latest_chat_id is non-null).
-          onOpenChat: n.data.stage.latest_chat_id ? handleOpenChat : undefined,
+          onOpenChat: stage.latest_chat_id ? handleOpenChat : undefined,
           // Handle interactivity derived from current stage status (not frozen topology).
           sourceEditable: n.data.sourceEditable,
           targetEditable: n.data.targetEditable,
         },
-      })),
-    [layoutGraph.nodes, selectedStageId, onSelectStage, handleOpenChat],
-  );
+      };
+    });
+  }, [layoutGraph.nodes, stages, selectedStageId, onSelectStage, handleOpenChat]);
 
   // Build edges inline — avoids calling buildBatchPlanGraph (which triggers dagre) for edge-only updates.
   // Positions are frozen from layoutGraph; only edge connectivity and callbacks change during editing.

@@ -27,6 +27,8 @@ type ContextItemsProps = {
   onRemoveImage: (id: string) => void;
   onRemovePastedText: (id: string) => void;
   onRemoveTask?: () => void;
+  /** Extra chips for the end of the strip; pass null when there are none. */
+  children?: React.ReactNode;
 };
 
 /**
@@ -39,8 +41,9 @@ export function ContextItems({
   onRemoveImage,
   onRemovePastedText,
   onRemoveTask,
+  children,
 }: ContextItemsProps) {
-  if (images.length === 0 && pastedTexts.length === 0 && !attachedTask) {
+  if (images.length === 0 && pastedTexts.length === 0 && !attachedTask && !children) {
     return null;
   }
 
@@ -56,7 +59,7 @@ export function ContextItems({
   return (
     <div className="flex flex-col gap-2">
       {attachedTask && onRemoveTask && <AttachedTask task={attachedTask} onRemove={onRemoveTask} />}
-      {(images.length > 0 || pastedTexts.length > 0) && (
+      {(images.length > 0 || pastedTexts.length > 0 || children) && (
         <div className="flex flex-wrap gap-[6px]">
           {images.map((img, idx) => (
             <AgentImageItem
@@ -80,6 +83,7 @@ export function ContextItems({
               onRemove={() => onRemovePastedText(pt.id)}
             />
           ))}
+          {children}
         </div>
       )}
     </div>

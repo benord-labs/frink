@@ -55,6 +55,7 @@ import {
 } from './custom-nodes/installation-coordinator';
 import type { FlowExecuteStepPayload, ParsedStepOutput } from './flow-step-executor';
 import { executeFlowStepLocal } from './flow-step-executor';
+import { LoginShellEnvResolver, setLoginShellEnvResolver } from './platform/login-shell-env';
 
 const PROJECT = { id: 'p1', path: '/repo', machine_id: 'm1', name: 'test', git_remote: null };
 
@@ -101,9 +102,26 @@ function nid() {
   return `nr-exec-${++_counter}`;
 }
 
+/** Answer the login-shell wait from a fake shell; `gate` holds the answer until released. */
+function loginShellAnswers(gate?: Promise<void>): void {
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () => {
+        await gate;
+        return { ok: true, env: { PATH: process.env.PATH ?? '' } };
+      },
+      extendPath: (p) => p ?? '',
+    }),
+  );
+}
+
 describe('flow-step-executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loginShellAnswers();
+    // clearAllMocks keeps queued *Once values and implementations; a test that stops early must not
+    // hand its leftover lookup results to the next test.
+    getProjectByIdMock.mockReset();
     getProjectByIdMock.mockResolvedValue(PROJECT);
     runShellCommandMock.mockResolvedValue(makeOkShellResult('hello'));
     runCustomNodeProcessMock.mockResolvedValue({
@@ -209,6 +227,27 @@ describe('flow-step-executor', () => {
     expect(outputs.baseBranch).toBe('main');
   });
 
+  it('runs no step before the login-shell PATH is ready (a flow firing right after launch)', async () => {
+    let release: () => void = () => {};
+    loginShellAnswers(new Promise<void>((resolve) => (release = resolve)));
+
+    const driver = makeStepDriver();
+    const pending = driver._trigger('execute', {
+      nodeRunId: nid(),
+      flowRunId: 'fr-1',
+      projectId: 'p1',
+      blockType: 'run_command',
+      command: 'bun test',
+      timeoutMs: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(runShellCommandMock).not.toHaveBeenCalled();
+
+    release();
+    await pending;
+    expect(runShellCommandMock).toHaveBeenCalledOnce();
+  });
+
   it('emits failed flow:step-result when start_task worktree creation fails', async () => {
     createWorktreeForBranchMock.mockResolvedValueOnce({
       success: false,
@@ -230,6 +269,30 @@ describe('flow-step-executor', () => {
     const p = result?.[1] as Record<string, unknown>;
     expect(p.status).toBe('failed');
     expect(String(p.error)).toContain('git worktree add failed');
+  });
+
+  it('keeps the cause of a failed setup command in the start_task error, not just the command (sc-4724)', async () => {
+    // The node error is the first line of the failure, clipped to 500 chars. A long setup command
+    // used to fill that line and push "bun: command not found" out of what the run reports.
+    const cmd = `bun install && ${'bun run build:something-long && '.repeat(30)}true`;
+    createWorktreeForBranchMock.mockResolvedValueOnce({
+      success: false,
+      error: `Worktree setup failed: /bin/sh: bun: command not found (exit 127) — while running: ${cmd}`,
+    });
+
+    const driver = makeStepDriver();
+    await driver._trigger('execute', {
+      nodeRunId: nid(),
+      flowRunId: 'fr-1',
+      projectId: 'p1',
+      blockType: 'start_task',
+      timeoutMs: 5000,
+    });
+
+    expect(driver._emitted.find(([e]) => e === 'result')?.[1]).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('bun: command not found'),
+    });
   });
 
   // Worktree setup is interruptible, so a cancel surfaces as a setup FAILURE. Reporting that as
@@ -550,6 +613,51 @@ describe('flow-step-executor', () => {
         manifest,
         args: [JSON.stringify({ repo: 'owner/repo' })],
         signal: controller.signal,
+      }),
+    );
+  });
+
+  it('passes a "template": false input to the script as authored, under the manifest it runs (sc-3251)', async () => {
+    const manifest = {
+      name: 'jinja-node',
+      entrypoint: 'run.js',
+      timeout: 30,
+      nodePath: '/home/.frink/nodes/jinja-node',
+      credentials: {},
+      inputs: { body: { type: 'string', template: false }, repo: { type: 'string' } },
+    };
+    discoverCustomNodesMock.mockReturnValue({
+      valid: [manifest],
+      manifestWarnings: [],
+      errors: [],
+    });
+    runCustomNodeProcessMock.mockResolvedValueOnce({
+      stdout: '{}',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+    });
+
+    await executeFlowStepLocal(
+      {
+        nodeRunId: nid(),
+        flowRunId: 'fr-opt-out',
+        projectId: 'p1',
+        blockType: 'jinja-node',
+        workingDirectory: 'project_root',
+        timeoutMs: 30_000,
+        // Dispatch rendered every string; the executor restores the opted-out one from the
+        // authored config using the manifest it holds the lease on.
+        config: { body: 'Hi ', repo: 'org/frink' },
+        authoredConfig: { body: 'Hi {{name}}', repo: 'org/{{trigger.name}}' },
+      },
+      new AbortController().signal,
+    );
+
+    expect(runCustomNodeProcessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [JSON.stringify({ body: 'Hi {{name}}', repo: 'org/frink' })],
       }),
     );
   });
@@ -1068,6 +1176,192 @@ describe('flow-step-executor', () => {
     expect(p.error).toBe('Error: something went wrong');
   });
 
+  describe('failed step error names the cause, not just the first stderr line', () => {
+    async function errorFor(stderr: string, exitCode = 1): Promise<string> {
+      runShellCommandMock.mockResolvedValueOnce({
+        stdout: '',
+        stderr,
+        exitCode,
+        timedOut: false,
+        spawnMessage: undefined,
+      });
+      const driver = makeStepDriver();
+      await driver._trigger('execute', {
+        nodeRunId: nid(),
+        flowRunId: 'fr-1',
+        projectId: 'p1',
+        blockType: 'run_command',
+        command: 'fail-command',
+        workingDirectory: 'project_root',
+        timeoutMs: 5000,
+      });
+      const result = driver._emitted.find(([e]) => e === 'result');
+      // SAFETY: flow:step-result's payload always carries an `error` field on a failed step.
+      const p = result?.[1] as { error?: unknown };
+      return String(p.error);
+    }
+
+    it('leads a Python traceback with its exception line', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "<string>", line 2, in <module>',
+        '    d["x"]',
+        '    ~^^^^^',
+        "KeyError: 'x'",
+        '',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe("KeyError: 'x'");
+    });
+
+    it('leads a Python SyntaxError with its message, keeping the line number', async () => {
+      const stderr = [
+        '  File "<stdin>", line 179',
+        '    print("abc',
+        '          ^',
+        'SyntaxError: unterminated string literal (detected at line 179)',
+        '',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe(
+        'SyntaxError: unterminated string literal (detected at line 179) — File "<stdin>", line 179',
+      );
+    });
+
+    it('leads a Node crash with its Error line, skipping stack frames and the version footer', async () => {
+      const stderr = [
+        '/private/tmp/job.js:2',
+        'throw new Error("boom");',
+        '      ^',
+        '',
+        'Error: boom',
+        '    at Object.<anonymous> (/private/tmp/job.js:2:7)',
+        '    at Module._compile (node:internal/modules/cjs/loader:1706:14)',
+        '',
+        'Node.js v22.20.0',
+        '',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('Error: boom — /private/tmp/job.js:2');
+    });
+
+    it('names a bare Python exception that has no message', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "<string>", line 1, in <module>',
+        '    raise ValueError',
+        'ValueError',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('ValueError');
+    });
+
+    it('names the traceback exception even when later stderr follows it', async () => {
+      const traceback = 'Traceback (most recent call last):\n  File "x.py", line 1, in <module>';
+      expect(await errorFor(`${traceback}\nKeyError: 'x'\ndone\n`)).toBe("KeyError: 'x'");
+      expect(await errorFor(`${traceback}\nValueError\ndone\n`)).toBe('ValueError');
+    });
+
+    it('names a custom Python exception whose class is not called …Error', async () => {
+      const stderr = 'Traceback (most recent call last):\n  File "<string>", line 2\nBoom: kaput\n';
+      expect(await errorFor(stderr)).toBe('Boom: kaput');
+    });
+
+    it('ignores traceback source lines that mention an error', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  File "job.py", line 9, in check',
+        '    if self.error:',
+        'Boom: kaput',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('Boom: kaput');
+    });
+
+    it('names the exception of a traceback indented as a whole', async () => {
+      const stderr =
+        '  Traceback (most recent call last):\n    File "x.py", line 1\n  ValueError\n';
+      expect(await errorFor(stderr)).toBe('ValueError');
+    });
+
+    it('names the cause of an exception group nested inside a traceback', async () => {
+      const stderr = [
+        'Traceback (most recent call last):',
+        '  + Exception Group Traceback (most recent call last):',
+        '  | ExceptionGroup: g (1 sub-exception)',
+        '    | ValueError: x',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('ValueError: x');
+      const bare =
+        'Traceback (most recent call last):\n  + Exception Group Traceback (most recent call last):\n    | ValueError\n';
+      expect(await errorFor(bare)).toBe('ValueError');
+    });
+
+    it('keeps the first line when a traceback is cut off before its exception', async () => {
+      const stderr = 'Loading...\nTraceback (most recent call last):\n  File "x.py", line 1\n';
+      expect(await errorFor(stderr)).toBe('Loading...');
+      const withSource =
+        'Traceback (most recent call last):\n  File "job.py", line 9\n    if self.error:\n';
+      expect(await errorFor(withSource)).toBe('Traceback (most recent call last):');
+    });
+
+    it('ignores a stack frame whose path contains `error:`', async () => {
+      const stderr = 'Error: boom\n    at run (/app/error:handler.js:3:1)\n';
+      expect(await errorFor(stderr)).toBe('Error: boom');
+    });
+
+    it('reports a leading blank line as the line after it', async () => {
+      expect(await errorFor('\nfatal: not a git repository\n', 128)).toBe(
+        'fatal: not a git repository',
+      );
+    });
+
+    it('reads Windows CRLF stderr without stray carriage returns', async () => {
+      const stderr =
+        'Traceback (most recent call last):\r\n  File "C:\\job.py", line 2\r\nKeyError: \'x\'\r\n';
+      expect(await errorFor(stderr)).toBe("KeyError: 'x'");
+    });
+
+    it('leads a Node error that carries a code', async () => {
+      const stderr = [
+        'node:internal/modules/esm/resolve:873',
+        '  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);',
+        '        ^',
+        '',
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'left-pad' imported from /app/job.mjs",
+        '    at packageResolve (node:internal/modules/esm/resolve:873:9)',
+        '',
+        'Node.js v22.20.0',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe(
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'left-pad' imported from /app/job.mjs — node:internal/modules/esm/resolve:873",
+      );
+    });
+
+    it("keeps the first line when no line reads as an error message, so npm's log-path trailer does not lead", async () => {
+      const stderr = [
+        'npm error Missing script: "nope"',
+        'npm error',
+        'npm error To see a list of scripts, run:',
+        'npm error   npm run',
+        'npm error A complete log of this run can be found in: /Users/me/.npm/_logs/debug-0.log',
+      ].join('\n');
+      expect(await errorFor(stderr)).toBe('npm error Missing script: "nope"');
+    });
+
+    it('reports single-line stderr exactly as written', async () => {
+      expect(await errorFor('fatal: not a git repository\n', 128)).toBe(
+        'fatal: not a git repository',
+      );
+    });
+
+    it('reports the exit code when stderr is empty', async () => {
+      expect(await errorFor('', 2)).toBe('Command exited with code 2');
+    });
+
+    it('keeps the cause within the length cap for long stderr', async () => {
+      const stderr = `${'x'.repeat(600)}\nValueError: bad input\n`;
+      const error = await errorFor(stderr);
+      expect(error.length).toBe(500);
+      expect(error.startsWith('ValueError: bad input — ')).toBe(true);
+    });
+  });
+
   // sc-612: converging merge tests
 
   it('start_task empty baseBranches falls back to payload.branch (legacy single-branch path)', async () => {
@@ -1192,6 +1486,45 @@ describe('flow-step-executor', () => {
     expect(outputs.configured).toBe(true);
   });
 
+  it('reports a cancelled converging start_task as cancelled, not as a retryable failure', async () => {
+    const nodeRunId = nid();
+    let release: (() => void) | undefined;
+    createWorktreeWithMergedBasesMock.mockImplementationOnce(
+      (_path: string, _slug: string, _branches: string[], signal: AbortSignal) =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve(
+              signal.aborted
+                ? { success: false, error: 'Cancelled' }
+                : {
+                    success: true,
+                    worktreePath: '/wt',
+                    branch: 'b',
+                    baseBranch: 'feat/ticket-2',
+                    mergedBranches: ['feat/ticket-1'],
+                  },
+            );
+        }),
+    );
+
+    const driver = makeStepDriver();
+    const stepDone = driver._trigger('execute', {
+      nodeRunId,
+      flowRunId: 'fr-conv-cancel',
+      projectId: 'p1',
+      blockType: 'start_task',
+      baseBranches: ['feat/ticket-2', 'feat/ticket-1'],
+      timeoutMs: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    await driver._trigger('cancel', { nodeRunId });
+    release?.();
+    await stepDone;
+
+    expect(driver._emitted.find(([e]) => e === 'result')?.[1]?.status).toBe('cancelled');
+  });
+
   it('start_task with baseBranches: emits awaiting_input on merge conflict', async () => {
     createWorktreeWithMergedBasesMock.mockResolvedValueOnce({
       success: false,
@@ -1311,5 +1644,169 @@ describe('flow-step-executor', () => {
     const p = result?.[1] as Record<string, unknown>;
     expect(p.status).toBe('failed');
     expect(String(p.error)).toContain('dependency_branch_not_found');
+  });
+
+  describe('project lookup is read fresh per step', () => {
+    function runCommandStep(projectId: string): Partial<FlowExecuteStepPayload> & {
+      nodeRunId: string;
+    } {
+      return {
+        nodeRunId: nid(),
+        flowRunId: 'fr-fresh',
+        projectId,
+        blockType: 'run_command',
+        command: 'echo test',
+        workingDirectory: 'project_root',
+        timeoutMs: 5000,
+      };
+    }
+
+    function stepResults(driver: ReturnType<typeof makeStepDriver>): StepRecord[] {
+      return driver._emitted.map(([, record]) => record);
+    }
+
+    function customNodeStep(projectId: string): Partial<FlowExecuteStepPayload> & {
+      nodeRunId: string;
+    } {
+      discoverCustomNodesMock.mockReturnValue({
+        valid: [
+          {
+            name: 'local-node',
+            entrypoint: 'run.js',
+            timeout: 30,
+            nodePath: '/home/.frink/nodes/local-node',
+            credentials: {},
+            inputs: {},
+          },
+        ],
+        manifestWarnings: [],
+        errors: [],
+      });
+      return {
+        nodeRunId: nid(),
+        flowRunId: 'fr-fresh',
+        projectId,
+        blockType: 'local-node',
+        workingDirectory: 'project_root',
+        timeoutMs: 30_000,
+        config: {},
+      };
+    }
+
+    it('fails a custom node step once its project has been deleted', async () => {
+      const projectId = 'p-deleted-custom';
+      getProjectByIdMock
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId })
+        .mockResolvedValueOnce(null);
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', customNodeStep(projectId));
+      await driver._trigger('execute', customNodeStep(projectId));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('completed');
+      expect(second.status).toBe('failed');
+      expect(second.error).toBe(`Project ${projectId} not found locally`);
+      expect(runCustomNodeProcessMock).toHaveBeenCalledOnce();
+    });
+
+    it('fails a run_command step once its project has been deleted', async () => {
+      const projectId = 'p-deleted-command';
+      getProjectByIdMock
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId })
+        .mockResolvedValueOnce(null);
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', runCommandStep(projectId));
+      await driver._trigger('execute', runCommandStep(projectId));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('completed');
+      expect(second.status).toBe('failed');
+      expect(second.error).toBe(`Project ${projectId} not found locally`);
+      expect(runShellCommandMock).toHaveBeenCalledOnce();
+    });
+
+    it('runs a step for a project registered after an earlier lookup missed', async () => {
+      const projectId = 'p-registered-late';
+      getProjectByIdMock
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId });
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', runCommandStep(projectId));
+      await driver._trigger('execute', runCommandStep(projectId));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('failed');
+      expect(second.status).toBe('completed');
+      expect(runShellCommandMock).toHaveBeenCalledOnce();
+      expect(runShellCommandMock.mock.calls[0][1]).toBe('/repo');
+    });
+
+    it('names a start_task worktree after the renamed project', async () => {
+      const projectId = 'p-renamed';
+      getProjectByIdMock
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId })
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId, name: 'renamed' });
+
+      const driver = makeStepDriver();
+      for (let i = 0; i < 2; i++) {
+        await driver._trigger('execute', {
+          nodeRunId: nid(),
+          flowRunId: 'fr-fresh',
+          projectId,
+          blockType: 'start_task',
+          branch: 'feature-x',
+          timeoutMs: 5000,
+        });
+      }
+
+      expect(createWorktreeForBranchMock).toHaveBeenCalledTimes(2);
+      expect(createWorktreeForBranchMock.mock.calls[0][1]).toBe('test');
+      expect(createWorktreeForBranchMock.mock.calls[1][1]).toBe('renamed');
+    });
+
+    // Wiring check: the real repo delete, not a mocked null, is what the next step must observe.
+    // Cold-importing the real repo module can pass the 5s default on a loaded machine.
+    it('fails the next custom node step after deleteProject removes the row', async () => {
+      const actual =
+        await vi.importActual<typeof import('./db/repos/projects')>('./db/repos/projects');
+      const { freshDb } = await import('./db/test-utils/fresh-db');
+      const db = freshDb();
+      const project = await actual.createProject(db, { name: 'real', path: '/real-repo' });
+      getProjectByIdMock.mockImplementation((...[, id]: Parameters<typeof actual.getProjectById>) =>
+        actual.getProjectById(db, id),
+      );
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', customNodeStep(project.id));
+      expect(await actual.deleteProject(db, project.id)).toEqual({
+        deleted: true,
+        removed: true,
+        deletedChats: [],
+      });
+      await driver._trigger('execute', customNodeStep(project.id));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('completed');
+      expect(runCustomNodeProcessMock.mock.calls[0][0].cwd).toBe('/real-repo');
+      expect(second.status).toBe('failed');
+      expect(second.error).toBe(`Project ${project.id} not found locally`);
+      expect(runCustomNodeProcessMock).toHaveBeenCalledOnce();
+    }, 30_000);
+
+    it('fails the step without throwing when the project lookup rejects', async () => {
+      const projectId = 'p-lookup-throws';
+      getProjectByIdMock.mockRejectedValueOnce(new Error('db unavailable'));
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', runCommandStep(projectId));
+
+      const [only] = stepResults(driver);
+      expect(only.status).toBe('failed');
+      expect(only.error).toBe(`Project ${projectId} not found locally`);
+      expect(runShellCommandMock).not.toHaveBeenCalled();
+    });
   });
 });

@@ -13,7 +13,12 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
-import { encodeForMentionToken } from '@/lib/mentions/briefing-base64';
+import {
+  codeSelectionMention,
+  diffMention,
+  quoteMention,
+} from '@/lib/mentions/queued-message-text';
+import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 
 // Mock trpc (pulled in by the agents-file-mention transitive dep, unused by the parser).
 vi.mock('../../../lib/trpc', () => ({
@@ -67,6 +72,75 @@ describe('mention token -> attachment summary label', () => {
 
     expect(labelFor(codeToken('src/i18n.ts', 1, 1, gnarly))).toBe('Using code selection');
     expect(labelFor(quoteToken(gnarly))).toBe('Using selected text');
+  });
+
+  it('parses the real code-selection producer back to the selection it was built from', () => {
+    // The tokens above are hand-built mirrors; this one comes from the builder every send path calls.
+    const text = 'const a: Item[] = [];\n// ü ✓';
+    const token = codeSelectionMention({
+      fileName: '50% C:x [draft].ts',
+      startLine: 3,
+      endLine: 4,
+      text,
+    });
+
+    const { textMentions, cleanedText } = extractTextMentions(`${token} explain`);
+
+    expect(cleanedText).toBe('explain');
+    expect(textMentions).toEqual([
+      expect.objectContaining({
+        type: 'code',
+        path: '50% C:x [draft].ts',
+        lineRange: '3-4',
+        fullText: text,
+      }),
+    ]);
+  });
+
+  it('parses the real quote and diff producers back to the text they were built from', () => {
+    const text = '  const a: Item[] = [];\n// ü ✓ ';
+    const quote = quoteMention({ text });
+    const lined = diffMention({ text, filePath: 'src/app.ts', lineNumber: 12 });
+    const unlined = diffMention({ text, filePath: 'src/b.ts' });
+
+    const { textMentions, cleanedText } = extractTextMentions(
+      `${quote} ${lined} ${unlined} explain`,
+    );
+
+    expect(cleanedText.trim()).toBe('explain');
+    expect(textMentions).toEqual([
+      expect.objectContaining({ type: 'quote', label: 'const a Item = ; // ü ✓', fullText: text }),
+      expect.objectContaining({
+        type: 'diff',
+        path: 'src/app.ts',
+        lineNumber: 12,
+        fullText: text,
+      }),
+      expect.objectContaining({
+        type: 'diff',
+        path: 'src/b.ts',
+        lineNumber: undefined,
+        fullText: text,
+      }),
+    ]);
+  });
+
+  it.each([
+    ['a route segment in brackets', 'app/[id]/page.tsx', 'page.tsx:3'],
+    ['a Windows drive letter', 'C:\\repo\\src\\app.ts', 'app.ts:3'],
+    ['a literal percent sign', 'docs/100%.md', '100%.md:3'],
+    ['a literal %XX sequence', 'docs/a%20b.md', 'a%20b.md:3'],
+  ])('keeps a diff of a path with %s whole', (_pathKind, filePath, label) => {
+    // A raw `]` closed the token early and a raw `:` shifted every field after the path.
+    const text = 'export default function Page() {}\r\n';
+    const token = diffMention({ text, filePath, lineNumber: 3 });
+
+    const { textMentions, cleanedText } = extractTextMentions(`${token} explain`);
+
+    expect(cleanedText).toBe('explain');
+    expect(textMentions).toEqual([
+      expect.objectContaining({ type: 'diff', path: filePath, label, fullText: text }),
+    ]);
   });
 
   it('labels a Windows drive-letter diff path, whose colons split the token oddly', () => {

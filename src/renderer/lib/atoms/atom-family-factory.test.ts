@@ -251,11 +251,9 @@ describe('cleanupChatScopedState', () => {
  */
 describe('cleanupChatScopedState covers the real per-chat families', () => {
   it('sweeps the code-editor families the sweep was introduced for', async () => {
-    const {
-      codeSelectionContextAtomFamily,
-      chatContextFileAtomFamily,
-      chatContextFileDismissedAtomFamily,
-    } = await import('../code-editor/state/atoms');
+    const { codeSelectionContextAtomFamily } = await import('../code-editor/state/atoms');
+    const { chatContextFileAtomFamily, chatContextFileDismissedAtomFamily } =
+      await import('../code-editor/state/chat-context-file');
 
     appStore.set(codeSelectionContextAtomFamily('chat-real'), {
       filePath: '/a.ts',

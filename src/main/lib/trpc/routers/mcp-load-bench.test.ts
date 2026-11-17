@@ -39,7 +39,7 @@ const {
       async (url: string, _headers?: Record<string, string>, _name?: string) =>
         probe(String(url).split('/').pop() ?? ''),
     ),
-    fetchMcpToolsStdioMock: vi.fn(async (cfg: { args?: string[] }, _name?: string) =>
+    fetchMcpToolsStdioMock: vi.fn(async (cfg: { args?: string[]; cwd?: string }, _name?: string) =>
       probe(cfg.args?.[0] ?? ''),
     ),
     ensureMcpTokensFreshMock: vi.fn(async (servers: unknown) => {
@@ -214,6 +214,20 @@ describe('getAllMcpConfigHandler group assembly (parallel build)', () => {
       .slice(before)
       .filter(([cfg]) => cfg.args?.[0] === 'dup-slow-0');
     expect(probed).toHaveLength(3); // global + two projects
+  });
+
+  it('probes a project server in its project folder and a global one outside every project', async () => {
+    const server = { 'cwd-fast-0': { command: 'node', args: ['cwd-fast-0'] } };
+    readClaudeConfigMock.mockResolvedValue({
+      mcpServers: server,
+      projects: { '/proj/one': { mcpServers: server } },
+    });
+    const before = fetchMcpToolsStdioMock.mock.calls.length;
+
+    await getAllMcpConfigHandler();
+
+    const cwds = fetchMcpToolsStdioMock.mock.calls.slice(before).map(([cfg]) => cfg.cwd);
+    expect(cwds.sort()).toEqual(['/proj/one', undefined]);
   });
 
   it('coerces a numeric env value or arg instead of dropping the whole field', async () => {

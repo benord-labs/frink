@@ -8,7 +8,7 @@ const pending = vi.hoisted(() => ({
 }));
 vi.mock('./wake-hold-signal', () => ({ summarizePendingWork: () => pending }));
 
-import { listWakeHolds } from './wake-hold-registry-view';
+import { listWakeHolds, listWakeHoldSubChatIdsForChat } from './wake-hold-registry-view';
 
 const liveHold = (isFlowTurn: boolean) => ({
   chatId: 'c1',
@@ -27,5 +27,17 @@ describe('listWakeHolds — marking Flow-owned holds', () => {
       { subChatId: 'chat-hold', chatId: 'c1', pending },
       { subChatId: 'flow-hold', chatId: 'c1', pending, flow: true },
     ]);
+  });
+});
+
+describe('listWakeHoldSubChatIdsForChat', () => {
+  it("includes a chat's stopped and settling holds — their pumps are still live", () => {
+    holds.clear();
+    holds.set('live', liveHold(false));
+    holds.set('stopped', { ...liveHold(false), retracted: true });
+    holds.set('settling', { ...liveHold(false), settling: true });
+    holds.set('other-chat', { ...liveHold(false), chatId: 'c2' });
+
+    expect(listWakeHoldSubChatIdsForChat('c1')).toEqual(['live', 'stopped', 'settling']);
   });
 });

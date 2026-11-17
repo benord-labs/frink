@@ -48,6 +48,7 @@ const PHASE_ACCENT_CLASS: Record<FlowChangePresentation['phase'], string> = {
   denied: 'text-destructive',
   stale: 'text-[hsl(var(--status-warning-foreground))]',
   unconfirmed: 'text-[hsl(var(--status-warning-foreground))]',
+  unread: 'text-muted-foreground',
   interrupted: 'text-[hsl(var(--status-warning-foreground))]',
 };
 

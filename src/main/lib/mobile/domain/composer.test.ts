@@ -37,7 +37,12 @@ vi.mock('../../claude', () => ({
   claudeVersionSupportsXhigh: () => true,
 }));
 
-import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
+import {
+  type CodexAccountTiers,
+  CODEX_DEFAULT_MODEL_ID,
+} from '../../../../shared/lib/codex-cli-models';
+import type { CodexUsageSnapshot } from '../../agent-runner/codex/usage/codex-usage';
+import { codexPlanUsage } from '../../agent-runner/codex/usage';
 import {
   readMobileComposer,
   setMobileAccount,
@@ -61,6 +66,28 @@ function withChat(projectId: string | null) {
   });
 }
 
+/** The signed-in Codex account's catalog, as the usage probe would report it. */
+function codexTiers(tiers: CodexAccountTiers, defaultSlug: string | null = null): void {
+  const snapshot: CodexUsageSnapshot = {
+    windows: {},
+    subscriptionType: 'plus',
+    email: null,
+    available: true,
+    updatedAt: 0,
+    catalog: { tiers, defaultSlug },
+  };
+  vi.spyOn(codexPlanUsage, 'get').mockResolvedValue(snapshot);
+}
+
+/** A free ChatGPT login's model/list (bundled Codex 0.155.1): no GPT-6 Astra, no paid speeds. */
+const FREE_TIERS: CodexAccountTiers = {
+  'gpt-6-luna': [],
+  'gpt-5.6-terra': [],
+  'gpt-5.6-luna': [],
+  'gpt-5.5': [],
+  'codex-auto-review': [],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   withChat('project');
@@ -75,6 +102,7 @@ beforeEach(() => {
     thinkingEnabled: true,
   });
   fixture.update.mockReturnValue({});
+  codexTiers({ 'gpt-6-astra': ['fast', 'ultrafast'] });
 });
 
 describe('phone composer', () => {
@@ -120,6 +148,26 @@ describe('phone composer', () => {
     expect(fixture.update).not.toHaveBeenCalled();
   });
 
+  it("offers only the account's paid speeds, keeping the one the chat is on", async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    codexTiers({ 'gpt-6-astra': [] });
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    // The stored chat is on Ultrafast, so it stays switchable-off; Fast is not offered.
+    expect(composer.codexSpeedCredits).toEqual({ fast: null, ultrafast: 8 });
+  });
+
+  it('offers no paid speed when the account tiers could not be read', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    fixture.read.mockReturnValue({ modelId: CODEX_DEFAULT_MODEL_ID, codexSpeed: 'standard' });
+    vi.spyOn(codexPlanUsage, 'get').mockResolvedValue(null);
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.codexSpeedCredits).toEqual({ fast: null, ultrafast: null });
+  });
+
   it('writes settings through main and Thinking app-wide', async () => {
     await updateMobileComposer({
       type: 'updateComposer',
@@ -136,6 +184,49 @@ describe('phone composer', () => {
       await updateMobileComposer({ type: 'updateComposer', ...identity, patch: { codexSpeed } });
       expect(fixture.update).toHaveBeenLastCalledWith('chat', { codexSpeed });
     }
+  });
+
+  it("lists only the models a free account can use, keeping a saved one it can't", async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    fixture.read.mockReturnValue({ modelId: CODEX_DEFAULT_MODEL_ID, codexSpeed: 'standard' });
+    codexTiers(FREE_TIERS, 'gpt-6-luna');
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.models.some((m) => m.id.startsWith('codex-gpt-6-astra'))).toBe(false);
+    expect(composer.models.some((m) => m.id === 'codex-gpt-6-luna-medium')).toBe(true);
+    expect(composer.settings.modelId).toBe(CODEX_DEFAULT_MODEL_ID);
+  });
+
+  it('starts a Codex chat with no Codex model on the account default', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    codexTiers(FREE_TIERS, 'gpt-6-luna');
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.settings.modelId).toBe('codex-gpt-6-luna-medium');
+  });
+
+  it('lists every Codex model while the account catalog is unknown', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    vi.spyOn(codexPlanUsage, 'get').mockResolvedValue(null);
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.models.some((m) => m.id === CODEX_DEFAULT_MODEL_ID)).toBe(true);
+  });
+
+  it("refuses a Codex model the account can't use", async () => {
+    codexTiers(FREE_TIERS);
+
+    await expect(
+      updateMobileComposer({
+        type: 'updateComposer',
+        ...identity,
+        patch: { modelId: CODEX_DEFAULT_MODEL_ID },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(fixture.update).not.toHaveBeenCalled();
   });
 
   it('refuses a model id that is in neither catalog', async () => {
@@ -167,5 +258,25 @@ describe('phone composer', () => {
     withChat(null);
     await setMobileAccount({ type: 'setAccount', ...identity, accountId: 'acc-2' });
     expect(fixture.setDefault).toHaveBeenCalledWith({ id: 'acc-2' });
+  });
+
+  it.each([
+    ['claude-code', 'claude', 'sonnet', ''],
+    ['codex', 'codex', CODEX_DEFAULT_MODEL_ID, ''],
+    [
+      'opencode',
+      'claude',
+      'anthropic/claude-sonnet-4-5',
+      'The selected provider or model does not support Auto Mode.',
+    ],
+  ])('on %s, sends provider %s and model %s', async (type, provider, modelId, autoReason) => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type });
+    fixture.read.mockReturnValue({ modelId: 'anthropic/claude-sonnet-4-5', autoMode: true });
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.provider).toBe(provider);
+    expect(composer.settings.modelId).toBe(modelId);
+    expect(composer.autoUnavailableReason).toBe(autoReason);
   });
 });

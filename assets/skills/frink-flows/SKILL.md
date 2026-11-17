@@ -12,15 +12,15 @@ A Flow is a graph: one trigger starts action/logic nodes connected by edges. Use
 1. For an existing flow, read it with `frink_flows_get` (discover with `frink_flows_list`). Discover projects, integrations, commands and installed nodes with `frink_flows_list_catalog`; use returned ids/names.
 2. Choose the trigger and required blocks. Every Agent needs an upstream Start Task (a session; see [Sessions](#sessions-start-task)); Chat Reply needs upstream Start Task or Post-Task trigger chat context.
 3. Wire data deliberately: `trigger.*` lasts the run, `previous.*` is one hop, `loop.*` lasts the fan-out body. Only Condition passes predecessor data through; Start Task and Agent replace it.
-4. Save via `frink_flows_patch`. Create with `name` and no flowId; modify with `flowId`. Read returned errors/warnings and correct the cause. Save checks topology; run/define_stages also check execution config.
+4. Save via `frink_flows_patch`. Create with `name` and no flowId; modify with `flowId`. Read returned errors/warnings and correct the cause. Save checks topology; run/define_stages also check execution config. If a patch result is missing, cut short, or replaced by a note such as "saved to <path>", the call may have finished: check with `frink_flows_get` (or `frink_flows_list` after a create) before retrying, and never resend a create.
 5. Run only within the user's requested scope; inspect the returned run id with `frink_flows_get_run`. Batch work follows plan → user confirmation → define → start.
 
 ## Graph and patch essentials
 
 - Exactly one trigger, ≤50 nodes, unique node/edge ids; edges reference existing ids. Prefer lowercase-hyphen ids. End has no outgoing edges.
 - Edge: `{ "id":"e1", "source":"a", "target":"b" }`. Condition requires true/false sourceHandle branches. Fan-out uses contained linear branches and a shared continuation; read its contract before wiring.
-- Nodes may omit `position` for auto-layout; if supplied, use roughly 200px vertical / 300px horizontal spacing.
-- Patch operations: add/remove/update node or edge, and `update_settings`. `update_node.config` merges recursively (JSON Merge Patch); null removes a key.
+- Nodes may omit `position` for auto-layout. Before placing nodes yourself, read Canvas layout in [Graph and logic](references/blocks-logic.md): nodes are 320px wide, so columns closer than 368px overlap.
+- Patch operations: add/remove/update node or edge, `update_settings`, and `auto_layout` (resets the canvas layout). `update_node.config` merges recursively (JSON Merge Patch); null removes a key.
 - Create `projectId` seeds `settings.defaultProjectId` (otherwise current session project when resolvable). Nodes inherit it; Start Task may set config.projectId explicitly.
 - Fan-out continuation receives `previous.results[itemIndex][branchRootNodeId]` plus totalCount. Generic convergence outside it is OR, not an all-predecessors barrier.
 
@@ -43,7 +43,7 @@ All paths are bundled relative to this file; no source checkout is needed. Confi
 | Choose/configure trigger and its data | [Trigger contracts](references/blocks-triggers.md) |
 | Bind friendly webhook fields | [Provider aliases](references/webhook-aliases.md) |
 | Create tasks/agents, run commands, call HTTP/integrations, reply in text/HTML | [Action contracts](references/blocks-actions.md) |
-| Wire condition, fan-out, approval or end | [Graph and logic](references/blocks-logic.md) |
+| Wire condition, fan-out, approval or end; position nodes on the canvas | [Graph and logic](references/blocks-logic.md) |
 | Carry data between blocks; templates and shared briefing | [Templates and context](references/template-variables.md) |
 | Start from a complete validated patch or common pattern | [Examples](references/examples.md) |
 | Plan many tickets, stages, dependencies, branches and concurrency | [Batch orchestration](references/batching.md) |

@@ -27,7 +27,7 @@ export type ChatItem = {
   isWorktree: boolean;
   /** Non-null when this chat was created by an automated task (trigger-based) */
   taskId: string | null;
-  /** Non-null when this chat belongs to a batch flow run */
+  /** The sidebar group this chat folds into: its batch, or the Fan Out run that opened it */
   batchId: string | null;
 };
 
@@ -66,11 +66,11 @@ export type FolderDescriptor = {
   projectIds: string[] | null;
 };
 
-/** Confirmation state for archive/delete flows that may strand running tasks. */
+/** Confirmation state for deletes that also stop a linked running task. Archive never asks. */
 export type TaskAwareActionDialogState = {
   open: boolean;
   mode: 'single' | 'batch';
-  operation: 'archive' | 'archive_batch' | 'delete' | 'delete_batch';
+  operation: 'delete' | 'delete_batch';
   chatIds: string[];
   taskIds: string[];
   totalChats: number;

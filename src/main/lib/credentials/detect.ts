@@ -187,7 +187,7 @@ function detectMacOS(): DetectClaudeAccountResult {
   if (canonicalProbe === 'denied') {
     return {
       available: false,
-      hint: 'macOS denied keychain access for Frink. Re-allow access in System Settings → Privacy & Security → Keychain, or run `claude auth login` if no entry exists yet.',
+      hint: 'macOS blocked Frink from your Claude login. Sign in again here.',
     };
   }
 
@@ -195,10 +195,10 @@ function detectMacOS(): DetectClaudeAccountResult {
   // the executor pins CLAUDE_SECURESTORAGE_CONFIG_DIR='', which forces the spawned CLI onto
   // the unsuffixed `Claude Code-credentials` service. Connecting a workspace-scoped
   // `Claude Code-credentials-<hash>` here would record a sourcePath frink can probe but the
-  // agent can never use. `claude auth login` is the only real fix.
+  // agent can never use. Signing in again is the only real fix.
   return {
     available: false,
-    hint: 'No Claude Code login found in the macOS Keychain. Run `claude auth login` and try again.',
+    hint: "Frink didn't find a Claude login on this Mac.",
   };
 }
 
@@ -217,7 +217,7 @@ function detectLinux(): DetectClaudeAccountResult {
 
   return {
     available: false,
-    hint: 'No Claude Code login found at ~/.claude/.credentials.json. Run `claude auth login` and try again.',
+    hint: "Frink didn't find a Claude login on this computer.",
   };
 }
 

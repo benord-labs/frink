@@ -17,8 +17,8 @@ import { getDatabase, projects } from '../../db';
  * - Rejects absolute paths and ".." traversal segments
  *
  * SYMLINK PROTECTION (secure-fs.ts):
- * - Writes: Block if realpath escapes the worktree the caller named
- * - Reads: Caller can check isSymlinkEscaping() to warn users
+ * - Git routes: block reads, writes and deletes whose realpath escapes the worktree
+ * - Editor route: never blocked; escapeTarget() feeds a notice naming the real path
  */
 
 /**
@@ -121,13 +121,4 @@ export function getProjectIdByPath(projectPath: string): string {
     throw new PathValidationError('Path is not a registered project', 'UNREGISTERED_PROJECT');
   }
   return project.id;
-}
-
-/**
- * Validates a path for git commands. Lighter check that allows root.
- *
- * @throws PathValidationError if path is invalid
- */
-export function assertValidGitPath(filePath: string): void {
-  validateRelativePath(filePath, { allowRoot: true });
 }

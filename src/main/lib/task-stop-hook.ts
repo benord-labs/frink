@@ -21,6 +21,16 @@ export interface StopPendingWork {
   sessionCrons: NonNullable<StopHookInput['session_crons']>;
 }
 
+/** Claude Code's Stop-input labels for the tasks that make it skip a `/goal` check: background
+ * shells (Monitor included), subagents, Workflows, teammates and cloud sessions. */
+const GOAL_DEFERRING_TASK_TYPES = new Set([
+  'shell',
+  'subagent',
+  'workflow',
+  'teammate',
+  'cloud session',
+]);
+
 const TAIL_COMMAND = /\btail\b/;
 const FOLLOW_FLAG = /(?:\s-[a-zA-Z]*[fF]\b|\s--follow\b)/;
 /**
@@ -205,15 +215,23 @@ type StopHookResult = { decision: 'block'; reason: string } | Record<string, nev
 export type TaskStopHook = ((input: StopHookInput) => Promise<StopHookResult>) & {
   reset: () => void;
   lastPendingWork: StopPendingWork | null;
+  /** The turn-end read: with no Stop since the reset, restore the list it set aside, which a
+   * Stop-less turn never contradicted. Any Stop, even an empty one, wins. */
+  carryForwardPendingWork: () => StopPendingWork | null;
   /** The last Stop dropped a finished follower that is still running: only the CLI's EOF ends it. */
   droppedFollower?: boolean;
   /** A Stop ran since the hook was built or last reset, so its snapshot is the current turn's. */
   stoppedSinceReset?: boolean;
+  /** The last Stop listed work that makes Claude Code defer a `/goal` check (raw input, so a
+   * finished follower still counts: the CLI does). */
+  defersGoalCheck?: boolean;
 };
 
 export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
   const maxRetries = opts.maxRetries ?? 2;
   let retries = 0;
+  /** The snapshot a reset set aside. Only {@link TaskStopHook.carryForwardPendingWork} reads it. */
+  let setAside: StopPendingWork | null = null;
 
   // Funnel every idle allow through here so onAllow (turn-end duties) can never be forgotten
   // on a new allow path, and so it fires exactly once per allow decision.
@@ -225,6 +243,9 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
   const hook = (async (input: StopHookInput): Promise<StopHookResult> => {
     hook.stoppedSinceReset = true;
     hook.lastPendingWork = readPendingWork(input);
+    hook.defersGoalCheck = (input.background_tasks ?? []).some((task) =>
+      GOAL_DEFERRING_TASK_TYPES.has(task.type),
+    );
     const kept = new Set(hook.lastPendingWork?.backgroundTasks.map((task) => task.id));
     const dropped = new Set(
       (input.background_tasks ?? []).map((task) => task.id).filter((id) => !kept.has(id)),
@@ -265,11 +286,19 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
     };
   }) as TaskStopHook;
   hook.lastPendingWork = null;
+  hook.carryForwardPendingWork = (): StopPendingWork | null => {
+    if (!hook.stoppedSinceReset && !hook.lastPendingWork) hook.lastPendingWork = setAside;
+    return hook.lastPendingWork;
+  };
   hook.reset = (): void => {
     retries = 0;
+    // Set aside, not discard: one turn after another can each end with no Stop, so the list carries
+    // forward until a Stop replaces it.
+    setAside = hook.carryForwardPendingWork();
     hook.lastPendingWork = null;
     hook.droppedFollower = false;
     hook.stoppedSinceReset = false;
+    hook.defersGoalCheck = false;
   };
   return hook;
 }

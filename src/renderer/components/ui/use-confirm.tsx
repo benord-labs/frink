@@ -10,14 +10,18 @@ export type ConfirmOptions = {
   onCloseAutoFocus?: (event: Event) => void;
 };
 
+type ConfirmApi = {
+  confirm: (options: ConfirmOptions) => Promise<boolean>;
+  /** Closes an open dialog as a Cancel, e.g. when what it asked about has changed. */
+  dismiss: () => void;
+  confirmDialog: ReactElement;
+};
+
 /**
  * Promise-based ConfirmDialog in place of `window.confirm`: true only when accepted, settled once.
  * Render `confirmDialog` once in the owning component.
  */
-export function useConfirm(): {
-  confirm: (options: ConfirmOptions) => Promise<boolean>;
-  confirmDialog: ReactElement;
-} {
+export function useConfirm(): ConfirmApi {
   // Options outlive `open` so the closing animation keeps its copy and the focus-return callback
   // (Radix calls onCloseAutoFocus after the dialog has closed).
   const [open, setOpen] = useState(false);
@@ -42,15 +46,18 @@ export function useConfirm(): {
     [settle],
   );
 
+  const dismiss = useCallback(() => {
+    settle(false);
+    setOpen(false);
+  }, [settle]);
+
   useEffect(() => () => settle(false), [settle]);
 
   const confirmDialog = (
     <ConfirmDialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (nextOpen) return;
-        settle(false);
-        setOpen(false);
+        if (!nextOpen) dismiss();
       }}
       onConfirm={() => settle(true)}
       onCloseAutoFocus={options?.onCloseAutoFocus}
@@ -60,5 +67,5 @@ export function useConfirm(): {
     />
   );
 
-  return { confirm, confirmDialog };
+  return { confirm, dismiss, confirmDialog };
 }

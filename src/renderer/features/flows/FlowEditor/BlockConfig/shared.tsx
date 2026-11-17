@@ -93,17 +93,17 @@ export function FieldRow({ htmlFor, label, children, hint, error }: FieldRowProp
 
   return (
     <div className="grid min-w-0 gap-1.5">
-      <Label htmlFor={htmlFor} className="text-xs font-medium">
+      <Label htmlFor={htmlFor} className="text-sm font-medium">
         {label}
       </Label>
       {enhancedChild}
       {hint ? (
-        <p id={hintId} className="text-xs text-muted-foreground">
+        <p id={hintId} className="text-sm text-muted-foreground">
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} role="alert" className="text-xs text-destructive">
+        <p id={errorId} role="alert" className="text-sm text-destructive">
           {error}
         </p>
       ) : null}

@@ -1,7 +1,13 @@
 /** The phone's composer controls, reading and writing the values main owns through the desktop's
  *  own paths, so each window follows the phone live. */
 import { getAutoModeUnavailableReason } from '../../../../shared/lib/auto-mode-availability';
-import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
+import {
+  type CodexAccountCatalog,
+  type CodexAccountTiers,
+  codexModelsForAccount,
+  codexTierCredits,
+  isCodexModelUnavailable,
+} from '../../../../shared/lib/codex-cli-models';
 import {
   CLAUDE_CODE_MODELS,
   CODEX_MODELS,
@@ -11,12 +17,14 @@ import {
   isCodexModelVisible,
   normalizeModelIdForExecutionAccount,
 } from '../../../../shared/lib/models';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import type {
   MobileChatMode,
   MobileComposer,
   MobilePickerModel,
   MobileRequest,
 } from '../../../../shared/types/remote/mobile';
+import { codexCatalogForModel, codexPlanUsage } from '../../agent-runner/codex/usage';
 import {
   broadcastComposerChange,
   readComposerSettings,
@@ -38,11 +46,15 @@ type SetAccountRequest = Extract<MobileRequest, { type: 'setAccount' }>;
 // The desktop hides no family by default; per-window hidden families stay a desktop preference.
 const NO_HIDDEN_FAMILIES: string[] = [];
 
-function pickerModels(provider: 'claude' | 'codex'): MobilePickerModel[] {
+/** The phone's rows, Codex ones limited to what the signed-in account can use (as on desktop). */
+function pickerModels(
+  provider: 'claude' | 'codex',
+  catalog: CodexAccountCatalog | null,
+): MobilePickerModel[] {
   return provider === 'codex'
-    ? CODEX_MODELS.filter((m) => isCodexModelVisible(m, NO_HIDDEN_FAMILIES)).map(
-        codexModelToPickerItem,
-      )
+    ? codexModelsForAccount(catalog)
+        .filter((m) => isCodexModelVisible(m, NO_HIDDEN_FAMILIES))
+        .map(codexModelToPickerItem)
     : CLAUDE_CODE_MODELS.filter((m) => isClaudeModelVisible(m, NO_HIDDEN_FAMILIES)).map(
         claudeModelToPickerItem,
       );
@@ -64,6 +76,17 @@ function ultraSupported(): boolean {
   }
 }
 
+/** A paid speed's multiplier on the phone: offered when the account can use it, or kept while it is
+ *  on so it can be turned off. Unknown account tiers offer nothing. */
+function phoneSpeedCredits(
+  modelId: string,
+  speed: Exclude<CodexSpeed, 'standard'>,
+  current: CodexSpeed | undefined,
+  accountTiers: CodexAccountTiers,
+): number | null {
+  return codexTierCredits(modelId, speed, current === speed ? undefined : accountTiers);
+}
+
 export async function readMobileComposer(input: ComposerRequest): Promise<MobileComposer> {
   const { chat, subChat } = await requireChat(input.chatId, input.subChatId);
   const [account, accounts] = await Promise.all([
@@ -75,7 +98,11 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
   const provider = account?.type === 'codex' ? 'codex' : 'claude';
   // Shown normalized (as the desktop picker does) but never stored normalized: flipping the
   // account back must not lose the other provider's choice.
-  const modelId = normalizeModelIdForExecutionAccount(provider === 'codex', stored.modelId);
+  const catalog = provider === 'codex' ? ((await codexPlanUsage.get())?.catalog ?? null) : null;
+  const modelId = normalizeModelIdForExecutionAccount(account?.type, stored.modelId, catalog, {
+    keepUnavailable: true,
+  });
+  const tiers = provider === 'codex' ? (catalog?.tiers ?? {}) : null;
   return {
     mode: (subChat.mode as MobileChatMode) ?? 'agent',
     debugAvailable: Boolean(chat.projectId),
@@ -97,17 +124,17 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
       isDefault,
       isAuthenticated,
     })),
-    models: pickerModels(provider),
+    models: pickerModels(provider, catalog),
     settings: { ...stored, modelId },
     autoUnavailableReason: getAutoModeUnavailableReason({
       accountResolved: true,
       isAuthenticated: account?.isAuthenticated,
-      accountType: account?.type === 'codex' ? 'codex' : account ? 'claude-code' : undefined,
+      accountType: account?.type,
       selectedModelId: modelId,
     }),
     codexSpeedCredits: {
-      fast: provider === 'codex' ? codexTierCredits(modelId, 'fast') : null,
-      ultrafast: provider === 'codex' ? codexTierCredits(modelId, 'ultrafast') : null,
+      fast: tiers ? phoneSpeedCredits(modelId, 'fast', stored.codexSpeed, tiers) : null,
+      ultrafast: tiers ? phoneSpeedCredits(modelId, 'ultrafast', stored.codexSpeed, tiers) : null,
     },
     xhighSupported: xhighSupported(),
     ultraSupported: ultraSupported(),
@@ -119,6 +146,13 @@ export async function updateMobileComposer(input: UpdateComposerRequest): Promis
   const { thinkingEnabled, ...patch } = input.patch;
   if (patch.modelId !== undefined && !isKnownModel(patch.modelId)) {
     throw new MobileApiError(400, 'That model is not available.');
+  }
+  const isCodexModel = CODEX_MODELS.some((m) => m.id === patch.modelId);
+  if (
+    isCodexModel &&
+    isCodexModelUnavailable(patch.modelId, await codexCatalogForModel(patch.modelId))
+  ) {
+    throw new MobileApiError(400, "That model isn't available on your ChatGPT plan.");
   }
   if (Object.keys(patch).length > 0 && !updateComposerSettings(chat.id, patch)) {
     throw new MobileApiError(404, 'Chat not found.');

@@ -129,6 +129,20 @@ type CutShortBurstCleanup = {
   complete: () => unknown;
 };
 
+function logPumpEnd(subChatId: string, exit: WakePumpExit): void {
+  const error = exit.reason === 'stream-ended' && exit.error;
+  const detail = error ? ` (${error instanceof Error ? error.message : String(error)})` : '';
+  log.info(`[Socket Executor] Wake pump for ${subChatId} ended: ${exit.reason}${detail}`);
+}
+
+/** Pump exits that end the CLI under a wait nobody declared over. `work-finished` follows the
+ * wait-over latch; a takeover or turn error hands the session to the adopting turn. */
+const WORK_LOSING_EXITS: ReadonlySet<WakePumpExit['reason']> = new Set([
+  'stream-ended',
+  'sink-error',
+  'interrupted',
+]);
+
 /** Settle the resources owned by one ended wake pump before releasing its Flow activity. */
 export async function settleClaudeWakeHold(params: {
   exit: WakePumpExit;
@@ -141,6 +155,9 @@ export async function settleClaudeWakeHold(params: {
   retractIfCurrent: (endReason?: WakeHoldEndReason) => unknown;
   dropIfCurrent: () => unknown;
   takeCutShortBurst: () => CutShortBurstCleanup | null;
+  /** Post the lost-work notice into the arming message. Must run before the retract. A release
+   * that already posted one, or a user's Stop, makes this a no-op. */
+  announceLostWork?: (cause: string) => Promise<void>;
 }): Promise<void> {
   const cleanupErrors: unknown[] = [];
   const preserveThrownFailure = (error: unknown): unknown =>
@@ -158,14 +175,32 @@ export async function settleClaudeWakeHold(params: {
     }
   };
 
+  // Work lost when the CLI ends under a wait is said in the chat. Not gated on the queue:
+  // a dying CLI's own stream end evicts the session and closes it first.
+  const noticeCause = WORK_LOSING_EXITS.has(params.exit.reason)
+    ? `wake-pump-exit:${params.exit.reason}`
+    : undefined;
   // A wait that died rather than ended is announced as failed; Stop and release already retracted.
   const failed = params.exit.reason === 'stream-ended' || params.exit.reason === 'sink-error';
-  await runCleanup(() => params.retractIfCurrent(failed ? 'failed' : undefined));
-  log.info(`[Socket Executor] Wake pump for ${params.subChatId} ended: ${params.exit.reason}`);
-  const cutShort = params.takeCutShortBurst();
-  if (cutShort) {
-    await runCleanup(cutShort.backfill);
-    await runCleanup(cutShort.complete);
+  const completeCutShortBurst = async (): Promise<void> => {
+    const cutShort = params.takeCutShortBurst();
+    if (cutShort) {
+      await runCleanup(cutShort.backfill);
+      await runCleanup(cutShort.complete);
+    }
+  };
+  const { announceLostWork } = params;
+  if (noticeCause && announceLostWork) {
+    // Notice first, retract after: retracting finishes the held live stream, so the cut-short
+    // burst and the notice are both completed while the arming message can still take them.
+    await completeCutShortBurst();
+    await runCleanup(() => announceLostWork(noticeCause));
+    await runCleanup(() => params.retractIfCurrent(failed ? 'failed' : undefined));
+    logPumpEnd(params.subChatId, params.exit);
+  } else {
+    await runCleanup(() => params.retractIfCurrent(failed ? 'failed' : undefined));
+    logPumpEnd(params.subChatId, params.exit);
+    await completeCutShortBurst();
   }
 
   const drainCancellationPersistence = async (): Promise<void> => {

@@ -4,8 +4,15 @@ import path from 'node:path';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
+import {
+  AI_PROVIDER_IDS,
+  aiProvider,
+  PASSTHROUGH_SOURCES,
+  selectableProviderIds,
+} from '../../../../shared/lib/ai-providers';
 import { isAnthropicApiKey } from '../../../../shared/lib/anthropic-token';
 import { getClaudeShellEnvironment } from '../../claude';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { runClaudeOAuthBrowser } from '../../claude-oauth-browser';
 import {
   decryptToken,
@@ -15,9 +22,13 @@ import {
   RESOLVABLE_FIRST_RANK,
 } from '../../credentials';
 import { detectClaudeAccount } from '../../credentials/detect';
-import { detectCodexAccount } from '../../credentials/detect-codex';
 import { ALLOWED_SOURCE_PATH_SCHEMES } from '../../credentials/source-readers';
-import { type AIAccountType, claudeCodeCredentials, getDatabase } from '../../db';
+import {
+  type AIAccountType,
+  type CredentialSource,
+  claudeCodeCredentials,
+  getDatabase,
+} from '../../db';
 import { getChatById } from '../../db/repos/chats';
 import {
   getChatAiAccount,
@@ -47,32 +58,17 @@ const CLAUDE_ACCOUNT_SCOPE = sql`(${claudeCodeCredentials.type} = 'claude-code' 
 // Local default/existence management across ALL local providers INCLUDING codex. Used for
 // first-account checks + default clearing/promotion so exactly one row stays isDefault=1 — e.g.
 // connecting a claude account after a default codex must clear the codex default.
-const LOCAL_DEFAULT_ACCOUNT_SCOPE = sql`(${claudeCodeCredentials.type} IN ('claude-code', 'codex') OR ${claudeCodeCredentials.type} IS NULL)`;
+const LOCAL_DEFAULT_ACCOUNT_SCOPE = sql`(${inArray(claudeCodeCredentials.type, AI_PROVIDER_IDS)} OR ${claudeCodeCredentials.type} IS NULL)`;
 
-/**
- * Account types selectable in the UI (codex behind `LAUNCH_FLAGS.codexAccounts`). Hiding is
- * selection-only: write/sync/dedup keep seeing hidden rows, so one can't be duplicated on sync.
- */
-const SELECTABLE_ACCOUNT_TYPES: AIAccountType[] = [
-  'claude-code',
-  ...(LAUNCH_FLAGS.codexAccounts ? (['codex'] as const) : []),
-];
+// Account types selectable in the UI (each behind its launch flag). Hiding is selection-only:
+// write/sync/dedup keep seeing hidden rows, so one can't be duplicated on sync.
+const SELECTABLE_ACCOUNT_TYPES = selectableProviderIds(LAUNCH_FLAGS, process.platform);
 const SELECTABLE_ACCOUNT_TYPE_SCOPE = inArray(claudeCodeCredentials.type, SELECTABLE_ACCOUNT_TYPES);
 // Legacy NULL rows pre-date type-tagging and mean 'claude-code'.
 const SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL = sql`(${SELECTABLE_ACCOUNT_TYPE_SCOPE} OR ${claudeCodeCredentials.type} IS NULL)`;
 
 // Among unresolvable candidates prefer a passthrough row: getResolvedAccount heals it by re-probing.
-const HEALABLE_NEXT_RANK = sql`${claudeCodeCredentials.source} IN ('claude-passthrough', 'codex-passthrough')`;
-
-/** Account type for the selection/switch surfaces (claude-code | codex; NULL legacy → claude-code). */
-function resolveAccountType(row: { type?: string | null } | undefined): 'claude-code' | 'codex' {
-  return row?.type === 'codex' ? 'codex' : 'claude-code';
-}
-
-/** Display name for a row whose account_label is NULL (pre-label rows, cloud placeholders). */
-function defaultAccountLabel(type: 'claude-code' | 'codex'): string {
-  return type === 'codex' ? 'OpenAI' : 'Claude Code';
-}
+const HEALABLE_NEXT_RANK = inArray(claudeCodeCredentials.source, PASSTHROUGH_SOURCES);
 
 /**
  * Authenticated when an api-key row has a non-null encrypted oauth_token, OR a passthrough row
@@ -112,16 +108,17 @@ async function reprobeFlaggedPassthrough<
   return fresh;
 }
 
-/** A login as the account surfaces show it; `isBlocked` marks a chat whose own login was removed. */
+/** A login as the account surfaces show it (null if hidden); `isBlocked` marks a removed login. */
 function toResolvedAccount(
   row: typeof claudeCodeCredentials.$inferSelect,
-  unlabelled: string,
   flags: { isProjectOverride: boolean; isBlocked: boolean; projectId: string | null },
 ) {
+  const provider = aiProvider(row.type);
+  if (!provider) return null;
   return {
     id: row.id,
-    label: row.accountLabel || unlabelled,
-    type: resolveAccountType(row),
+    label: row.accountLabel || provider.name,
+    type: provider.id,
     isAuthenticated: isAccountAuthenticated(row),
     source: row.source ?? null,
     sourcePath: row.sourcePath ?? null,
@@ -293,11 +290,10 @@ export const claudeCodeRouter = router({
    * If true, user can skip OAuth onboarding
    * Based on PR #29 by @sa4hnd
    */
-  hasExistingCliConfig: publicProcedure.query(() => {
-    const shellEnv = getClaudeShellEnvironment();
-    const hasConfig = !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_BASE_URL);
+  hasExistingCliConfig: publicProcedure.query(async () => {
+    const shellEnv = await ensureLoginShellEnv().then(getClaudeShellEnvironment); // profile keys
     return {
-      hasConfig,
+      hasConfig: !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_BASE_URL),
       hasApiKey: !!shellEnv.ANTHROPIC_API_KEY,
       baseUrl: shellEnv.ANTHROPIC_BASE_URL || null,
     };
@@ -395,19 +391,6 @@ export const claudeCodeRouter = router({
    */
   detectClaudeAccount: publicProcedure.query(async () => {
     return detectClaudeAccount();
-  }),
-
-  /**
-   * Detect a usable Codex login on this machine without touching the token (the `codex` binary
-   * owns ~/.codex / its keychain entry). Flag-gated: while codex ships dark this returns
-   * unavailable, so the (gated) UI never probes and `connectCodexPassthrough` stays the one
-   * creation surface. No multi-entry picker — codex auth is one-per-device, machine-local.
-   */
-  detectCodexAccount: publicProcedure.query(() => {
-    if (!LAUNCH_FLAGS.codexAccounts) {
-      return { available: false as const, hint: 'Codex accounts are not enabled.' };
-    }
-    return detectCodexAccount();
   }),
 
   /**
@@ -610,87 +593,6 @@ export const claudeCodeRouter = router({
     }),
 
   /**
-   * Connect the local OpenAI Codex login as a passthrough account. Codex auth is
-   * machine-local — the `codex` binary owns `~/.codex` and Frink stores no token
-   * (the row's token is null; the runner relies on the binary at spawn). One codex
-   * login per device. LOCAL-ONLY — never synced to Neon.
-   */
-  connectCodexPassthrough: publicProcedure
-    .input(z.object({ accountLabel: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      // Server-side flag guard: the Connect UI is gated, but a DevTools/automation
-      // caller could still invoke this. While codex ships dark, refuse to persist a row.
-      if (!LAUNCH_FLAGS.codexAccounts) {
-        throw new Error('Codex accounts are not enabled.');
-      }
-
-      // Confirm the codex CLI is actually logged in on this machine (identity only —
-      // no token; the binary owns auth). Synchronous, no keychain shell-out timeout to
-      // worry about. Fail with the detector's hint if not.
-      const detection = detectCodexAccount();
-      if (!detection.available) {
-        throw new Error(detection.hint ?? 'No Codex login found. Run `codex login` and try again.');
-      }
-
-      const db = getDatabase();
-      const expectedEmail = detection.email ?? null;
-
-      const txResult = db.transaction(() => {
-        // One codex passthrough per device (machine-local ~/.codex) — reuse the row.
-        const existing = db
-          .select()
-          .from(claudeCodeCredentials)
-          .where(eq(claudeCodeCredentials.source, 'codex-passthrough'))
-          .get();
-
-        const isFirstAccount =
-          !existing &&
-          !db
-            .select({ id: claudeCodeCredentials.id })
-            .from(claudeCodeCredentials)
-            .where(LOCAL_DEFAULT_ACCOUNT_SCOPE)
-            .limit(1)
-            .get();
-
-        if (existing) {
-          db.update(claudeCodeCredentials)
-            .set({
-              accountLabel: input.accountLabel,
-              expectedEmail,
-              needsReauthAt: null,
-              connectedAt: new Date(),
-            })
-            .where(eq(claudeCodeCredentials.id, existing.id))
-            .run();
-          return { accountId: existing.id, status: 'updated' as const };
-        }
-
-        if (isFirstAccount) {
-          clearLocalAccountDefaults();
-        }
-
-        const id = createId();
-        db.insert(claudeCodeCredentials)
-          .values({
-            id,
-            type: 'codex',
-            accountLabel: input.accountLabel,
-            oauthToken: null,
-            connectedAt: new Date(),
-            isDefault: isFirstAccount,
-            source: 'codex-passthrough',
-            sourcePath: detection.sourcePath ?? 'codex-passthrough://local',
-            expectedEmail,
-          })
-          .run();
-
-        return { accountId: id, status: 'created' as const };
-      });
-
-      return txResult;
-    }),
-
-  /**
    * Remove the local passthrough row. LOCAL-ONLY — never propagates to Neon
    * (passthrough rows are never synced to begin with).
    */
@@ -706,7 +608,7 @@ export const claudeCodeRouter = router({
       if (!row) {
         throw new Error(`Account "${input.accountId}" not found`);
       }
-      if (row.source !== 'claude-passthrough' && row.source !== 'codex-passthrough') {
+      if (!isPassthroughSource(row.source)) {
         throw new Error(
           'disconnectClaudePassthrough only handles passthrough rows (claude/codex). Use the regular delete endpoint for API-key accounts.',
         );
@@ -729,11 +631,12 @@ export const claudeCodeRouter = router({
       .where(sql`${SELECTABLE_ACCOUNT_TYPE_SCOPE}`)
       .all();
 
-    return accounts.map((acc) => {
-      const accountType = resolveAccountType(acc);
+    return accounts.flatMap((acc) => {
+      const provider = aiProvider(acc.type);
+      if (!provider) return [];
       // Codex is passthrough (token-null), never an API key; only claude-code rows can be.
       let isApiKey = false;
-      if (accountType === 'claude-code' && acc.oauthToken) {
+      if (provider.id === 'claude-code' && acc.oauthToken) {
         try {
           const token = decryptToken(acc.oauthToken);
           if (token) {
@@ -746,21 +649,23 @@ export const claudeCodeRouter = router({
       // Passthrough rows (claude + codex) have oauth_token = NULL by design; auth is governed by
       // needsReauthAt (the keychain / codex binary is the source of truth). Shared helper.
       const isAuthenticated = isAccountAuthenticated(acc);
-      return {
+      const account = {
         id: acc.id,
-        label: acc.accountLabel || defaultAccountLabel(accountType),
+        label: acc.accountLabel || provider.name,
         isDefault: acc.isDefault ?? false,
         isAuthenticated,
         connectedAt: acc.connectedAt?.toISOString() ?? null,
         isApiKey,
-        type: accountType,
+        type: provider.id,
         // Narrow the TEXT column to the runtime union at the boundary so the
         // renderer can branch on `source` without re-narrowing every render.
-        source: (acc.source ?? 'api-key') as 'api-key' | 'claude-passthrough' | 'codex-passthrough',
+        // SAFETY: rows are only written with a CredentialSource value.
+        source: (acc.source ?? 'api-key') as CredentialSource,
         sourcePath: acc.sourcePath ?? null,
         needsReauthAt: acc.needsReauthAt?.toISOString() ?? null,
         expectedEmail: acc.expectedEmail ?? null,
       };
+      return [account];
     });
   }),
 
@@ -1009,6 +914,8 @@ export const claudeCodeRouter = router({
       // so the three selection reads can't drift). `type` resolves to 'codex' when a codex row
       // surfaces (flag on); codex passthrough is authenticated by needsReauthAt, not a token.
       const chat = input.chatId ? await getChatById(db, input.chatId) : null;
+      // A chat on a provider that is switched off here shows no login at all.
+      if (chat && !SELECTABLE_ACCOUNT_TYPES.some((id) => id === chat.provider)) return null;
       const scopedProjectId = (input.chatId ? chat?.projectId : input.projectId) ?? null;
       const projectOverride = scopedProjectId ? await getProjectAiAccount(scopedProjectId) : null;
       const pinned = chat ? await getChatAiAccount(db, chat) : projectOverride;
@@ -1031,8 +938,7 @@ export const claudeCodeRouter = router({
         // A pinned row this user cannot see (another account's, hidden type, or deleted
         // mid-probe) is no override: fall through to the user's own default account.
         if (freshOverride) {
-          const unlabelled = defaultAccountLabel(resolveAccountType(freshOverride));
-          return toResolvedAccount(freshOverride, unlabelled, {
+          return toResolvedAccount(freshOverride, {
             isProjectOverride: freshOverride.id === projectOverride?.id,
             isBlocked: false,
             projectId: scopedProjectId,
@@ -1063,7 +969,7 @@ export const claudeCodeRouter = router({
         .get();
 
       const freshDefault = await reprobeFlaggedPassthrough(defaultAccount);
-      if (freshDefault) return toResolvedAccount(freshDefault, 'Claude Code', fallback);
+      if (freshDefault) return toResolvedAccount(freshDefault, fallback);
 
       // Fall back to best available account. Order: passthrough (no needsReauthAt)
       // OR api-key with token, then by recency. Without the source check passthrough
@@ -1081,7 +987,7 @@ export const claudeCodeRouter = router({
         .limit(1)
         .get();
       const freshAny = await reprobeFlaggedPassthrough(anyAccount);
-      if (freshAny) return toResolvedAccount(freshAny, 'Account', fallback);
+      if (freshAny) return toResolvedAccount(freshAny, fallback);
 
       return null;
     }),

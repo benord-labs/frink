@@ -11,13 +11,6 @@ vi.mock('electron-log', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('./port-manager', () => ({
-  portManager: {
-    registerSession: vi.fn(),
-    unregisterSession: vi.fn(),
-  },
-}));
-
 vi.mock('./env', () => ({
   SHELL_CRASH_THRESHOLD_MS: 5000,
 }));

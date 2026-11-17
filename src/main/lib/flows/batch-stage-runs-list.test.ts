@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Real in-memory SQLite (freshDb): under test are the batch read queries' enrichment — start_task
-// (latest attempt, merge-conflict surfacing, absence) and the needs_input / attention_count readouts.
+// (latest attempt, merge-conflict surfacing, absence), the needs_input / attention_count readouts,
+// each row's chat_id and the page/total snapshot.
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -11,14 +12,20 @@ const { mocks } = vi.hoisted(() => ({
 
 vi.mock('../db', () => ({ getDatabase: mocks.getDatabase }));
 
-import { createBatchStageRun } from '../db/repos/batch-stage-runs';
-import { createBatchStage } from '../db/repos/batch-stages';
+import {
+  type BatchStageRunStatus,
+  createBatchStageRun,
+  setStageRunStatus,
+} from '../db/repos/batch-stage-runs';
+import { createBatchStage, insertBatchStagesWithRuns } from '../db/repos/batch-stages';
 import { createNodeRun, listHumanWaitFlowRunIds } from '../db/repos/node-runs';
-import { flowRuns, tasks } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { chats, flowRuns, tasks } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { listBatchStageDetail } from './batch-stage-detail';
+import { listBatchRunsForBatch } from './batch-runs-list';
 import { listBatchStageRunsForStage } from './batch-stage-runs-list';
-import { seedBatchFlow } from './batch-test-factories';
+import { pageAndCountStatements, recordPrepares, seedBatchFlow } from './batch-test-factories';
 
 let db: TestDb;
 let stageId: string;
@@ -36,12 +43,17 @@ async function seedFlowRun(): Promise<string> {
   return run.id;
 }
 
-async function seedStageRun(flowRunId: string | null): Promise<string> {
+async function seedStageRun(
+  flowRunId: string | null,
+  input: { id?: string; status?: string; createdAt?: Date } = {},
+): Promise<string> {
   const run = await createBatchStageRun(db, {
+    id: input.id,
     stageId,
-    status: flowRunId ? 'dispatched' : 'pending',
+    status: input.status ?? (flowRunId ? 'dispatched' : 'pending'),
     triggerContext: { label: 'r' },
-    ...(flowRunId ? { flowRunId } : {}),
+    flowRunId,
+    createdAt: input.createdAt,
   });
   return run.id;
 }
@@ -183,6 +195,334 @@ describe('batch stage read paths', () => {
     expect(runs[0].start_task_status).toBe('completed');
     expect(runs[0].merge_conflict).toBeUndefined();
     expect(runs[0].merged_branches).toEqual(['feat/a']);
+  });
+
+  describe('chat_id', () => {
+    it('is the chat the run start_task created', async () => {
+      await db.insert(chats).values({ id: 'chat-1' });
+      const flowRunId = await seedFlowRun();
+      await seedStageRun(flowRunId);
+      await seedStartTask(flowRunId, {
+        nodeId: 'st',
+        status: 'completed',
+        outputs: { chatId: 'chat-1' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs[0].chat_id).toBe('chat-1');
+    });
+
+    it('is null for a run-less row and for a run whose start_task has not completed', async () => {
+      await seedStageRun(null);
+      const flowRunId = await seedFlowRun();
+      await seedStageRun(flowRunId);
+      await seedStartTask(flowRunId, {
+        nodeId: 'st',
+        status: 'awaiting_input',
+        outputs: { chatId: 'chat-early' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs.map((r) => r.chat_id)).toEqual([null, null]);
+    });
+
+    it('falls back to a chatId the stage run trigger context carries', async () => {
+      await db.insert(chats).values({ id: 'chat-ctx' });
+      await createBatchStageRun(db, {
+        stageId,
+        status: 'pending',
+        triggerContext: { chatId: 'chat-ctx' },
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs[0].chat_id).toBe('chat-ctx');
+    });
+
+    it('is null once the chat it names has been deleted', async () => {
+      const flowRunId = await seedFlowRun();
+      await seedStageRun(flowRunId);
+      await seedStartTask(flowRunId, {
+        nodeId: 'st',
+        status: 'completed',
+        outputs: { chatId: 'chat-gone' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs.map((r) => r.chat_id)).toEqual([null]);
+    });
+
+    // Both readers describe the same run; the batch list is called as production calls it, with no db.
+    it('agrees with the batch run list on a run both of them return', async () => {
+      await db.insert(chats).values({ id: 'chat-shared' });
+      const [run] = await db
+        .insert(flowRuns)
+        .values({ flowVersionId: versionId, status: 'running', batchId: 'batch-1' })
+        .returning();
+      await seedStageRun(run.id);
+      await seedStartTask(run.id, {
+        nodeId: 'st',
+        status: 'completed',
+        outputs: { chatId: 'chat-shared' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const stageList = await listBatchStageRunsForStage(stageId);
+      const batchList = await listBatchRunsForBatch('batch-1', { stageId });
+
+      expect(batchList.runs.map((r) => [r.id, r.chat_id])).toEqual([[run.id, 'chat-shared']]);
+      expect(stageList.runs.map((r) => r.chat_id)).toEqual(['chat-shared']);
+    });
+  });
+
+  describe('latest_chat_id', () => {
+    /** A dispatched member whose top-level start_task completed and created `chatId`. */
+    async function seedMemberWithChat(
+      chatId: string,
+      input: { laneIndex?: number } = {},
+    ): Promise<string> {
+      await db.insert(chats).values({ id: chatId }).onConflictDoNothing();
+      const flowRunId = await seedFlowRun();
+      await createBatchStageRun(db, {
+        stageId,
+        status: 'dispatched',
+        triggerContext: { label: 'r' },
+        flowRunId,
+      });
+      await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'st',
+        blockType: 'start_task',
+        status: 'completed',
+        nodeOutput: { status: 'completed', outputs: { chatId } },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+        laneIndex: input.laneIndex ?? null,
+      });
+      return flowRunId;
+    }
+
+    async function latestChatId(): Promise<string | null> {
+      const [stage] = await listBatchStageDetail('batch-1');
+      return stage.latest_chat_id;
+    }
+
+    it('is the chat the member start_task created, with none in the trigger context', async () => {
+      await seedMemberWithChat('chat-1');
+
+      expect(await latestChatId()).toBe('chat-1');
+    });
+
+    // Members seeded in one test share a created_at second, as bulk-defined stage runs do.
+    it('takes the most recently dispatched member when members share a created_at', async () => {
+      await seedMemberWithChat('chat-old');
+      await seedMemberWithChat('chat-new');
+
+      expect(await latestChatId()).toBe('chat-new');
+    });
+
+    it('goes by when the run was dispatched before insert order', async () => {
+      const first = await seedMemberWithChat('chat-later-run');
+      await seedMemberWithChat('chat-earlier-run');
+      const later = new Date(Date.now() + 60_000);
+      await db.update(flowRuns).set({ createdAt: later }).where(eq(flowRuns.id, first));
+
+      expect(await latestChatId()).toBe('chat-later-run');
+    });
+
+    it('uses an older member when the newest has no completed start_task', async () => {
+      await seedMemberWithChat('chat-old');
+      const newest = await seedFlowRun();
+      await seedStageRun(newest);
+      await seedStartTask(newest, {
+        nodeId: 'st',
+        status: 'awaiting_input',
+        outputs: { chatId: 'chat-early' },
+        createdAt: new Date('2026-07-11T10:02:00Z'),
+      });
+
+      expect(await latestChatId()).toBe('chat-old');
+    });
+
+    it('skips a deleted chat for the next existing one, and is null when none exist', async () => {
+      await seedMemberWithChat('chat-kept');
+      await seedMemberWithChat('chat-gone');
+      await db.delete(chats).where(eq(chats.id, 'chat-gone'));
+      expect(await latestChatId()).toBe('chat-kept');
+
+      await db.delete(chats).where(eq(chats.id, 'chat-kept'));
+      expect(await latestChatId()).toBeNull();
+    });
+
+    it('ignores a start_task inside a fan-out lane', async () => {
+      await seedMemberWithChat('chat-lane', { laneIndex: 0 });
+
+      expect(await latestChatId()).toBeNull();
+    });
+
+    it('keeps an archived chat, which can still be opened', async () => {
+      await seedMemberWithChat('chat-archived');
+      await db.update(chats).set({ archivedAt: new Date() }).where(eq(chats.id, 'chat-archived'));
+
+      expect(await latestChatId()).toBe('chat-archived');
+    });
+
+    it('falls back to a chatId the run trigger context carries', async () => {
+      await db.insert(chats).values({ id: 'chat-ctx' });
+      const [run] = await db
+        .insert(flowRuns)
+        .values({
+          flowVersionId: versionId,
+          status: 'running',
+          triggerContext: { chatId: 'chat-ctx' },
+        })
+        .returning();
+      await seedStageRun(run.id);
+
+      expect(await latestChatId()).toBe('chat-ctx');
+    });
+
+    it('is null, with the counts intact, when no member has a chat to resolve', async () => {
+      await seedStageRun(null);
+      await seedStageRun(await seedFlowRun());
+
+      const [stage] = await listBatchStageDetail('batch-1');
+      expect(stage).toMatchObject({ latest_chat_id: null, run_count: 2, active_count: 2 });
+    });
+
+    // The chat lookup runs after the snapshot; the counts and the started rows must stay inside it.
+    it('still reads the aggregates and the member rows inside one transaction', async () => {
+      await seedMemberWithChat('chat-1');
+      const prepared = recordPrepares(db);
+
+      await listBatchStageDetail('batch-1');
+
+      const snapshot = prepared.filter((s) => /group by|inner join "flow_runs"/i.test(s.sql));
+      expect(snapshot).toHaveLength(2);
+      expect(snapshot.map((s) => s.inTransaction)).toEqual([true, true]);
+      expect(db.$client.inTransaction).toBe(false);
+    });
+
+    it('resolves each stage from its own members', async () => {
+      await seedMemberWithChat('chat-s1');
+      const second = await createBatchStage(db, {
+        batchId: 'batch-1',
+        stageNumber: 2,
+        name: 's2',
+        status: 'pending',
+        failureThreshold: 0,
+        dependsOnStageIds: [],
+      });
+      await createBatchStageRun(db, { stageId: second.id, status: 'pending', triggerContext: {} });
+
+      const stages = await listBatchStageDetail('batch-1');
+      expect(stages.map((s) => s.latest_chat_id)).toEqual(['chat-s1', null]);
+    });
+  });
+
+  describe('page and total', () => {
+    it('keeps the whole-stage total on every page, including one past the end', async () => {
+      for (let i = 0; i < 3; i += 1) await seedStageRun(null);
+
+      const first = await listBatchStageRunsForStage(stageId, { limit: 2 });
+      expect(first.runs).toHaveLength(2);
+      expect(first.total).toBe(3);
+
+      const past = await listBatchStageRunsForStage(stageId, { limit: 2, offset: 10 });
+      expect(past).toEqual({ runs: [], total: 3 });
+    });
+
+    it('pages stage runs that share a created_at second once each, in insert order', async () => {
+      // Ids out of insert order, and mixed statuses so the (stage_id, status) index scans them
+      // out of insert order too: only an insert-order tiebreaker gives the expected order.
+      const inserted = ['bsr-c', 'bsr-a', 'bsr-e', 'bsr-b', 'bsr-d'];
+      const statuses = ['dispatched', 'pending', 'completed', 'pending', 'failed'];
+      const sameSecond = new Date('2026-07-11T10:00:00Z');
+      for (const [i, id] of inserted.entries()) {
+        await seedStageRun(null, { id, status: statuses[i], createdAt: sameSecond });
+      }
+
+      const paged: string[] = [];
+      for (let offset = 0; offset < inserted.length; offset += 2) {
+        const page = await listBatchStageRunsForStage(stageId, { limit: 2, offset });
+        expect(page.total).toBe(inserted.length);
+        paged.push(...page.runs.map((r) => r.id));
+      }
+
+      expect(paged).toEqual(inserted);
+    });
+
+    it('pages a stage in member order while dispatch re-statuses its same-second runs', async () => {
+      // The real writer: one multi-row insert, every run pending, all in one second.
+      const members = ['m0', 'm1', 'm2', 'm3', 'm4'];
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-07-11T10:00:00Z'));
+      let stageIds = new Map<number, string>();
+      try {
+        stageIds = insertBatchStagesWithRuns(db, 'batch-1', [
+          { stageNumber: 2, runs: members.map((label) => ({ triggerContext: { label } })) },
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+      const dispatchedStage = stageIds.get(2) ?? '';
+      // Re-statusing moves rows around the (stage_id, status) index without changing insert order.
+      const restatus = new Map<unknown, BatchStageRunStatus>([
+        ['m0', 'queued'],
+        ['m1', 'dispatched'],
+        ['m3', 'completed'],
+      ]);
+      for (const r of (await listBatchStageRunsForStage(dispatchedStage)).runs) {
+        const status = restatus.get(r.trigger_context?.label);
+        if (status) await setStageRunStatus(db, r.id, status);
+      }
+
+      const paged: unknown[] = [];
+      for (let offset = 0; offset < members.length; offset += 2) {
+        const page = await listBatchStageRunsForStage(dispatchedStage, { limit: 2, offset });
+        paged.push(...page.runs.map((r) => r.trigger_context?.label));
+      }
+
+      expect(paged).toEqual(members);
+    });
+
+    it('puts a stage run added between page reads after the rows already paged', async () => {
+      const sameSecond = new Date('2026-07-11T10:00:00Z');
+      const original = [];
+      for (const id of ['bsr-c', 'bsr-a', 'bsr-b']) {
+        original.push(await seedStageRun(null, { id, createdAt: sameSecond }));
+      }
+
+      const first = await listBatchStageRunsForStage(stageId, { limit: 2 });
+      const added = await seedStageRun(null, { id: 'bsr-0', createdAt: sameSecond });
+      const second = await listBatchStageRunsForStage(stageId, { limit: 2, offset: 2 });
+
+      expect(first.runs.map((r) => r.id)).toEqual(original.slice(0, 2));
+      expect(second.runs.map((r) => r.id)).toEqual([original[2], added]);
+    });
+
+    it('orders stage runs from different seconds by created_at, not by insert order', async () => {
+      const latest = await seedStageRun(null, { createdAt: new Date('2026-07-11T10:02:00Z') });
+      const earliest = await seedStageRun(null, { createdAt: new Date('2026-07-11T10:00:00Z') });
+      const middle = await seedStageRun(null, { createdAt: new Date('2026-07-11T10:01:00Z') });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+
+      expect(runs.map((r) => r.id)).toEqual([earliest, middle, latest]);
+    });
+
+    it('reads the page and the total inside one transaction', async () => {
+      await seedStageRun(await seedFlowRun());
+      const prepared = recordPrepares(db);
+
+      await listBatchStageRunsForStage(stageId);
+
+      const statements = pageAndCountStatements(prepared);
+      expect(statements).toHaveLength(2);
+      expect(statements.map((s) => s.inTransaction)).toEqual([true, true]);
+      expect(db.$client.inTransaction).toBe(false);
+    });
   });
 
   describe('waiting on a human', () => {

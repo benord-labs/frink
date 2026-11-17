@@ -1,13 +1,14 @@
 {
   "name": "frink",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Frink - Personal AI coding assistant with trigger-based automation",
+  "description": "Desktop-first, open-source (MIT) application for running parallel agents, and multi-step custom workflows triggered by schedules, webhooks or events from tools like Linear and Sentry, across your already-used providers.",
   "license": "MIT",
   "author": {
     "name": "Benji Norval"
   },
   "main": "out/main/index.js",
+  "desktopName": "frink.desktop",
   "engines": {
     "node": ">=22.12"
   },
@@ -23,14 +24,16 @@
     "package:win": "electron-builder --win",
     "package:linux": "electron-builder --linux",
     "dist": "electron-builder",
-    "release": "bun --env-file=.env scripts/publish/assert-release-env.mjs && rm -rf release && bun run claude:download && bun run codex:download && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
+    "release": "bun --env-file=.env scripts/publish/assert-release-env.mjs && rm -rf release && bun run claude:download && bun run codex:download && bun run cursor:stage && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
     "claude:download": "node scripts/binaries/download-claude-binary.mjs",
     "claude:download:all": "node scripts/binaries/download-claude-binary.mjs --all",
     "codex:build": "node scripts/binaries/build-codex-frink.mjs",
+    "codex:patch": "node scripts/binaries/codex-patch-workspace.mjs",
     "codex:download": "node scripts/binaries/download-codex-binary.mjs",
+    "cursor:stage": "node scripts/binaries/stage-cursor-platform.mjs",
     "electron:download": "node scripts/binaries/ensure-electron-binary.mjs",
     "kill:worktree-electron": "node scripts/dev/kill-worktree-electron.mjs",
-    "release:dev": "rm -rf release && bun run claude:download && bun run codex:download && bun run build && bun --env-file=.env run package:mac && rm -rf node_modules && bun i",
+    "release:dev": "rm -rf release && bun run claude:download && bun run codex:download && bun run cursor:stage && bun run build && bun --env-file=.env run package:mac && rm -rf node_modules && bun i",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
@@ -38,10 +41,12 @@
     "test": "vitest",
     "pretest:run": "node ./scripts/dev/ensure-package-deps.mjs",
     "test:run": "vitest run",
+    "pretest:compiled": "node ./scripts/dev/ensure-package-deps.mjs",
+    "test:compiled": "vitest run --project compiled",
     "pretest:run:coverage": "node ./scripts/dev/ensure-package-deps.mjs",
     "test:run:coverage": "vitest run --coverage",
     "prets:check": "node ./scripts/dev/ensure-package-deps.mjs",
-    "ts:check": "node ./node_modules/@typescript/native/bin/tsc --noEmit && node ./node_modules/@typescript/native/bin/tsc --noEmit -p relay/tsconfig.test.json && node ./node_modules/@typescript/native/bin/tsc --noEmit -p live-activity-forwarder/tsconfig.json",
+    "ts:check": "node ./scripts/dev/ts-check.mjs",
     "lint:structure": "node --preserve-symlinks node_modules/eslint/bin/eslint.js src relay live-activity-forwarder",
     "knip": "knip",
     "knip:fix": "knip --fix",
@@ -52,19 +57,23 @@
     "format:check": "oxfmt --check '**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,css}'"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.7.0",
     "@ai-sdk/react": "^4.0.112",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.278",
+    "@anthropic-ai/claude-agent-sdk": "0.3.316",
     "@anthropic-ai/sdk": "^0.127.0",
     "@benord-labs/frink-primitives": "^0.10.8",
+    "@cursor/sdk": "1.0.37",
     "@dagrejs/dagre": "^3.1.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@github/copilot-sdk": "1.0.16",
     "@iconify-icons/logos": "2.0.1",
     "@iconify-icons/ri": "2.0.0",
     "@iconify-icons/simple-icons": "2.0.4",
     "@iconify-icons/vscode-icons": "2.0.6",
     "@iconify/react": "6.0.2",
+    "@leeoniya/ufuzzy": "1.0.19",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.7.0",
     "@parcel/watcher": "^2.6.0",
@@ -108,12 +117,14 @@
     "culori": "^4.0.2",
     "date-fns": "4.4.0",
     "diff": "^9.0.0",
+    "dotenv": "17.4.2",
     "drizzle-orm": "^0.45.3",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "fast-json-stable-stringify": "^2.1.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.8",
+    "ignore": "^7.0.12",
     "isomorphic-dompurify": "^4.3.0",
     "jotai": "^2.20.3",
     "jsonc-parser": "^3.3.1",
@@ -125,8 +136,6 @@
     "node-pty": "^1.1.0",
     "path-browserify": "^1.0.1",
     "picomatch": "^4.0.7",
-    "pidtree": "^1.0.0",
-    "posthog-js": "^1.434.7",
     "posthog-node": "^5.52.5",
     "qrcode.react": "^4.2.0",
     "react": "^19.3.0",
@@ -214,7 +223,11 @@
     "files": [
       "out/**/*",
       "!**/*.map",
-      "!node_modules/better-sqlite3/**"
+      "!node_modules/better-sqlite3/**",
+      "!node_modules/@github/copilot-sdk-*/**",
+      "!node_modules/@cursor/sdk-*/**",
+      "!node_modules/koffi/**",
+      "!node_modules/@koromix/**"
     ],
     "extraResources": [
       {
@@ -283,7 +296,10 @@
           "0108_chat_account.sql",
           "0109_chat_provider.sql",
           "0110_chat_run_link_indexes.sql",
-          "0111_sub_chat_messages.sql"
+          "0111_sub_chat_messages.sql",
+          "0112_resume_intent_continuation.sql",
+          "0113_tasks_project_status_completed_idx.sql",
+          "0114_flow_admission_run_first.sql"
         ]
       },
       {
@@ -300,6 +316,14 @@
       {
         "from": "resources/custom-nodes/managed-bootstrap.mjs",
         "to": "custom-nodes/managed-bootstrap.mjs"
+      },
+      {
+        "from": "resources/cursor/cursor-host.mjs",
+        "to": "cursor/cursor-host.mjs"
+      },
+      {
+        "from": "resources/tray",
+        "to": "tray"
       },
       {
         "from": "assets/skills",
@@ -337,6 +361,12 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "resources/cursor-sdk/darwin-${arch}",
+          "to": "node_modules/@cursor/sdk-darwin-${arch}"
+        }
+      ],
       "notarize": true
     },
     "publish": {
@@ -377,7 +407,17 @@
       ],
       "icon": "build/icons",
       "category": "Development",
-      "maintainer": "Benji Norval <noreply@frink.dev>"
+      "maintainer": "Benji Norval <noreply@frink.dev>",
+      "syncDesktopName": true,
+      "extraResources": [
+        {
+          "from": "node_modules/@cursor/sdk-linux-${arch}",
+          "to": "node_modules/@cursor/sdk-linux-${arch}"
+        }
+      ]
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
     },
     "nsis": {
       "oneClick": false,

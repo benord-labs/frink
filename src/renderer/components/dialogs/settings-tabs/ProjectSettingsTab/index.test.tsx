@@ -6,6 +6,7 @@ import type { Operation } from '@trpc/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
+import { TooltipProvider } from '../../../ui/tooltip';
 import { ProjectSettingsTab } from './index';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -18,7 +19,7 @@ vi.hoisted(() => {
 type Account = {
   id: string;
   label: string;
-  type: 'claude-code' | 'codex';
+  type: 'claude-code' | 'codex' | 'opencode';
   isDefault: boolean;
   isAuthenticated: boolean;
 };
@@ -59,7 +60,9 @@ function answer(op: Operation): Promise<Answer> {
 
 function renderTab(path: string) {
   return renderWithTrpc(
-    <ProjectSettingsTab project={{ id: 'project-1', path }} title="frink" />,
+    <TooltipProvider>
+      <ProjectSettingsTab project={{ id: 'project-1', path }} title="frink" />
+    </TooltipProvider>,
     answer,
   );
 }
@@ -126,6 +129,20 @@ describe('ProjectAiAccountSelector', () => {
         projectId: 'project-1',
         accountId: 'acc-work-codex',
       }),
+    );
+  });
+
+  it('tags an OpenCode account Preview, also once chosen, and never a Claude one', async () => {
+    const user = userEvent.setup();
+    backend.accounts = [work, { ...workCodex, type: 'opencode' }];
+    backend.projectAccountId = 'acc-work-codex';
+    renderTab('/work/frink');
+
+    const picker = await screen.findByRole('combobox', { name: 'Account' });
+    await waitFor(() => expect(picker).toHaveTextContent('OpenCodePreview'));
+    await user.click(picker);
+    expect(await screen.findByRole('option', { name: /Work.*Claude/ })).not.toHaveTextContent(
+      'Preview',
     );
   });
 

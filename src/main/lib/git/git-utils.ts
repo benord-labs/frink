@@ -2,17 +2,6 @@ import * as path from 'node:path';
 import { simpleGit } from 'simple-git';
 
 /**
- * Check if the error message indicates the upstream branch is missing/deleted
- */
-export function isUpstreamMissingError(message: string): boolean {
-  return (
-    message.includes('no such ref was fetched') ||
-    message.includes('no tracking information') ||
-    message.includes("couldn't find remote ref")
-  );
-}
-
-/**
  * Whether writing `relPath` into `projectPath` would add a COMMITTABLE repo file — i.e. `projectPath` is a
  * git work tree AND `relPath` is not gitignored. Used to surface "this adds files to your repo" before a
  * user-initiated "copy to local project" (a note, never a gate — `provider-config-canonical-home`).

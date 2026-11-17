@@ -7,6 +7,7 @@ import {
   UNREADABLE_CONFIG_MESSAGE,
   updateWorktreeConfig,
 } from '../../git/worktree-config';
+import { resolveWorktreeIncludes, setWorktreeCopyEnabled } from '../../git/worktree/include';
 import {
   isAbsoluteWorktreeBasePathInput,
   isSensitiveWorktreeBasePath,
@@ -91,6 +92,31 @@ export const worktreeConfigRouter = router({
           .catch(() => {});
         throw error;
       }
+    }),
+
+  /**
+   * The ignored files the next worktree will receive, from the same resolver the copy uses.
+   */
+  includePreview: publicProcedure
+    .input(z.object({ projectId: z.string() }))
+    .query(async ({ input }) => {
+      const project = await resolveLocalProjectOrThrow(input.projectId);
+      const { source, files, skipped, overLimit, enabled } = await resolveWorktreeIncludes(
+        project.path,
+      );
+      return { source, files, skipped, overLimit, enabled };
+    }),
+
+  /**
+   * Switch copying ignored files into new worktrees on or off. Stored in the repo's local git
+   * config, so it is the user's own choice and never reaches teammates through a commit.
+   */
+  setIncludeEnabled: publicProcedure
+    .input(z.object({ projectId: z.string(), enabled: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const project = await resolveLocalProjectOrThrow(input.projectId);
+      await setWorktreeCopyEnabled(project.path, input.enabled);
+      return { enabled: input.enabled };
     }),
 
   /**

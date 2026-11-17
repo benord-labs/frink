@@ -5,8 +5,14 @@
  * calls, and orphan recovery live elsewhere (`task-completion-watcher.ts`).
  */
 
+import { z } from 'zod';
 import type { NodeOutput } from '../../../shared/types/flow';
 import { TASK_SIGNAL_STATES, type TaskSignalState } from '../../../shared/types/task-signal';
+import {
+  nodeTurnUsage,
+  storedTurnUsageSchema,
+  type TurnUsage,
+} from '../../../shared/types/turn-usage';
 import type { Task } from '../db/schema';
 
 const SIGNAL_SET = new Set<string>(TASK_SIGNAL_STATES);
@@ -108,6 +114,19 @@ function parseStructuredOutputs(result: unknown): Record<string, unknown> {
   return out;
 }
 
+/** Only the agent dispatcher creates node-linked tasks, and it tags them in `_config`. */
+const agentNodeTriggerSchema = z.object({ _config: z.object({ blockType: z.literal('agent') }) });
+
+/** The executor's per-turn stamp (turn-usage.ts). An agent turn that died before stamping still
+ * reports both keys, as unknown. */
+function readTurnUsage(task: Task): TurnUsage | undefined {
+  const result = isRecord(task.result) ? task.result.turnUsage : null;
+  const stamped = storedTurnUsageSchema.safeParse(result);
+  if (stamped.success) return nodeTurnUsage(stamped.data);
+  const isAgentNode = agentNodeTriggerSchema.safeParse(task.triggerContext).success;
+  return isAgentNode ? { contextTokens: null, compactions: null } : undefined;
+}
+
 function computeDurationMs(startedAt: Date | null, completedAt: Date | null): number {
   if (!startedAt) return 0;
   const end = completedAt ?? new Date();
@@ -203,7 +222,7 @@ function mapSignalToNodeOutput(
 export function mapTaskToNodeOutput(task: Task): NodeOutput {
   const result = task.result;
   const signal = parseAgentSignal(result);
-  const outputs = parseStructuredOutputs(result);
+  const outputs = { ...parseStructuredOutputs(result), ...readTurnUsage(task) };
   const durationMs = computeDurationMs(task.startedAt, task.completedAt);
   const exitCode = readExitCode(result);
   const errorMessage = readError(result);

@@ -10,6 +10,7 @@ import {
   TriggerSummaryFieldRow,
 } from '../../../../../components/TriggerSummaryFields';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../../components/ui/tabs';
+import { FileLinkBadgeContext } from '../../../../../lib/file-links/file-link-badge-context';
 import { EmailTriggerContentDialog } from '../EmailTriggerContentDialog';
 import { TriggerDialogShell } from '../TriggerDialogShell';
 
@@ -27,7 +28,12 @@ function TriggerSummaryCard({ summary }: { summary: TriggerSummary }): ReactElem
         <h3 className="text-lg font-semibold text-foreground leading-snug">
           {summary.title ?? summary.provider}
         </h3>
-        {summary.description && <ChatMarkdownRenderer content={summary.description} size="sm" />}
+        {summary.description && (
+          // The trigger's own content, not an agent reply: a chat around the dialog draws no badges.
+          <FileLinkBadgeContext value={null}>
+            <ChatMarkdownRenderer content={summary.description} size="sm" />
+          </FileLinkBadgeContext>
+        )}
         {summary.changes && summary.changes.length > 0 && (
           <div className="space-y-1">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">

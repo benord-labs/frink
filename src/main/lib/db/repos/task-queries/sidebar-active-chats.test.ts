@@ -3,6 +3,8 @@ import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import { seedCompletedNodeRun, seedFlowRun } from '../../test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../test-utils/fresh-db';
 import { createChat, linkChatToTask } from '../chats';
+import { setFlowRunStatus } from '../flow-runs';
+import { setKv } from '../flow-kv-state';
 import { createTask, updateTaskStatus } from '../tasks';
 import { listSidebarActiveChats } from './sidebar-active-chats';
 
@@ -33,9 +35,13 @@ describe('listSidebarActiveChats', () => {
     await linkChatToTask(db, byLink.id, linkedTask.id);
     await taskFor(byResult.id);
 
-    const rows = await listSidebarActiveChats(db);
-    expect(rows.map((row) => row.chatId).sort()).toEqual([byLink.id, byResult.id].sort());
-    expect(rows[0]).toMatchObject({ projectId: null, batchId: null, hasLiveFlowRun: false });
+    const { chats } = await listSidebarActiveChats(db);
+    expect(chats.map((row) => row.chatId).sort()).toEqual([byLink.id, byResult.id].sort());
+    expect(chats[0]).toMatchObject({ projectId: null, batchId: null, hasLiveFlowRun: false });
+    // task_id marks the chat a Flow opened, so the sidebar's Flow-chat filter can hide it.
+    const taskIdByChat = new Map(chats.map((row) => [row.chatId, row.taskId]));
+    expect(taskIdByChat.get(byLink.id)).toBe(linkedTask.id);
+    expect(taskIdByChat.get(byResult.id)).toBeNull();
   });
 
   it('leaves out finished tasks and archived or unknown chats', async () => {
@@ -45,7 +51,7 @@ describe('listSidebarActiveChats', () => {
     await taskFor(archived.id);
     await taskFor('not-a-local-chat');
 
-    expect(await listSidebarActiveChats(db)).toEqual([]);
+    expect(await listSidebarActiveChats(db)).toEqual({ chats: [], tasks: [] });
   });
 
   it('flags a chat driven only by a live flow run', async () => {
@@ -58,8 +64,80 @@ describe('listSidebarActiveChats', () => {
       outputs: { chatId: chat.id },
     });
 
-    expect(await listSidebarActiveChats(db)).toEqual([
-      { chatId: chat.id, projectId: null, batchId: null, hasLiveFlowRun: true },
+    expect((await listSidebarActiveChats(db)).chats).toEqual([
+      { chatId: chat.id, projectId: null, taskId: null, batchId: null, hasLiveFlowRun: true },
     ]);
+  });
+
+  it('returns the tasks of each shown chat as lean status rows, with no page cap', async () => {
+    const chat = await createChat(db, { name: 'flow' });
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'completed');
+    const steps = Array.from({ length: 650 }, (_, index) => ({
+      description: `agent step ${index}`,
+      source: 'flow',
+      flowRunId,
+      result: { chatId: chat.id, agentSignal: { summary: `step ${index}`, details: 'long' } },
+    }));
+    for (const step of steps) await updateTaskStatus(db, (await createTask(db, step)).id, 'done');
+
+    const { tasks } = await listSidebarActiveChats(db);
+
+    expect(tasks).toHaveLength(650);
+    expect(tasks[0]).toEqual({
+      id: expect.any(String),
+      status: 'done',
+      linkedChatId: chat.id,
+      flowRunStatus: 'completed',
+      effectiveStatus: 'done',
+      agentSignalSummary: expect.stringMatching(/^step \d+$/),
+      chatLive: false,
+    });
+  });
+
+  it('marks a Fan Out item the loop has moved past as no longer live', async () => {
+    const [past, current] = [
+      await createChat(db, { name: 'item 0' }),
+      await createChat(db, { name: 'item 1' }),
+    ];
+    const { flowId, flowRunId } = await seedFlowRun(db, GRAPH);
+    const fan = await seedCompletedNodeRun(db, { flowRunId, nodeId: 'fan', blockType: 'fan_out' });
+    for (const [laneIndex, chat] of [past, current].entries()) {
+      const lane = { flowRunId, laneIndex, parentFanOutNodeRunId: fan.id };
+      await seedCompletedNodeRun(db, {
+        ...lane,
+        nodeId: 'st',
+        blockType: 'start_task',
+        outputs: { chatId: chat.id },
+      });
+      const draft = await seedCompletedNodeRun(db, { ...lane, nodeId: 'a', blockType: 'agent' });
+      const task = await createTask(db, {
+        description: 'draft',
+        source: 'flow',
+        flowRunId,
+        nodeRunId: draft.id,
+        result: { chatId: chat.id },
+      });
+      await updateTaskStatus(db, task.id, 'done');
+    }
+    await setKv(db, flowId, `_fanOut:${flowRunId}:fan`, { currentIndex: 1 });
+
+    const { tasks } = await listSidebarActiveChats(db);
+
+    expect(tasks.map((row) => [row.linkedChatId, row.chatLive]).sort()).toEqual(
+      [
+        [past.id, false],
+        [current.id, true],
+      ].sort(),
+    );
+  });
+
+  it('leaves out tasks whose chat is archived, unknown or missing', async () => {
+    const archived = await createChat(db, { name: 'archived', archivedAt: new Date() });
+    await taskFor(archived.id);
+    await taskFor('not-a-local-chat');
+    await createTask(db, { description: 'no chat yet', source: 'manual' });
+
+    expect((await listSidebarActiveChats(db)).tasks).toEqual([]);
   });
 });

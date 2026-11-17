@@ -1,6 +1,11 @@
 import { getChatActiveState, SIDEBAR_TASK_PRESENTATION, type SidebarTaskStatus } from './constants';
 import type { ChatItem, CodebaseGroup } from './types';
 
+/** A project group's expansion-state key, also its tree row's `data-item-id`. */
+export function getCodebaseKey(codebase: Pick<CodebaseGroup, 'gitRemote' | 'displayName'>): string {
+  return codebase.gitRemote ?? codebase.displayName;
+}
+
 export type SidebarChatListItem = {
   id: string;
   name: string | null;
@@ -52,6 +57,29 @@ export function mergeChatsById(chats: SidebarChatListItem[]): SidebarChatListIte
 }
 
 /**
+ * A folder's rows above "Show more": the first `limit` chats and batch groups, plus any later one
+ * that `isOpen`, so a chat the user has open never hides behind the cut.
+ */
+export function cutSidebarEntries<E extends { type: string }>(
+  entries: readonly E[],
+  limit: number,
+  isOpen: (entry: E) => boolean,
+): E[] {
+  let counted = 0;
+  const kept = entries.filter((entry) => {
+    if (entry.type === 'sectionHeader') return true;
+    counted += 1;
+    return counted <= limit || isOpen(entry);
+  });
+  // A header stays only while a row of its section follows it.
+  return kept.filter((entry, i) => {
+    if (entry.type !== 'sectionHeader') return true;
+    const next = kept[i + 1];
+    return next !== undefined && next.type !== 'sectionHeader';
+  });
+}
+
+/**
  * Updates `updatedAt` for `chatId` in any loaded folder list and re-sorts each touched list.
  * Returns `folderChatsByKey` unchanged (same reference) if the chat is not present in any folder.
  */
@@ -97,6 +125,8 @@ function flowAwareStatus(task: ActiveTaskLite): SidebarTaskStatus {
     if (task.flowRunStatus === 'completed') return 'done';
     if (task.flowRunStatus === 'cancelled') return 'cancelled';
     if (task.flowRunStatus === 'failed') return 'failed';
+    // A finished Fan Out item's chat no longer drives the run, so its outcome is its own.
+    if (task.chatLive === false) return 'done';
     if (status === 'done') return 'running';
   }
   return status !== 'pending' && task.effectiveStatus === 'running' ? 'running' : status;
@@ -107,56 +137,17 @@ type ActiveTaskLite = {
   linkedChatId?: string | null;
   flowRunStatus?: string | null;
   effectiveStatus?: string | null;
-  // Already on the tasks.listPaginated payload (the SELECT spreads the full task row); the sidebar
-  // just narrows it away. Read here for the park reason — no query change. See sc-848.
-  result?: { agentSignal?: { summary?: string; details?: string } } | null;
+  agentSignalSummary?: string | null;
+  chatLive?: boolean;
 };
 
-/**
- * The shape the sidebar polls, declared once so the change check and the maps built from it cannot
- * drift apart when a field is added.
- */
+/** A task as the sidebar polls it (chats.listActiveChats), declared once for the maps built from it. */
 export type SidebarPolledTask = ActiveTaskLite & {
   id: string;
 };
 
-/** Every field below is a nullable string; an absent key and an explicit null both mean "unset". */
-type TaskFieldValue = string | null | undefined;
-
-/** An absent key and an explicit null both mean "unset" on this payload — never a real difference. */
-const sameOptional = (a: TaskFieldValue, b: TaskFieldValue): boolean => (a ?? null) === (b ?? null);
-
-/**
- * Every field the sidebar reads. `agentSignal` is here deliberately: a re-parked task can change
- * only its reason, and that reason drives the pill tooltip.
- */
-const TASK_FIELDS: ReadonlyArray<(task: SidebarPolledTask) => TaskFieldValue> = [
-  (task) => task.id,
-  (task) => task.status,
-  (task) => task.linkedChatId,
-  (task) => task.flowRunStatus,
-  (task) => task.effectiveStatus,
-  (task) => task.result?.agentSignal?.summary,
-  (task) => task.result?.agentSignal?.details,
-];
-
-/**
- * Compared by value, never by reference: pages past the first bypass the query cache, so unchanged
- * content still arrives as fresh objects and would churn every map and callback built from it.
- */
-export function sameSidebarTasks(
-  a: readonly SidebarPolledTask[],
-  b: readonly SidebarPolledTask[],
-): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  return a.every((task, index) =>
-    TASK_FIELDS.every((read) => sameOptional(read(task), read(b[index]))),
-  );
-}
-
-/** The reason an agent task parked (its frink_task_signal summary/details), shown on the pill tooltip. */
-export type ChatReason = { summary?: string; details?: string };
+/** The reason an agent task parked (its frink_task_signal summary), shown on the pill tooltip. */
+export type ChatReason = { summary?: string };
 
 /**
  * Chat ids with a live held question, keyed by each atom entry's `parentChatId` (the sidebar row).
@@ -208,7 +199,7 @@ export function buildChatTaskStatusMap(
 }
 
 /**
- * Build chatId → the agent reason ({summary, details}) of the SAME task that wins the pill in
+ * Build chatId → the agent reason ({summary}) of the SAME task that wins the pill in
  * {@link buildChatTaskStatusMap} (highest STATUS_PRIORITY, with the same done→running flow-run
  * substitution), so the pill tooltip shows the reason for the status it displays. Additive: read
  * alongside the status map, never mutating it. Only parked tasks (awaiting_input/blocked/partial)
@@ -225,8 +216,7 @@ export function buildChatReasonMap(tasks: ActiveTaskLite[]): Map<string, ChatRea
     const current = winnerPriority.get(task.linkedChatId);
     if (current !== undefined && priority <= current) continue;
     winnerPriority.set(task.linkedChatId, priority);
-    const signal = task.result?.agentSignal;
-    reasons.set(task.linkedChatId, { summary: signal?.summary, details: signal?.details });
+    reasons.set(task.linkedChatId, { summary: task.agentSignalSummary ?? undefined });
   }
   return reasons;
 }
@@ -305,6 +295,8 @@ const IDLE_CHAT = {
 export type ActiveFolderChat = {
   chatId: string;
   projectId: string | null;
+  /** Set when a Flow opened the chat. */
+  taskId?: string | null;
   batchId: string | null;
   hasLiveFlowRun: boolean;
 };
@@ -329,9 +321,12 @@ export function groupActiveChatsByFolder(
 export function buildSidebarActivityMaps(
   tasks: SidebarPolledTask[],
   activeChats: readonly ActiveFolderChat[],
+  hideFlowChats = false,
 ): [Map<string, SidebarTaskStatus>, Map<FolderKey, ActiveFolderChat[]>] {
   const liveFlowChatIds = activeChats.flatMap((chat) => (chat.hasLiveFlowRun ? [chat.chatId] : []));
-  return [buildChatTaskStatusMap(tasks, liveFlowChatIds), groupActiveChatsByFolder(activeChats)];
+  // A hidden Flow chat must not light its collapsed folder: expanding it would show nothing there.
+  const folderChats = hideFlowChats ? activeChats.filter((chat) => !chat.taskId) : activeChats;
+  return [buildChatTaskStatusMap(tasks, liveFlowChatIds), groupActiveChatsByFolder(folderChats)];
 }
 
 /** Active chats for one sidebar folder: its project ids, or the general bucket. */

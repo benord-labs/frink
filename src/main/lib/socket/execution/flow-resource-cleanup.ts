@@ -7,7 +7,7 @@ import {
 import type { PendingContinuationResume } from '../../flows/admission/terminal-resume/continuation';
 import type { ClaudeSession } from '../claude-session-registry';
 import { releaseWakeHold } from '../claude-wake-hold';
-import type { AgentRuntime } from '../runtime-gate';
+import type { AgentRuntime } from '../../../../shared/lib/ai-providers';
 import { disposeClaudeSessionAndWait } from './claude-provider-cleanup';
 import { hasReusableWakeHoldRuntimeSlot } from './wake-hold-registry-view';
 
@@ -198,14 +198,20 @@ async function resolveContinuationConversion(
   identity: FlowProviderIdentity,
   chatId: string | undefined,
   run: { status: string } | null | undefined,
+  admission: { state: string } | null | undefined,
 ): Promise<PendingContinuationResume | null> {
-  if (!chatId || !run || !['failed', 'cancelled'].includes(run.status)) return null;
+  if (!chatId || !run) return null;
+  // A paused run that gave its slot up has no admission left; any other (a retained release, a resume
+  // already waiting) keeps the plain decline.
+  if (run.status === 'paused') return admission ? null : pausedRunContinuation(db, identity);
+  if (!['failed', 'cancelled'].includes(run.status)) return null;
   try {
     const { resolveTerminalResumeTarget } =
       await import('../../flows/admission/terminal-resume/dispatcher');
     const { resolveSessionResumeSeed } = await import('../../flows/rerun/session-resume');
     const target = await resolveTerminalResumeTarget(db, identity.flowRunId);
-    if (!target) return null;
+    // A Retry step declines: continuing would carry on a prompt the agent never received.
+    if (!target?.continues) return null;
     const seed = await resolveSessionResumeSeed(db, {
       chatId,
       flowRunId: identity.flowRunId,
@@ -220,6 +226,25 @@ async function resolveContinuationConversion(
     );
     return null;
   }
+}
+
+/** A reply into a paused run that gave its slot up while it waited: the replied-to step continues
+ * once its resume ticket takes a slot back, unless a Cancel or another resume reached the run first. */
+async function pausedRunContinuation(
+  db: ReturnType<typeof getDatabase>,
+  identity: FlowProviderIdentity,
+): Promise<PendingContinuationResume | null> {
+  const { getTaskById } = await import('../../db/repos/tasks');
+  const { stepRecoveryKind } = await import('../../flows/rerun/recovery-kind');
+  const { readRun } = await import('../../flows/transitions/run-rows');
+  const { stagedResumeAction } = await import('../../flows/admission/terminal-resume/continuation');
+  // A Skip or Retry already waiting for the slot decides the step; a reply cannot stand in for it.
+  if (stagedResumeAction(identity.flowRunId)) return null;
+  const nodeRunId = (await getTaskById(db, identity.canonicalTaskId))?.nodeRunId;
+  // A step whose session never answered retries instead; a reply cannot carry it on.
+  if (!nodeRunId || stepRecoveryKind(db, nodeRunId) !== 'continue') return null;
+  const { flowRunId } = identity;
+  return { flowRunId, nodeRunId, admit: (tx) => readRun(tx, flowRunId)?.status === 'paused' };
 }
 
 async function assertFlowProviderEligible(
@@ -250,7 +275,7 @@ async function assertFlowProviderEligible(
   // fires the recorded re-admission after this turn settles. The provenance throws above stay
   // uncategorized on purpose — those are internal defects, not ended runs.
   const declineEndedRun = async (message: string): Promise<never> => {
-    const conversion = await resolveContinuationConversion(db, identity, chatId, run);
+    const conversion = await resolveContinuationConversion(db, identity, chatId, run, admission);
     if (conversion) {
       recordContinuation(conversion);
       throw Object.assign(new Error(message), { category: 'FLOW_RUN_RESUMING' });

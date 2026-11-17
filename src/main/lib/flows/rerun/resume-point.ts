@@ -9,24 +9,30 @@ import { SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
 import type { NodeRun } from '../../db/schema';
 import { type ParsedFlowGraph, pickNextTargetNodeId } from '../graph';
 
+/** The fields that place an attempt and say whether it stopped the run. */
+export type AttemptRow = Pick<
+  NodeRun,
+  'nodeId' | 'status' | 'parentFanOutNodeRunId' | 'laneIndex' | 'nodeOutput'
+>;
+
 /** A superseded attempt is history, not a resume point: its retry row stands in for it. */
-const isUnfinished = (nr: NodeRun): boolean =>
+const isUnfinished = (nr: AttemptRow): boolean =>
   nr.status !== 'completed' && nr.status !== 'skipped' && nr.status !== SUPERSEDED_NODE_STATUS;
 
 /** Cancelled by the run-terminal sweep, which writes only the status: the row's own output never
  * says cancelled (a restart marker or a user Stop does). */
-function isSwept(nr: NodeRun): boolean {
+function isSwept(nr: AttemptRow): boolean {
   if (nr.status !== 'cancelled') return false;
   const output = nr.nodeOutput as { status?: unknown } | null | undefined;
   return output?.status !== 'cancelled';
 }
 
-const attemptSlot = (nr: NodeRun): string =>
+const attemptSlot = (nr: AttemptRow): string =>
   `${nr.nodeId}\u0000${nr.parentFanOutNodeRunId ?? ''}\u0000${nr.laneIndex ?? ''}`;
 
 /** The node_run that stopped the run: the newest unfinished latest attempt that the sweep did not
  * cancel, else the newest unfinished row; undefined when every node completed/skipped. */
-export function lastUnfinishedNodeRun(nodeRunsForRun: NodeRun[]): NodeRun | undefined {
+export function lastUnfinishedNodeRun<T extends AttemptRow>(nodeRunsForRun: T[]): T | undefined {
   const newestFirst = [...nodeRunsForRun].reverse();
   const seenSlots = new Set<string>();
   const cause = newestFirst.find((nr) => {

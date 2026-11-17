@@ -19,6 +19,8 @@ export const STRINGS = {
   ARCHIVE: 'Archive',
   DISCORD: 'Join our Discord',
   CLOSE_SIDEBAR: 'Close sidebar',
+  HIDE_FLOW_CHATS: 'Hide Flow chats',
+  SHOW_FLOW_CHATS: 'Show Flow chats',
   NO_PROJECTS: 'No projects registered',
   NO_CHATS: 'No chats yet',
   UNTITLED_CHAT: 'Untitled chat',

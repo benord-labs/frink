@@ -13,7 +13,14 @@ import {
   useColorScheme,
   type TextStyle,
 } from 'react-native';
-import { readAppearance, saveAppearance, type AppearanceMode } from '../lib/preferences';
+import {
+  readAppearance,
+  saveAppearance,
+  readTransparency,
+  saveTransparency,
+  type AppearanceMode,
+  type Transparency,
+} from '../lib/preferences';
 
 // Neutral surfaces mirror desktop; the mobile accent uses a quieter violet.
 // Colour is spent on state only: running (primary), live (green), needs you (amber), failed (red).
@@ -90,7 +97,12 @@ export const themes = {
     offline: '#6B6B6B',
   },
 };
-export type Theme = typeof themes.dark & { solid: boolean; dark: boolean };
+export type Theme = typeof themes.dark & {
+  solid: boolean;
+  dark: boolean;
+  blur: number;
+  saturation: number;
+};
 export type Tone = 'neutral' | 'accent' | 'live' | 'attention' | 'danger' | 'info';
 
 /** One type ramp for the app. 13, 11 and 10pt are deliberately absent: 12 is the floor. */
@@ -98,7 +110,7 @@ export const type = {
   largeTitle: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -0.6 },
   title: { fontSize: 22, lineHeight: 28, fontWeight: '700', letterSpacing: -0.3 },
   headline: { fontSize: 17, lineHeight: 22, fontWeight: '600' },
-  body: { fontSize: 16, lineHeight: 24, fontWeight: '400' },
+  body: { fontSize: 17, lineHeight: 25, fontWeight: '400' },
   row: { fontSize: 16, lineHeight: 21, fontWeight: '500' },
   secondary: { fontSize: 14, lineHeight: 20, fontWeight: '400' },
   label: { fontSize: 12, lineHeight: 16, fontWeight: '600', letterSpacing: 0.2 },
@@ -112,7 +124,7 @@ export type TypeVariant = keyof typeof type;
 
 export const radius = { sm: 8, md: 12, lg: 16, xl: 22, pill: 999 } as const;
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
-export const GUTTER = space.lg;
+export const GUTTER = 20;
 
 export function toneColors(t: Theme, tone: Tone) {
   return {
@@ -126,6 +138,10 @@ export function toneColors(t: Theme, tone: Tone) {
 }
 
 const SolidMaterial = createContext(false);
+const TransparencyPreference = createContext<{
+  level: Transparency;
+  setLevel: (level: Transparency) => void;
+}>({ level: 50, setLevel: () => {} });
 const AppearancePreference = createContext<{
   mode: AppearanceMode;
   setMode: (mode: AppearanceMode) => void;
@@ -134,10 +150,14 @@ const AppearancePreference = createContext<{
 /** Device appearance and Reduce Transparency apply across every screen and native control. */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [solid, setSolid] = useState(false);
+  const [storedLevel, setStoredLevel] = useState<Transparency | null>(null);
   const [storedMode, setStoredMode] = useState<AppearanceMode | null>(null);
   const mode = storedMode ?? 'system';
   useEffect(() => {
     let mounted = true;
+    void readTransparency().then((saved) => {
+      if (mounted) setStoredLevel((current) => current ?? saved);
+    });
     void readAppearance().then((saved) => {
       // A choice made while the keychain loads takes precedence over the saved preference.
       if (mounted) setStoredMode((current) => current ?? saved);
@@ -165,10 +185,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setStoredMode(next);
     void saveAppearance(next);
   };
+  const setLevel = (next: Transparency) => {
+    setStoredLevel(next);
+    void saveTransparency(next);
+  };
   return createElement(
     AppearancePreference.Provider,
     { value: { mode, setMode } },
-    createElement(SolidMaterial.Provider, { value: solid }, children),
+    createElement(
+      TransparencyPreference.Provider,
+      { value: { level: storedLevel ?? 50, setLevel } },
+      createElement(SolidMaterial.Provider, { value: solid }, children),
+    ),
   );
 }
 
@@ -176,11 +204,37 @@ export function useAppearance() {
   return useContext(AppearancePreference);
 }
 
+export function useTransparency() {
+  return useContext(TransparencyPreference);
+}
+
 export function useTheme(): Theme {
   const system = useColorScheme();
   const { mode } = useAppearance();
   const dark = (mode === 'system' ? system : mode) !== 'light';
   const base = themes[dark ? 'dark' : 'light'];
-  const solid = useContext(SolidMaterial);
-  return { ...base, surface: solid ? base.solidSurface : base.surface, solid, dark };
+  const reduced = useContext(SolidMaterial);
+  const { level } = useTransparency();
+  return glassTheme(base, dark, reduced ? 0 : level);
+}
+
+/** Desktop's five material steps; the atmosphere is deliberately independent of the level. */
+export function glassTheme(base: typeof themes.dark, dark: boolean, level: Transparency): Theme {
+  const step = level / 25;
+  const solid = level === 0;
+  const opacity = [1, 0.85, 0.7, 0.55, 0.4][step];
+  const rim = (dark ? [0, 0.14, 0.19, 0.25, 0.3] : [0, 0.55, 0.65, 0.75, 0.85])[step];
+  const sheen = (dark ? [0, 0.04, 0.05, 0.07, 0.08] : [0, 0.18, 0.24, 0.3, 0.36])[step];
+  const tint = (dark ? [0, 0.1, 0.13, 0.16, 0.19] : [0, 0.06, 0.08, 0.1, 0.12])[step];
+  return {
+    ...base,
+    solid,
+    dark,
+    surface: solid ? base.solidSurface : `rgba(${dark ? '10,10,10' : '250,250,250'},${opacity})`,
+    rim: `rgba(255,255,255,${rim})`,
+    sheen: `rgba(255,255,255,${sheen})`,
+    glint: `rgba(${dark ? '182,167,205' : '112,91,141'},${tint})`,
+    blur: [0, 10, 8, 6, 5][step],
+    saturation: [1, 1.4, 1.6, 1.8, 1.8][step],
+  };
 }

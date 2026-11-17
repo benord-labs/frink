@@ -1,9 +1,10 @@
 // Barrel the `src/main` folder-structure rule requires; exports only what the execution loop
 // imports through it. Every other module here is imported directly by its sibling callers.
 export {
-  isAmbientIdleFrame,
+  admitTurnFrame,
   isAnyResult,
   isIdleActivity,
+  isMainTurnStart,
   isSetterEcho,
   isTurnBoundary,
 } from './ambient-idle-frame';

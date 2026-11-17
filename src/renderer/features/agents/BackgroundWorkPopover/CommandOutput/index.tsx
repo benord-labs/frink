@@ -30,7 +30,10 @@ export function CommandOutput({ subChatId, commandId }: { subChatId: string; com
   const runningFor = data?.runningForMs == null ? '' : formatElapsedTime(data.runningForMs);
   // One element throughout, so the visibility observer keeps watching what is on screen.
   return (
-    <div ref={rootRef} className={data ? 'mt-1.5 mb-0.5 space-y-1 text-xs text-muted-foreground' : undefined}>
+    <div
+      ref={rootRef}
+      className={data ? 'mt-1.5 mb-0.5 space-y-1 text-xs text-muted-foreground' : undefined}
+    >
       {runningFor ? <div className="tabular-nums">Running for {runningFor}</div> : null}
       {!data ? null : text ? (
         <pre
@@ -57,7 +60,9 @@ function useOnScreen(ref: RefObject<HTMLElement | null>): boolean {
   useEffect(() => {
     const element = ref.current;
     if (!element || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver(([entry]) => setOnScreen(entry?.isIntersecting ?? false));
+    const observer = new IntersectionObserver(([entry]) =>
+      setOnScreen(entry?.isIntersecting ?? false),
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, [ref]);

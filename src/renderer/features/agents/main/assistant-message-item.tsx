@@ -23,6 +23,7 @@ import * as FlowPatch from '../../../lib/flows/flow-change-tool';
 import { cn } from '../../../lib/utils';
 import { chatMarkdownModeAtom, showMessageJsonAtom } from '../atoms';
 import { HtmlArtifactCard } from '../HtmlArtifactCard';
+import { FileLinkScope } from '../mentions/FileLinkBadge';
 import type { Message, MessagePart } from '../stores/message-store';
 import { AgentFlowRunTool } from '../ui/AgentFlowRunTool';
 import { AgentFlowTool } from '../ui/AgentFlowTool';
@@ -135,7 +136,7 @@ function CollapsibleSteps({
   );
 }
 
-// Assistant message item — memoized by message id + parts length.
+// Assistant message item — plain memo: the message store writes a new object on every change.
 
 type AssistantMessageItemProps = {
   message: Message;
@@ -154,74 +155,6 @@ const isHoistedFromCollapse = (part: MessagePart): boolean =>
   part.type === 'tool-AskUserQuestion' ||
   part.type === 'tool-ImageGeneration' ||
   FlowPatch.isRootFlowPatchToolPart(part);
-
-// Cache for tracking previous message state per message (to detect AI SDK in-place mutations)
-// Stores both text lengths and tool states for complete change detection
-type MessageStateSnapshot = {
-  textLengths: number[];
-  partStates: (string | undefined)[];
-  lastPartInputJson: string | undefined;
-  /** Metadata-only change: an involuntary teardown can stamp the reason without adding a part. */
-  interruptedBy: string | undefined;
-};
-const messageStateCache = new Map<string, MessageStateSnapshot>();
-
-/** Every prop that is cheap to compare by identity. `message` is excluded — the AI SDK mutates it
- * in place, so it needs the snapshot comparison below. */
-const SCALAR_PROPS = [
-  'status',
-  'isStreaming',
-  'isLastMessage',
-  'isLastAssistantMessage',
-  'isMobile',
-  'subChatId',
-  'chatId',
-  'sandboxSetupStatus',
-] as const satisfies readonly (keyof AssistantMessageItemProps)[];
-
-// Custom comparison - check if message content actually changed
-// CRITICAL: AI SDK mutates objects in-place! So prev.message.parts[i].text === next.message.parts[i].text
-// even when text HAS changed (they're the same mutated object).
-// Solution: Cache state externally and compare those.
-function areMessagePropsEqual(
-  prev: AssistantMessageItemProps,
-  next: AssistantMessageItemProps,
-): boolean {
-  if (prev.message?.id !== next.message?.id) return false;
-  if (SCALAR_PROPS.some((key) => prev[key] !== next[key])) return false;
-
-  const msgId = next.message?.id;
-  const current = snapshotMessageState(next);
-  const cached = msgId ? messageStateCache.get(msgId) : undefined;
-  if (cached && sameMessageState(cached, current)) return true;
-
-  if (msgId) messageStateCache.set(msgId, current);
-  return false;
-}
-
-function snapshotMessageState(props: AssistantMessageItemProps): MessageStateSnapshot {
-  const parts = props.message?.parts || [];
-  const lastPart = parts[parts.length - 1];
-  return {
-    textLengths: parts.map((p: MessagePart) => (p.type === 'text' ? p.text?.length || 0 : -1)),
-    // ALL part states — critical for detecting Edit plan file streaming.
-    partStates: parts.map((p: MessagePart) => p.state),
-    // Tool input changes — critical for tool streaming.
-    lastPartInputJson: lastPart?.input ? JSON.stringify(lastPart.input) : undefined,
-    interruptedBy: (props.message?.metadata as AgentMessageMetadata | undefined)?.interruptedBy,
-  };
-}
-
-function sameMessageState(a: MessageStateSnapshot, b: MessageStateSnapshot): boolean {
-  return (
-    // Metadata-only: a teardown stamps its reason without touching any part, so nothing below sees it.
-    a.interruptedBy === b.interruptedBy &&
-    a.lastPartInputJson === b.lastPartInputJson &&
-    a.textLengths.length === b.textLengths.length &&
-    a.textLengths.every((len, i) => len === b.textLengths[i]) &&
-    a.partStates.every((state, i) => state === b.partStates[i])
-  );
-}
 
 /**
  * Dev-only: isolates showMessageJson subscription from the main message body.
@@ -283,13 +216,10 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   // render mode for assistant bubbles (default rendered) and thread it down.
   const markdownMode = useAtomValue(chatMarkdownModeAtom);
   const renderMarkdown = resolveRenderMarkdown(markdownMode, 'assistant');
-
   /** Dedupe duplicate plan markdown in message parts when a frink-plan card already carries the same planText (matches executor `buildFinalPartsForPersist`). */
   const messagePartsForRender = useMemo(() => {
     const hasFrink = messageParts.some((p) => isFrinkPlanMessagePartType(p.type));
-    if (!hasFrink) {
-      return messageParts;
-    }
+    if (!hasFrink) return messageParts;
     const partsLike = messageParts as CanonicalPlanPartLike[];
     const planText = extractCanonicalPlanTextForFilter(partsLike);
     const filtered = filterCanonicalPlanParts(partsLike, planText ?? undefined) as MessagePart[];
@@ -624,137 +554,139 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   if (!message) return null;
 
   return (
-    <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
-      <div className="flex flex-col gap-1.5">
-        {shouldCollapse && visibleStepsCount > 0 && (
-          <CollapsibleSteps stepsCount={visibleStepsCount}>
-            {(() => {
-              const taskGrouped = groupTaskTools(collapsedStepParts, nestedToolIds);
-              const grouped = groupExploringTools(taskGrouped, nestedToolIds);
-              return grouped.map(
-                (
-                  part:
-                    | MessagePart
-                    | { type: 'exploring-group'; parts: MessagePart[] }
-                    | { type: 'task-group'; parts: MessagePart[] },
-                  idx: number,
-                ) => {
-                  if (isExploringGroup(part)) {
-                    const isLast = idx === grouped.length - 1;
-                    const isGroupStreaming = isStreaming && isLastMessage && isLast;
-                    // Use first part's toolCallId as unique key, or fallback to composite key
-                    const groupKey =
-                      part.parts[0]?.toolCallId ||
-                      `group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
-                    return (
-                      <AgentExploringGroup
-                        key={groupKey}
-                        parts={part.parts}
-                        chatStatus={status}
-                        isStreaming={isGroupStreaming}
-                      />
-                    );
-                  }
-                  if (isTaskGroup(part)) {
-                    const isLast = idx === grouped.length - 1;
-                    const isGroupStreaming = isStreaming && isLastMessage && isLast;
-                    const groupKey =
-                      part.parts[0]?.toolCallId ||
-                      `task-group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
-                    return (
-                      <AgentTaskToolsGroup
-                        key={groupKey}
-                        parts={part.parts}
-                        chatStatus={status}
-                        isStreaming={isGroupStreaming}
-                        subChatId={subChatId}
-                      />
-                    );
-                  }
-                  return renderPart(part, idx, false);
-                },
-              );
-            })()}
-          </CollapsibleSteps>
+    <FileLinkScope isStreaming={isStreaming && isLastMessage}>
+      <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
+        <div className="flex flex-col gap-1.5">
+          {shouldCollapse && visibleStepsCount > 0 && (
+            <CollapsibleSteps stepsCount={visibleStepsCount}>
+              {(() => {
+                const taskGrouped = groupTaskTools(collapsedStepParts, nestedToolIds);
+                const grouped = groupExploringTools(taskGrouped, nestedToolIds);
+                return grouped.map(
+                  (
+                    part:
+                      | MessagePart
+                      | { type: 'exploring-group'; parts: MessagePart[] }
+                      | { type: 'task-group'; parts: MessagePart[] },
+                    idx: number,
+                  ) => {
+                    if (isExploringGroup(part)) {
+                      const isLast = idx === grouped.length - 1;
+                      const isGroupStreaming = isStreaming && isLastMessage && isLast;
+                      // Use first part's toolCallId as unique key, or fallback to composite key
+                      const groupKey =
+                        part.parts[0]?.toolCallId ||
+                        `group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
+                      return (
+                        <AgentExploringGroup
+                          key={groupKey}
+                          parts={part.parts}
+                          chatStatus={status}
+                          isStreaming={isGroupStreaming}
+                        />
+                      );
+                    }
+                    if (isTaskGroup(part)) {
+                      const isLast = idx === grouped.length - 1;
+                      const isGroupStreaming = isStreaming && isLastMessage && isLast;
+                      const groupKey =
+                        part.parts[0]?.toolCallId ||
+                        `task-group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
+                      return (
+                        <AgentTaskToolsGroup
+                          key={groupKey}
+                          parts={part.parts}
+                          chatStatus={status}
+                          isStreaming={isGroupStreaming}
+                          subChatId={subChatId}
+                        />
+                      );
+                    }
+                    return renderPart(part, idx, false);
+                  },
+                );
+              })()}
+            </CollapsibleSteps>
+          )}
+
+          {/* Durable artifacts remain visible after the turn's generic execution steps collapse. */}
+          {hoistedCollapsedEntries.map(({ index, part }) => (
+            <Fragment key={`hoisted-artifact-${message.id}-${index}`}>
+              {renderPart(part, index, false)}
+            </Fragment>
+          ))}
+
+          {(() => {
+            const taskGrouped = groupTaskTools(finalParts, nestedToolIds);
+            const grouped = groupExploringTools(taskGrouped, nestedToolIds);
+            return grouped.map(
+              (
+                part:
+                  | MessagePart
+                  | { type: 'exploring-group'; parts: MessagePart[] }
+                  | { type: 'task-group'; parts: MessagePart[] },
+                idx: number,
+              ) => {
+                if (isExploringGroup(part)) {
+                  const isLast = idx === grouped.length - 1;
+                  const isGroupStreaming = isStreaming && isLastMessage && isLast;
+                  // Use first part's toolCallId as unique key, or fallback to composite key
+                  const groupKey =
+                    part.parts[0]?.toolCallId ||
+                    `group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
+                  return (
+                    <AgentExploringGroup
+                      key={groupKey}
+                      parts={part.parts}
+                      chatStatus={status}
+                      isStreaming={isGroupStreaming}
+                    />
+                  );
+                }
+                if (isTaskGroup(part)) {
+                  const isLast = idx === grouped.length - 1;
+                  const isGroupStreaming = isStreaming && isLastMessage && isLast;
+                  const groupKey =
+                    part.parts[0]?.toolCallId ||
+                    `task-group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
+                  return (
+                    <AgentTaskToolsGroup
+                      key={groupKey}
+                      parts={part.parts}
+                      chatStatus={status}
+                      isStreaming={isGroupStreaming}
+                      subChatId={subChatId}
+                    />
+                  );
+                }
+                return renderPart(
+                  part,
+                  shouldCollapse ? collapseBeforeIndex + idx : idx,
+                  shouldCollapse,
+                );
+              },
+            );
+          })()}
+
+          {shouldShowPlanning && (
+            <AgentToolCall {...pendingTurnCard(isCompacting, planningMeta, planningId)} />
+          )}
+        </div>
+
+        {/* Survives the reload that caused it — the matching error IPC does not. */}
+        {interruptedBy && <AgentTurnInterrupted reason={interruptedBy} />}
+
+        {/* One action row per TURN: isLastAssistantMessage is per-group, not chat-wide. */}
+        {hasTextContent && isLastAssistantMessage && (!isStreaming || !isLastMessage) && (
+          <AssistantMessageFooterRow
+            message={message}
+            isStreaming={isStreaming}
+            isMobile={isMobile}
+          />
         )}
 
-        {/* Durable artifacts remain visible after the turn's generic execution steps collapse. */}
-        {hoistedCollapsedEntries.map(({ index, part }) => (
-          <Fragment key={`hoisted-artifact-${message.id}-${index}`}>
-            {renderPart(part, index, false)}
-          </Fragment>
-        ))}
-
-        {(() => {
-          const taskGrouped = groupTaskTools(finalParts, nestedToolIds);
-          const grouped = groupExploringTools(taskGrouped, nestedToolIds);
-          return grouped.map(
-            (
-              part:
-                | MessagePart
-                | { type: 'exploring-group'; parts: MessagePart[] }
-                | { type: 'task-group'; parts: MessagePart[] },
-              idx: number,
-            ) => {
-              if (isExploringGroup(part)) {
-                const isLast = idx === grouped.length - 1;
-                const isGroupStreaming = isStreaming && isLastMessage && isLast;
-                // Use first part's toolCallId as unique key, or fallback to composite key
-                const groupKey =
-                  part.parts[0]?.toolCallId ||
-                  `group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
-                return (
-                  <AgentExploringGroup
-                    key={groupKey}
-                    parts={part.parts}
-                    chatStatus={status}
-                    isStreaming={isGroupStreaming}
-                  />
-                );
-              }
-              if (isTaskGroup(part)) {
-                const isLast = idx === grouped.length - 1;
-                const isGroupStreaming = isStreaming && isLastMessage && isLast;
-                const groupKey =
-                  part.parts[0]?.toolCallId ||
-                  `task-group-${part.parts.map((p: MessagePart) => p.toolCallId || '').join('-')}`;
-                return (
-                  <AgentTaskToolsGroup
-                    key={groupKey}
-                    parts={part.parts}
-                    chatStatus={status}
-                    isStreaming={isGroupStreaming}
-                    subChatId={subChatId}
-                  />
-                );
-              }
-              return renderPart(
-                part,
-                shouldCollapse ? collapseBeforeIndex + idx : idx,
-                shouldCollapse,
-              );
-            },
-          );
-        })()}
-
-        {shouldShowPlanning && (
-          <AgentToolCall {...pendingTurnCard(isCompacting, planningMeta, planningId)} />
-        )}
+        {import.meta.env.DEV && <AssistantMessageJsonDebug message={message} />}
       </div>
-
-      {/* Survives the reload that caused it — the matching error IPC does not. */}
-      {interruptedBy && <AgentTurnInterrupted reason={interruptedBy} />}
-
-      {/* One action row per TURN: isLastAssistantMessage is per-group, not chat-wide. */}
-      {hasTextContent && isLastAssistantMessage && (!isStreaming || !isLastMessage) && (
-        <AssistantMessageFooterRow
-          message={message}
-          isStreaming={isStreaming}
-          isMobile={isMobile}
-        />
-      )}
-
-      {import.meta.env.DEV && <AssistantMessageJsonDebug message={message} />}
-    </div>
+    </FileLinkScope>
   );
-}, areMessagePropsEqual);
+});

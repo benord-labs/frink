@@ -7,7 +7,12 @@ import {
   COMPOSER_CONTROL_LABEL_CLASS,
   COMPOSER_MODEL_CONTROL_CLASS,
   COMPOSER_MODEL_DETAIL_CLASS,
+  COMPOSER_MODEL_EFFORT_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
+  COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+  COMPOSER_MODEL_ULTRA_EFFORT_CLASS,
+  COMPOSER_ULTRA_GLYPH_CLASS,
+  COMPOSER_ULTRA_NAME_CLASS,
 } from './chat-composer-shell-classes';
 
 /** The container width, in rem, below which a tier class hides its element. */
@@ -34,6 +39,30 @@ describe('composer footer contract', () => {
     expect(modelDetail).toBeGreaterThan(modelName);
     expect(COMPOSER_MODEL_CONTROL_CLASS).toContain(`@max-[${modelName}rem]/composer:w-7`);
     expect(COMPOSER_MODEL_CONTROL_CLASS).not.toMatch(/(^|\s)shrink-0\b/);
+  });
+
+  it('shows the effort token only between the tier and name tiers, where Ultra moves onto the name', () => {
+    const effortToken = hideTierRem(COMPOSER_MODEL_EFFORT_CLASS);
+    const modelName = hideTierRem(COMPOSER_MODEL_LABEL_CLASS);
+    for (const [detail, effort] of [
+      [COMPOSER_MODEL_DETAIL_CLASS, COMPOSER_MODEL_EFFORT_CLASS],
+      [COMPOSER_MODEL_ULTRA_DETAIL_CLASS, COMPOSER_MODEL_ULTRA_EFFORT_CLASS],
+    ]) {
+      expect(effort).toContain(`@max-[${hideTierRem(detail)}rem]/composer:inline`);
+      expect(hideTierRem(effort)).toBe(effortToken);
+      expect(hideTierRem(detail)).toBeGreaterThan(effortToken);
+    }
+    expect(effortToken).toBeGreaterThan(modelName);
+    expect(COMPOSER_ULTRA_NAME_CLASS).toContain(`@max-[${effortToken}rem]/composer:chroma-text`);
+    expect(COMPOSER_ULTRA_GLYPH_CLASS).toContain(`@max-[${modelName}rem]/composer:inline-flex`);
+  });
+
+  // A cut label reads as a different model or effort ("Extra Hig…"), so the longer Ultra label
+  // trades its full form for the effort token sooner, and still before Mode and Auto lose theirs.
+  it('sheds the longer Ultra tier suffix at a wider composer than a plain one', () => {
+    const ultraDetail = hideTierRem(COMPOSER_MODEL_ULTRA_DETAIL_CLASS);
+    expect(ultraDetail).toBeGreaterThan(hideTierRem(COMPOSER_MODEL_DETAIL_CLASS));
+    expect(hideTierRem(COMPOSER_CONTROL_LABEL_CLASS)).toBeGreaterThan(ultraDetail);
   });
 
   it('insets the icon 6px in both states, so it never jumps when a label appears', () => {

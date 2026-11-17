@@ -1,6 +1,8 @@
 import os from 'node:os';
 import { expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
+import { hasPendingPermissionRequest } from '../streaming/pending-permission/validate-tool-permission';
+import { registerCodexHookTests } from './codex';
 import { registerCustomNodePermissionTests } from './executor-custom-node-permissions';
 
 /** Registers Codex permission cases against the parent executor test harness. */
@@ -9,6 +11,7 @@ const BASH_DENY_MESSAGE_RE = /user.*Bash\(rm:\*\)/;
 const DELETE_MESSAGE_RE = /Delete/;
 
 type ExecutorModule = typeof import('../executor');
+type PermissionModule = typeof import('../streaming/pending-permission/validate-tool-permission');
 type AgentRunnerModule = typeof import('../../agent-runner');
 type CredentialModule = typeof import('../../credentials');
 type ChatRepoModule = typeof import('../../db/repos/chats');
@@ -37,7 +40,7 @@ export type ExecutorPermissionHarness = {
   toolValidation: Pick<ToolValidationModule, 'resolvePermissionProjectPath'>;
   parkFlowTaskOnClaudeInterruption: TaskParkingModule['parkFlowTaskOnClaudeInterruption'];
   clientPermissionBridge: { lastResponseHandler: PermissionResponseHandler | null };
-  validateToolPermission: ExecutorModule['validateToolPermission'];
+  validateToolPermission: PermissionModule['validateToolPermission'];
   basePayload: Omit<Parameters<ExecutorModule['handleRemoteExecute']>[0], 'message'>;
   codexCredential: NonNullable<Awaited<ReturnType<CredentialModule['getDefaultClaudeCodeToken']>>>;
   project: { path: string };
@@ -45,6 +48,7 @@ export type ExecutorPermissionHarness = {
 
 export function registerExecutorPermissionTests(harness: ExecutorPermissionHarness): void {
   registerCustomNodePermissionTests(harness);
+  registerCodexHookTests(harness);
   registerCodexBasicPermissionTests(harness);
   registerCodexBoundaryPermissionTests(harness);
   registerCodexPathAndLifecycleTests(harness);
@@ -306,34 +310,38 @@ function registerCodexBoundaryPermissionTests({
     expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it('preserves an explicit Frink deny when Codex Auto is on', async () => {
-    const { checkPermission } = await import('../../permissions/v2/check');
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'deny',
-      reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' },
-    });
-    let approval: unknown;
-    vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
-      approval = await options.checkApproval({
-        toolName: 'Bash',
-        input: { command: 'rm -rf /' },
+  it.each([
+    ['allow', { decision: 'allow' }, { allowed: true }],
+    [
+      'deny',
+      { decision: 'deny', reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' } },
+      { allowed: false, message: expect.stringMatching(BASH_DENY_MESSAGE_RE) },
+    ],
+  ] as const)(
+    'answers an explicit Frink %s itself when Codex Auto is on, so Guardian never sees it',
+    async (_kind, ruleResult, expected) => {
+      const { checkPermission } = await import('../../permissions/v2/check');
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      vi.mocked(checkPermission).mockResolvedValueOnce(ruleResult);
+      let approval: unknown;
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
+        approval = await options.checkApproval({
+          toolName: 'Bash',
+          input: { command: 'rm -rf /' },
+        });
+        yield { type: 'finish' } as UIMessageChunk;
       });
-      yield { type: 'finish' } as UIMessageChunk;
-    });
 
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'codex explicit deny',
-      settings: { autoReviewTools: true },
-    });
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'codex explicit rule',
+        settings: { autoReviewTools: true },
+      });
 
-    expect(approval).toEqual({
-      allowed: false,
-      message: expect.stringMatching(BASH_DENY_MESSAGE_RE),
-    });
-    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
-  });
+      expect(approval).toEqual(expected);
+      expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+    },
+  );
 }
 
 function registerCodexPathAndLifecycleTests({
@@ -449,5 +457,30 @@ function registerCodexPathAndLifecycleTests({
       basePayload.subChatId,
       { kind: 'api-error', status: 401, message: 'API Error: 401 unauthorized' },
     );
+  });
+
+  it('closes an unanswered Codex permission card when its turn ends', async () => {
+    const { checkPermission } = await import('../../permissions/v2/check');
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+    // SAFETY: the seam consumes only decision/prompt; this is the dispatcher's ask shape.
+    vi.mocked(checkPermission).mockResolvedValueOnce({
+      decision: 'ask',
+      prompt: { reason: 'no-matching-rule' },
+    } as Awaited<ReturnType<typeof checkPermission>>);
+    let approval: Promise<unknown> | undefined;
+    vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
+      // SAFETY: the executor reads only type, id and delta from a text-delta chunk.
+      yield { type: 'text-delta', id: 'codex-1', delta: 'Running tests' } as UIMessageChunk;
+      approval = options.checkApproval({ toolName: 'Bash', input: { command: 'npm test' } });
+      await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
+      throw new Error('codex app-server connection closed');
+    });
+
+    await handleRemoteExecute({ ...basePayload, message: 'codex turn that dies on a card' });
+
+    const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
+    expect(card).toBeDefined();
+    expect(hasPendingPermissionRequest(basePayload.subChatId)).toBe(false);
+    await expect(approval).resolves.toMatchObject({ allowed: false });
   });
 }

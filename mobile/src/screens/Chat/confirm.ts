@@ -1,20 +1,4 @@
-import { Alert, Platform } from 'react-native';
-
-/** A two-button destructive confirmation; the web preview uses the browser's own dialog. */
-function confirmDestructive(title: string, message: string, action: string): Promise<boolean> {
-  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
-  return new Promise((resolve) =>
-    Alert.alert(
-      title,
-      message,
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-        { text: action, style: 'destructive', onPress: () => resolve(true) },
-      ],
-      { cancelable: true, onDismiss: () => resolve(false) },
-    ),
-  );
-}
+import { confirmDestructive } from '../../ui/confirm';
 
 /** The one confirmation for deleting a chat, from its header or a swipe in the list. */
 export function confirmChatDeletion(name: string): Promise<boolean> {

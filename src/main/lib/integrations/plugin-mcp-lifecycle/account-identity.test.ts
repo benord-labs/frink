@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import {
   insertIntegration,
   listLocalIntegrations,
   setLocalIntegrationExternalUserId,
 } from '../../db/repos/webhook-ingress';
-import { ensureLocalAccountIdentity, readIdentityId } from './account-identity';
+import { ensureLocalAccountIdentity, lookUpIdentity, readIdentityId } from './account-identity';
 
 describe('readIdentityId', () => {
   it('prefers structured output and falls back to the text blocks JSON', () => {
@@ -30,6 +30,15 @@ describe('readIdentityId', () => {
     ).toBe('member-3');
   });
 
+  it('indexes a list with a numeric path segment', () => {
+    expect(readIdentityId({ structuredContent: { userIds: ['93748974'] } }, 'userIds.0')).toBe(
+      '93748974',
+    );
+    expect(readIdentityId({ content: [{ text: '{"userIds":[183]}' }] }, 'userIds.0')).toBe('183');
+    expect(readIdentityId({ structuredContent: { userIds: [] } }, 'userIds.0')).toBeUndefined();
+    expect(readIdentityId({ structuredContent: { userIds: ['x'] } }, 'userIds.id')).toBeUndefined();
+  });
+
   it('yields no id for a result the declared path does not reach', () => {
     expect(readIdentityId({ content: [{ text: 'not json' }] }, 'id')).toBeUndefined();
     expect(readIdentityId({ structuredContent: { id: '  ' } }, 'id')).toBeUndefined();
@@ -52,6 +61,72 @@ describe('local account identity', () => {
     const db = freshDb();
     await insertIntegration(db, { provider: 'generic_webhook' });
     await ensureLocalAccountIdentity(db, 'generic_webhook');
+    expect((await listLocalIntegrations(db))[0]?.externalUserId).toBeNull();
+  });
+});
+
+describe('ClickUp identity lookup', () => {
+  const target = {
+    config: {
+      name: 'clickup',
+      type: 'custom' as const,
+      authType: 'none' as const,
+      command: '',
+      url: 'https://mcp.clickup.com/mcp',
+    },
+    credentials: undefined,
+    serverName: 'clickup',
+  };
+  const resolvePluginServerTarget = vi.fn(async () => ({ ok: true as const, target }));
+
+  it('asks the server who "me" is', async () => {
+    const callServerTool = vi.fn(async () => ({
+      ok: true as const,
+      result: { content: [{ type: 'text' as const, text: '{"userIds":["93748974"]}' }] },
+    }));
+    await expect(
+      lookUpIdentity('clickup', { resolvePluginServerTarget, callServerTool }),
+    ).resolves.toBe('93748974');
+    expect(callServerTool).toHaveBeenCalledExactlyOnceWith(
+      target.config,
+      undefined,
+      'clickup_resolve_assignees',
+      { assignees: ['me'] },
+    );
+  });
+
+  it('names nobody when the server refuses, or answers with an empty list', async () => {
+    const refused = vi.fn(async () => ({
+      ok: false as const,
+      reason: 'transport' as const,
+      message: 'workspace_id is required',
+    }));
+    const empty = vi.fn(async () => ({
+      ok: true as const,
+      result: { content: [{ type: 'text' as const, text: '{"userIds":[]}' }] },
+    }));
+    await expect(
+      lookUpIdentity('clickup', { resolvePluginServerTarget, callServerTool: refused }),
+    ).resolves.toBeUndefined();
+    await expect(
+      lookUpIdentity('clickup', { resolvePluginServerTarget, callServerTool: empty }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('stamps the answer on the account', async () => {
+    const db = freshDb();
+    await insertIntegration(db, { provider: 'clickup' });
+    await ensureLocalAccountIdentity(db, 'clickup', undefined, async () => '93748974');
+    expect((await listLocalIntegrations(db))[0]?.externalUserId).toBe('93748974');
+  });
+
+  it('leaves the account without an identity when the lookup names nobody or throws', async () => {
+    const db = freshDb();
+    await insertIntegration(db, { provider: 'clickup' });
+    await ensureLocalAccountIdentity(db, 'clickup', undefined, async () => undefined);
+    await ensureLocalAccountIdentity(db, 'clickup', undefined, async () => {
+      throw new Error('offline');
+    });
     expect((await listLocalIntegrations(db))[0]?.externalUserId).toBeNull();
   });
 });

@@ -5,7 +5,11 @@ type LaunchRun = DbFlowRun & {
   flowRunId?: string;
 };
 
-export function buildFlowRunLaunchResult(flowId: string, run: LaunchRun) {
+/** `heldByWaitingRuns`: slots held by paused runs waiting on the user, named when a run queues. */
+const waitingNote = (held: number): string =>
+  held > 0 ? ` ${held} ${held === 1 ? 'slot is' : 'slots are'} held by runs waiting on the user.` : '';
+
+export function buildFlowRunLaunchResult(flowId: string, run: LaunchRun, heldByWaitingRuns = 0) {
   const queued = run.started_at === null && run.status === 'pending';
   const started = typeof run.started_at === 'string';
   const queuePosition = run.admission_state === 'queued' ? (run.queue_position ?? null) : null;
@@ -38,7 +42,7 @@ export function buildFlowRunLaunchResult(flowId: string, run: LaunchRun) {
       status: queued ? 'queued' : 'started',
       queuePosition,
       message: queued
-        ? `Flow run queued${queuePosition == null ? '' : ` at position #${queuePosition}`}. The user can monitor progress in the Flows page → Run history.`
+        ? `Flow run queued${queuePosition == null ? '' : ` at position #${queuePosition}`}.${waitingNote(heldByWaitingRuns)} The user can monitor progress in the Flows page → Run history.`
         : 'Flow run started. The user can monitor progress in the Flows page → Run history.',
     },
   };

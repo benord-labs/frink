@@ -7,7 +7,8 @@
  * - `validateGraph` in run mode — the shared, cloud-safe rules.
  * - Required custom-node inputs — deliberately NOT in validateGraph, which also runs server-side
  *   in Frink Cloud and must not depend on desktop filesystem state. Manifest discovery is local to
- *   this process, so the manifest-aware half lives here.
+ *   this process, as are the integration nodes derived from connection state and the cached tool
+ *   schemas, so the manifest-aware half lives here.
  */
 
 import { isCustomNodeBlockType } from '../../../../shared/lib/block-registry';
@@ -23,18 +24,19 @@ import {
   validateGraph,
 } from '../../../../shared/lib/validate-flow-graph';
 import { discoverCustomNodes } from '../../custom-nodes/discovery';
+import { listPluginNodes } from '../../integrations/plugin-node-derivation';
 
 /** Required custom-node inputs the saved graph leaves unset, phrased as run-blocking errors. */
 function collectMissingCustomNodeInputErrors(graph: FlowGraph): string[] {
   const nodes = graph.nodes.filter((n) => isCustomNodeBlockType(n.blockType));
   if (nodes.length === 0) return [];
+  // Integration nodes are derived at read time, never in `valid`; reading only `valid` let their
+  // unset required inputs through to dispatch.
+  const manifests = [...discoverCustomNodes().valid, ...listPluginNodes()];
   const inputsByType = new Map(
     // SAFETY: discovery keeps manifest inputs as unparsed JSON; the parser drops anything that is
     // not a well-formed declaration, so nothing downstream trusts the raw shape.
-    discoverCustomNodes().valid.map((m) => [
-      m.name,
-      parseManifestInputDeclarations(m.inputs as JsonValue),
-    ]),
+    manifests.map((m) => [m.name, parseManifestInputDeclarations(m.inputs as JsonValue)]),
   );
   return nodes.flatMap((node) => {
     const missing = findMissingRequiredCustomNodeInputs(

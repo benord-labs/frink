@@ -174,9 +174,10 @@ describe('packWebhookTriggerConditions', () => {
 });
 
 describe('defaultWebhookAssignee', () => {
-  it('starts a Shortcut story rule on anyone and every other event on me', () => {
+  it('starts a Shortcut story rule and a ClickUp assignee change on anyone, every other event on me', () => {
     expect(defaultWebhookAssignee('story_assigned')).toBe('anyone');
     expect(defaultWebhookAssignee('story_created')).toBe('anyone');
+    expect(defaultWebhookAssignee('task_assignee_changed')).toBe('anyone');
     expect(defaultWebhookAssignee('task_assigned')).toBe('me');
     expect(defaultWebhookAssignee('issue_opened')).toBe('me');
   });

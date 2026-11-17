@@ -8,6 +8,7 @@ import type { SelectedTextContext } from '../../lib/queue-utils';
 import type { AgentsMentionsEditorHandle } from '../../mentions';
 import type { MessageTokenData } from '../../ui/agent-context-indicator';
 import type { IsolatedChatToolRegistry } from '../../ui/agent-tool-registry';
+import type { UnauthAccountForSend } from './utils';
 
 /**
  * Props that active-chat passes unchanged through every isolated-chat layer, shared so the
@@ -40,7 +41,7 @@ export type IsolatedChatSharedProps = {
   showChatRetryControl: boolean;
   retryInFlight: boolean;
   onRetryChat: () => void;
-  /** null when the sub-chat has no session to resume — the failed group renders Retry alone. */
+  /** Continues a failed turn; null with no session to resume, so the row reads Retry. */
   onCarryOnChat: (() => void) | null;
   chatRetryTooltipText: string | null;
 };
@@ -64,9 +65,7 @@ export type ChatViewInnerProps = {
   sandboxSetupStatus?: 'cloning' | 'ready' | 'error';
   sandboxSetupError?: string;
   onRetrySetup?: () => void;
-  sandboxId?: string;
   projectPath?: string;
-  /** UUID of the project this chat is associated with (used for @briefing mentions) */
   projectId?: string | null;
   /** Current git branch when chat has a workspace (for subtle context bar under input) */
   currentBranch?: string | null;
@@ -99,7 +98,7 @@ export type ChatViewInnerProps = {
   /** Refetch execution account after error (passed to composer retry control). */
   onRetryResolvedAccount?: () => void;
   /** When account exists but is not authenticated, surfaces the reconnect CTA. Null when no account is configured. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
 };
 
 /**
@@ -113,7 +112,6 @@ export type ChatViewProps = {
   selectedTeamImageUrl?: string;
   isMobileFullscreen?: boolean;
   onBackToChats?: () => void;
-  onOpenPreview?: () => void;
   onOpenDiff?: () => void;
   onOpenTerminal?: () => void;
   /** When in split view, the 0-based index of this pane. undefined = not in split view. */
@@ -148,9 +146,7 @@ export type ComposerForwardedProps = {
   parentChatId: string;
   teamId?: string;
   repository?: string;
-  sandboxId?: string;
   projectPath?: string;
-  /** UUID of the project this chat is associated with (used for @briefing mentions) */
   projectId?: string | null;
   changedFiles: SubChatFileChange[];
   firstQueueItemId?: string;

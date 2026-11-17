@@ -15,6 +15,7 @@
  */
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { captureMainMessage } from '../../sentry/init';
 import type {
   McpClientContext,
@@ -145,6 +146,8 @@ export async function fetchMcpToolDescriptorsStdio(
     serverName,
     operationTimeoutMs: MCP_OPERATION_TIMEOUT_MS,
   };
+  // The spawn takes the login-shell PATH (npx, uvx...); a probe right after launch must not race it.
+  await ensureLoginShellEnv();
   const outcome = await withMcpClient(
     context,
     () => createStdioTransport(config),

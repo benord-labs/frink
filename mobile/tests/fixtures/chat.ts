@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test';
 import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
 import type { AppState } from './app';
 import { chatFixture } from './data';
+import { openHistory } from './navigation';
 
 /** The fixture chat, idle unless asked otherwise, with any fields replaced. */
 export function conversation(
@@ -11,32 +12,11 @@ export function conversation(
   return { ...chatFixture(activity), ...overrides };
 }
 
-/**
- * Opens a chat as a deep link would: through the navigator the tab bar already holds, so these
- * tests don't depend on the list screens that normally lead here.
- */
-export async function openChat(
-  page: Page,
-  params: { id: string; subChatId?: string; decisionTarget?: { type: string; id: string } } = {
-    id: 'chat-1',
-  },
-) {
-  await page.getByTestId('tab-queue').waitFor();
-  await page.evaluate((route) => {
-    const element = document.querySelector('[data-testid="tab-queue"]') as unknown as Record<
-      string,
-      { memoizedProps?: { navigation?: { navigate?: (...args: unknown[]) => void } }; return: unknown }
-    >;
-    const key = Object.keys(element).find((name) => name.startsWith('__reactFiber$'))!;
-    let fiber = element[key] as (typeof element)[string] | null;
-    while (fiber) {
-      const navigate = fiber.memoizedProps?.navigation?.navigate;
-      if (navigate) return navigate('Chat', route);
-      fiber = fiber.return as typeof fiber;
-    }
-    throw new Error('No navigator found above the tab bar');
-  }, params);
-  await expect(page.getByTestId('chat-transcript')).toBeVisible();
+/** Opens a conversation through the same History row the reader uses. */
+export async function openChat(page: Page, { id = 'chat-1' } = {}) {
+  await openHistory(page);
+  await page.getByTestId(`chat-row-${id}`).click();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
 }
 
 /**

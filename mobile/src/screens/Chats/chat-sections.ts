@@ -24,3 +24,33 @@ export function chatSections(chats: MobileChatSummary[]): ChatSection[] {
   }
   return [...sections.values()];
 }
+
+/** History follows each chat's last activity, grouped by the phone's local calendar day. */
+export function recentSections(chats: MobileChatSummary[], now = new Date()): ChatSection[] {
+  const today = now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const sections = new Map<string, ChatSection>();
+  const ordered = [...chats].sort(
+    (a, b) => Date.parse(b.lastActiveAt) - Date.parse(a.lastActiveAt),
+  );
+  for (const chat of ordered) {
+    const date = new Date(chat.lastActiveAt);
+    const key = date.toDateString();
+    if (!sections.has(key)) {
+      const title =
+        key === today
+          ? 'Today'
+          : key === yesterday.toDateString()
+            ? 'Yesterday'
+            : date.toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+              });
+      sections.set(key, { key, title, projectId: null, data: [] });
+    }
+    sections.get(key)!.data.push(chat);
+  }
+  return [...sections.values()];
+}

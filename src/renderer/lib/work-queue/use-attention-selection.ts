@@ -14,10 +14,11 @@ export function useAttentionSelection(tasks: ReadonlyArray<{ id: string }>): Att
   const requestedTaskExists = tasks.some((task) => task.id === requestedTaskId);
   const selectedTaskId = requestedTaskExists ? requestedTaskId : (tasks[0]?.id ?? null);
 
+  // Pin what the spotlight shows, so an item arriving on a later poll never replaces it uninvited.
   useEffect(() => {
-    if (requestedTaskId === null || requestedTaskExists) return;
+    if (requestedTaskExists) return;
     setRequestedTaskId(selectedTaskId);
-  }, [requestedTaskExists, requestedTaskId, selectedTaskId]);
+  }, [requestedTaskExists, selectedTaskId]);
 
   useLayoutEffect(() => {
     if (!focusPromotedTaskRef.current) return;

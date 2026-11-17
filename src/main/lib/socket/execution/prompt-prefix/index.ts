@@ -8,4 +8,6 @@
  * dispatch.
  */
 export { applyApprovedPlanContextToPrompt } from './approved-plan-prompt';
-export { formatPromptWithHistory } from './prompt-history';
+export { codexComposerContext, isPersonAuthored, projectComposerContext } from './composer-context';
+export { formatPromptWithHistory, replaceCarriedWithHistory } from './prompt-history';
+export { carryUndeliveredMessages, forgetUndeliveredOnClear } from './undelivered-messages';

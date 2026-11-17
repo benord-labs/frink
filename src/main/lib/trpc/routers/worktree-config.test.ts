@@ -1,7 +1,9 @@
+import { execSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { canInitGit } from '../../test-utils';
 
 const localProjectGetMock = vi.fn();
 
@@ -141,4 +143,33 @@ describe('worktreeConfigRouter', () => {
       'setup-worktree': ['bun install'],
     });
   });
+
+  // The preview is the only way a user sees what the copy will do, so it must reach the shared
+  // resolver with the project's path and hand back its result unchanged.
+  it.skipIf(!canInitGit)(
+    'previews the ignored files the next worktree receives and saves the switch',
+    async () => {
+      const dir = await createProjectWithConfig({});
+      execSync('git init -q -b main', { cwd: dir, stdio: 'pipe' });
+      await writeFile(join(dir, '.gitignore'), '.env*\n.frink/\n', 'utf-8');
+      await writeFile(join(dir, '.env.local'), 'A=1\n', 'utf-8');
+
+      const caller = await createCaller();
+      const preview = await caller.includePreview({ projectId: 'local-1' });
+
+      expect(preview).toEqual({
+        source: 'default',
+        files: ['.env.local'],
+        skipped: [],
+        overLimit: 0,
+        enabled: true,
+      });
+
+      await caller.setIncludeEnabled({ projectId: 'local-1', enabled: false });
+
+      expect(await caller.includePreview({ projectId: 'local-1' })).toMatchObject({
+        enabled: false,
+      });
+    },
+  );
 });

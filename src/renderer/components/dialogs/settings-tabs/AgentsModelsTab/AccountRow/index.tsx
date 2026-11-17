@@ -14,7 +14,13 @@ import {
   type AccountType,
   shouldUseInlineCredentialEdit,
 } from '../auth-flow-utils';
-import { PROVIDER_NAME, ProviderTile } from '../ProviderTile';
+import {
+  AI_PROVIDERS,
+  isInstalledAgent,
+  type PassthroughSource,
+} from '../../../../../../shared/lib/ai-providers';
+import { ProviderPreviewTag } from '../../../../ProviderPreviewTag';
+import { ProviderTile } from '../ProviderTile';
 import { ApiKeyEditForm } from './ApiKeyEditForm';
 
 type Props = {
@@ -28,11 +34,10 @@ type Props = {
     isApiKey?: boolean;
     type?: AccountType;
     /**
-     * Credential storage model. `claude-passthrough` / `codex-passthrough` rows
-     * live only on this device — deleting them must NOT tombstone the
-     * (cloud-shared) account on other machines. See `AccountsList.handleDelete`.
+     * Credential storage model. Passthrough rows live only on this device: deleting one must
+     * NOT tombstone the cloud-shared account on other machines (see `AccountsList.handleDelete`).
      */
-    source?: 'api-key' | 'claude-passthrough' | 'codex-passthrough';
+    source?: 'api-key' | PassthroughSource;
   };
   isEditing?: boolean;
   isEditingRename?: boolean;
@@ -49,18 +54,22 @@ type Props = {
 
 /** The one line under the name: which provider, and who is signed in or what is missing. */
 function accountDetail(account: Props['account'], type: AccountType, isApiKey: boolean): string {
+  // An agent run from the user's own install has no sign-in of its own here.
+  const installed = isInstalledAgent(AI_PROVIDERS[type]);
   let detail: string;
   if (isApiKey) detail = account.isAuthenticated ? 'API key' : 'Needs an API key';
-  else if (!account.isAuthenticated) detail = 'Signed out';
+  else if (!account.isAuthenticated)
+    detail = installed ? 'Not found on this computer' : 'Signed out';
   else if (account.expectedEmail && account.expectedEmail !== account.label)
     detail = account.expectedEmail;
-  else detail = 'Signed in on this computer';
-  return `${PROVIDER_NAME[type]} · ${detail}`;
+  else detail = installed ? 'Installed on this computer' : 'Signed in on this computer';
+  return `${AI_PROVIDERS[type].name} · ${detail}`;
 }
 
 function AccountActionsMenu({
   account,
   isApiKeyAccount,
+  signInLabel,
   actionsRef,
   onSetDefault,
   onAuthenticate,
@@ -69,6 +78,7 @@ function AccountActionsMenu({
 }: {
   account: Props['account'];
   isApiKeyAccount: boolean;
+  signInLabel: string;
   actionsRef: React.RefObject<HTMLButtonElement | null>;
   onSetDefault: (id: string) => void;
   onAuthenticate: (account: AccountAuthSelection) => void;
@@ -97,7 +107,7 @@ function AccountActionsMenu({
         )}
         {account.isAuthenticated && (
           <DropdownMenuItem onClick={() => onAuthenticate(account)}>
-            {isApiKeyAccount ? 'Replace key' : 'Sign in again'}
+            {isApiKeyAccount ? 'Replace key' : signInLabel}
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onClick={() => onRenameClick(account.id)}>Rename</DropdownMenuItem>
@@ -196,11 +206,13 @@ export const AccountRow = memo(function AccountRow({
   onCancelRename,
   renamePending = false,
 }: Props) {
-  const accountType: AccountType = account.type === 'codex' ? 'codex' : 'claude-code';
+  const accountType = account.type ?? 'claude-code';
   const isApiKeyAccount = shouldUseInlineCredentialEdit({
     isApiKey: account.isApiKey,
     type: accountType,
   });
+  // An agent run from the user's own install has nothing to sign in to.
+  const signInLabel = isInstalledAgent(AI_PROVIDERS[accountType]) ? 'Reconnect' : 'Sign in again';
   const actionsRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [renameDraft, setRenameDraft] = useState(account.label);
@@ -220,7 +232,10 @@ export const AccountRow = memo(function AccountRow({
       <div className="flex items-center gap-3 px-4 py-3">
         <ProviderTile type={accountType} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{account.label}</p>
+          <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <span className="truncate">{account.label}</span>
+            <ProviderPreviewTag provider={accountType} />
+          </p>
           <p
             className={cn(
               'truncate text-sm',
@@ -233,7 +248,7 @@ export const AccountRow = memo(function AccountRow({
 
         {!account.isAuthenticated && !isEditing ? (
           <Button size="sm" variant="secondary" onClick={() => onAuthenticate(account)}>
-            {isApiKeyAccount ? 'Add key' : 'Sign in again'}
+            {isApiKeyAccount ? 'Add key' : signInLabel}
           </Button>
         ) : account.isDefault ? (
           <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -245,6 +260,7 @@ export const AccountRow = memo(function AccountRow({
         <AccountActionsMenu
           account={account}
           isApiKeyAccount={isApiKeyAccount}
+          signInLabel={signInLabel}
           actionsRef={actionsRef}
           onSetDefault={onSetDefault}
           onAuthenticate={onAuthenticate}

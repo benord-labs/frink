@@ -258,6 +258,15 @@ export function pluginConnectAction(
   };
 }
 
+/** Whether example prompts can run in chat (every declared grant live); `null` until the tools state settles. */
+export function promptsUnlocked(plugin: ResolvedPlugin, tools: PluginToolsState): boolean | null {
+  const { definition } = plugin;
+  const liveAccount = plugin.connections.some((connection) => connection.isActive);
+  if (!hasChatMcp(definition)) return liveAccount;
+  if (tools === 'unknown') return null;
+  return tools === 'connected' && (isChatOnlyPlugin(definition) || liveAccount);
+}
+
 const ONE_SIGN_IN = 'One sign-in in your browser.';
 
 /** The sign-ins the chain will still run, from the declared grants and what is missing; `null` when none is owed. */

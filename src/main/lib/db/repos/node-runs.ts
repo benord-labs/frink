@@ -13,7 +13,12 @@ import {
   or,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
-import { RESTART_INTERRUPTION_REASON, SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
+import { z } from 'zod';
+import {
+  type NodeOutput,
+  RESTART_INTERRUPTION_REASON,
+  SUPERSEDED_NODE_STATUS,
+} from '../../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../index';
 import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, tasks } from '../schema';
@@ -57,6 +62,31 @@ export async function createNodeRun(db: Db, input: NewNodeRun): Promise<NodeRun>
 export async function getNodeRun(db: Db, id: string): Promise<NodeRun | null> {
   const [row] = await db.select().from(nodeRuns).where(eq(nodeRuns.id, id)).limit(1);
   return row ?? null;
+}
+
+const parkedOutputSchema = z.object({
+  outputs: z.record(z.string(), z.unknown()).catch({}),
+  artifacts: z.custom<NodeOutput['artifacts']>(Array.isArray).catch([]),
+  durationMs: z.number().catch(0),
+  signal: z.unknown().optional(),
+});
+
+/** What a parked node stored; `signalled` is false for a pause the agent did not ask for. */
+export type ParkedOutput = Pick<NodeOutput, 'outputs' | 'artifacts' | 'durationMs'> & {
+  signalled: boolean;
+};
+
+/** Synchronous, so a caller can read the stored output and write over it in one tick. */
+export function readParkedOutput(db: Db, id: string): ParkedOutput {
+  const row = db
+    .select({ nodeOutput: nodeRuns.nodeOutput })
+    .from(nodeRuns)
+    .where(eq(nodeRuns.id, id))
+    .get();
+  const parsed = parkedOutputSchema.safeParse(row?.nodeOutput);
+  if (!parsed.success) return { outputs: {}, artifacts: [], durationMs: 0, signalled: false };
+  const { signal, ...stored } = parsed.data;
+  return { ...stored, signalled: signal != null };
 }
 
 export async function listNodeRunsForFlowRun(db: Db, flowRunId: string): Promise<NodeRun[]> {

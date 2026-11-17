@@ -1,3 +1,4 @@
+import type { BackgroundTaskSummary } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { createTaskStopHook, forgetPendingTask } from './task-stop-hook';
 
@@ -369,6 +370,52 @@ describe('createTaskStopHook', () => {
     expect(hook.stoppedSinceReset).toBe(false);
   });
 
+  // ── carryForwardPendingWork(): a Stop-less turn after a reset leaves the listed work running ──
+  const workflow = { id: 'w1', type: 'workflow', status: 'running', description: 'build' };
+
+  it('carries the last Stop’s work across a reset when the next turn ends with no Stop', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    expect(hook.lastPendingWork).toBeNull(); // mid-turn readers see the turn's own (empty) state
+
+    const carried = { backgroundTasks: [workflow], sessionCrons: [] };
+    expect(hook.carryForwardPendingWork()).toEqual(carried);
+    expect(hook.lastPendingWork).toEqual(carried); // restored, so every later reader agrees
+  });
+
+  it('keeps carrying across several Stop-less turns in a row', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    hook.reset();
+    hook.reset();
+    expect(hook.carryForwardPendingWork()?.backgroundTasks).toEqual([workflow]);
+  });
+
+  it('lets an empty Stop after the reset win: the work is over', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    await hook(idleStop());
+    expect(hook.carryForwardPendingWork()).toBeNull();
+    hook.reset(); // and nothing is set aside for the turn after
+    expect(hook.carryForwardPendingWork()).toBeNull();
+  });
+
+  it('lets a newer Stop replace the carried list', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    await hook(stopInput({ background_tasks: [bgTask] }));
+    expect(hook.carryForwardPendingWork()?.backgroundTasks).toEqual([bgTask]);
+  });
+
+  it('carries nothing on a fresh hook', () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    expect(hook.carryForwardPendingWork()).toBeNull();
+  });
+
   it('abort wins over pending work: allows with onAllow', async () => {
     const onAllow = vi.fn();
     const hook = createTaskStopHook({ hasSignal: () => false, isAborted: () => true, onAllow });
@@ -442,7 +489,7 @@ describe('createTaskStopHook', () => {
 
   it('drops every dead follower but leaves unrelated live work waiting', async () => {
     // The reported shape: three abandoned followers stacked up beside one real command.
-    const real = shell('qavis1', 'qavis qa --diff origin/main');
+    const real = shell('build1', 'bun run build --watch');
     const pending = await pendingAfter([
       follower('t1', 'gone1'),
       follower('t2', 'gone2'),
@@ -570,5 +617,54 @@ describe('forgetPendingTask', () => {
 
   it('reads as nothing pending once the last item is gone, like a Stop would', () => {
     expect(forgetPendingTask({ backgroundTasks: [shell('a')], sessionCrons: [] }, 'a')).toBeNull();
+  });
+});
+
+describe('createTaskStopHook defersGoalCheck', () => {
+  const task = (type: string): BackgroundTaskSummary => ({
+    id: `${type}-1`,
+    type,
+    status: 'running',
+    description: '',
+  });
+  const defersFor = async (tasks: BackgroundTaskSummary[]) => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: tasks }));
+    return hook.defersGoalCheck;
+  };
+
+  // Labels from Claude Code 2.1.289's Stop-input table. Idle teammates and long-running cloud
+  // sessions do not defer in the CLI, but the Stop input cannot tell them apart, so they count.
+  it.each(['shell', 'subagent', 'workflow', 'teammate', 'cloud session'])(
+    'defers the goal check for a running %s',
+    async (type) => expect(await defersFor([task(type)])).toBe(true),
+  );
+
+  it.each(['monitor', 'MCP task', 'dream'])('evaluates the goal beside a %s', async (type) =>
+    expect(await defersFor([task(type)])).toBe(false),
+  );
+
+  it('evaluates the goal when only a scheduled wake is pending', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [], session_crons: [{ id: 'c1' }] }));
+    expect(hook.defersGoalCheck).toBe(false);
+  });
+
+  it('counts a finished follower the wait drops, since the CLI still runs it', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    const tasksDir = `/tmp/claude-501/-Users-x-repo/${SESSION}/tasks`;
+    const follower = { ...task('shell'), command: `tail -f ${tasksDir}/ship9.output` };
+    await hook(stopInput({ background_tasks: [follower] }));
+    expect(hook.lastPendingWork).toBeNull();
+    expect(hook.defersGoalCheck).toBe(true);
+  });
+
+  it('records the stop before its first await, and forgets it on reset', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    const stopping = hook(stopInput({ background_tasks: [task('workflow')] }));
+    expect(hook.defersGoalCheck).toBe(true);
+    await stopping;
+    hook.reset();
+    expect(hook.defersGoalCheck).toBe(false);
   });
 });

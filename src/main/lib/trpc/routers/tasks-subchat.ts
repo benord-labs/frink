@@ -4,6 +4,11 @@
  */
 
 import { z } from 'zod';
+import {
+  type RecoveryKind,
+  type RunRecovery,
+  recoveryKindSchema,
+} from '../../../../shared/types/flow-run/resume';
 import { taskResultSchema, type TaskResultRecord } from '../../../../shared/types/task-result';
 import { getDatabase } from '../../db';
 import { getActiveFlowRunForSubChat, getFlowRun } from '../../db/repos/flow-runs';
@@ -12,8 +17,10 @@ import {
   getFlowChatForNodeRun,
   getLatestFlowTaskForSubChat,
   getTaskById,
+  parseResultRecord,
 } from '../../db/repos/tasks';
 import type { Task } from '../../db/schema';
+import type { SettledRun } from '../../flows/transitions';
 import { publicProcedure } from '../index';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -32,24 +39,165 @@ function parseSurfaceTask(task: Task | null): SurfaceTask | null {
   };
 }
 
-/** A flow task stamped with its run's status: TaskAcceptBar accepts only on a COMPLETED run and
- * TaskControls keys Retry / Carry on off it, batch member or not. Non-flow tasks are unstamped. */
-export type TaskWithRunOutcome = Task & { flowRunStatus?: string };
+/** A flow task stamped with its run's status: TaskAcceptBar accepts only on a COMPLETED run, batch
+ * member or not. Non-flow tasks are unstamped. `recoveryKind` is set only on a stopped task. */
+export type TaskWithRunOutcome = Task & {
+  flowRunStatus?: string;
+  recoveryKind?: RecoveryKind;
+  /** Its Retry re-runs a started non-agent step, so it confirms first. */
+  confirmSideEffects?: boolean;
+  /** The run's stopped step this task recovers through, when that is not the task itself. */
+  recoveryNodeRunId?: string;
+};
+
+type RecoveryCandidate = Pick<Task, 'id' | 'status' | 'flowRunId' | 'result'> & {
+  flowRunStatus?: string | null;
+  /** The queue's derived status; `interrupted` marks a run a restart cancelled. */
+  effectiveStatus?: string;
+};
+
+const isStoppedTask = (c: RecoveryCandidate) =>
+  c.status === 'failed' || c.status === 'needs_attention';
+
+/** The run a row recovers through when its own task is not the stopped step: a restart cancelled
+ * the run, or the failed run stopped on a later step without a task (non-agent). */
+function stoppedRunOf(c: RecoveryCandidate): SettledRun | undefined {
+  if (!c.flowRunId) return undefined;
+  if (c.effectiveStatus === 'interrupted') return { id: c.flowRunId, status: 'cancelled' };
+  const failedLater = c.effectiveStatus === 'failed' && !isStoppedTask(c);
+  return failedLater ? { id: c.flowRunId, status: 'failed' } : undefined;
+}
+
+/** Each such row's recovery: its run's stopped step, as the run history shows it. */
+async function stoppedRunRecoveries(
+  db: Db,
+  candidates: readonly RecoveryCandidate[],
+): Promise<Map<string, RunRecovery>> {
+  const runOf = new Map<string, SettledRun>();
+  for (const c of candidates) {
+    const run = stoppedRunOf(c);
+    if (run) runOf.set(c.id, run);
+  }
+  if (runOf.size === 0) return new Map();
+  // One batched lookup for the page's runs, however many of them stopped.
+  const runs = new Map([...runOf.values()].map((run) => [run.id, run]));
+  const { resolveSettledRunRecoveries } = await import('../../flows/rerun/recovery-kind');
+  const byRun = resolveSettledRunRecoveries(db, [...runs.values()]);
+  const recoveries = new Map<string, RunRecovery>();
+  for (const [taskId, run] of runOf) {
+    const step = byRun.get(run.id);
+    if (step) recoveries.set(taskId, step);
+  }
+  return recoveries;
+}
+
+/** Each stopped task's one recovery; `runSteps` holds the rows that recover through their run's
+ * stopped step. */
+type TaskRecoveries = { kinds: Map<string, RecoveryKind>; runSteps: Map<string, RunRecovery> };
+
+/** The one recovery action each stopped (failed, parked, interrupted) task offers, if any. */
+export async function stoppedTaskRecoveries(
+  db: Db,
+  candidates: readonly RecoveryCandidate[],
+): Promise<TaskRecoveries> {
+  // A run still in flight has no recovery to carry out: it pauses or settles first.
+  const stopped = candidates.filter(
+    (t) =>
+      isStoppedTask(t) &&
+      t.effectiveStatus !== 'interrupted' &&
+      t.flowRunStatus !== 'pending' &&
+      t.flowRunStatus !== 'running',
+  );
+  // Dynamic import mirrors the tasks router's flows uses (avoids a static import cycle).
+  const { resolveRecoveryKinds } = await import('../../flows/rerun/recovery-kind');
+  const kinds = resolveRecoveryKinds(db, stopped);
+  const runSteps = await stoppedRunRecoveries(db, candidates);
+  for (const [id, step] of runSteps) kinds.set(id, step.kind);
+  return { kinds, runSteps };
+}
+
+/** Stamps each row with its recovery, as the Work Queue lists it; `recoveryNodeRunId` names the
+ * attempt a run-level recovery acts on, so a confirm asked about it never carries to the next. */
+export async function withStoppedTaskRecoveries<T extends RecoveryCandidate>(
+  db: Db,
+  items: readonly T[],
+) {
+  const { kinds, runSteps } = await stoppedTaskRecoveries(db, items);
+  return items.map((item) => ({
+    ...item,
+    recoveryKind: kinds.get(item.id),
+    confirmSideEffects: runSteps.get(item.id)?.confirmSideEffects === true,
+    recoveryNodeRunId: runSteps.get(item.id)?.nodeRunId,
+  }));
+}
+
+/** One task's recovery by the Work Queue's rule: a cancelled run reads as its interrupted row (a
+ * user Stop recovers nothing) and a failed run recovers through its stopped step. */
+function taskRecoveries(db: Db, outcome: TaskWithRunOutcome): Promise<TaskRecoveries> {
+  const { flowRunStatus } = outcome;
+  const effectiveStatus = flowRunStatus === 'cancelled' ? 'interrupted' : flowRunStatus;
+  return stoppedTaskRecoveries(db, [{ ...outcome, effectiveStatus }]);
+}
+
+async function stampRecovery(db: Db, outcome: TaskWithRunOutcome): Promise<void> {
+  const recovery = await taskRecoveries(db, outcome);
+  const step = recovery.runSteps.get(outcome.id);
+  if (step) return stampRunStep(db, outcome, step);
+  const recoveryKind = recovery.kinds.get(outcome.id);
+  if (recoveryKind) outcome.recoveryKind = recoveryKind;
+}
+
+/** A run-level recovery shows in the chat its stopped step ran in, or in every chat of the run
+ * when that step has no chat (non-agent); a fan-out's other lanes run in chats of their own. */
+async function stampRunStep(db: Db, outcome: TaskWithRunOutcome, step: RunRecovery): Promise<void> {
+  const stepChat = await getFlowChatForNodeRun(db, step.nodeRunId);
+  const ownSubChatId = parseResultRecord(outcome.result).subChatId;
+  if (stepChat?.subChatId && stepChat.subChatId !== ownSubChatId) return;
+  outcome.recoveryKind = step.kind;
+  outcome.recoveryNodeRunId = step.nodeRunId;
+  if (step.confirmSideEffects) outcome.confirmSideEffects = true;
+}
+
+async function getTaskWithRunStatus(db: Db, taskId: string): Promise<TaskWithRunOutcome | null> {
+  const task = await getTaskById(db, taskId);
+  if (!task) return null;
+  const run = task.flowRunId ? await getFlowRun(db, task.flowRunId) : null;
+  const outcome: TaskWithRunOutcome = { ...task };
+  if (run) outcome.flowRunStatus = run.status;
+  return outcome;
+}
 
 export async function getTaskWithRunOutcome(
   db: Db,
   taskId: string,
 ): Promise<TaskWithRunOutcome | null> {
-  const task = await getTaskById(db, taskId);
-  if (!task?.flowRunId) return task;
-  const run = await getFlowRun(db, task.flowRunId);
-  return run ? { ...task, flowRunStatus: run.status } : task;
+  const outcome = await getTaskWithRunStatus(db, taskId);
+  if (outcome) await stampRecovery(db, outcome);
+  return outcome;
+}
+
+/** tasks.recover input; `recoveryNodeRunId` pins the step attempt a confirmation asked about. */
+export const recoverTaskInputSchema = z.object({
+  taskId: z.string().min(1),
+  kind: recoveryKindSchema,
+  recoveryNodeRunId: z.string().min(1).optional(),
+});
+
+/** Refuses a recovery pinned to a step attempt that is no longer the one the task recovers through,
+ * so a confirmation never carries over to a newer, unconfirmed step. */
+export async function assertRecoveryStep(db: Db, taskId: string, expected?: string): Promise<void> {
+  if (expected === undefined) return;
+  const outcome = await getTaskWithRunStatus(db, taskId);
+  const step = outcome && (await taskRecoveries(db, outcome)).runSteps.get(taskId);
+  if (step?.nodeRunId === expected) return;
+  const { recoveryChangedError } = await import('../../flows/rerun/recovery-kind');
+  throw recoveryChangedError();
 }
 
 export const taskSubChatProcedures = {
   /**
-   * The ONE task every chat-level RunStatusRow acts on — accept (TaskAcceptBar) and Retry /
-   * Carry-on (TaskControls) both resolve through this, so their rows stay mutually exclusive by
+   * The ONE task every chat-level RunStatusRow acts on — accept (TaskAcceptBar) and recovery
+   * (TaskControls, keyed on `recoveryKind`) both resolve through this, so their rows stay mutually exclusive by
    * construction (one task, disjoint status branches). Resolution: the NEWEST flow task of the
    * sub-chat (terminal included — a later node's failed task must win over the chat's pinned
    * first-agent task, which chats.taskId freezes at link time), falling back to the pinned task

@@ -15,7 +15,13 @@ import { reservedPluginIdForNodeName } from '../integrations/plugin-nodes';
 import { TRIGGER_FIELD_ALIASES } from '../integrations/trigger-field-aliases';
 import { isCustomNodeBlockType } from './block-registry';
 import { resolveFanOutStructure } from './compute-fan-out-body-chain';
-import { getTemplateRenderedFields } from './flows/template-rendered-fields';
+import type { CustomNodeInputsByType } from './flows/custom-node-required-inputs';
+import {
+  customNodeNonFlowRootWarning,
+  extractTemplatePaths,
+  nonRenderedFieldWarnings,
+} from './flows/template-field-warnings';
+import { getTemplateRenderedStrings } from './flows/template-rendered-fields';
 import {
   CUSTOM_NODE_FALLBACK_OUTPUT_SCHEMA,
   LOOP_CONTEXT_SCHEMA,
@@ -28,7 +34,6 @@ import {
   type TriggerFieldSchema,
 } from './output-schemas';
 import { findShellTemplateWarnings, type ShellWarningFields } from './shell-template/warnings';
-import { TEMPLATE_VARIABLE_PATTERN } from './template-constants';
 import type { FlowEdge, FlowGraph, FlowNode } from './validate-flow-graph';
 
 export type NodeVariables = {
@@ -76,18 +81,6 @@ export type TemplateVariableWarning = ShellWarningFields & {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Extract `{{path}}` placeholder paths from a template string. */
-function extractTemplatePaths(template: string): string[] {
-  if (typeof template !== 'string') return [];
-  const regex = new RegExp(TEMPLATE_VARIABLE_PATTERN, 'g');
-  const paths: string[] = [];
-  for (const match of template.matchAll(regex)) {
-    const path = match[1]?.trim();
-    if (path) paths.push(path);
-  }
-  return paths;
-}
 
 /** Build adjacency maps for efficient graph traversal. */
 function buildAdjacency(edges: FlowEdge[]): {
@@ -476,7 +469,8 @@ export function computeNodeVariables(
  *
  * Only scans fields that are actually template-rendered at runtime:
  *   run_command.command, start_task.label, start_task.branch,
- *   agent.instructions, chat_reply.messageTemplate, and every top-level string custom-node input
+ *   agent.instructions, chat_reply.messageTemplate, http_request url/headers/body, and every
+ *   top-level string custom-node input
  *
  * Returns advisory warnings — never hard errors. Unknown fields on run_command
  * or custom node predecessors are silently allowed (JSON stdout is dynamic).
@@ -484,6 +478,10 @@ export function computeNodeVariables(
 export function validateFlowTemplateVariables(
   graph: FlowGraph,
   precomputedNodeVariables?: Record<string, NodeVariables>,
+  options?: {
+    /** Manifest input declarations by custom-node blockType: `"template": false` inputs are not rendered. */
+    customNodeInputs?: CustomNodeInputsByType;
+  },
 ): TemplateVariableWarning[] {
   const { nodes, edges } = graph;
   const warnings: TemplateVariableWarning[] = findShellTemplateWarnings(nodes);
@@ -496,51 +494,19 @@ export function validateFlowTemplateVariables(
   const fanOutBodyMembers = computeFanOutBodyMembers(nodes);
   const nodeVariables = precomputedNodeVariables ?? computeNodeVariables(graph);
 
-  // Warn about templates in non-rendered fields (e.g. run_command.customPath)
-  for (const node of nodes) {
-    const config = node.config;
-    if (!config || typeof config !== 'object') continue;
-
-    for (const [field, value] of Object.entries(config)) {
-      if (typeof value !== 'string') continue;
-      const paths = extractTemplatePaths(value);
-      if (paths.length === 0) continue;
-
-      const renderedFields = getTemplateRenderedFields(node.blockType, node.config);
-      if (renderedFields.includes(field)) continue;
-
-      // Field has template syntax but is NOT template-rendered
-      for (const path of paths) {
-        const specialNote =
-          node.blockType === 'run_command' && field === 'customPath'
-            ? 'customPath is intentionally not template-rendered (path traversal prevention)'
-            : `"${field}" is not template-rendered for ${node.blockType} nodes`;
-
-        warnings.push({
-          nodeId: node.id,
-          field,
-          placeholder: `{{${path}}}`,
-          message: `Template variable {{${path}}} in config field "${field}" will not be resolved at runtime — ${specialNote}.`,
-        });
-      }
-    }
-  }
+  warnings.push(...nonRenderedFieldWarnings(nodes, options?.customNodeInputs));
 
   // Validate template variables in rendered fields
   for (const node of nodes) {
-    const renderedFields = getTemplateRenderedFields(node.blockType, node.config);
-    if (renderedFields.length === 0) continue;
-
-    const config = node.config;
-    if (!config || typeof config !== 'object') continue;
-
     const vars = nodeVariables[node.id];
     if (!vars) continue;
 
-    for (const field of renderedFields) {
-      const value = (config as Record<string, unknown>)[field];
-      if (typeof value !== 'string') continue;
-
+    const declarations = options?.customNodeInputs?.get(node.blockType);
+    for (const { field, value } of getTemplateRenderedStrings(
+      node.blockType,
+      node.config,
+      declarations,
+    )) {
       const paths = extractTemplatePaths(value);
 
       for (const path of paths) {
@@ -562,8 +528,11 @@ export function validateFlowTemplateVariables(
               message: `{{${path}}} is only available in agent block instructions. It will not resolve in ${node.blockType} nodes.`,
             });
           }
+        } else {
+          const warning = customNodeNonFlowRootWarning(node, field, path);
+          if (warning) warnings.push(warning);
         }
-        // Other unknown roots are handled gracefully at runtime (left as literal).
+        // Other unknown roots render empty at runtime; agent/chat text may legitimately mention {{x}}.
       }
     }
   }

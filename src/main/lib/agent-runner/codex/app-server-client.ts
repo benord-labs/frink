@@ -138,9 +138,7 @@ export type CodexInitializeResult = {
   codexHome: string;
   platformFamily: string;
   platformOs: string;
-  capabilities?: {
-    frinkHostToolPermission?: number;
-  };
+  capabilities?: { frinkHostToolPermission?: number };
 };
 
 export type CodexAppServerClientOptions = {
@@ -153,6 +151,8 @@ export type CodexAppServerClientOptions = {
   clientInfo: { name: string; version: string; title?: string };
   /** Vendor-plugin skill roots to register via `skills/extraRoots/set` at start. */
   extraSkillRoots?: string[];
+  /** Awaited before the spawn, e.g. so the server starts on the user's login-shell PATH. */
+  beforeSpawn?: () => Promise<void>;
 };
 
 /** Hard cap on the initialize handshake so a hung/wrong binary can't wedge a turn forever. */
@@ -257,6 +257,9 @@ export class CodexAppServerClient {
 
   /** Spawn `codex app-server`, perform the initialize handshake, return the result. */
   async start(): Promise<CodexInitializeResult> {
+    if (this.options.beforeSpawn) await this.options.beforeSpawn();
+    // Superseded while beforeSpawn ran (dispose() saw no child): spawning now would orphan it.
+    if (this.disposed) throw new Error('Codex app-server client was disposed before it started');
     const args = ['app-server', ...(this.options.args ?? [])];
     const child = spawn(this.options.binary, args, {
       cwd: this.options.cwd,
@@ -292,7 +295,10 @@ export class CodexAppServerClient {
     const result = (await withTimeout(
       connection.sendRequest('initialize', {
         clientInfo: this.options.clientInfo,
-        capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
+        capabilities: {
+          frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION,
+          experimentalApi: true,
+        },
       }),
       INITIALIZE_TIMEOUT_MS,
       'codex app-server did not respond to initialize (wrong binary or hung process)',

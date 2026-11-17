@@ -34,7 +34,7 @@ const state = vi.hoisted(() => ({
   writeFile: vi.fn(),
   rm: vi.fn(),
   stat: vi.fn(),
-  discoverCustomNodes: vi.fn(() => ({ nodes: [], errors: [] })),
+  discoverCustomNodes: vi.fn(() => ({ valid: [], manifestWarnings: [], errors: [] })),
   invalidateCustomNodesDiscoveryCache: vi.fn(),
 }));
 

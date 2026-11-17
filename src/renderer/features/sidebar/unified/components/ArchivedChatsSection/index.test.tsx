@@ -125,21 +125,28 @@ describe('ArchivedChatsSection', () => {
     expect(screen.queryByRole('treeitem', { name: 'beta' })).toBeNull();
   });
 
-  // Chat names routinely carry branch-ish punctuation, so the query is a literal
-  // substring, never a pattern -- "sc-1." must not behave like a wildcard.
-  it('treats regex metacharacters as literal text', () => {
+  // Chat names carry branch-ish punctuation; in a query it only separates words and is never
+  // run as a pattern, so ".*" must not behave like a wildcard.
+  it('treats punctuation as a word break, never a pattern', () => {
     const punctuated = [
       { id: 'chat-a', name: 'fix(sidebar): sc-198' },
       { id: 'chat-b', name: 'fixXsidebarY' },
     ];
 
-    renderSection({ archivedChats: punctuated, searchQuery: 'fix(sidebar)' });
+    renderSection({ archivedChats: punctuated, searchQuery: 'sc-1' });
     expect(screen.getByRole('treeitem', { name: 'fix(sidebar): sc-198' })).toBeTruthy();
     expect(screen.queryByRole('treeitem', { name: 'fixXsidebarY' })).toBeNull();
 
     cleanup();
-    renderSection({ archivedChats: punctuated, searchQuery: 'fix.sidebar.' });
+    renderSection({ archivedChats: punctuated, searchQuery: '.*' });
     expect(screen.getByText('No matches found')).toBeTruthy();
+  });
+
+  it('finds a chat despite a typo in the query', () => {
+    renderSection({ archivedChats: TWO_CHATS, searchQuery: 'alpah' });
+
+    expect(screen.getByRole('treeitem', { name: 'Alpha' })).toBeTruthy();
+    expect(screen.queryByRole('treeitem', { name: 'beta' })).toBeNull();
   });
 
   it('preserves source order when filtering', () => {

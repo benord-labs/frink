@@ -18,7 +18,7 @@ type SidebarChatUtils = {
 type BatchTaskAwareDialog = {
   open: true;
   mode: 'batch';
-  operation: 'delete_batch' | 'archive_batch';
+  operation: 'delete_batch';
   chatIds: string[];
   taskIds: string[];
   totalChats: number;
@@ -41,7 +41,7 @@ type BulkChatActionsParams = {
   deleteMutRef: { current: { mutateAsync: (input: { id: string }) => ChatMutationResult } };
   archiveMutRef: {
     current: {
-      mutateAsync: (input: { id: string; killTerminals?: boolean }) => ChatMutationResult;
+      mutateAsync: (input: { id: string }) => ChatMutationResult;
     };
   };
   moveOne: (chatId: string, targetProjectId: string | null) => Promise<void>;
@@ -97,6 +97,114 @@ export function toastPartialFailure(verb: 'Deleted' | 'Archived') {
   };
 }
 
+type ChatsBatchRunnerParams = Pick<
+  BulkChatActionsParams,
+  | 'utilsRef'
+  | 'invalidateBatchViews'
+  | 'clearPanesForChat'
+  | 'restorePaneAt'
+  | 'removeChatsFromLoadedFolders'
+  | 'syncSidebarCountsOrFullRefresh'
+  | 'setSelectedChatId'
+>;
+
+/** Runs a chat mutation over many chats, keeping split panes and every sidebar view in step. */
+function useChatsBatchRunner({
+  utilsRef,
+  invalidateBatchViews,
+  clearPanesForChat,
+  restorePaneAt,
+  removeChatsFromLoadedFolders,
+  syncSidebarCountsOrFullRefresh,
+  setSelectedChatId,
+}: ChatsBatchRunnerParams) {
+  /** Drop chats that are gone from every sidebar view, the selection and chat-scoped state. */
+  const finishChatsBatch = useCallback(
+    async (goneIds: Set<string>) => {
+      removeChatsFromLoadedFolders(goneIds);
+      try {
+        await Promise.all([
+          invalidateBatchViews(utilsRef.current),
+          syncSidebarCountsOrFullRefresh('Chats updated'),
+        ]);
+      } finally {
+        // The chats are gone whether or not the refresh worked: never leave them selected.
+        setSelectedChatId((current) => (current && goneIds.has(current) ? null : current));
+        for (const chatId of goneIds) cleanupChatScopedState(chatId);
+      }
+    },
+    [
+      removeChatsFromLoadedFolders,
+      syncSidebarCountsOrFullRefresh,
+      setSelectedChatId,
+      utilsRef,
+      invalidateBatchViews,
+    ],
+  );
+
+  /** allSettled fan-out → restore panes of failed chats → drop the rest from every sidebar view. */
+  const runChatsBatch = useCallback(
+    async (
+      chats: Array<{ id: string }>,
+      mutateOne: (chatId: string) => ChatMutationResult,
+      options?: ChatsBatchOptions,
+    ): Promise<number> => {
+      const clearedPanesByChat = new Map<string, number[]>();
+      if (options?.clearPanesBefore)
+        for (const chat of chats) clearedPanesByChat.set(chat.id, clearPanesForChat(chat.id));
+      const results = await Promise.allSettled(chats.map((chat) => mutateOne(chat.id)));
+      const succeededIds = new Set<string>();
+      results.forEach((result, index) => {
+        const chatId = chats[index]?.id;
+        if (!chatId) return;
+        if (result.status === 'fulfilled') succeededIds.add(chatId);
+        else (clearedPanesByChat.get(chatId) ?? []).forEach((pane) => restorePaneAt(pane, chatId));
+      });
+      await finishChatsBatch(succeededIds);
+      const failed = chats.length - succeededIds.size;
+      if (failed > 0) options?.onPartialFailure?.(succeededIds.size, chats.length, failed);
+      return succeededIds.size;
+    },
+    [clearPanesForChat, restorePaneAt, finishChatsBatch],
+  );
+
+  /** One mutation removes many chats at once (a project delete's FK cascade) and resolves to the ids
+   *  it really removed. Panes come back for every other chat, all of them if it throws. */
+  const runChatsAtomically = useCallback(
+    async (
+      chats: Array<{ id: string }>,
+      mutateAll: () => Promise<readonly string[]>,
+    ): Promise<void> => {
+      const clearedPanesByChat = new Map(
+        chats.map((chat) => [chat.id, clearPanesForChat(chat.id)]),
+      );
+      const restorePanes = (keep: (chatId: string) => boolean) => {
+        for (const [chatId, panes] of clearedPanesByChat)
+          if (keep(chatId)) for (const pane of panes) restorePaneAt(pane, chatId);
+      };
+      let goneIds: Set<string>;
+      try {
+        goneIds = new Set(await mutateAll());
+      } catch (error) {
+        restorePanes(() => true);
+        throw error;
+      }
+      // A chat moved to another project before the delete landed survives it.
+      restorePanes((chatId) => !goneIds.has(chatId));
+      try {
+        await finishChatsBatch(goneIds);
+      } catch (error) {
+        // The delete already committed, so a refresh failure is not a failed delete.
+        toast.warning('Deleted; refreshing sidebar', {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+    },
+    [clearPanesForChat, restorePaneAt, finishChatsBatch],
+  );
+  return { runChatsBatch, runChatsAtomically };
+}
+
 /** Delete / archive / move for many sidebar chats at once, plus the Cmd/Shift-click delete confirm. */
 export function useBulkChatActions({
   selection,
@@ -121,46 +229,15 @@ export function useBulkChatActions({
   /** One bulk archive/delete at a time: a second would hit chats the first already changed. */
   const bulkBusyRef = useRef(false);
   loadedChatsRef.current = loadedChats;
-
-  /** allSettled fan-out → restore panes of failed chats → drop the rest from every sidebar view. */
-  const runChatsBatch = useCallback(
-    async (
-      chats: Array<{ id: string }>,
-      mutateOne: (chatId: string) => ChatMutationResult,
-      options?: ChatsBatchOptions,
-    ): Promise<number> => {
-      const clearedPanesByChat = new Map<string, number[]>();
-      if (options?.clearPanesBefore)
-        for (const chat of chats) clearedPanesByChat.set(chat.id, clearPanesForChat(chat.id));
-      const results = await Promise.allSettled(chats.map((chat) => mutateOne(chat.id)));
-      const succeededIds = new Set<string>();
-      results.forEach((result, index) => {
-        const chatId = chats[index]?.id;
-        if (!chatId) return;
-        if (result.status === 'fulfilled') succeededIds.add(chatId);
-        else (clearedPanesByChat.get(chatId) ?? []).forEach((pane) => restorePaneAt(pane, chatId));
-      });
-      removeChatsFromLoadedFolders(succeededIds);
-      await Promise.all([
-        invalidateBatchViews(utilsRef.current),
-        syncSidebarCountsOrFullRefresh('Chats updated'),
-      ]);
-      setSelectedChatId((current) => (current && succeededIds.has(current) ? null : current));
-      for (const chatId of succeededIds) cleanupChatScopedState(chatId);
-      const failed = chats.length - succeededIds.size;
-      if (failed > 0) options?.onPartialFailure?.(succeededIds.size, chats.length, failed);
-      return succeededIds.size;
-    },
-    [
-      clearPanesForChat,
-      restorePaneAt,
-      removeChatsFromLoadedFolders,
-      syncSidebarCountsOrFullRefresh,
-      setSelectedChatId,
-      utilsRef,
-      invalidateBatchViews,
-    ],
-  );
+  const { runChatsBatch, runChatsAtomically } = useChatsBatchRunner({
+    utilsRef,
+    invalidateBatchViews,
+    clearPanesForChat,
+    restorePaneAt,
+    removeChatsFromLoadedFolders,
+    syncSidebarCountsOrFullRefresh,
+    setSelectedChatId,
+  });
 
   const deleteChatsBatch = useCallback(
     (chats: Array<{ id: string }>, options?: ChatsBatchOptions) =>
@@ -169,10 +246,10 @@ export function useBulkChatActions({
   );
 
   const archiveChatsBatch = useCallback(
-    async (chatIds: string[], killTerminals?: boolean) => {
+    async (chatIds: string[]) => {
       const archived = await runChatsBatch(
         chatIds.map((id) => ({ id })),
-        (id) => archiveMutRef.current.mutateAsync({ id, killTerminals }),
+        (id) => archiveMutRef.current.mutateAsync({ id }),
         { clearPanesBefore: true, onPartialFailure: toastPartialFailure('Archived') },
       );
       await utilsRef.current.chats.list.invalidate();
@@ -181,9 +258,9 @@ export function useBulkChatActions({
     [runChatsBatch, archiveMutRef, utilsRef, setShowArchived],
   );
 
-  /** True when a live linked task hands the action to the task-aware dialog instead. */
+  /** True when a live linked task hands the delete to the task-aware dialog instead. */
   const deferToTaskAwareDialog = useCallback(
-    async (chatIds: string[], operation: 'delete_batch' | 'archive_batch') => {
+    async (chatIds: string[]) => {
       const { activeTasks, unresolvedTaskLinks } = await getActiveLinkedTasks(chatIds);
       if (unresolvedTaskLinks > 0) {
         toast.warning('Some linked task details were unavailable', {
@@ -194,7 +271,7 @@ export function useBulkChatActions({
       openTaskAwareDialog({
         open: true,
         mode: 'batch',
-        operation,
+        operation: 'delete_batch',
         chatIds,
         taskIds: activeTasks.map((task) => task.taskId),
         totalChats: chatIds.length,
@@ -210,7 +287,7 @@ export function useBulkChatActions({
       // Held through the task check only: the confirm dialog that follows is modal.
       bulkBusyRef.current = true;
       try {
-        if (await deferToTaskAwareDialog(chatIds, 'delete_batch')) return;
+        if (await deferToTaskAwareDialog(chatIds)) return;
         setPendingDeleteIds(chatIds);
       } finally {
         bulkBusyRef.current = false;
@@ -238,13 +315,12 @@ export function useBulkChatActions({
       if (chatIds.length === 0 || bulkBusyRef.current) return;
       bulkBusyRef.current = true;
       try {
-        if (await deferToTaskAwareDialog(chatIds, 'archive_batch')) return;
         await archiveChatsBatch(chatIds);
       } finally {
         bulkBusyRef.current = false;
       }
     },
-    [deferToTaskAwareDialog, archiveChatsBatch],
+    [archiveChatsBatch],
   );
 
   /** Dropping a selected row moves the whole selection. Every move, across drops too, runs one at a
@@ -277,6 +353,7 @@ export function useBulkChatActions({
 
   return {
     deleteChatsBatch,
+    runChatsAtomically,
     archiveChatsBatch,
     requestDelete,
     requestArchive,

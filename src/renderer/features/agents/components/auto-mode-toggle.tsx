@@ -25,7 +25,7 @@ type AutoModeTogglePresentationContext = Pick<
   'checked' | 'available' | 'unavailableReason'
 >;
 
-function getAutoModeTogglePresentation({
+export function getAutoModeTogglePresentation({
   checked: on,
   available,
   unavailableReason,

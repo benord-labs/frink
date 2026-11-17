@@ -4,7 +4,7 @@ import type { SettingsTab } from '../../../lib/atoms';
 
 export type AgentActionSource = 'hotkey' | 'ui_button' | 'context-menu';
 
-export type AgentActionCategory = 'general' | 'navigation' | 'chat' | 'view';
+type AgentActionCategory = 'general' | 'navigation' | 'chat' | 'view';
 
 export type AgentActionContext = {
   // Navigation
@@ -16,6 +16,7 @@ export type AgentActionContext = {
   setFilesSidebarOpen?: (open: boolean | ((prev: boolean) => boolean)) => void;
   setSettingsDialogOpen?: (open: boolean) => void;
   setSettingsActiveTab?: (tab: SettingsTab) => void;
+  openDestination?: (destination: 'flows' | 'workqueue') => void;
   setFileSearchDialogOpen?: (open: boolean) => void;
   activateFilesSidebarSearch?: () => void;
   activateActivePaneFileSearch?: () => void;

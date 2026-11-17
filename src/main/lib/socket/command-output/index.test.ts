@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,6 +36,7 @@ afterEach(() => {
   holds.clear();
   codexTurns.clear();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -48,6 +49,15 @@ describe('readCommandOutput', () => {
 
     expect(tail?.text).toBe('tick 1\ntick 2');
     expect(tail?.runningForMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('never reports a negative running time for a file born after the clock reads', async () => {
+    const path = join(tasksDir, 'b1.output');
+    writeFileSync(path, 'tick\n');
+    holdWith([{ id: 'b1', type: 'shell' }]);
+    vi.spyOn(Date, 'now').mockReturnValue(Math.floor(statSync(path).birthtimeMs) - 1);
+
+    expect((await readCommandOutput('sc1', 'b1'))?.runningForMs).toBe(0);
   });
 
   it('keeps only the last 8KB, starting on a whole line', async () => {
@@ -139,7 +149,9 @@ describe('readCommandOutput on a Codex chat', () => {
   it('reads a running command’s output from its live turn', async () => {
     const startedAt = Date.now() - 5000;
     codexTurns.set('sc1', {
-      commandOutputs: new Map([['c1', { startedAt, text: 'ial\n\u001b[1mbuilt\u001b[0m\n', cut: true }]]),
+      commandOutputs: new Map([
+        ['c1', { startedAt, text: 'ial\n\u001b[1mbuilt\u001b[0m\n', cut: true }],
+      ]),
     });
 
     const tail = await readCommandOutput('sc1', 'c1');
@@ -150,10 +162,20 @@ describe('readCommandOutput on a Codex chat', () => {
 
   it('marks a Codex command’s single overlong line as cut', async () => {
     codexTurns.set('sc1', {
-      commandOutputs: new Map([['c1', { startedAt: Date.now(), text: 'x'.repeat(8192), cut: true }]]),
+      commandOutputs: new Map([
+        ['c1', { startedAt: Date.now(), text: 'x'.repeat(8192), cut: true }],
+      ]),
     });
 
     expect((await readCommandOutput('sc1', 'c1'))?.text).toBe(`…${'x'.repeat(8191)}`);
+  });
+
+  it('never reports a negative running time for a start stamped ahead of the clock', async () => {
+    codexTurns.set('sc1', {
+      commandOutputs: new Map([['c1', { startedAt: Date.now() + 1000, text: '', cut: false }]]),
+    });
+
+    expect((await readCommandOutput('sc1', 'c1'))?.runningForMs).toBe(0);
   });
 
   it('has nothing for a command the live turn is not running', async () => {
@@ -165,9 +187,9 @@ describe('readCommandOutput on a Codex chat', () => {
 
 describe('cleanOutputTail', () => {
   it('strips colours and keeps a redrawn progress line’s last state', () => {
-    expect(cleanOutputTail('\u001b[32mPASS\u001b[0m a.test\r\n 10%\r 50%\r100%\ndone\n', false)).toBe(
-      'PASS a.test\n100%\ndone',
-    );
+    expect(
+      cleanOutputTail('\u001b[32mPASS\u001b[0m a.test\r\n 10%\r 50%\r100%\ndone\n', false),
+    ).toBe('PASS a.test\n100%\ndone');
   });
 
   it('drops the partial line a cut tail opens with', () => {

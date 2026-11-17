@@ -168,6 +168,8 @@ export function ActivityHeatmap({ history }: { history: UsageHistory }): ReactEl
         </div>
       </div>
       <div className="flex items-center justify-end gap-1.5 text-[11px] text-muted-foreground">
+        {/* Other agents keep no transcript Frink can count. */}
+        <span className="mr-auto text-xs">Claude and OpenAI only</span>
         <span>Less</span>
         {LEVEL_CLASS.map((level) => (
           <span key={level} className={cn('size-[11px] rounded-[3px]', level)} />

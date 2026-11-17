@@ -4,6 +4,7 @@
 import log from 'electron-log';
 import {
   acquireCustomNodeReadLease,
+  applyTemplateOptOuts,
   buildCustomNodeInputConfig,
   CUSTOM_NODES_DIR,
   type CustomNodeProcessResult,
@@ -12,6 +13,7 @@ import {
   parseStructuredStdout,
   resolveNodeCredentialEnvVars,
   runCustomNodeProcess,
+  summarizeStderr,
 } from './custom-nodes';
 import { getDatabase } from './db';
 import { getProjectById as getLocalProjectById } from './db/repos/projects';
@@ -19,12 +21,13 @@ import { createWorktreeForBranch } from './git/worktree';
 import { createWorktreeWithMergedBases } from './git/worktree-converge';
 import { sanitizeProjectName } from './git/worktree-naming';
 import { validateWorktreeForReuse } from './git/worktree-validation';
+import { ensureLoginShellEnv } from './platform/login-shell-env';
 import { runShellCommand, SHELL_TASK_MAX_BUFFER } from './shell-executor';
 import { buildSafeEnv } from './terminal/env';
 
 // Output minimization: parse stdout here and carry only structured data onward.
 // parseStructuredStdout and its constants live in custom-nodes/parse-node-output.ts.
-const MAX_ERROR_MESSAGE_LENGTH = 500; // derived error field (stderr first line + optional spawn detail)
+const MAX_ERROR_MESSAGE_LENGTH = 500; // derived error field (stderr cause line + optional spawn detail)
 const MAX_OUTPUTS_SERIALIZED_BYTES = 1_048_576; // 1MB cap on total outputs object
 
 type ParsedStepOutput = {
@@ -35,7 +38,7 @@ type ParsedStepOutput = {
 
 /**
  * Derive a short error message for a step's `error` field.
- * Prefer the first line of stderr; when empty or when spawn/exec detail adds information,
+ * Prefer the stderr summary; when empty or when spawn/exec detail adds information,
  * include `spawnMessage` (from runShellCommand). Capped at MAX_ERROR_MESSAGE_LENGTH.
  */
 function deriveErrorMessage(
@@ -44,13 +47,13 @@ function deriveErrorMessage(
   spawnMessage?: string,
 ): string {
   const sm = spawnMessage?.trim() ?? '';
-  const firstLine = stderr.split('\n')[0]?.trim() ?? '';
+  const summary = summarizeStderr(stderr);
 
   const parts: string[] = [];
-  if (firstLine) {
-    parts.push(firstLine);
+  if (summary) {
+    parts.push(summary);
   }
-  if (sm && (!firstLine || (sm !== firstLine && !firstLine.includes(sm)))) {
+  if (sm && (!summary || (sm !== summary && !summary.includes(sm)))) {
     parts.push(sm);
   }
 
@@ -118,6 +121,8 @@ type FlowExecuteStepPayload = {
   timeoutMs: number;
   /** custom nodes: the block config to pass as JSON argv */
   config?: Record<string, unknown>;
+  /** custom nodes: `config` before template rendering, for inputs declared `"template": false` */
+  authoredConfig?: FlowExecuteStepPayload['config'];
   /** start_task: branch to checkout in the worktree (when startInWorktree is true) */
   branch?: string;
   /**
@@ -137,26 +142,14 @@ type FlowExecuteStepPayload = {
 };
 
 /**
- * Short-lived project cache to avoid repeated HTTP calls for the same project within a session.
- * TTL of 60s — projects change rarely and any staleness is bounded.
+ * Read the project fresh on every step, so a deleted, renamed or newly registered project takes
+ * effect at once. It is a primary-key select on the local database, so there is nothing to cache.
  */
-const projectCache = new Map<
-  string,
-  { project: { id: string; path: string; name: string } | null; expiresAt: number }
->();
-const PROJECT_CACHE_TTL_MS = 60_000;
-
-async function getCachedProject(
+async function findLocalProject(
   projectId: string,
 ): Promise<{ id: string; path: string; name: string } | null> {
-  const cached = projectCache.get(projectId);
-  if (cached && Date.now() < cached.expiresAt) {
-    return cached.project;
-  }
   const project = await getLocalProjectById(getDatabase(), projectId).catch(() => null);
-  const result = project?.path ? { id: project.id, path: project.path, name: project.name } : null;
-  projectCache.set(projectId, { project: result, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
-  return result;
+  return project?.path ? { id: project.id, path: project.path, name: project.name } : null;
 }
 
 type ShellResult = CustomNodeProcessResult;
@@ -280,7 +273,10 @@ async function executeCustomNode(
     if (!cwdResult.ok) {
       return stepFailure(cwdResult.error);
     }
-    const configValues = buildCustomNodeInputConfig(manifest.inputs, payload.config ?? {});
+    const configValues = buildCustomNodeInputConfig(
+      manifest.inputs,
+      applyTemplateOptOuts(manifest.inputs, payload.config ?? {}, payload.authoredConfig),
+    );
     if (!configValues.ok) {
       return stepFailure('', `Custom node "${payload.blockType}" ${configValues.error}`);
     }
@@ -351,10 +347,15 @@ async function executeStartTask(
       ...string[],
     ];
     try {
-      const result = await createWorktreeWithMergedBases(projectPath, sanitizedName, baseBranches);
+      const result = await createWorktreeWithMergedBases(
+        projectPath,
+        sanitizedName,
+        baseBranches,
+        signal,
+      );
 
       if (!result.success && !('conflict' in result)) {
-        return stepFailure(result.error);
+        return { ...stepFailure(result.error), cancelled: signal.aborted };
       }
 
       if (!result.success && 'conflict' in result) {
@@ -426,7 +427,7 @@ export async function executeFlowStepLocal(
   payload: FlowExecuteStepPayload,
   signal: AbortSignal,
 ): Promise<ParsedStepOutput> {
-  const project = await getCachedProject(payload.projectId);
+  const project = await findLocalProject(payload.projectId);
   if (!project) {
     return {
       status: 'failed',
@@ -435,6 +436,8 @@ export async function executeFlowStepLocal(
     };
   }
 
+  // Every step spawns the user's tools; a flow that fires right after launch must not race the PATH.
+  await ensureLoginShellEnv();
   let result: ShellResult;
   if (payload.blockType === 'start_task') {
     result = await executeStartTask(payload, project.path, project.name, signal);

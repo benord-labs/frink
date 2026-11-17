@@ -21,10 +21,10 @@ export function SearchField({
       style={{
         flexDirection: 'row',
         alignItems: 'center',
-        minHeight: 40,
+        minHeight: 44,
         gap: 8,
         backgroundColor: t.field,
-        borderRadius: radius.md,
+        borderRadius: radius.pill,
         paddingLeft: 12,
       }}
     >
@@ -39,14 +39,14 @@ export function SearchField({
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"
-        style={[{ flex: 1, minHeight: 40, padding: 0, fontSize: 16, color: t.text }, bareInput]}
+        style={[{ flex: 1, minHeight: 44, padding: 0, fontSize: 16, color: t.text }, bareInput]}
       />
       {!!value && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Clear search"
           onPress={() => onChangeText('')}
-          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+          style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
         >
           <CircleX size={17} color={t.muted} />
         </Pressable>

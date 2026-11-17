@@ -13,6 +13,7 @@ const FLOW_PATCH_OPERATION_SHAPES = {
   update_edge: { action: 'update', kind: 'edge' },
   remove_edge: { action: 'remove', kind: 'edge' },
   update_settings: { action: 'update', kind: 'settings' },
+  auto_layout: { action: 'update', kind: 'settings' },
 } as const satisfies Record<string, FlowPatchOperationShape>;
 
 export type FlowPatchOperationName = keyof typeof FLOW_PATCH_OPERATION_SHAPES;

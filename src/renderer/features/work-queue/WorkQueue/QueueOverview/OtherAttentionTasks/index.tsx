@@ -6,10 +6,13 @@ import {
   type ActionMenuProps,
   type TaskActionListProps,
 } from '@/features/work-queue/WorkQueue/ActionMenu';
+import type { AwaitingApproval } from '../../../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { Task } from '../../../types';
+import { APPROVAL_COPY, getApprovalTitle } from '../../AttentionCarousel';
 import { TaskActivityRow } from '../../TaskActivityRow';
 
 type Props = {
+  approvals?: AwaitingApproval[];
   canLoadMore: boolean;
   getPresentation: (task: Task) => { compactLabel: string; rowState: ActivityRowState };
   onPromoteTask: (taskId: string) => void;
@@ -27,7 +30,16 @@ const ROW_BADGE_VARIANT: Record<ActivityRowState, BadgeVariant> = {
   error: 'error',
 };
 
+function rowBadge(rowState: ActivityRowState, label: string): ReactElement {
+  return (
+    <Badge variant={ROW_BADGE_VARIANT[rowState]} noDot className="px-2 py-0.5 text-xs">
+      {label}
+    </Badge>
+  );
+}
+
 export const OtherAttentionTasks = memo(function OtherAttentionTasks({
+  approvals = [],
   canLoadMore,
   getPresentation,
   onPromoteTask,
@@ -36,10 +48,11 @@ export const OtherAttentionTasks = memo(function OtherAttentionTasks({
   tasks,
   totalCount,
 }: Props): ReactElement | null {
+  const otherGates = approvals.filter((gate) => gate.flowRunId !== selectedTaskId);
   const otherTasks = tasks.filter((task) => task.id !== selectedTaskId);
-  if (otherTasks.length === 0) return null;
+  const loadedOtherTaskCount = otherGates.length + otherTasks.length;
+  if (loadedOtherTaskCount === 0) return null;
 
-  const loadedOtherTaskCount = otherTasks.length;
   const totalOtherTaskCount = Math.max(totalCount - 1, loadedOtherTaskCount);
   const hasUnloadedTasks = canLoadMore && totalOtherTaskCount > loadedOtherTaskCount;
 
@@ -64,6 +77,22 @@ export const OtherAttentionTasks = memo(function OtherAttentionTasks({
         />
       </summary>
       <ul aria-label="Other tasks needing attention" className="border-t border-hairline">
+        {otherGates.map((gate) => (
+          <TaskActivityRow
+            key={gate.flowRunId}
+            task={{
+              title: getApprovalTitle(gate),
+              description: gate.flowName,
+              source: 'flow',
+              projectName: gate.projectName,
+            }}
+            state={APPROVAL_COPY.rowState}
+            statusLabel={APPROVAL_COPY.compactLabel}
+            trailing={rowBadge(APPROVAL_COPY.rowState, APPROVAL_COPY.compactLabel)}
+            onActivate={() => onPromoteTask(gate.flowRunId)}
+            activationStatusLabel="needs approval, show in spotlight"
+          />
+        ))}
         {otherTasks.map((task) => {
           const { compactLabel, rowState } = getPresentation(task);
           return (
@@ -81,11 +110,7 @@ export const OtherAttentionTasks = memo(function OtherAttentionTasks({
               task={task}
               state={rowState}
               statusLabel={compactLabel}
-              trailing={
-                <Badge variant={ROW_BADGE_VARIANT[rowState]} noDot className="px-2 py-0.5 text-xs">
-                  {compactLabel}
-                </Badge>
-              }
+              trailing={rowBadge(rowState, compactLabel)}
               onActivate={() => onPromoteTask(task.id)}
               activationStatusLabel={`${compactLabel.toLowerCase()}, show in spotlight`}
             />

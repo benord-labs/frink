@@ -1,15 +1,7 @@
-/**
- * Operator reminders injected mid-conversation — mode-exit transitions (plan→agent, debug→other) and
- * the disarmed task-signal notice. These are delivered as an IN-CONVERSATION SYSTEM PROMPT, NOT as
- * hand-rolled `<system-reminder>` user-turn text:
- *  - Claude path → the SDK's `UserPromptSubmit` hook ({@link buildUserPromptSubmitReminderHook}); the
- *    CLI emits a real `{role:"system"}` message (or its own reminder rendering) per model.
- *  - Codex → no in-conversation system-prompt channel yet (tracked: sc-996); prepend as text
- *    ({@link wrapRemindersForPrompt}), its only current option.
- *
- * Extracted from `executor.ts` to keep that file small and make the gating logic unit-testable in
- * isolation (see `operator-reminders.test.ts`).
- */
+/** Mode/availability reminders: Claude hook context, Codex host context, or prompt text elsewhere.
+ * Per-delivery message provenance uses its own runtime adapters. */
+import log from 'electron-log';
+import type { CodexContextEntry } from '../../../shared/lib/message-markers/message-provenance';
 import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
 
 // Worded to be unconditionally TRUE for any agent-mode turn: it fires on unknown history too
@@ -45,21 +37,28 @@ export type OperatorReminderInputs = {
   agentSawPriorTurns: boolean;
   /** A plan turn with a live task to signal, outside a Flow run (whose prompt states the duty). */
   planOwesNoFinishSignal: boolean;
+  /** This turn carries the Flow-run-ended notice, which already says the signal tool is gone. */
+  flowRunEndedNoticeDue?: boolean;
 };
+
+/** One reminder with a stable key: Codex re-sends a host-context key only when its value changes. */
+type OperatorReminder = { key: string; text: string };
 
 export type OperatorReminderResult = {
   /** Reminder texts to inject this turn (may be empty). */
   reminders: string[];
+  /** The same reminders, keyed. */
+  entries: OperatorReminder[];
   /** True when this turn exits debug mode — the caller runs the debug-session cleanup side effect. */
   isExitingDebugMode: boolean;
 };
 
 /**
- * Decide which operator reminders apply this turn. Pure: the caller owns delivery (Claude hook vs
- * Codex prepend) and the debug-session cleanup side effect (signalled via `isExitingDebugMode`).
+ * Decide which operator reminders apply this turn. Pure: the caller owns delivery (per runtime) and
+ * the debug-session cleanup side effect (signalled via `isExitingDebugMode`).
  */
 export function buildOperatorReminders(inputs: OperatorReminderInputs): OperatorReminderResult {
-  const reminders: string[] = [];
+  const entries: OperatorReminder[] = [];
   // Plan→non-plan: the resumed transcript still holds the SDK's own "Plan mode is active"
   // reminder, and debug turns act too (their permissionMode is default/auto, never 'plan'), so
   // every non-plan mode gets the rebuttal. `previousMode === undefined` (unknown history — the
@@ -71,41 +70,87 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
     (inputs.previousMode === 'plan' || inputs.previousMode === undefined) &&
     inputs.hasResumeSession
   ) {
-    reminders.push(PLAN_MODE_EXIT_REMINDER);
+    entries.push({ key: 'frink_plan_mode_exit', text: PLAN_MODE_EXIT_REMINDER });
   }
   // Debug→other: tell the agent debug mode ended (caller also cleans up the ingest debug session).
   const isExitingDebugMode =
     inputs.mode !== 'debug' && inputs.previousMode === 'debug' && inputs.hasResumeSession;
   if (isExitingDebugMode) {
-    reminders.push(DEBUG_MODE_EXIT_REMINDER);
+    entries.push({ key: 'frink_debug_mode_exit', text: DEBUG_MODE_EXIT_REMINDER });
   }
   // Skip in plan mode: it's read-only (no Bash/Write/Edit), so the reminder's "other tools remain
   // available" wording would mislead.
-  if (inputs.taskSignalDisarmed && inputs.agentSawPriorTurns && inputs.mode !== 'plan') {
-    reminders.push(TASK_SIGNAL_DISARMED_REMINDER);
+  if (
+    inputs.taskSignalDisarmed &&
+    inputs.agentSawPriorTurns &&
+    inputs.mode !== 'plan' &&
+    !inputs.flowRunEndedNoticeDue
+  ) {
+    entries.push({ key: 'frink_task_signal_disarmed', text: TASK_SIGNAL_DISARMED_REMINDER });
   }
   // Per turn rather than in the system prompt, so the prompt (and a warm CLI) stays mode-free.
-  if (inputs.planOwesNoFinishSignal) reminders.push(PLAN_MODE_NO_FINISH_SIGNAL);
-  return { reminders, isExitingDebugMode };
+  if (inputs.planOwesNoFinishSignal) {
+    entries.push({ key: 'frink_plan_no_finish_signal', text: PLAN_MODE_NO_FINISH_SIGNAL });
+  }
+  return { reminders: entries.map((entry) => entry.text), entries, isExitingDebugMode };
 }
 
-/**
- * Codex fallback (sc-996): wrap reminders as `<system-reminder>` text for prompt prepend, since
- * that runtime has no in-conversation system-prompt channel.
- */
+/** Text fallback for runtimes with no host-context channel: `<system-reminder>` blocks. */
 export function wrapRemindersForPrompt(reminders: string[]): string {
   return reminders
     .map((reminder) => `<system-reminder>\n${reminder}\n</system-reminder>`)
     .join('\n\n');
 }
 
+/** Codex host context: one application entry per reminder, under its stable key. */
+function codexReminderContext(entries: OperatorReminder[]) {
+  return Object.fromEntries(
+    entries.map(({ key, text }): [string, CodexContextEntry] => [
+      key,
+      { kind: 'application', value: text },
+    ]),
+  );
+}
+
 /**
  * Claude path: the UserPromptSubmit callback that injects `reminders` as an in-conversation system
- * message; session-callbacks.ts delegates to it per turn.
+ * context attachment; the CLI chooses system-role or reminder rendering per model.
  */
 export function buildUserPromptSubmitReminderHook(reminders: string[]) {
   const additionalContext = reminders.join('\n\n');
   return async () => ({
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext },
   });
+}
+
+export type TurnReminderInputs = OperatorReminderInputs & {
+  agentRuntime: string;
+  subChatId: string;
+  prompt: string;
+};
+
+/** The runtime's own reminder channel; a runtime without one gets the reminders as prompt text. */
+function nativeChannel(agentRuntime: string): string | undefined {
+  if (agentRuntime === 'claude') return 'UserPromptSubmit hook';
+  if (agentRuntime === 'codex') return 'Codex additionalContext';
+  return undefined;
+}
+
+/** Claude reads `reminders` from its hook, Codex `codexContext`; any other runtime gets prompt text. */
+export function prepareTurnReminders(inputs: TurnReminderInputs): OperatorReminderResult & {
+  prompt: string;
+  codexContext: Record<string, CodexContextEntry>;
+} {
+  const { agentRuntime, subChatId } = inputs;
+  const result = buildOperatorReminders(inputs);
+  const channel = nativeChannel(agentRuntime);
+  let prompt = inputs.prompt;
+  if (result.reminders.length > 0) {
+    if (!channel) prompt = `${wrapRemindersForPrompt(result.reminders)}\n\n${prompt}`;
+    log.info(
+      `[Socket Executor] ${result.reminders.length} operator reminder(s) for ${subChatId} via ${channel ?? 'prompt prepend'}`,
+    );
+  }
+  const codexContext = agentRuntime === 'codex' ? codexReminderContext(result.entries) : {};
+  return { ...result, prompt, codexContext };
 }

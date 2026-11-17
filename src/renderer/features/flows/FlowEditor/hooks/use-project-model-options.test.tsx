@@ -187,4 +187,50 @@ describe('useProjectModelOptions', () => {
     );
     expect(onClearModel).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['opencode', 'OpenCode'],
+    ['copilot', 'GitHub Copilot'],
+  ])(
+    'says Flows run on Claude or OpenAI for a %s project, keeping any saved model',
+    (type, name) => {
+      querySnapshot.data = { type };
+      const onClearModel = vi.fn();
+      const { result } = renderHook(() =>
+        useProjectModelOptions(PROJECT_ID, { model: 'codex-gpt-5.3-codex-high', onClearModel }),
+      );
+      expect(result.current.unsupportedMessage).toBe(
+        `This project uses ${name}. Flows run on Claude or OpenAI for now.`,
+      );
+      expect(onClearModel).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['claude-code', 'codex'])('offers model fields on a %s project', (type) => {
+    querySnapshot.data = { type };
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: undefined, onClearModel: () => {} }),
+    );
+    expect(result.current.unsupportedMessage).toBeUndefined();
+  });
+
+  it.each([
+    ['codex', "Plan mode isn't available for OpenAI yet. Pick another mode."],
+    ['claude-code', null],
+  ])('says why a %s project cannot run Plan, or null when it can', (type, expected) => {
+    querySnapshot.data = { type };
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: undefined, onClearModel: () => {} }),
+    );
+    expect(result.current.planUnavailable).toBe(expected);
+  });
+
+  it('keeps Plan on offer while the project account is still loading', () => {
+    querySnapshot.data = { type: 'codex' };
+    querySnapshot.isLoading = true;
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: undefined, onClearModel: () => {} }),
+    );
+    expect(result.current.planUnavailable).toBeNull();
+  });
 });

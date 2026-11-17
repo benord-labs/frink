@@ -130,12 +130,9 @@ export function useGitWatcher(
     // Listen for git status changes from the watcher (includes .git/HEAD when branch switches)
     const cleanup = window.desktopApi?.onGitStatusChanged((data) => {
       if (data.worktreePath === worktreePath) {
-        // Invalidate only this worktree's git status and branch list
+        // Only this worktree's status; branch pickers load the full branch list when opened
         queryClient.invalidateQueries({
           queryKey: [['changes', 'getStatus'], { input: { worktreePath } }],
-        });
-        queryClient.invalidateQueries({
-          queryKey: [['changes', 'getBranches'], { input: { worktreePath } }],
         });
         onStatusChangedRef.current?.();
         if (lineChangeDebounceRef.current) {

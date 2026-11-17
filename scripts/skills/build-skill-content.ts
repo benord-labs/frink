@@ -9,8 +9,8 @@
  * SHA256 baseline at `assets/skills/frink-flows/.baseline.json`.
  *
  * Usage:
- *   bun run scripts/build-skill-content.ts          # write
- *   bun run scripts/build-skill-content.ts --check  # verify outputs match TS (CI / drift gate)
+ *   bun run build:skills        # write
+ *   bun run build:skills:check  # verify outputs match TS (CI / drift gate)
  */
 
 import { createHash } from 'node:crypto';
@@ -95,11 +95,15 @@ async function writeOutputs(outputs: Map<string, string>, baseline: Baseline): P
   await writeFile(BASELINE_FILE, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8');
 }
 
-async function checkDrift(outputs: Map<string, string>, baseline: Baseline): Promise<string[]> {
+async function checkDrift(
+  outputs: Map<string, string>,
+  baseline: Baseline,
+  skillRoot: string,
+): Promise<string[]> {
   const drift: string[] = [];
   for (const [relPath, content] of outputs) {
     if (relPath === 'SKILL.md') continue;
-    const abs = join(SKILL_ROOT, relPath);
+    const abs = join(skillRoot, relPath);
     const existing = await readIfExists(abs);
     if (existing === null) {
       drift.push(`${relPath}: missing on disk`);
@@ -109,7 +113,7 @@ async function checkDrift(outputs: Map<string, string>, baseline: Baseline): Pro
       drift.push(`${relPath}: out of sync with guideline TS source`);
     }
   }
-  const existingBaselineRaw = await readIfExists(BASELINE_FILE);
+  const existingBaselineRaw = await readIfExists(join(skillRoot, '.baseline.json'));
   const expectedBaseline = `${JSON.stringify(baseline, null, 2)}\n`;
   if (existingBaselineRaw === null) {
     drift.push('.baseline.json: missing on disk');
@@ -119,18 +123,27 @@ async function checkDrift(outputs: Map<string, string>, baseline: Baseline): Pro
   return drift;
 }
 
+/** Compare the skill assets under `skillRoot` against fresh generator output without writing anything. */
+export async function findDrift(skillRoot: string = SKILL_ROOT): Promise<string[]> {
+  const outputs = await buildAll();
+  return checkDrift(outputs, computeBaseline(outputs), skillRoot);
+}
+
+/** The `--check` failure text: every drifted path, then the command that regenerates them. */
+export function formatDriftReport(drift: readonly string[]): string {
+  const lines = drift.map((d) => `  - ${d}`).join('\n');
+  return `Skill content drift detected:\n${lines}\nRe-run: bun run build:skills\n`;
+}
+
 async function main(): Promise<void> {
   const check = process.argv.includes('--check');
   const outputs = await buildAll();
   const baseline = computeBaseline(outputs);
 
   if (check) {
-    const drift = await checkDrift(outputs, baseline);
+    const drift = await checkDrift(outputs, baseline, SKILL_ROOT);
     if (drift.length > 0) {
-      process.stderr.write(
-        `Skill content drift detected:\n${drift.map((d) => `  - ${d}`).join('\n')}\n`,
-      );
-      process.stderr.write(`Re-run: bun run scripts/build-skill-content.ts\n`);
+      process.stderr.write(formatDriftReport(drift));
       process.exit(1);
     }
     process.stdout.write(`Skill content in sync (manifest ${baseline.version}).\n`);

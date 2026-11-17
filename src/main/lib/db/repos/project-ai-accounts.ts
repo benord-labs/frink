@@ -1,6 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import log from 'electron-log';
 import type { getDatabase } from '../index';
+import { AI_PROVIDER_IDS } from '../../../../shared/lib/ai-providers';
 import { type Chat, chats, claudeCodeCredentials, projectAiAccounts } from '../schema';
 import { parkFlowTaskForSubChat } from './task-parking';
 
@@ -39,8 +40,6 @@ export async function getProjectAiAccount(
   return row ?? null;
 }
 
-const AI_ACCOUNT_TYPES = ['claude-code', 'codex'];
-
 /** An AI account's provider type, or null for an unknown id (the table also holds non-AI rows). */
 export async function getAiAccountType(db: Db, accountId: string): Promise<string | null> {
   const [row] = await db
@@ -49,7 +48,7 @@ export async function getAiAccountType(db: Db, accountId: string): Promise<strin
     .where(
       and(
         eq(claudeCodeCredentials.id, accountId),
-        inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+        inArray(claudeCodeCredentials.type, AI_PROVIDER_IDS),
       ),
     )
     .limit(1);
@@ -69,7 +68,7 @@ export async function getNewChatAccountId(
     .where(
       and(
         eq(claudeCodeCredentials.isDefault, true),
-        inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+        inArray(claudeCodeCredentials.type, AI_PROVIDER_IDS),
       ),
     )
     .limit(1);

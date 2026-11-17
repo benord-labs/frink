@@ -17,7 +17,10 @@ import type { ManifestInputProjection } from '../../../../shared/lib/flows/json-
 import { vendorPluginMcpServerName } from '../../../../shared/lib/mcp-tool-name';
 import type { ManifestOutputField } from '../../../../shared/lib/output-schemas';
 import { getDatabase } from '../../db';
-import { listPluginNodeSchemas, type PluginNodeSchema } from '../../db/repos/plugin-node-schemas';
+import {
+  listPluginNodeSchemasByPlugin,
+  type PluginNodeSchema,
+} from '../../db/repos/plugin-node-schemas';
 import { readMcpConfigSync } from '../../mcp';
 
 const PLUGIN_NODE_VERSION = '1';
@@ -101,13 +104,17 @@ function manifestFor(action: PluginAction, fields: PluginNodeFields): PluginNode
 
 /** Every integration node on this machine, or one plugin's. Uncached on purpose: staleness is the bug class this replaces. */
 export function listPluginNodes(pluginId?: string): PluginNodeManifest[] {
-  const db = getDatabase();
+  const ids = [...listConnectedPluginIds()].filter(
+    (id) =>
+      (pluginId === undefined || id === pluginId) &&
+      (getPluginDefinition(id)?.contents.actions.length ?? 0) > 0,
+  );
+  // One query for every plugin, not one per plugin: readiness and the palette call this per request.
+  const cachedByPlugin = listPluginNodeSchemasByPlugin(getDatabase(), ids);
   const nodes: PluginNodeManifest[] = [];
-  for (const id of listConnectedPluginIds()) {
-    if (pluginId !== undefined && id !== pluginId) continue;
+  for (const id of ids) {
     const actions = getPluginDefinition(id)?.contents.actions ?? [];
-    if (actions.length === 0) continue;
-    const cached = listPluginNodeSchemas(db, id);
+    const cached = cachedByPlugin.get(id) ?? new Map<string, PluginNodeSchema>();
     for (const action of actions) {
       const fields = pluginNodeFields(action, cached);
       if (fields) nodes.push(manifestFor(action, fields));

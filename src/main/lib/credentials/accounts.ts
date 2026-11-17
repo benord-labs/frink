@@ -5,7 +5,17 @@
 
 import { desc, eq, inArray, sql } from 'drizzle-orm';
 import log from 'electron-log';
+import {
+  AI_PROVIDER_IDS,
+  AI_PROVIDERS,
+  aiProvider,
+  isInstalledAgent,
+  PASSTHROUGH_SOURCES,
+} from '../../../shared/lib/ai-providers';
 import { isAnthropicApiKey } from '../../../shared/lib/anthropic-token';
+import { locateAcpAgent } from '../agent-runner/acp';
+import { locateCopilotAgent } from '../agent-runner/copilot';
+import { locateCursorAgent } from '../agent-runner/cursor';
 import { readClaudeUserConfig } from './detect';
 import { markRowNeedsReauth, markRowResolved } from './row-state';
 import { withCredentialRowOperation } from '../integrations/connection-lifecycle-operation';
@@ -39,9 +49,9 @@ const CLAUDE_TYPE_FILTER = sql`${claudeCodeCredentials.type} = 'claude-code'`;
  * Ranks currently-resolvable rows first: passthrough without `needsReauthAt`, or api-key with a
  * token. Use as the first `desc()` in `.orderBy`, before `desc(connectedAt)`. Never for id lookups.
  */
-export const RESOLVABLE_FIRST_RANK = sql`((${claudeCodeCredentials.source} IN ('claude-passthrough', 'codex-passthrough') AND ${claudeCodeCredentials.needsReauthAt} IS NULL) OR ${claudeCodeCredentials.oauthToken} IS NOT NULL)`;
+const PASSTHROUGH_RANK = sql`(${inArray(claudeCodeCredentials.source, PASSTHROUGH_SOURCES)})`;
 
-const PASSTHROUGH_RANK = sql`(${claudeCodeCredentials.source} IN ('claude-passthrough', 'codex-passthrough'))`;
+export const RESOLVABLE_FIRST_RANK = sql`((${PASSTHROUGH_RANK} AND ${claudeCodeCredentials.needsReauthAt} IS NULL) OR ${claudeCodeCredentials.oauthToken} IS NOT NULL)`;
 
 type CredentialRow = {
   id: string;
@@ -59,15 +69,6 @@ type CredentialRow = {
 export { CredentialEncryptionUnavailableError, decryptToken, encryptToken } from './token-crypto';
 
 import { decryptToken } from './token-crypto';
-
-/**
- * Normalize row type for credentials (migration may leave type null)
- */
-function accountType(cred: { type?: string | null } | undefined): AIAccountType {
-  const t = cred?.type;
-  if (t === 'claude-code' || t === 'codex') return t;
-  return 'claude-code';
-}
 
 function emptyResult(type: AIAccountType = 'claude-code'): CredentialResult {
   return { token: null, label: null, isApiKey: false, type };
@@ -97,10 +98,14 @@ function redactEmailForLog(email: string | null | undefined): string {
 /** Injection seam (anti-slop forbids module mocking in tests); production keeps the default. */
 export const passthroughDeps = {
   readLiveLogin: readClaudeUserConfig,
+  locateAgent: (type: string, env?: Record<string, string>) => {
+    if (type === 'cursor') return locateCursorAgent();
+    return type === 'copilot' ? locateCopilotAgent(env) : locateAcpAgent(type, env);
+  },
 };
 
 export function isPassthroughSource(source: string | null | undefined): boolean {
-  return source === 'claude-passthrough' || source === 'codex-passthrough';
+  return PASSTHROUGH_SOURCES.some((passthrough) => passthrough === source);
 }
 
 // `email` undefined = identity not observable without reading the secret (codex); keep the stored one.
@@ -108,8 +113,15 @@ type LiveLoginProbe =
   | { ok: true; email?: string | null; login?: string }
   | { ok: false; transient: boolean; detail: string };
 
+/** An agent keeps its own sign-in, so its row is live while the agent is installed. */
+async function probeInstalledAgent(type: AIAccountType): Promise<LiveLoginProbe> {
+  if (await passthroughDeps.locateAgent(type)) return { ok: true };
+  return { ok: false, transient: false, detail: 'agent not installed' };
+}
+
 /** Is the provider's own login present on this machine right now (presence only), and as whom? */
-async function probeLiveLogin(row: CredentialRow): Promise<LiveLoginProbe> {
+async function probeLiveLogin(row: CredentialRow, type: AIAccountType): Promise<LiveLoginProbe> {
+  if (isInstalledAgent(AI_PROVIDERS[type])) return probeInstalledAgent(type);
   if (row.source !== 'codex-passthrough' && !row.sourcePath) {
     return { ok: false, transient: false, detail: 'missing sourcePath' };
   }
@@ -134,7 +146,7 @@ async function resolvePassthrough(
   row: CredentialRow,
   type: AIAccountType,
 ): Promise<CredentialResult> {
-  const probe = await probeLiveLogin(row);
+  const probe = await probeLiveLogin(row, type);
   if (!probe.ok) {
     if (probe.transient) {
       captureMainMessage('passthrough keychain probe denied or timed out', 'warning', {
@@ -164,7 +176,7 @@ async function resolvePassthrough(
     // Token-null on purpose: the executor pins CLAUDE_SECURESTORAGE_CONFIG_DIR='' so the CLI
     // reads the canonical keychain item and owns rotation (decisions/claude-credential-ownership-at-spawn).
     token: null,
-    label: row.accountLabel || (type === 'codex' ? 'OpenAI' : 'Claude Code'),
+    label: row.accountLabel || AI_PROVIDERS[type].name,
     isApiKey: false,
     type,
     passthrough: true,
@@ -173,9 +185,9 @@ async function resolvePassthrough(
 }
 
 async function rowToCredentialResult(row: CredentialRow | undefined): Promise<CredentialResult> {
-  if (!row) return emptyResult();
-
-  const type = accountType(row);
+  // A missing type is a legacy Claude row; a type Frink does not know never resolves.
+  const type = aiProvider(row?.type)?.id;
+  if (!row || !type) return emptyResult();
 
   // Passthrough re-probes the live login every resolution, so a re-login heals a flagged row.
   if (isPassthroughSource(row.source)) {
@@ -256,7 +268,7 @@ async function getBestCredentialForTypes(
  */
 export async function getDefaultClaudeCodeToken(): Promise<CredentialResult> {
   try {
-    return await getBestCredentialForTypes(['claude-code', 'codex']);
+    return await getBestCredentialForTypes(AI_PROVIDER_IDS);
   } catch (error) {
     log.error('[getDefaultClaudeCodeToken] Failed:', error);
     return emptyResult();
@@ -285,7 +297,7 @@ export async function getClaudeCodeTokenById(accountId: string): Promise<Credent
       .select(selectColumns())
       .from(claudeCodeCredentials)
       .where(
-        sql`${claudeCodeCredentials.id} = ${accountId} AND ${inArray(claudeCodeCredentials.type, ['claude-code', 'codex'])}`,
+        sql`${claudeCodeCredentials.id} = ${accountId} AND ${inArray(claudeCodeCredentials.type, AI_PROVIDER_IDS)}`,
       )
       .get();
     return await rowToCredentialResult(row);

@@ -67,6 +67,8 @@ function storeWrapper(store: ReturnType<typeof createStore>) {
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
+  // Midday, so no test meets the 3am cameo by running at the host's real hour.
+  vi.setSystemTime(new Date(2026, 5, 15, 12, 0));
   FloatingBadgeMock.mockImplementation(({ onDismiss }: { onDismiss: () => void }) => (
     <button type="button" data-testid="floating-badge" onClick={onDismiss} />
   ));
@@ -356,37 +358,54 @@ describe('EasterEggBoundary recovery', () => {
 });
 
 describe('Late-night cameo', () => {
-  it('sends Frink by at 3am, but not while another Frink is on screen', () => {
-    vi.setSystemTime(new Date(2026, 8, 27, 3, 15));
+  let jotai: typeof import('jotai');
+  let eggs: typeof import('../../hooks/use-easter-eggs');
+  let Overlay: typeof EasterEggOverlay;
+
+  // A fresh module graph per test: the cameo remembers it was shown for the whole session.
+  beforeEach(async () => {
     localStorage.clear();
-    const busy = createStore();
-    busy.set(mascotChaserActiveAtom, true);
-    const first = render(
-      <Provider store={busy}>
-        <EasterEggOverlay />
-      </Provider>,
+    vi.resetModules();
+    jotai = await import('jotai');
+    eggs = await import('../../hooks/use-easter-eggs');
+    ({ EasterEggOverlay: Overlay } = await import('.'));
+  });
+
+  // Mid-June has no daylight-saving switch in any zone, so 03:15 exists on every host.
+  function atQuarterPastThree(day: number) {
+    vi.setSystemTime(new Date(2026, 5, day, 3, 15));
+    expect(new Date().getHours()).toBe(3);
+  }
+
+  function renderWith(store: ReturnType<typeof jotai.createStore>) {
+    return render(
+      <jotai.Provider store={store}>
+        <Overlay />
+      </jotai.Provider>,
     );
+  }
+
+  it('sends Frink by at 3am, but not while another Frink is on screen', () => {
+    atQuarterPastThree(15);
+    const busy = jotai.createStore();
+    busy.set(eggs.mascotChaserActiveAtom, true);
+    const first = renderWith(busy);
     expect(screen.queryByTestId('mascot-cameo')).toBeNull();
     first.unmount();
 
-    render(
-      <Provider store={createStore()}>
-        <EasterEggOverlay />
-      </Provider>,
-    );
+    renderWith(jotai.createStore());
     expect(screen.queryByTestId('mascot-cameo')).not.toBeNull();
   });
 
-  it('stays away while the arcade is open', () => {
-    vi.setSystemTime(new Date(2026, 8, 29, 3, 15));
-    localStorage.clear();
-    const store = createStore();
-    store.set(arcadeRunAtom, 1);
-    render(
-      <Provider store={store}>
-        <EasterEggOverlay />
-      </Provider>,
-    );
+  it('stays away while the arcade is open, and still shows once it closes', () => {
+    atQuarterPastThree(17);
+    const arcade = jotai.createStore();
+    arcade.set(eggs.arcadeRunAtom, 1);
+    const first = renderWith(arcade);
     expect(screen.queryByTestId('mascot-cameo')).toBeNull();
+    first.unmount();
+
+    renderWith(jotai.createStore());
+    expect(screen.queryByTestId('mascot-cameo')).not.toBeNull();
   });
 });

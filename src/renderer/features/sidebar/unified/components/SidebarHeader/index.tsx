@@ -13,6 +13,7 @@ import { useLogoDodge } from '@/hooks/use-logo-dodge';
 import { SidebarHeaderWithSearch } from '../../../components/SidebarHeaderWithSearch';
 import { SIDEBAR_PANEL_SEARCH_INPUT_CLASS } from '../../../panel-search-input-class';
 import { STRINGS } from '../../constants';
+import { FlowChatsFilterButton } from './FlowChatsFilterButton';
 import { FrinkLogo } from './FrinkLogo';
 
 /** Padding from viewport edge so the dodging logo stays fully visible. */
@@ -27,6 +28,8 @@ type SidebarHeaderProps = {
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   /** Archive mode scopes the search to archived chats; the placeholder says so. */
   showArchived: boolean;
+  /** Off when there are no Flow chats to hide and the filter is off. */
+  showFlowChatsFilter: boolean;
   onToggleSidebar?: () => void;
 };
 
@@ -48,6 +51,7 @@ export function SidebarHeader({
   onSearchChange,
   searchInputRef,
   showArchived,
+  showFlowChatsFilter,
   onToggleSidebar,
 }: SidebarHeaderProps): ReactElement {
   const setFloatingBadgeActive = useSetAtom(floatingBadgeActiveAtom);
@@ -205,6 +209,7 @@ export function SidebarHeader({
       searchQuery={searchQuery}
       onSearchChange={onSearchChange}
       searchInputRef={searchInputRef}
+      searchAccessory={showFlowChatsFilter ? <FlowChatsFilterButton /> : undefined}
       onClose={onToggleSidebar}
       closeTooltipLabel={STRINGS.CLOSE_SIDEBAR}
       closeShortcutId="toggle-sidebar"

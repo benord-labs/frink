@@ -5,6 +5,8 @@ const port = Number(process.env.MOBILE_WEB_PORT ?? 8093);
 
 export default defineConfig({
   testDir: './tests',
+  // Fixtures load ../src/shared, whose tweetnacl/zod must resolve from mobile/node_modules (as in Metro).
+  tsconfig: './tsconfig.json',
   // Traces live in a subfolder Playwright may wipe; review screenshots stay in test-results/.
   outputDir: 'test-results/runs',
   workers: 1,

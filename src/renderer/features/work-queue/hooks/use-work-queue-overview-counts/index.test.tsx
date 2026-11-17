@@ -4,8 +4,9 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkQueueOverviewCounts } from './index';
 
-const { admissionsUseQueryMock, overviewUseQueryMock } = vi.hoisted(() => ({
+const { admissionsUseQueryMock, approvalsUseQueryMock, overviewUseQueryMock } = vi.hoisted(() => ({
   admissionsUseQueryMock: vi.fn(),
+  approvalsUseQueryMock: vi.fn(),
   overviewUseQueryMock: vi.fn(),
 }));
 
@@ -16,6 +17,7 @@ vi.mock('../../../../lib/trpc', () => ({
     },
     flows: {
       workQueueAdmissions: { useQuery: admissionsUseQueryMock },
+      workQueueApprovals: { useQuery: approvalsUseQueryMock },
     },
   },
 }));
@@ -24,6 +26,7 @@ describe('useWorkQueueOverviewCounts', () => {
   beforeEach(() => {
     admissionsUseQueryMock.mockReset();
     overviewUseQueryMock.mockReset();
+    approvalsUseQueryMock.mockReturnValue({ data: undefined });
   });
 
   it('uses the visible admissions as the queued count', () => {
@@ -58,5 +61,19 @@ describe('useWorkQueueOverviewCounts', () => {
     );
 
     expect(result.current).toEqual({ inbox: 4, queued: 3, review: 2, running: 1 });
+  });
+
+  it('counts each run waiting on an approval as review work', () => {
+    overviewUseQueryMock.mockReturnValue({ data: undefined, isLoading: true });
+    admissionsUseQueryMock.mockReturnValue({ data: undefined, isLoading: true });
+    approvalsUseQueryMock.mockReturnValue({
+      data: [{ flowRunId: 'run-1' }, { flowRunId: 'run-2' }],
+    });
+
+    const { result } = renderHook(() =>
+      useWorkQueueOverviewCounts({ inbox: 0, queued: 0, review: 1, running: 0 }),
+    );
+
+    expect(result.current.review).toBe(3);
   });
 });

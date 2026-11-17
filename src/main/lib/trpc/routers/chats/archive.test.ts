@@ -6,10 +6,16 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Chat } from '../../../db/schema';
-import { makeLocalChat } from './test-factories';
+import type { Chat, Task } from '../../../db/schema';
+import type { getDatabase } from '../../../db';
+import { makeLocalChat, makeLocalSubChat, makeLocalTask } from './test-factories';
 
 const archiveChatLocalMock = vi.fn();
+/** What the archive transaction hands back: the archived row and the tasks it cancelled. */
+const archivedRow = (chat: Chat | null, cancelledPrevious: Task[] = []) => ({
+  chat,
+  cancelledPrevious,
+});
 const unarchiveChatLocalMock = vi.fn();
 const getChatByIdLocalMock = vi.fn();
 const updateChatLocalMock = vi.fn();
@@ -35,6 +41,8 @@ vi.mock('../../../analytics', () => ({ trackWorkspaceArchived: trackWorkspaceArc
 vi.mock('../../../socket/executor', () => ({
   clearCodexSession: clearCodexSessionMock,
   abortActiveExecutionsForSubChats: vi.fn(),
+  // Inline factory, same reason as listSubChatsByChat above.
+  collectLiveSubChatIdsForChat: vi.fn(() => []),
 }));
 vi.mock('../../../terminal/manager', () => ({
   terminalManager: { killByWorkspaceId: killByWorkspaceIdMock },
@@ -60,7 +68,7 @@ describe('archiveRouter (local-first)', () => {
   it('archives a chat through the local repo and tracks analytics', async () => {
     const archived = makeLocalChat({ id: 'c1', archivedAt: new Date() });
     getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
-    archiveChatLocalMock.mockResolvedValue(archived);
+    archiveChatLocalMock.mockReturnValue(archivedRow(archived));
 
     const { archiveRouter } = await import('./archive');
     const caller = archiveRouter.createCaller({ getWindow: () => null });
@@ -76,7 +84,7 @@ describe('archiveRouter (local-first)', () => {
 
   it('returns null and cancels no flows when the local repo has no chat to archive', async () => {
     getChatByIdLocalMock.mockResolvedValue(null);
-    archiveChatLocalMock.mockResolvedValue(null);
+    archiveChatLocalMock.mockReturnValue(archivedRow(null));
 
     const { archiveRouter } = await import('./archive');
     const caller = archiveRouter.createCaller({ getWindow: () => null });
@@ -88,6 +96,25 @@ describe('archiveRouter (local-first)', () => {
     });
     expect(result).toBeNull();
     expect(cancelFlowRunsForChatMock).not.toHaveBeenCalled();
+  });
+
+  it("still aborts the chat's live turns when its own row can't be read", async () => {
+    getChatByIdLocalMock.mockRejectedValue(new Error('database is locked'));
+    archiveChatLocalMock.mockReturnValue(
+      archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })),
+    );
+    const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+      await import('../../../socket/executor');
+    vi.mocked(collectLiveSubChatIdsForChat).mockReturnValue(['sub-live']);
+
+    const { archiveRouter } = await import('./archive');
+    const caller = archiveRouter.createCaller({ getWindow: () => null });
+    await caller.archive({ id: 'c1', deleteWorktree: true, killTerminals: false });
+
+    // The row is archived anyway, so its turns must not keep streaming into it.
+    expect(archiveChatLocalMock).toHaveBeenCalledWith(expect.anything(), 'c1');
+    expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(['sub-live'], 'chat archived');
+    expect(tearDownChatWorktreeMock).not.toHaveBeenCalled();
   });
 
   it('restore unarchives via the local repo', async () => {
@@ -121,9 +148,9 @@ describe('archiveRouter (local-first)', () => {
 
   it('archiveBatch archives multiple chats and skips nulls in the response', async () => {
     archiveChatLocalMock
-      .mockResolvedValueOnce(makeLocalChat({ id: 'c1', archivedAt: new Date() }))
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(makeLocalChat({ id: 'c3', archivedAt: new Date() }));
+      .mockReturnValueOnce(archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })))
+      .mockReturnValueOnce(archivedRow(null))
+      .mockReturnValueOnce(archivedRow(makeLocalChat({ id: 'c3', archivedAt: new Date() })));
 
     const { archiveRouter } = await import('./archive');
     const caller = archiveRouter.createCaller({ getWindow: () => null });
@@ -155,8 +182,8 @@ describe('archiveRouter (local-first)', () => {
       getChatByIdLocalMock
         .mockResolvedValueOnce(chat)
         .mockResolvedValue({ ...chat, archivedAt: new Date() });
-      archiveChatLocalMock.mockResolvedValue(
-        makeLocalChat({ id: chat.id, archivedAt: new Date() }),
+      archiveChatLocalMock.mockReturnValue(
+        archivedRow(makeLocalChat({ id: chat.id, archivedAt: new Date() })),
       );
       // Must resolve: the teardown helper calls .catch() on this return value, and the mutation
       // never awaits the teardown promise — so a mock returning undefined raises a TypeError that
@@ -218,7 +245,9 @@ describe('archiveRouter (local-first)', () => {
       unarchiveChatLocalMock.mockResolvedValue(worktreeChat());
       // Every read sees an active chat: the undo lands before teardown re-checks the row.
       getChatByIdLocalMock.mockResolvedValue(worktreeChat());
-      archiveChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', archivedAt: new Date() }));
+      archiveChatLocalMock.mockReturnValue(
+        archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })),
+      );
       updateChatLocalMock.mockResolvedValue(worktreeChat());
 
       const { archiveRouter } = await import('./archive');
@@ -239,14 +268,40 @@ describe('archiveRouter (local-first)', () => {
     it('aborts running executions before tearing the worktree down even if the sub-chat lookup fails', async () => {
       const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
       vi.mocked(listSubChatsByChat).mockRejectedValue(new Error('database is locked'));
+      const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+        await import('../../../socket/executor');
+      vi.mocked(collectLiveSubChatIdsForChat).mockReturnValue(['sub-live']);
       tearDownChatWorktreeMock.mockResolvedValue(true);
 
       await archiveWithWorktree(worktreeChat());
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // A failed lookup means we cannot know which executions are live, and aborting an empty list
-      // is a no-op — so removing the worktree would yank it from under a still-streaming agent.
+      // The live turn is found in memory, so it is stopped without the DB list.
+      expect(collectLiveSubChatIdsForChat).toHaveBeenCalledWith('c1');
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(['sub-live'], 'chat archived');
+      // Idle sessions of sub-chats we couldn't list are still unknown, so the worktree stays.
       expect(tearDownChatWorktreeMock).not.toHaveBeenCalled();
+    });
+
+    it('aborts the listed and live sub-chats once each when the lookup succeeds', async () => {
+      const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
+      vi.mocked(listSubChatsByChat).mockResolvedValue([
+        makeLocalSubChat({ id: 'sub-a', chatId: 'c1' }),
+        makeLocalSubChat({ id: 'sub-b', chatId: 'c1' }),
+      ]);
+      const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+        await import('../../../socket/executor');
+      vi.mocked(collectLiveSubChatIdsForChat).mockReturnValue(['sub-b']);
+      tearDownChatWorktreeMock.mockResolvedValue(true);
+
+      await archiveWithWorktree(worktreeChat());
+      await flushTeardown();
+
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(
+        ['sub-a', 'sub-b'],
+        'chat archived',
+      );
+      expect(tearDownChatWorktreeMock).toHaveBeenCalled();
     });
 
     it('makes restore wait for a running teardown instead of unarchiving into it', async () => {
@@ -280,7 +335,9 @@ describe('archiveRouter (local-first)', () => {
     it('does not tear the same worktree down twice when two panes archive the chat at once', async () => {
       tearDownChatWorktreeMock.mockResolvedValue(true);
       getChatByIdLocalMock.mockResolvedValue(worktreeChat({ archivedAt: new Date() }));
-      archiveChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', archivedAt: new Date() }));
+      archiveChatLocalMock.mockReturnValue(
+        archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })),
+      );
       updateChatLocalMock.mockResolvedValue(worktreeChat());
 
       const { archiveRouter } = await import('./archive');
@@ -296,8 +353,30 @@ describe('archiveRouter (local-first)', () => {
   });
 
   describe('archiveBatch edge cases', () => {
+    it("aborts every chat's live turns even when its sub-chat lookup fails", async () => {
+      const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
+      vi.mocked(listSubChatsByChat).mockRejectedValue(new Error('database is locked'));
+      const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+        await import('../../../socket/executor');
+      vi.mocked(collectLiveSubChatIdsForChat).mockImplementation((chatId) => [`${chatId}-live`]);
+      archiveChatLocalMock.mockImplementation((_db, id: string) =>
+        archivedRow(makeLocalChat({ id, archivedAt: new Date() })),
+      );
+
+      const { archiveRouter } = await import('./archive');
+      const caller = archiveRouter.createCaller({ getWindow: () => null });
+      await caller.archiveBatch({ chatIds: ['c1', 'c2'] });
+
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(
+        ['c1-live', 'c2-live'],
+        'chat archived (batch)',
+      );
+    });
+
     it('archives a chat once when the same id appears twice in the batch', async () => {
-      archiveChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', archivedAt: new Date() }));
+      archiveChatLocalMock.mockReturnValue(
+        archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })),
+      );
 
       const { archiveRouter } = await import('./archive');
       const caller = archiveRouter.createCaller({ getWindow: () => null });
@@ -309,8 +388,8 @@ describe('archiveRouter (local-first)', () => {
     });
 
     it('invalidates the git cache for batch-archived chats that own a worktree', async () => {
-      archiveChatLocalMock.mockResolvedValue(
-        makeLocalChat({ id: 'c1', worktreePath: '/wt/c1', archivedAt: new Date() }),
+      archiveChatLocalMock.mockReturnValue(
+        archivedRow(makeLocalChat({ id: 'c1', worktreePath: '/wt/c1', archivedAt: new Date() })),
       );
 
       const { archiveRouter } = await import('./archive');
@@ -321,6 +400,57 @@ describe('archiveRouter (local-first)', () => {
       // entry keyed on a worktree the sidebar no longer shows.
       const { gitCache } = await import('../../../git/cache');
       expect(gitCache.invalidateStatus).toHaveBeenCalledWith('/wt/c1');
+    });
+  });
+
+  describe('linked Work Queue tasks', () => {
+    it("aborts the cancelled running task's session after archiving", async () => {
+      const running = makeLocalTask({ status: 'running', result: { subChatId: 'sub-run' } });
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      archiveChatLocalMock.mockReturnValue(
+        archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() }), [running]),
+      );
+
+      const { archiveRouter } = await import('./archive');
+      const caller = archiveRouter.createCaller({ getWindow: () => null });
+      await caller.archive({ id: 'c1', deleteWorktree: false, killTerminals: true });
+
+      const { abortActiveExecutionsForSubChats } = await import('../../../socket/executor');
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(['sub-run'], 'task cancelled');
+    });
+
+    it('refuses the archive, and leaves terminals and worktree alone, when the task cannot be stopped', async () => {
+      getChatByIdLocalMock.mockResolvedValue(
+        makeLocalChat({ id: 'c1', worktreePath: '/wt/c1', branch: 'b', projectId: 'p1' }),
+      );
+      archiveChatLocalMock.mockImplementation(() => {
+        throw new Error('cancel refused');
+      });
+
+      const { archiveRouter } = await import('./archive');
+      const caller = archiveRouter.createCaller({ getWindow: () => null });
+
+      await expect(
+        caller.archive({ id: 'c1', deleteWorktree: true, killTerminals: true }),
+      ).rejects.toThrow("Could not stop this chat's task, so the chat was not archived.");
+      expect(trackWorkspaceArchivedMock).not.toHaveBeenCalled();
+      expect(killByWorkspaceIdMock).not.toHaveBeenCalled();
+      expect(tearDownChatWorktreeMock).not.toHaveBeenCalled();
+    });
+
+    it('archiveBatch archives the other chats when one chat cannot stop its task', async () => {
+      archiveChatLocalMock.mockImplementation(
+        (_db: ReturnType<typeof getDatabase>, chatId: string) => {
+          if (chatId === 'c2') throw new Error('cancel refused');
+          return archivedRow(makeLocalChat({ id: chatId, archivedAt: new Date() }));
+        },
+      );
+
+      const { archiveRouter } = await import('./archive');
+      const caller = archiveRouter.createCaller({ getWindow: () => null });
+
+      const result = await caller.archiveBatch({ chatIds: ['c1', 'c2', 'c3'] });
+      expect(result.map((c) => c.id)).toEqual(['c1', 'c3']);
     });
   });
 });

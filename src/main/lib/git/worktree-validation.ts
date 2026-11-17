@@ -20,11 +20,10 @@ export type WorktreeValidationResult =
  * 1. Path exists on disk
  * 2. Is a valid git worktree (registered in the main repo)
  * 3. No in-progress rebase / merge / cherry-pick
- * 4. No concurrent worktree lock (`.git/index.lock`)
  *
  * Invalid results carry `permanent`: true means the failure is deterministic (path gone,
  * not a worktree) and retrying cannot fix it — callers should fail fast. False means
- * another process may be mid-operation (lock, rebase) and a bounded retry is reasonable.
+ * another process may be mid-operation (rebase, merge) and a bounded retry is reasonable.
  *
  * @param worktreePath - Absolute path to the worktree directory
  */
@@ -105,20 +104,7 @@ export async function validateWorktreeForReuse(
     }
   }
 
-  // 4. Check for index lock (another git process is running)
-  try {
-    await access(join(actualGitDir, 'index.lock'));
-    return {
-      valid: false,
-      reason:
-        'Worktree is locked by another git process (index.lock exists). Wait for it to complete.',
-      permanent: false,
-    };
-  } catch {
-    // Not locked — good
-  }
-
-  // 5. Verify it's recognized as a valid worktree via simple-git status
+  // 4. Verify it's recognized as a valid worktree via simple-git status
   try {
     const git = simpleGit(worktreePath);
     const isRepo = await git.checkIsRepo();

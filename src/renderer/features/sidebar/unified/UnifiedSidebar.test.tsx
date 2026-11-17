@@ -3,7 +3,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { answerConfirm } from './sidebar-confirm-test-harness';
+import { answerConfirm } from '../../../lib/test-utils/sidebar-confirm';
 import {
   captureChatAction,
   expectScopedCountsRefetch,
@@ -12,6 +12,7 @@ import {
   setupHarness,
 } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
+import type { SidebarBatchGroup } from '../../../../shared/types/flows/sidebar-batch-group';
 
 // Every mock delegates to the shared harness so this suite can be split across files.
 vi.mock('jotai', async (importOriginal) =>
@@ -100,6 +101,26 @@ describe('UnifiedSidebar pending plan approvals', () => {
   });
 });
 
+describe('UnifiedSidebar open chats older than the loaded pages', () => {
+  afterEach(() => {
+    hoisted.state.openChatRows = [];
+  });
+
+  it('lists a chat open in a split pane that no loaded page holds', () => {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['recent-chat', 'old-chat'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    hoisted.state.openChatRows = [
+      { id: 'old-chat', projectId: null, updatedAt: new Date('2025-01-01') },
+    ];
+    render(<UnifiedSidebar />);
+    // SAFETY: the useGroupedProjects double captures the chat list UnifiedSidebar handed it.
+    const chats = hoisted.capturedGroupedProjectsParams?.chats as Array<{ id: string }>;
+    expect(chats.map((chat) => chat.id)).toEqual(['old-chat']);
+  });
+});
+
 describe('UnifiedSidebar folder count-drift self-heal', () => {
   it('re-arms the drift refetch when the folder count advances while the first fetch is in flight', async () => {
     // Disarm-race repro: the header count goes 1 -> 2 (a second chat syncs) WHILE the initial
@@ -162,11 +183,11 @@ describe('UnifiedSidebar task count freshness', () => {
       interrupted: 0,
       total: 6,
     };
-    hoisted.state.activeTasksData = { items: [{ id: 'task-1' }], hasMore: false, nextCursor: null };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [{ id: 'task-1' }] };
 
     const { rerender } = render(<UnifiedSidebar />);
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('1:2:3:0:0:none');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('1:2:3:0:0');
 
     hoisted.state.taskCountsData = {
       pending: 4,
@@ -178,18 +199,14 @@ describe('UnifiedSidebar task count freshness', () => {
       interrupted: 0,
       total: 5,
     };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-2' }, { id: 'task-3' }],
-      hasMore: false,
-      nextCursor: null,
-    };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [{ id: 'task-2' }, { id: 'task-3' }] };
     // Pass a new onChatSelect reference to bypass React.memo's equality check
     rerender(<UnifiedSidebar onChatSelect={() => {}} />);
 
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('4:0:1:2:0:none');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('4:0:1:2:0');
     expect(hoisted.listCountsUseQueryMock).toHaveBeenCalled();
-    expect(hoisted.listPaginatedUseQueryMock).toHaveBeenCalled();
+    expect(hoisted.listActiveChatsUseQueryMock).toHaveBeenCalled();
   });
 
   // Interrupted runs fold into the Needs Attention bucket, so they must contribute to the sidebar's
@@ -208,87 +225,7 @@ describe('UnifiedSidebar task count freshness', () => {
     };
     render(<UnifiedSidebar />);
     // position 4 = needsAttentionTaskCount = needsAttention(1) + interrupted(2) = 3
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:0:3:0:none');
-  });
-
-  it('surfaces hasMore in footer when active-task page reports additional pages', async () => {
-    hoisted.state.taskCountsData = {
-      pending: 0,
-      planReady: 1,
-      done: 0,
-      running: 1,
-      needsAttention: 0,
-      failed: 0,
-      interrupted: 0,
-      total: 2,
-    };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-1' }],
-      hasMore: true,
-      nextCursor: null,
-    };
-
-    render(<UnifiedSidebar />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:1:0:0:more');
-    });
-  });
-
-  it('keeps hasMore true when pagination loop detects repeated cursor', async () => {
-    hoisted.state.taskCountsData = {
-      pending: 0,
-      planReady: 1,
-      done: 0,
-      running: 1,
-      needsAttention: 1,
-      failed: 0,
-      interrupted: 0,
-      total: 2,
-    };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-1' }],
-      hasMore: true,
-      nextCursor: { createdAt: '2026-03-09T09:00:00.000Z', id: 'cursor-1' },
-    };
-    hoisted.listPaginatedClientQueryMock.mockResolvedValueOnce({
-      items: [{ id: 'task-2' }],
-      hasMore: true,
-      nextCursor: { createdAt: '2026-03-09T09:00:00.000Z', id: 'cursor-1' },
-    });
-
-    render(<UnifiedSidebar />);
-
-    await waitFor(() => {
-      expect(hoisted.listPaginatedClientQueryMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:1:1:0:more');
-    });
-  });
-
-  it('falls back to first-page hasMore when follow-up page fetch fails', async () => {
-    hoisted.state.taskCountsData = {
-      pending: 0,
-      planReady: 1,
-      done: 0,
-      running: 1,
-      needsAttention: 0,
-      failed: 0,
-      interrupted: 0,
-      total: 2,
-    };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-1' }],
-      hasMore: false,
-      nextCursor: { createdAt: '2026-03-09T09:00:00.000Z', id: 'cursor-1' },
-    };
-    hoisted.listPaginatedClientQueryMock.mockRejectedValueOnce(new Error('network-fail'));
-
-    render(<UnifiedSidebar />);
-
-    await waitFor(() => {
-      expect(hoisted.listPaginatedClientQueryMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:1:0:0:none');
-    });
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:0:3:0');
   });
 
   it('uses highest-priority task status per chat for sidebar row state', async () => {
@@ -302,16 +239,15 @@ describe('UnifiedSidebar task count freshness', () => {
       interrupted: 0,
       total: 5,
     };
-    hoisted.state.activeTasksData = {
-      items: [
+    hoisted.state.sidebarActivityData = {
+      chats: [],
+      tasks: [
         { id: 'task-1', status: 'pending', linkedChatId: 'chat-priority' },
         { id: 'task-2', status: 'running', linkedChatId: 'chat-priority' },
         { id: 'task-3', status: 'plan_ready', linkedChatId: 'chat-priority' },
         { id: 'task-4', status: 'failed', linkedChatId: 'chat-priority' },
         { id: 'task-5', status: 'needs_attention', linkedChatId: 'chat-priority' },
       ],
-      hasMore: false,
-      nextCursor: null,
     };
 
     render(<UnifiedSidebar />);
@@ -603,20 +539,10 @@ describe('UnifiedSidebar move-chat parity', () => {
 });
 
 describe('UnifiedSidebar handleDeleteBatch', () => {
-  type SidebarBatchGroup = {
-    batch_id: string;
-    flow_name: string;
-    run_count: number;
-    completed_count: number;
-    failed_count: number;
-    running_count: number;
-    first_run_at: string | null;
-    last_activity_at: string | null;
-  };
-
   function makeBatchSummary(overrides: Partial<SidebarBatchGroup> = {}): SidebarBatchGroup {
     return {
       batch_id: 'batch-uuid-001',
+      kind: 'batch',
       flow_name: 'Test Flow',
       run_count: 5,
       completed_count: 5,
@@ -663,6 +589,15 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
     );
     expect(asked).toContain('Delete all 1 chat from batch "Test Flow"?');
     expect(asked).toContain('1 running flow run will be stopped');
+  });
+
+  it('names the Fan Out run, not a batch, when deleting a run group', async () => {
+    hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-1' }]);
+    const onDeleteBatch = getOnDeleteBatch();
+    const summary = makeBatchSummary({ kind: 'run', flow_name: 'List outreach', running_count: 1 });
+    const asked = await answerConfirm(() => onDeleteBatch('run-1', summary), 'cancel');
+    expect(asked).toContain('Delete all 1 chat from the "List outreach" run?');
+    expect(asked).toContain('The run will stop');
   });
 
   it('asks once for a batch with running runs, then deletes on confirm', async () => {
@@ -1221,89 +1156,48 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
     return captureChatAction('onChatArchive');
   }
 
-  /**
-   * Drives the archive dropdown up to the point the task-aware confirm dialog is showing, and
-   * returns its captured callbacks. A non-empty activeTasks list is what defers the archive; zero
-   * unresolved links keeps the warning toast out of the way.
-   */
-  async function openTaskAwareArchiveDialog(chatId: string) {
-    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockImplementation(
-      async (chatIds: string[]) =>
-        chatIds.length === 1 && chatIds[0] === chatId
-          ? {
-              activeTasks: [{ taskId: 'task-taw', chatId }],
-              unresolvedTaskLinks: 0,
-            }
-          : { activeTasks: [], unresolvedTaskLinks: 0 },
-    );
+  // Archive stops the linked task in the main process, so the renderer never cancels from a snapshot.
+  it('archives at once when the chat has a live linked task, without the task dialog', async () => {
+    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockResolvedValue({
+      activeTasks: [{ taskId: 'task-taw', chatId: 'chat-taw' }],
+      unresolvedTaskLinks: 0,
+    });
     const onChatArchive = getOnChatArchive();
     await act(async () => {
-      await onChatArchive(chatId);
+      await onChatArchive('chat-taw');
     });
-    // The dialog must have rendered before its callbacks are read: executeTaskAwareAction
-    // early-returns unless the ref it assigns during render says the dialog is open.
+
+    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-taw' });
     const props = hoisted.capturedSidebarDialogsProps as {
       taskAwareActionDialog?: { open?: boolean };
-      onTaskAwareActionKeepRunning?: () => void;
-      onTaskAwareActionCancelAndContinue?: () => void;
     } | null;
-    expect(props?.taskAwareActionDialog?.open).toBe(true);
-    expect(hoisted.archiveChatMutateAsyncMock).not.toHaveBeenCalled();
-    return props!;
-  }
-
-  it('cancels the linked tasks and kills terminals on cancel-and-continue', async () => {
-    const props = await openTaskAwareArchiveDialog('chat-taw-cancel');
-    await act(async () => {
-      props.onTaskAwareActionCancelAndContinue?.();
-    });
-
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalled());
-    expect(hoisted.abortTaskChatStreamsBestEffortMock).toHaveBeenCalledWith(['chat-taw-cancel']);
-    expect(hoisted.cancelTasksBestEffortMock).toHaveBeenCalledWith(['task-taw']);
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-taw-cancel',
-      killTerminals: true,
-    });
-  });
-
-  // Keeping a task running means its terminals must survive the archive, or the task it is still
-  // executing loses the shell out from under it.
-  it('leaves the linked tasks running and the terminals alive on keep-running', async () => {
-    const props = await openTaskAwareArchiveDialog('chat-taw-keep');
-    await act(async () => {
-      props.onTaskAwareActionKeepRunning?.();
-    });
-
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalled());
-    expect(hoisted.abortTaskChatStreamsBestEffortMock).not.toHaveBeenCalled();
+    expect(props?.taskAwareActionDialog?.open).toBe(false);
+    expect(hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock).not.toHaveBeenCalled();
     expect(hoisted.cancelTasksBestEffortMock).not.toHaveBeenCalled();
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-taw-keep',
-      killTerminals: false,
-    });
   });
 
-  // A cancellation that fails must not strand the chat: the user asked to archive, so the archive
-  // still has to happen — the failure is reported, not treated as a blocker.
-  it('still archives when some task cancellations fail', async () => {
-    const toastWarningSpy = vi.spyOn(toast, 'warning').mockReturnValue('toast-id');
-    hoisted.cancelTasksBestEffortMock.mockResolvedValueOnce({ failed: 2 });
-    const props = await openTaskAwareArchiveDialog('chat-taw-partial');
+  // A refused archive leaves the chat live, so its pane must come back.
+  it('reopens the cleared panes and reports the reason when archive refuses', async () => {
+    const errorSpy = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
+    hoisted.archiveChatMutateAsyncMock.mockRejectedValueOnce(
+      new Error("Could not stop this chat's task, so the chat was not archived."),
+    );
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['chat-other', 'chat-refused'], activePaneIndex: 1 },
+      isSplitActive: true,
+    };
+    const onChatArchive = getOnChatArchive();
     await act(async () => {
-      props.onTaskAwareActionCancelAndContinue?.();
+      await onChatArchive('chat-refused');
     });
 
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalled());
-    expect(toastWarningSpy).toHaveBeenCalledWith(
-      'Some task cancellations failed',
-      expect.objectContaining({ description: expect.stringContaining('2 tasks') }),
-    );
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-taw-partial',
-      killTerminals: true,
+    expect(errorSpy).toHaveBeenCalledWith('Failed to archive chat', {
+      description: "Could not stop this chat's task, so the chat was not archived.",
     });
-    toastWarningSpy.mockRestore();
+    expect(screen.queryByTestId('archived-chats')).toBeNull();
+    // The pane archive cleared eagerly comes back, since the chat is still live.
+    expect(hoisted.restorePaneAtMock).toHaveBeenCalledWith(1, 'chat-refused');
+    errorSpy.mockRestore();
   });
 
   it('switches to archived mode and clears the selection only if it was the archived chat', async () => {
@@ -1323,6 +1217,13 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
     ) => string | null;
     expect(updater('chat-arch-selected')).toBeNull();
     expect(updater('chat-other')).toBe('chat-other');
+  });
+
+  it('clears the archived chat from the selection before the sidebar counts resync', async () => {
+    hoisted.chatsListCountsFetchMock.mockReturnValueOnce(new Promise(() => {}));
+    const onChatArchive = getOnChatArchive();
+    void onChatArchive('chat-arch-selected');
+    await waitFor(() => expect(hoisted.setSelectedChatIdMock).toHaveBeenCalled());
   });
 
   it('refetches batch caches + listArchived but skips full folder/pinned refetch', async () => {
@@ -1438,7 +1339,7 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
 });
 
 describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () => {
-  it('deleteCompletely: task preflight and deleteChat receive all project chat ids including pinned', async () => {
+  it('deleteCompletely: task preflight covers all project chat ids including pinned; one project delete', async () => {
     hoisted.chatsListCountsForSidebarData = [{ projectId: 'cloud-p1', count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
@@ -1474,10 +1375,42 @@ describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () 
       (args) => args[0].length === 2 && args[0].includes('unp-1') && args[0].includes('pin-1'),
     );
     expect(callWithAllChats).toBeDefined();
-    expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'unp-1' });
-    expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'pin-1' });
-    expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'local-p1' });
+    // The project delete's FK cascade drops the chats in one transaction.
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
+    expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledWith({
+      id: 'local-p1',
+      chatIds: ['unp-1', 'pin-1'],
+    });
     vi.unstubAllGlobals();
+  });
+
+  it('a failed project delete never deletes its chats first (sc-3279)', async () => {
+    const toastErrorSpy = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
+    hoisted.chatsListByFolderFetchMock.mockResolvedValue({
+      chats: [{ id: 'unp-1', projectId: 'cloud-p1' }],
+      hasMore: false,
+      nextCursor: null,
+    });
+    hoisted.listPinnedFetchMock.mockResolvedValue([]);
+    hoisted.projectsDeleteMutateAsyncMock.mockRejectedValueOnce(new Error('database is locked'));
+
+    render(<UnifiedSidebar />);
+    // SAFETY: the ProjectsTree double records the props UnifiedSidebar rendered it with.
+    const props = hoisted.capturedProjectsTreeProps as {
+      onProjectDelete?: (projectId: string) => Promise<void>;
+    } | null;
+    if (!props?.onProjectDelete) throw new Error('onProjectDelete not found in ProjectsTree props');
+
+    const onProjectDelete = props.onProjectDelete;
+    await answerConfirm(() => onProjectDelete('local-p1'), 'confirm');
+
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
+    expect(toastErrorSpy).toHaveBeenCalledWith(
+      'Failed to delete project',
+      expect.objectContaining({ description: 'database is locked' }),
+    );
+    toastErrorSpy.mockRestore();
   });
 });
 
@@ -1615,11 +1548,14 @@ describe('UnifiedSidebar archived mode (sc-198)', () => {
     ['a string', 'not-an-array'],
     ['null', null],
     ['undefined', undefined],
-  ])('survives listArchived returning %s during hydration', (_label, payload) => {
+  ])('survives listArchived and chats.list returning %s during hydration', (_label, payload) => {
     hoisted.archivedChatsData = payload;
+    // SAFETY: the corpus field holds chat rows; this payload is the malformed value under test.
+    hoisted.searchCorpusData = payload as never;
 
     expect(() => {
       render(<UnifiedSidebar />);
+      fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: 'chat' } });
       fireEvent.click(screen.getByTestId('toggle-archived'));
     }).not.toThrow();
 
@@ -1913,7 +1849,7 @@ describe('UnifiedSidebar row-action identity', () => {
     const identities = () => ROW_BOUND_PROPS.map((k) => hoisted.capturedProjectsTreeProps?.[k]);
     render(<UnifiedSidebar />);
     const before = identities();
-    hoisted.state.activeTasksData = { items: [], hasMore: false, nextCursor: null };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [] };
     fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: 'x' } });
     const after = identities();
     ROW_BOUND_PROPS.forEach((key, i) => expect(after[i], key).toBe(before[i]));
@@ -1934,5 +1870,130 @@ describe('UnifiedSidebar row-action identity', () => {
     await Promise.all([first, second]);
 
     expect(hoisted.togglePinMutateAsyncMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('UnifiedSidebar pane indicators', () => {
+  it('passes no pane map in single view, where panes are unnumbered', () => {
+    render(<UnifiedSidebar />);
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toBeUndefined();
+  });
+
+  it('passes the pane map in split view', () => {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['chat-a', null, 'chat-b'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    render(<UnifiedSidebar />);
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toEqual(
+      new Map([
+        ['chat-a', 1],
+        ['chat-b', 3],
+      ]),
+    );
+  });
+});
+
+describe('UnifiedSidebar reveal active chat', () => {
+  it('focuses the active chat when a pane header asks for it', () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    hoisted.focusActiveItemMock.mockClear();
+    render(<UnifiedSidebar />);
+    expect(hoisted.focusActiveItemMock).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('sidebar:reveal-active-chat'));
+    });
+
+    expect(hoisted.focusActiveItemMock).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('UnifiedSidebar search', () => {
+  const chatRow = (id: string, name: string, pinnedAt: Date | null = null) => ({
+    id,
+    name,
+    projectId: null,
+    updatedAt: new Date('2026-01-01'),
+    branch: null,
+    pinnedAt,
+    worktreePath: null,
+    taskId: null,
+    batchId: null,
+  });
+  const search = (query: string) =>
+    fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: query } });
+  // SAFETY: the useGroupedProjects double captures the chat list UnifiedSidebar handed it.
+  const groupedChats = () => hoisted.capturedGroupedProjectsParams?.chats as Array<{ id: string }>;
+
+  it('matches chats by words in any order with a typo, and keeps folders matched by name', () => {
+    hoisted.groupedProjectsResult = [
+      {
+        displayName: 'frink',
+        chats: [chatRow('fix', 'Fix sidebar search'), chatRow('bill', 'Billing')],
+      },
+      { displayName: 'devkit', chats: [chatRow('ship', 'Ship gates')] },
+    ];
+    render(<UnifiedSidebar />);
+
+    search('serach sidebar');
+    // SAFETY: the ProjectsTree double captures the codebases UnifiedSidebar rendered.
+    const tree = () =>
+      hoisted.capturedProjectsTreeProps?.filteredCodebases as Array<{
+        displayName: string;
+        chats: Array<{ id: string }>;
+      }>;
+    expect(tree().map((c) => [c.displayName, c.chats.map((chat) => chat.id)])).toEqual([
+      ['frink', ['fix']],
+    ]);
+
+    search('devkt');
+    expect(tree().map((c) => [c.displayName, c.chats.length])).toEqual([['devkit', 0]]);
+  });
+
+  it('searches every chat while a query is active, not just the loaded pages', () => {
+    hoisted.searchCorpusData = [chatRow('old', 'Old chat')];
+    render(<UnifiedSidebar />);
+    expect(groupedChats()).toEqual([]);
+    expect(hoisted.chatsListUseQueryMock).toHaveBeenLastCalledWith({}, { enabled: false });
+
+    search('old');
+    expect(groupedChats().map((chat) => chat.id)).toEqual(['old']);
+    expect(hoisted.chatsListUseQueryMock).toHaveBeenLastCalledWith({}, { enabled: true });
+
+    search('');
+    expect(groupedChats()).toEqual([]);
+  });
+
+  it('keeps a loaded row over the stale search copy of the same chat', async () => {
+    const pinnedAt = new Date('2026-02-01');
+    hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 1 }];
+    hoisted.chatsListByFolderFetchMock.mockResolvedValue({
+      chats: [chatRow('chat-1', 'Pinned chat', pinnedAt)],
+      hasMore: false,
+      nextCursor: null,
+    });
+    hoisted.searchCorpusData = [chatRow('chat-1', 'Pinned chat')];
+    render(<UnifiedSidebar />);
+    await waitFor(() => expect(groupedChats()).toHaveLength(1));
+
+    search('pinned');
+    expect(groupedChats()).toEqual([expect.objectContaining({ id: 'chat-1', pinnedAt })]);
+  });
+
+  it('drops a deleted chat from the search corpus straight away', async () => {
+    const onChatDelete = captureChatAction('onChatDelete');
+    await answerConfirm(() => onChatDelete('chat-x'), 'confirm');
+
+    expect(hoisted.chatsListSetDataMock).toHaveBeenCalledWith({}, expect.any(Function));
+    // SAFETY: the second argument is the updater UnifiedSidebar passed to setData.
+    const update = hoisted.chatsListSetDataMock.mock.calls[0]?.[1] as (
+      prev: Array<{ id: string }> | undefined,
+    ) => Array<{ id: string }> | undefined;
+    expect(update([{ id: 'chat-x' }, { id: 'keep' }])).toEqual([{ id: 'keep' }]);
   });
 });

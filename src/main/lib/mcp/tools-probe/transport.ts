@@ -4,6 +4,7 @@
  * stdio), typed failure classification, and one connect-operate-close
  * lifecycle under per-step timeout budgets.
  */
+import os from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { captureMainMessage } from '../../sentry/init';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -224,6 +225,8 @@ export type McpStdioServerSpec = {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** The owning project's folder, where its relative paths resolve; global servers omit it. */
+  cwd?: string;
 };
 
 /**
@@ -250,7 +253,9 @@ class NormalizingStdioTransport implements Transport {
   constructor(private readonly config: McpStdioServerSpec) {}
 
   async start(): Promise<void> {
-    const spawn = await normalizeSpawnShapeAsync(this.config.command, this.config.args ?? []);
+    // Outside every project otherwise: a child listening in a project folder reads as its dev server.
+    const cwd = this.config.cwd ?? os.tmpdir();
+    const spawn = await normalizeSpawnShapeAsync(this.config.command, this.config.args ?? [], cwd);
     // The connect guard may have fired and closed us while the path check was pending.
     if (this.closed) return;
     const safeEnv = omitEnvKeys(getClaudeShellEnvironment(), CREDENTIAL_ENV_DENYLIST);
@@ -258,6 +263,7 @@ class NormalizingStdioTransport implements Transport {
       command: spawn.command,
       args: spawn.args,
       env: { ...safeEnv, ...withNpxRegistryDefault(spawn.command, this.config.env) },
+      cwd,
     });
     inner.onclose = () => this.onclose?.();
     inner.onerror = (error) => this.onerror?.(error);

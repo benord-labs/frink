@@ -12,7 +12,10 @@ import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import type { ToolPartState } from '../../../shared/types/assistant-message';
 import { buildFrinkPlanChunks } from '../agent-runner/plan-document';
 import type { UIMessageChunk } from '../claude/types';
+import type { RecordedTaskSignal } from '../mcp/task-signal-tool';
+import type { TurnHooks } from '../provider/hooks/dispatch';
 import type { MessagePart } from './client';
+import type { MessageProvenance } from '../../../shared/lib/message-markers/message-provenance';
 
 /** `MessagePart.state` is an untyped index-signature field; this is the one typed writer for it. */
 function setToolPartState(part: MessagePart, state: ToolPartState): void {
@@ -41,6 +44,8 @@ export interface ClaudeTurnExecution {
   flowPlanAutoApprove: boolean;
   abortController: AbortController;
   sendChunk: TurnChunkSend;
+  /** The user's own hooks, bound once for the send; absent means none run. */
+  userHooks?: TurnHooks;
 }
 
 /**
@@ -76,9 +81,12 @@ export interface ClaudeTurnContext {
   /** Plan restrictions still in force (plan mode, plan not yet submitted): refuses terminal
    * `frink_task_signal` states so plan mode finishes only through ExitPlanMode. */
   planTerminalsLocked: boolean;
-  /** This turn submitted a plan (ExitPlanMode called), so any signal recorded BEFORE that point
-   * belongs to the drafting phase — see hasLatestTaskSignalFor's `requireTerminal`. */
+  /** This turn submitted a plan (ExitPlanMode called), so the signal in {@link preplanSignal}
+   * belongs to the drafting phase and may not settle the implementation phase. */
   planSubmitted: boolean;
+  /** The drafting `awaiting_input` on record when ExitPlanMode was requested, else null. Once the
+   * plan is submitted, the Stop hook accepts any signal except this exact object. */
+  preplanSignal: RecordedTaskSignal | null;
   /** The plan this turn's ExitPlanMode submitted (hook input): the card is built from this text. */
   submittedPlan: { path: string; text: string } | null;
   /** Records that canUseTool persisted the task signal mid-stream (skips the post-stream write). */
@@ -86,8 +94,15 @@ export interface ClaudeTurnContext {
   /** Denied tool_use ids → denial message, read post-stream to emit synthetic tool-output-errors. */
   deniedToolIdsWithMessages: Map<string, string>;
   /** Operator reminders to deliver via the UserPromptSubmit hook for THIS turn (empty on wake
-   * bursts and on turns whose reminders ride the prompt prepend instead). */
+   * bursts). */
   pendingReminders: string[];
+  /** The Flow-run-ended notice, taken by the turn's first prompt hook so later fires skip it. */
+  pendingFlowRunEnded?: { subChatId: string; runId: string; text: string };
+  /** Runs when the CLI takes this turn's own prompt (a prompt hook for a prompt Frink sent). */
+  onPromptAccepted?: () => void;
+  messageProvenance?: MessageProvenance;
+  /** What the turn's attached files and selections mean; queued for the prompt hook on push. */
+  composerNotes: string[];
   /** Whether this turn delegates Frink's residual `ask` decisions to Claude's native Auto Mode. */
   autoReviewTools: boolean;
   /** Auto may review THIS turn's plan-drafting phase (resolveAutoReviewModes). On the turn because
@@ -122,10 +137,12 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
     setPlanSubmissionHalt: () => {},
     planTerminalsLocked: false,
     planSubmitted: false,
+    preplanSignal: null,
     submittedPlan: null,
     setHasExplicitTaskSignal: () => {},
     deniedToolIdsWithMessages: new Map(),
     pendingReminders: [],
+    composerNotes: [],
     autoReviewTools: false,
     planAutoReview: false,
     isWakeBurst: false,
@@ -142,6 +159,15 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
       sendChunk: () => {},
     },
   };
+}
+
+/** Snapshot the drafting park as ExitPlanMode is requested; a terminal on record is real work, never
+ * stale. A repeated request overwrites it, so it tracks the submission that landed. */
+export function notePreplanSignal(
+  turn: ClaudeTurnContext,
+  latestSignal: RecordedTaskSignal | null | undefined,
+): void {
+  turn.preplanSignal = latestSignal?.state === 'awaiting_input' ? latestSignal : null;
 }
 
 /** An adopting execute's bindings on the held session: all its own, except whether the session
@@ -189,11 +215,13 @@ export function createWakeBurstTurn(
   wakeTurn.waitForExecutionSettlement = burst.waitForExecutionSettlement;
   wakeTurn.planTerminalsLocked = arming.planTerminalsLocked;
   wakeTurn.planSubmitted = arming.planSubmitted;
+  wakeTurn.preplanSignal = arming.preplanSignal;
   wakeTurn.planSubmissionHalt = arming.planSubmissionHalt;
   wakeTurn.setPlanSubmissionHalt = arming.setPlanSubmissionHalt;
   wakeTurn.planAutoReview = arming.planAutoReview;
   wakeTurn.isWakeBurst = true;
   wakeTurn.execution = arming.execution;
+  wakeTurn.messageProvenance = arming.messageProvenance;
   return wakeTurn;
 }
 
@@ -370,7 +398,7 @@ export async function emitInlinePlanCard(params: {
       });
     }
     log.info(
-      `[Socket Executor] Claude plan mode: emitted frink-plan inline at ExitPlanMode for ${subChatId} (planPath=${planPath})`,
+      `[Socket Executor] Claude plan mode: emitted frink-plan card for ${subChatId} (planPath=${planPath})`,
     );
     return messageIndex;
   } catch (err) {

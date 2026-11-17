@@ -8,45 +8,14 @@ export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'copied'
 /** A changed file entry */
 export type ChangedFile = {
   path: string; // Relative path from repo root
-  oldPath?: string; // Original path for renames/copies
   status: FileStatus;
-  additions: number;
-  deletions: number;
-};
-
-/** A commit summary for the committed changes section */
-export type CommitInfo = {
-  hash: string;
-  shortHash: string; // Short hash (7 chars)
-  message: string; // Commit message (first line)
-  description?: string; // Commit description (body, optional)
-  author: string;
-  date: string; // ISO 8601 timestamp
-  files: ChangedFile[];
 };
 
 /** Full git changes status for a worktree */
 export type GitChangesStatus = {
-  branch: string;
-  defaultBranch: string; // Default branch (main/master)
-  againstBase: ChangedFile[]; // All files changed vs base branch
-  commits: CommitInfo[]; // Individual commits on branch (not on default)
   staged: ChangedFile[];
   unstaged: ChangedFile[];
   untracked: ChangedFile[];
-  ahead: number; // Commits ahead of default branch
-  behind: number; // Commits behind default branch
-  // Tracking branch status (for push/pull)
-  pushCount: number; // Commits to push to tracking branch
-  pullCount: number; // Commits to pull from tracking branch
-  hasUpstream: boolean; // Whether branch has an upstream tracking branch
-};
-
-/** File contents for Monaco diff editor */
-export type FileContents = {
-  original: string; // Original content (before changes)
-  modified: string; // Modified content (after changes)
-  language: string; // Detected language for syntax highlighting
 };
 
 /** Parsed diff file for the diff viewer */

@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '../../../../ui/tooltip';
 import { AccountsList } from './index';
 
 vi.mock('jotai', async (importOriginal) => {
@@ -41,16 +42,21 @@ vi.mock('../../../../../lib/trpc', () => ({
 
 function renderList(props: Partial<Parameters<typeof AccountsList>[0]> = {}) {
   render(
-    <AccountsList
-      onAuthenticate={vi.fn()}
-      accounts={[]}
-      refetchAccounts={vi.fn(async () => ({ data: [] }))}
-      {...props}
-    />,
+    <TooltipProvider>
+      <AccountsList
+        onAuthenticate={vi.fn()}
+        accounts={[]}
+        refetchAccounts={vi.fn(async () => ({ data: [] }))}
+        {...props}
+      />
+    </TooltipProvider>,
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Object.defineProperty(window, 'desktopApi', { value: undefined, configurable: true });
+});
 
 describe('AccountsList', () => {
   it('offers every way to add an account when none is connected', async () => {
@@ -62,8 +68,31 @@ describe('AccountsList', () => {
     expect(screen.getByRole('menuitem', { name: 'Sign in with OpenAI' })).toBeInTheDocument();
   });
 
+  it('tags only OpenCode, GitHub Copilot and Cursor as Preview in the add menu', async () => {
+    Object.defineProperty(window, 'desktopApi', {
+      value: { platform: 'darwin' },
+      configurable: true,
+    });
+    renderList();
+    await userEvent.click(screen.getByRole('button', { name: 'Add an account' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Sign in with Claude',
+      'Add a Claude API key',
+      'Sign in with OpenAI',
+      'Connect OpenCodePreview',
+      'Connect GitHub CopilotPreview',
+      'Connect CursorPreview',
+    ]);
+  });
+
   it('leaves out sign-ins this computer already has, then goes straight to the key form', () => {
-    renderList({ hasClaudePassthrough: true, hasCodexPassthrough: true });
+    const login = { isDefault: false, isAuthenticated: true, connectedAt: null };
+    renderList({
+      accounts: [
+        { ...login, id: 'a', label: 'Mine', type: 'claude-code', source: 'claude-passthrough' },
+        { ...login, id: 'b', label: 'Work', type: 'codex', source: 'codex-passthrough' },
+      ],
+    });
     expect(screen.queryByRole('button', { name: 'Sign in with Claude' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign in with OpenAI' })).not.toBeInTheDocument();
 

@@ -9,6 +9,10 @@ import {
   updateSubChatSession as updateSubChatSessionLocal,
 } from '../../../../db/repos/sub-chats';
 import { applyRollbackStash, type RollbackResult } from '../../../../git/stash';
+import { clearCodexSubChatSession } from '../../../../socket/codex-session';
+import { withAdmissionHeld } from '../../../../socket/execution/send-admission';
+import { hasArmedWakeHold } from '../../../../socket/execution/wake-hold-registry-view';
+import { getActiveExecution } from '../../../../socket/streaming/execution-registry';
 import { publicProcedureRaw, router } from '../../../index';
 import {
   findRollbackCheckpoint,
@@ -25,6 +29,11 @@ export function getRollbackFailureMessage(result: RollbackResult): string | null
 }
 
 const rollbacksInFlight = new Set<string>();
+
+/** A turn is running, or the session is parked on background work that will write again. */
+function isSubChatLive(subChatId: string): boolean {
+  return getActiveExecution(subChatId) !== undefined || hasArmedWakeHold(subChatId);
+}
 
 type RollbackInput = RollbackTarget & {
   subChatId: string;
@@ -100,6 +109,8 @@ async function rollbackToMessage(input: RollbackInput): Promise<RollbackOutcome>
   // updateSubChatSession requires a non-null string in current signature; pass empty
   // string and let the column hold "" (Drizzle accepts it). Renderer treats empty as none.
   await updateSubChatSessionLocal(db, input.subChatId, '', 'rollback');
+  // Codex resume reads this cache before the persisted session, so it must forget the thread too.
+  clearCodexSubChatSession(input.subChatId);
 
   let targetGone = false;
   const updated = await updateSubChatMessagesLocal(db, input.subChatId, (fresh) => {
@@ -162,7 +173,13 @@ export const subChatRollbackRouter = router({
       }
       rollbacksInFlight.add(input.subChatId);
       try {
-        return await rollbackToMessage(input);
+        // Sends hold admission through executor registration: no turn starts under the rollback,
+        // and one already starting has registered by the time this check reads it.
+        return await withAdmissionHeld(input.subChatId, async () =>
+          isSubChatLive(input.subChatId)
+            ? { success: false, error: 'This chat is still working. Stop it or wait, then retry.' }
+            : rollbackToMessage(input),
+        );
       } finally {
         rollbacksInFlight.delete(input.subChatId);
       }

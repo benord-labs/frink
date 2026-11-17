@@ -1,5 +1,5 @@
 /**
- * Deterministic fixture workspace for qavis QA runs.
+ * Deterministic fixture workspace for QA rig runs.
  *
  * Every value is fixed — IDs, timestamps, message text — so the rendered UI is
  * identical between the base-ref boot and the head-ref boot of a QA run (and
@@ -14,9 +14,35 @@ import { pluginNodeSchemas } from '../../../src/main/lib/db/schema/plugin-instal
 import { syntheticTranscript } from './synthetic-transcript';
 import { seedBackgroundWorkFixture } from './background-work';
 import { seedCodexFixture } from './codex';
-import { FIXTURE_ACCOUNT_ID, FIXTURE_CHAT_EMPTY_ID, FIXTURE_CHAT_SEEDED_ID, FIXTURE_HISTORY_CANCELLED_ID, FIXTURE_HISTORY_COMPLETED_ID, FIXTURE_LONG_CHAT_ID, FIXTURE_LONG_CHAT_NAME, FIXTURE_LONG_SUB_CHAT_ID, FIXTURE_PROJECT_ID, FIXTURE_SUB_CHAT_ID, FIXTURE_TASK_ID, T0, T1, T2, seedTranscript, type SqliteDb } from './base';
+import { seedContinueAllFixture } from './continue-all';
+import {
+  FIXTURE_ACCOUNT_ID,
+  FIXTURE_CHAT_EMPTY_ID,
+  FIXTURE_CHAT_SEEDED_ID,
+  FIXTURE_HISTORY_CANCELLED_ID,
+  FIXTURE_HISTORY_COMPLETED_ID,
+  FIXTURE_LONG_CHAT_ID,
+  FIXTURE_LONG_CHAT_NAME,
+  FIXTURE_LONG_SUB_CHAT_ID,
+  FIXTURE_PROJECT_ID,
+  FIXTURE_SUB_CHAT_ID,
+  FIXTURE_TASK_ID,
+  T0,
+  T1,
+  T2,
+  seedTranscript,
+  type SqliteDb,
+} from './base';
 import { seedInterruptedFlowFixture, seedPausedFlowFixture, seedRunningFlowFixture } from './flows';
-import { FIXTURE_FLOW_CHAT_ID, FIXTURE_FLOW_MESSAGES, FIXTURE_FLOW_SUB_CHAT_ID, FIXTURE_FLOW_TASK_DONE_ID, FIXTURE_FLOW_TASK_PARKED_ID, FIXTURE_MESSAGES, FIXTURE_PARKED_SIGNAL } from './messages';
+import {
+  FIXTURE_FLOW_CHAT_ID,
+  FIXTURE_FLOW_MESSAGES,
+  FIXTURE_FLOW_SUB_CHAT_ID,
+  FIXTURE_FLOW_TASK_DONE_ID,
+  FIXTURE_FLOW_TASK_PARKED_ID,
+  FIXTURE_MESSAGES,
+  FIXTURE_PARKED_SIGNAL,
+} from './messages';
 import { seedPluginNodeFlowFixture } from './plugin-node';
 import { seedBatchGroupFixture, seedQueuedAdmissionFixture } from './queue';
 
@@ -32,7 +58,7 @@ import { seedBatchGroupFixture, seedQueuedAdmissionFixture } from './queue';
  * disposable DB (the wiped QA profile, a temp file, an in-memory test DB) —
  * never at a real agents.db.
  */
-export function seedFixtures(db: SqliteDb, projectPath: string): void {
+export function seedFixtures(db: SqliteDb, projectPath: string, claudeSourcePath: string): void {
   db.delete(schema.tasks).run();
   db.delete(schema.subChatMessages).run();
   db.delete(schema.subChats).run();
@@ -48,8 +74,9 @@ export function seedFixtures(db: SqliteDb, projectPath: string): void {
   db.delete(schema.projects).run();
   db.delete(schema.claudeCodeCredentials).run();
 
-  // Passthrough accounts need no stored token; a null needsReauthAt makes the composer available
-  // at once. Claude stays the workspace default; the Codex fixture overrides only its own project.
+  // Passthrough accounts need no stored token, but every resolution probes sourcePath: without one
+  // the first resolution flags the row and the composer gives way to the reconnect card. Claude
+  // stays the workspace default; the Codex fixture overrides only its own project.
   db.insert(schema.claudeCodeCredentials)
     .values({
       id: FIXTURE_ACCOUNT_ID,
@@ -57,6 +84,7 @@ export function seedFixtures(db: SqliteDb, projectPath: string): void {
       accountLabel: 'QA Claude',
       oauthToken: null,
       source: 'claude-passthrough',
+      sourcePath: claudeSourcePath,
       needsReauthAt: null,
       isDefault: true,
       connectedAt: T0,
@@ -247,13 +275,14 @@ export function seedFixtures(db: SqliteDb, projectPath: string): void {
   seedQueuedAdmissionFixture(db);
   seedBatchGroupFixture(db);
   seedCodexFixture(db, projectPath);
+  seedContinueAllFixture(db);
   seedBackgroundWorkFixture(db, FIXTURE_PROJECT_ID, FIXTURE_ACCOUNT_ID);
 }
-
 
 export * from './base';
 export * from './messages';
 export * from './flows';
+export * from './continue-all';
 export * from './plugin-node';
 export * from './queue';
 export * from './verify';

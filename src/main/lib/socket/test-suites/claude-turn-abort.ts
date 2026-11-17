@@ -1,14 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  BackgroundTaskSummary,
-  CanUseTool,
-  McpServerStatus,
-  SDKUserMessage,
-} from '@anthropic-ai/claude-agent-sdk';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskById } from '../../db/repos/tasks';
 import { channelOwner, getChannelToken } from '../../mcp/execution-identity';
-import type { TaskStopHook } from '../../task-stop-hook';
 import { getSession } from '../claude-session-registry';
 import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
@@ -21,9 +15,16 @@ import {
   flowDriven,
   RUNNING_TASK,
   runningTask,
-  stopInput,
   TURN_END,
 } from './claude-turn-bindings';
+import {
+  type Cli,
+  type CliScript,
+  type Frame,
+  mockQuery,
+  never,
+  UNCLEAN_RESULT,
+} from './claude-query-fake';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type ClaudeTurnAbortHarness = Pick<
@@ -33,77 +34,7 @@ type ClaudeTurnAbortHarness = Pick<
   claudeQueryMock: ReturnType<typeof vi.fn>;
 };
 
-type QueryInput = {
-  prompt: AsyncIterable<SDKUserMessage>;
-  options: {
-    abortController?: AbortController;
-    hooks: { Stop: Array<{ hooks: TaskStopHook[] }> };
-    canUseTool: CanUseTool;
-  };
-};
-type Cli = {
-  prompt: AsyncIterator<SDKUserMessage>;
-  options: QueryInput['options'];
-  stop: (backgroundTasks?: BackgroundTaskSummary[]) => ReturnType<TaskStopHook>;
-};
-/** An SDK message as the suite's transformer mock reads it. */
-type Frame = { type?: string; chunks?: object[] };
-/** The CLI's side of one fake session: reads prompts, fires hooks, and yields frames. */
-type CliScript = (cli: Cli) => AsyncGenerator<Frame>;
-
-const DONE = { done: true, value: undefined } as const;
-/** A tool call that never answers, like a CLI blocked in a silent tool. */
-export const never = () => new Promise<never>(() => {});
-/** A result the CLI flags `is_error` without failing the turn (usage-limit or API-error text). */
-export const UNCLEAN_RESULT = { type: 'result', subtype: 'success', is_error: true, result: '' };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
-
-/** Registers the next SDK query. Like the real `Query`, `close()`/`return()` end the pending read
- * at once and an aborted `abortController` option fails it as a user abort. */
-export function mockQuery(
-  claudeQueryMock: ClaudeTurnAbortHarness['claudeQueryMock'],
-  cli: CliScript,
-) {
-  let ended = false;
-  let end: (error?: Error) => void = () => {};
-  const stopped = new Promise<IteratorResult<Frame>>((resolve, reject) => {
-    end = (error) => {
-      ended = true;
-      if (error) reject(error);
-      else resolve(DONE);
-    };
-  });
-  stopped.catch(() => {});
-  const query = {
-    close: vi.fn(() => end()),
-    return: vi.fn(async () => {
-      end();
-      await new Promise((resolve) => setImmediate(resolve));
-      return DONE;
-    }),
-    interrupt: vi.fn(async () => {}),
-    setPermissionMode: vi.fn(async () => {}),
-    setModel: vi.fn(async (_model?: string) => {}),
-    applyFlagSettings: vi.fn(async (_settings: Record<string, unknown>) => {}),
-    initializationResult: vi.fn(async () => ({})),
-    mcpServerStatus: vi.fn(async (): Promise<McpServerStatus[]> => []),
-  };
-  claudeQueryMock.mockImplementationOnce(({ prompt, options }: QueryInput) => {
-    options.abortController?.signal.addEventListener('abort', () =>
-      end(new Error('Claude Code process aborted by user')),
-    );
-    const stop = (backgroundTasks: BackgroundTaskSummary[] = []) =>
-      options.hooks.Stop[0].hooks[0](stopInput(backgroundTasks));
-    const frames = cli({ prompt: prompt[Symbol.asyncIterator](), options, stop });
-    return Object.assign(query, {
-      next: () => (ended ? stopped : Promise.race([frames.next(), stopped])),
-      [Symbol.asyncIterator]() {
-        return this;
-      },
-    });
-  });
-  return query;
-}
 
 /** Turn 1 leaves background work running so the session is held; `adopted` plays the CLI through
  * the follow-up turn that takes the hold over. */
@@ -117,6 +48,31 @@ const heldCli = (adopted: (cli: Cli) => Promise<void>) =>
     yield* TURN_END;
     await never();
   };
+
+/** Turn 1 leaves background work running so the chat holds; `wake()` then has the CLI run `burst`
+ * on its own, as a wake burst streaming into the arming message. */
+function wakingCli(burst: (cli: Cli) => AsyncGenerator<Frame>) {
+  let wake = () => {};
+  const woke = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  const script: CliScript = async function* (cli) {
+    await cli.prompt.next();
+    await cli.stop([RUNNING_TASK]);
+    yield* TURN_END;
+    await woke;
+    yield* burst(cli);
+    await never();
+  };
+  return { script, wake };
+}
+
+const streamed = () => JSON.stringify(vi.mocked(socketClient.sendStreamChunkDirect).mock.calls);
+const completes = () =>
+  vi
+    .mocked(socketClient.sendExecuteCompleteDirect)
+    .mock.calls.map(([complete]) => complete)
+    .filter((complete) => complete.subChatId === payload.subChatId);
 
 /** Resolves once the CLI script reaches the silent tool call. */
 function silentTool() {
@@ -148,6 +104,60 @@ export function registerClaudeTurnAbortTests(harness: ClaudeTurnAbortHarness): v
     afterEach(() => releaseWakeHold(payload.subChatId, 'test cleanup'));
     registerAttachedAbortTests(harness);
     registerDetachedAbortTests(harness);
+    registerStoplessAdoptedTurnTests(harness);
+  });
+}
+
+/** A Stop-less adopted turn (StopFailure, interrupt) must not read as "nothing pending": that kept
+ * the session idle, and an idle retirement then killed the Workflow it held. */
+function registerStoplessAdoptedTurnTests(harness: ClaudeTurnAbortHarness): void {
+  const { claudeQueryMock, handleRemoteExecute } = harness;
+
+  it('an adopted turn that ends with no Stop keeps holding on the work it took over', async () => {
+    const info = vi.spyOn(log, 'info');
+    mockQuery(
+      claudeQueryMock,
+      heldCli(async () => {}),
+    );
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await followUp(harness);
+
+    expect(hasWakeHold(payload.subChatId)).toBe(true);
+    expect(getSession(payload.subChatId)?.retained).toBeNull();
+    expect(info).toHaveBeenCalledWith(
+      `[Socket Executor] Adopted turn ended for ${payload.subChatId}: re-armed from the carried-forward Stop (Command)`,
+    );
+  });
+
+  // The StopFailure shape: an API error ends the adopted turn with an error result and no Stop. Such
+  // a turn used to read as unclean with nothing pending and end the session, Workflow and all.
+  it('an adopted turn that fails with no Stop keeps holding on the work it took over', async () => {
+    mockQuery(claudeQueryMock, async function* (cli) {
+      await cli.prompt.next();
+      await cli.stop([RUNNING_TASK]);
+      yield* TURN_END;
+      await cli.prompt.next();
+      yield UNCLEAN_RESULT;
+      await never();
+    });
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await followUp(harness);
+
+    expect(hasWakeHold(payload.subChatId)).toBe(true);
+    expect(claudeQueryMock).toHaveBeenCalledOnce();
+  });
+
+  it('an adopted turn whose own Stop lists nothing ends the wait', async () => {
+    mockQuery(
+      claudeQueryMock,
+      heldCli(async (cli) => {
+        await cli.stop([]);
+      }),
+    );
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await followUp(harness);
+
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
   });
 }
 
@@ -270,7 +280,11 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
     let arming: AbortController | undefined;
     mockQuery(claudeQueryMock, async function* (cli) {
       arming = getActiveExecution(payload.subChatId)?.controller;
-      yield* heldCli(async () => {})(cli);
+      // The adopted turn's own Stop reports the work settled, so the wait ends with it. Without a
+      // Stop the turn would carry the held work forward and re-arm.
+      yield* heldCli(async () => {
+        await cli.stop([]);
+      })(cli);
     });
     await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
     expect(hasWakeHold(payload.subChatId)).toBe(true);
@@ -315,11 +329,85 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
 
     await followUp(harness);
 
-    // Stop only closed the held CLI's stdin: it may still be mid-burst, making MCP calls.
-    expect(held.close).not.toHaveBeenCalled();
+    // Stop closed the held CLI outright, so it cannot keep running a burst beside the new one.
+    expect(held.close).toHaveBeenCalled();
     expect(claudeQueryMock).toHaveBeenCalledTimes(2);
     expect(channelOwner(heldChannel)).toBeUndefined();
     expect(getChannelToken(payload.subChatId, 'claude')).not.toBe(heldChannel);
+  });
+
+  it('Stop mid-burst on a held chat closes the CLI: nothing after Stop streams, the burst persists', async () => {
+    let enterTool = () => {};
+    const inTool = new Promise<void>((resolve) => {
+      enterTool = resolve;
+    });
+    let finishTool = () => {};
+    const toolDone = new Promise<void>((resolve) => {
+      finishTool = resolve;
+    });
+    const cli = wakingCli(async function* () {
+      yield {
+        type: 'assistant',
+        chunks: [{ type: 'text-delta', id: 'b', delta: 'checking build' }],
+      };
+      enterTool();
+      await toolDone; // a long foreground tool that outlives the Stop
+      yield { type: 'assistant', chunks: [{ type: 'text-delta', id: 'l', delta: 'after stop' }] };
+      yield* TURN_END;
+    });
+    const query = mockQuery(claudeQueryMock, cli.script);
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await vi.waitFor(() => expect(completes().some((c) => c.continuesWakeHold)).toBe(true));
+    cli.wake();
+    await inTool;
+
+    handleRemoteStop(payload);
+    finishTool();
+    await tick();
+
+    expect(query.close).toHaveBeenCalled();
+    expect(streamed()).toContain('checking build');
+    expect(streamed()).not.toContain('after stop');
+    const burst = completes().find((c) => c.wakeBurst);
+    expect(JSON.stringify(burst?.finalParts)).toContain('checking build');
+    expect(burst?.continuesWakeHold).toBe(false);
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
+    expect(socketClient.sendWakeHoldChanged).not.toHaveBeenCalledWith(
+      expect.objectContaining({ endReason: 'failed' }),
+    );
+    expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
+  });
+
+  it('a chat delete closes a held CLI too, not just Stop', async () => {
+    const query = mockQuery(claudeQueryMock, heldCli(never));
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+
+    abortActiveExecutionsForSubChats([payload.subChatId], 'chat-deleted');
+    await tick();
+
+    expect(query.close).toHaveBeenCalled();
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
+  });
+
+  it('a wait that ends on its own only closes stdin, so an answer written after EOF still lands', async () => {
+    const cli = wakingCli(async function* (wakingCliSide) {
+      yield {
+        type: 'assistant',
+        chunks: [{ type: 'text-delta', id: 'w', delta: 'coverage done' }],
+      };
+      await wakingCliSide.stop([]); // nothing left in flight: the wait is over
+      yield { type: 'result' };
+      yield { type: 'assistant', chunks: [{ type: 'text-delta', id: 'f', delta: 'final answer' }] };
+      yield { type: 'result' };
+    });
+    const query = mockQuery(claudeQueryMock, cli.script);
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    cli.wake();
+    await tick();
+
+    expect(getSession(payload.subChatId)?.queue.closed).toBe(true);
+    expect(query.close).not.toHaveBeenCalled();
+    expect(streamed()).toContain('final answer');
   });
 
   it('a question park on an adopted flow turn ends the session once; the abort after it closes nothing', async () => {

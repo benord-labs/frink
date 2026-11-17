@@ -9,13 +9,31 @@ describe('parseConditions', () => {
       fromStatus: '',
       toStatus: '',
       filters: [],
+      filtersApply: false,
     });
+  });
+
+  it('says stored filters apply unless they are an empty list, which filters nothing', () => {
+    expect(parseConditions({ filters: [] }, 'story_assigned', 'shortcut').filtersApply).toBe(false);
   });
 
   it('defaults new Shortcut rules to anyone and preserves an explicitly saved me condition', () => {
     expect(parseConditions({}, 'story_assigned', 'shortcut').assigneeMode).toBe('anyone');
     expect(parseConditions({}, 'story_created', 'shortcut').assigneeMode).toBe('anyone');
     expect(parseConditions({ assignee: 'me' }, 'story_assigned', 'shortcut').assigneeMode).toBe(
+      'me',
+    );
+  });
+
+  // A ClickUp rule saved before the event offered an assignee has none stored; reading it as "me"
+  // would narrow it the next time the editor packs its conditions.
+  it('reads a ClickUp assignee rule with no stored assignee as anyone, and keeps a stored choice', () => {
+    expect(parseConditions({}, 'task_assignee_changed', 'clickup').assigneeMode).toBe('anyone');
+    expect(
+      parseConditions({ assignee: 'me' }, 'task_assignee_changed', 'clickup').assigneeMode,
+    ).toBe('me');
+    // Only the assignee event carries the choice; a stored one elsewhere is not honoured.
+    expect(parseConditions({ assignee: 'anyone' }, 'task_created', 'clickup').assigneeMode).toBe(
       'me',
     );
   });

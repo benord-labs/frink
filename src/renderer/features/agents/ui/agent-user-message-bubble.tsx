@@ -2,10 +2,16 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
+import {
+  clearSearchHighlights,
+  highlightSearchText,
+} from '@/lib/agent-chat/search/highlight-search-text';
+import { MentionChipContext } from '@/lib/mentions/mention-chip-context';
 import { extractTaskBubbleData } from '@/lib/tasks/format-task-message';
 import type { AnsweredQuestion } from '../../../../shared/lib/agent-questions/answered-questions';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { isHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import { parseTriggerBubbleMessage } from '../../../../shared/lib/trigger-bubble-marker';
 import { ChatMarkdownRenderer } from '../../../components/chat-markdown-renderer';
@@ -15,7 +21,11 @@ import { cn } from '../../../lib/utils';
 import { parseSlashCommandDisplayParts } from '../commands/parse-slash-command-display';
 import { dataImageSrc } from '../lib/message-parts';
 import { agentsChatUserBubbleShellClass } from '../main/chat-composer-shell-classes';
-import { RenderFileMentions, TextMentionBlocks } from '../mentions/render-file-mentions';
+import {
+  MentionChip,
+  RenderFileMentions,
+  TextMentionBlocks,
+} from '../mentions/render-file-mentions';
 import { useSearchHighlight, useSearchQuery } from '../search';
 import { AnsweredQuestionsCard } from './AnsweredQuestionsCard';
 import { AgentImageItem } from './agent-image-item';
@@ -45,86 +55,10 @@ type AgentUserMessageBubbleProps = {
   endGutter?: boolean;
 };
 
-// Helper function to highlight text in DOM using TreeWalker
-function highlightTextInDom(
-  container: HTMLElement,
-  searchText: string,
-  currentOffset: number | null,
-  currentLength: number | null,
-) {
-  // Remove existing highlights first
-  const existingHighlights = container.querySelectorAll('.search-highlight');
-  existingHighlights.forEach((el) => {
-    const parent = el.parentNode;
-    if (parent) {
-      parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-      parent.normalize();
-    }
-  });
-
-  if (!searchText) return;
-
-  const lowerSearch = searchText.toLowerCase();
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Text | null = walker.nextNode() as Text | null;
-  while (node) {
-    if (node.nodeValue?.toLowerCase().includes(lowerSearch)) {
-      textNodes.push(node);
-    }
-    node = walker.nextNode() as Text | null;
-  }
-
-  let globalOffset: number = 0;
-  for (const textNode of textNodes) {
-    const text = textNode.nodeValue || '';
-    const lowerText = text.toLowerCase();
-    let lastIndex: number = 0;
-    const fragments: (string | HTMLElement)[] = [];
-    let searchIndex: number = lowerText.indexOf(lowerSearch, lastIndex);
-
-    while (searchIndex !== -1) {
-      if (searchIndex > lastIndex) {
-        fragments.push(text.slice(lastIndex, searchIndex));
-      }
-
-      const mark = document.createElement('mark');
-      mark.className = 'search-highlight';
-      mark.textContent = text.slice(searchIndex, searchIndex + searchText.length);
-
-      if (currentOffset !== null && currentLength !== null) {
-        const matchStart = globalOffset + searchIndex;
-        if (matchStart === currentOffset) {
-          mark.classList.add('search-highlight-current');
-        }
-      }
-
-      fragments.push(mark);
-      lastIndex = searchIndex + searchText.length;
-      searchIndex = lowerText.indexOf(lowerSearch, lastIndex);
-    }
-
-    if (lastIndex < text.length) {
-      fragments.push(text.slice(lastIndex));
-    }
-
-    if (fragments.length > 0) {
-      const parent = textNode.parentNode;
-      if (parent) {
-        fragments.forEach((frag) => {
-          if (typeof frag === 'string') {
-            parent.insertBefore(document.createTextNode(frag), textNode);
-          } else {
-            parent.insertBefore(frag, textNode);
-          }
-        });
-        parent.removeChild(textNode);
-      }
-    }
-
-    globalOffset += text.length;
-  }
+/** A mention in the rendered-markdown view draws as the same chip the plain view uses. */
+function renderMentionChip(id: string): ReactNode {
+  const mention = parseMention(id);
+  return mention && <MentionChip mention={mention} />;
 }
 
 export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
@@ -137,7 +71,7 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
 }: AgentUserMessageBubbleProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  // System-generated wake prompts (e.g. the Carry on continuation nudge) reach the agent but
+  // System-generated wake prompts (e.g. the Continue nudge) reach the agent but
   // never render — the user just sees the agent resume.
   const isHiddenWake = isHiddenWakeMessage(textContent);
 
@@ -210,26 +144,16 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
   useEffect(() => {
     if (!contentRef.current) return;
 
-    highlightTextInDom(
+    highlightSearchText(
       contentRef.current,
       searchQuery,
-      currentHighlight?.offset ?? null,
-      currentHighlight?.length ?? null,
+      ({ offset }) => offset === currentHighlight?.offset,
     );
 
     return () => {
-      if (contentRef.current) {
-        const existingHighlights = contentRef.current.querySelectorAll('.search-highlight');
-        existingHighlights.forEach((el) => {
-          const parent = el.parentNode;
-          if (parent) {
-            parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-            parent.normalize();
-          }
-        });
-      }
+      if (contentRef.current) clearSearchHighlights(contentRef.current);
     };
-  }, [searchQuery, currentHighlight?.offset, currentHighlight?.length]);
+  }, [searchQuery, currentHighlight?.offset]);
 
   // When expanded, we need to re-check overflow after the content changes
   const isOverflowing = showGradient && !isExpanded;
@@ -317,6 +241,15 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
                   data-message-id={messageId}
                   data-part-index={0}
                   data-part-type="text"
+                  // A chip focused below the fold scrolls the clipped text; open the card instead.
+                  onFocus={
+                    isOverflowing
+                      ? (e) => {
+                          e.currentTarget.scrollTop = 0;
+                          setIsExpanded(true);
+                        }
+                      : undefined
+                  }
                 >
                   {/* Render command text inline-highlighted, then user text after */}
                   {commandName && commandText && (
@@ -327,10 +260,11 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
                   )}
                   {commandText && cleanedText ? ' ' : null}
                   {cleanedText &&
-                    (renderMarkdown ? (
-                      // Opt-in rendered view: @[file] chips/ultrathink chroma are dropped here
-                      // (quote/diff/code mentions are already extracted to TextMentionBlocks above).
-                      <ChatMarkdownRenderer content={cleanedText} size="sm" />
+                    (renderMarkdown && showToggle ? (
+                      // Mentions still draw as chips here, but ultrathink is not highlighted.
+                      <MentionChipContext.Provider value={renderMentionChip}>
+                        <ChatMarkdownRenderer content={cleanedText} size="sm" />
+                      </MentionChipContext.Provider>
                     ) : (
                       <RenderFileMentions text={cleanedText} />
                     ))}

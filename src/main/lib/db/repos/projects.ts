@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, notLike, or, sql } from 'drizzle-orm';
 import type { getDatabase } from '../index';
 import { chats, type NewProject, type Project, projects, subChats } from '../schema';
 import {
@@ -22,6 +22,26 @@ type Db = ReturnType<typeof getDatabase>;
 export async function createProject(db: Db, input: NewProject): Promise<Project> {
   const [row] = await db.insert(projects).values(input).returning();
   return row;
+}
+
+/** Insert-or-adopt by UNIQUE path, in one sync transaction so a concurrent delete can't land
+ * between the conflict and the lookup. `createProject` stays strict — scaffoldBuild needs its throw. */
+export async function createOrGetProjectByPath(
+  db: Db,
+  input: NewProject,
+): Promise<{ project: Project; created: boolean }> {
+  return db.transaction(() => {
+    const row = db
+      .insert(projects)
+      .values(input)
+      .onConflictDoNothing({ target: projects.path })
+      .returning()
+      .get();
+    if (row) return { project: row, created: true };
+    const existing = db.select().from(projects).where(eq(projects.path, input.path)).get();
+    if (!existing) throw new Error(`Project for path ${input.path} vanished after conflict`);
+    return { project: existing, created: false };
+  });
 }
 
 export async function getProjectById(db: Db, id: string): Promise<Project | null> {
@@ -56,6 +76,16 @@ export async function listProjects(db: Db): Promise<Project[]> {
   return db.select().from(projects).orderBy(desc(projects.updatedAt));
 }
 
+/** `listProjects` minus virtual folders (`virtual://` paths): those group chats and have no
+ * on-disk path, so they are never a codebase an agent can be pointed at. */
+export async function listRealProjects(db: Db): Promise<Project[]> {
+  return db
+    .select()
+    .from(projects)
+    .where(notLike(projects.path, 'virtual://%'))
+    .orderBy(desc(projects.updatedAt));
+}
+
 /** Projects by last chat activity (any `sub_chats` write: messages, streams, renames, mode). Not
  * `chats.updated_at`, which archiving moves. No sub-chats: sorted by creation, null `lastActiveAt`. */
 export async function listProjectsByRecentActivity(
@@ -85,20 +115,28 @@ export async function updateProject(
   return row ?? null;
 }
 
-export async function deleteProject(db: Db, id: string): Promise<DeleteChatsResult> {
+type DeletedProjectChat = { id: string; worktreePath: string | null; branch: string | null };
+
+/** `deletedChats` is what the cascade really dropped (read in the same transaction); `removed` is
+ *  false when a concurrent delete already took the row, so the caller skips its cleanup. */
+export type DeleteProjectResult =
+  | Exclude<DeleteChatsResult, { deleted: true }>
+  | { deleted: true; removed: boolean; deletedChats: DeletedProjectChat[] };
+
+export async function deleteProject(db: Db, id: string): Promise<DeleteProjectResult> {
   return db.transaction(
     () => {
-      const chatIds = db
-        .select({ id: chats.id })
+      const deletedChats = db
+        .select({ id: chats.id, worktreePath: chats.worktreePath, branch: chats.branch })
         .from(chats)
         .where(eq(chats.projectId, id))
-        .all()
-        .map((chat) => chat.id);
+        .all();
+      const chatIds = deletedChats.map((chat) => chat.id);
       const unsettledRunIds = listUnsettledFlowRunIdsForChats(db, chatIds);
       if (unsettledRunIds.length > 0) return { deleted: false, unsettledRunIds, chatIds };
       deleteFlowQueueTasksForChats(db, chatIds);
-      db.delete(projects).where(eq(projects.id, id)).run();
-      return { deleted: true };
+      const gone = db.delete(projects).where(eq(projects.id, id)).returning({ id: projects.id });
+      return { deleted: true, removed: gone.all().length > 0, deletedChats };
     },
     { behavior: 'immediate' },
   );
@@ -121,4 +159,36 @@ export async function renameProjectIfPlaceholder(
     .where(and(eq(projects.id, id), eq(projects.name, expectedCurrentName)))
     .returning();
   return row ?? null;
+}
+
+/**
+ * Projects whose delete is in flight. projects.delete stops its chats' executors and Flow runs
+ * before the cascade, so a chat must not leave (or join) the project in between.
+ */
+const deletingProjectIds = new Map<string, number>(); // count: concurrent deletes of one project
+
+export class ProjectDeletionInProgressError extends Error {
+  constructor(projectId: string) {
+    super(`Project ${projectId} is being deleted; its chats can't be moved right now.`);
+    this.name = 'ProjectDeletionInProgressError';
+  }
+}
+
+/** Marks `projectId` as being deleted; call the returned release once the delete settles. */
+export function beginProjectDeletion(projectId: string): () => void {
+  deletingProjectIds.set(projectId, (deletingProjectIds.get(projectId) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (deletingProjectIds.get(projectId) ?? 1) - 1;
+    if (left > 0) deletingProjectIds.set(projectId, left);
+    else deletingProjectIds.delete(projectId);
+  };
+}
+
+export function assertProjectNotBeingDeleted(projectId: string | null): void {
+  if (projectId && deletingProjectIds.has(projectId)) {
+    throw new ProjectDeletionInProgressError(projectId);
+  }
 }

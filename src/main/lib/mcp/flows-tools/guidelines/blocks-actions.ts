@@ -55,13 +55,13 @@ ${buildOutputSchemasSection('run_command')}
   headers?: Record<string,string>, body?: string }
 \`\`\`
 
-Method defaults GET; body is not sent for GET/DELETE.
+Method defaults GET; body is not sent for GET.
 
 ${buildOutputSchemasSection('http_request')}
 
 ## chat_reply
 
-Requires a chat on the same path: an upstream Start Task or \`post_task_trigger\` with \`trigger.chatId\`.
+Requires a chat on the same path: an upstream Start Task, or a \`post_task_trigger\` whose task ran in a chat (\`trigger.chatId\` is not always present). An upstream Start Task's chat is used first.
 
 \`\`\`text
 { contentType?: "text"|"html_artifact", messageTemplate?: string,

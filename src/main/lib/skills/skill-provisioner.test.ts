@@ -247,6 +247,29 @@ describe('skill-provisioner', () => {
       expect(await readFile(join(claudeCopy, 'references', 'topic.md'), 'utf8')).toBe(USER_EDIT);
     });
 
+    it('keeps a file edited in one tool copy through a shipped update, and updates the rest', async () => {
+      await ship('1.0.0', FILES_V1);
+      await provisionOne(SKILL_NAME, sourceRoot);
+      const [agentsCopy, claudeCopy] = ideSkillPaths(userHome, SKILL_NAME);
+      await writeFile(join(claudeCopy, 'SKILL.md'), 'my claude tweak\n', 'utf8');
+      const shipped = await ship('2.0.0', FILES_V2);
+
+      await provisionOne(SKILL_NAME, sourceRoot);
+
+      expect(await readFile(join(claudeCopy, 'SKILL.md'), 'utf8')).toBe('my claude tweak\n');
+      expect(await readFile(join(claudeCopy, 'references', 'topic.md'), 'utf8')).toBe(
+        FILES_V2['references/topic.md'],
+      );
+      expect(JSON.parse(await readFile(join(claudeCopy, '.baseline.json'), 'utf8'))).toEqual(
+        shipped,
+      );
+      expect(await readFile(join(agentsCopy, 'SKILL.md'), 'utf8')).toBe(FILES_V2['SKILL.md']);
+      const warn = vi.spyOn(log, 'warn');
+      await provisionOne(SKILL_NAME, sourceRoot);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
     it('is a silent no-op on the next boot after a merge', async () => {
       await installEditedV1({ 'references/topic.md': USER_EDIT });
       await ship('2.0.0', FILES_V2);

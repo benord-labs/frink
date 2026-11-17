@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCdCommand, getCwdSwitchDecision, resolveExternalTerminalPath } from './cwd-switch';
+import { parseCwd } from './parseCwd';
 
 describe('getCwdSwitchDecision', () => {
   it('returns ignore when next cwd is an empty string', () => {
@@ -175,5 +176,19 @@ describe('resolveExternalTerminalPath', () => {
 
   it('returns null when no path is available', () => {
     expect(resolveExternalTerminalPath(null, null)).toBeNull();
+  });
+});
+
+describe('parseCwd', () => {
+  const osc7 = (path: string) => `\x1b]7;file://host${path}\x07`;
+
+  it('decodes the URI-encoded path of the last OSC 7 report', () => {
+    expect(parseCwd(`${osc7('/Users/x/old')}prompt$ ${osc7('/Users/x/My%20Project')}`)).toBe(
+      '/Users/x/My Project',
+    );
+  });
+
+  it('keeps a path that is not valid URI encoding as the shell wrote it', () => {
+    expect(parseCwd(osc7('/Users/x/100%'))).toBe('/Users/x/100%');
   });
 });

@@ -91,17 +91,6 @@ async function answeredNodeTask(
     : null;
 }
 
-/** Whether the session answered the node this flow task drove: the gate every continue-in-place
- * entrance shares, so none wakes an agent on a node it never received. */
-export async function sessionAnsweredTaskNode(
-  db: Db,
-  subChatId: string,
-  taskId: string,
-): Promise<boolean> {
-  const node = await flowTaskNode(db, taskId);
-  return node !== null && (await answeredNodeTask(db, subChatId, node)) !== null;
-}
-
 export async function resolveSessionResumeSeed(
   db: Db,
   input: {

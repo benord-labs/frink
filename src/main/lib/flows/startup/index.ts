@@ -7,19 +7,40 @@ import { onExecuteRequest, onStop, sendPermissionResponse } from '../../socket';
 import { handleRemoteExecute, handleRemoteStop } from '../../socket/executor';
 import { registerAttachmentProtocol } from '../attachments-protocol';
 
+const step = async (label: string, run: () => void | Promise<void>) => {
+  try {
+    await run();
+  } catch (err) {
+    log.warn(`[Main] ${label} failed:`, err);
+  }
+};
+
+/** Advance batch stages and count finished runs on run-terminal events; each starts on its own. */
+export async function startRunTerminalListeners(): Promise<void> {
+  await step('flows batch advance listener start', async () => {
+    const { startBatchAdvanceListener } = await import('../batch-dispatch');
+    startBatchAdvanceListener();
+  });
+  await step('flows usage telemetry listener start', async () => {
+    const { startFlowRunTelemetry } = await import('../usage-telemetry');
+    startFlowRunTelemetry();
+  });
+}
+
+/** Boot worktree recovery; logs the counts only when something changed. */
+export async function recoverWorktreesOnBoot(): Promise<void> {
+  const { recoverOrphanedWorktrees } = await import('../../trpc/routers/chats/teardown-worktree');
+  const { pruned, removed, skipped } = await recoverOrphanedWorktrees(getDatabase());
+  if ([pruned, removed, skipped].some((count) => count > 0)) {
+    log.info('[Main] recoverOrphanedWorktrees reclaimed', { pruned, removed, skipped });
+  }
+}
+
 /**
  * Boot recovery sweeps + local background loops, run once from the ready path; every step is best-effort and only logs on failure.
- * Order matters: the batch listener precedes the flow/task recovery sweep + task-completion watcher so no terminal event fires unobserved, and the worktree sweep follows them so in-flight-on-boot work has settled.
+ * Order matters: the run-terminal listeners precede the flow/task recovery sweep + task-completion watcher so no terminal event fires unobserved, and the worktree sweep follows them so in-flight-on-boot work has settled.
  */
 export async function runStartupRecoveryAndLoops(): Promise<void> {
-  const step = async (label: string, run: () => void | Promise<void>) => {
-    try {
-      await run();
-    } catch (err) {
-      log.warn(`[Main] ${label} failed:`, err);
-    }
-  };
-
   // Local turn dispatch plus the renderer's approve/deny return path. Registered before any
   // window exists so an early permission answer always finds a listener.
   await step('local dispatch listeners register', () => {
@@ -44,11 +65,7 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     );
   });
 
-  // Advance batch stages on run-terminal events.
-  await step('flows batch advance listener start', async () => {
-    const { startBatchAdvanceListener } = await import('../batch-dispatch');
-    startBatchAdvanceListener();
-  });
+  await startRunTerminalListeners();
 
   // A question still HELD when the process died parks first: the sweeps below would otherwise
   // cancel its run and boot carry-on would resume the agent without it.
@@ -70,20 +87,16 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     const { recoverFlowAdmissionsAtStartup } = await import('../admission/startup');
     await recoverFlowAdmissionsAtStartup();
   });
-
-  // Worktree recovery sweep: prune stale git registrations + remove worktrees no active chat
-  // references (the guaranteed backstop for fire-and-forget teardown failures).
-  await step('recoverOrphanedWorktrees', async () => {
-    const { recoverOrphanedWorktrees } = await import('../../trpc/routers/chats/teardown-worktree');
-    const { resolveWorktreeBasePath } = await import('../../worktree/base-path-config');
-    const { pruned, removed, skipped, orphaned } = await recoverOrphanedWorktrees(
-      getDatabase(),
-      await resolveWorktreeBasePath(),
-    );
-    if ([pruned, removed, skipped, orphaned].some((count) => count > 0)) {
-      log.info('[Main] recoverOrphanedWorktrees reclaimed', { pruned, removed, skipped, orphaned });
-    }
+  // After admission recovery, so a turn whose run held no slot queues behind recovered tickets.
+  await step('flows resume settled-slot turns', async () => {
+    const { resumeSettledSlotTurns } =
+      await import('../admission/terminal-resume/boot-continuation');
+    await resumeSettledSlotTurns(getDatabase());
   });
+
+  // Worktree recovery: prune stale git registrations + remove worktrees no chat references
+  // (the backstop for teardown failures git still lists).
+  await step('recoverOrphanedWorktrees', recoverWorktreesOnBoot);
 
   // Custom protocol behind the frink-attachment:// URLs the renderer's <img src> consumes.
   await step('flows attachment protocol register', () => registerAttachmentProtocol());

@@ -339,8 +339,8 @@ export function seedInterruptedFlowFixture(db: SqliteDb): void {
       createdAt: T2,
     })
     .run();
-  // Its continuation ticket is queued behind the cap (the rig freezes drains), which is the state
-  // the chat renders as "Waiting for a free slot to resume this step" instead of a Resume button.
+  // Its resume ticket is queued behind the cap (the rig freezes drains), which is the state the
+  // chat renders as "Queued to resume this step…" instead of a Continue or Retry button.
   db.insert(schema.flowRunAdmissions)
     .values({
       flowRunId: FIXTURE_INTERRUPTED.runId,
@@ -352,7 +352,6 @@ export function seedInterruptedFlowFixture(db: SqliteDb): void {
         action: 'resume',
         flow_run_id: FIXTURE_INTERRUPTED.runId,
         node_run_id: FIXTURE_INTERRUPTED.nodeRunId,
-        continuation: true,
       },
       requestedAt: T3,
     })

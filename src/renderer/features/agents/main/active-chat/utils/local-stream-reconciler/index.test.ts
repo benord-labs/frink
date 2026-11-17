@@ -687,6 +687,43 @@ describe('LocalStreamReconciler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  const nonDurableTerminal = (parts?: unknown[]): LocalStreamSeedResult => ({
+    streams: [],
+    terminals: [
+      {
+        subChatId: 'sub-1',
+        assistantMessageId: 'assistant-1',
+        streamEpoch: 'epoch-1',
+        status: 'settled',
+        durability: 'non-durable',
+        ...(parts && { parts }),
+      },
+    ],
+  });
+
+  it('repaints a non-durable terminal from the parts main kept for it', async () => {
+    const publish = vi.fn();
+    const parts = [{ type: 'text', text: 'never reached the transcript' }];
+    const seed = nonDurableTerminal(parts);
+
+    await new LocalStreamReconciler({ fetchSeed: async () => seed, publish }).hydrate();
+
+    expect(publish).toHaveBeenCalledExactlyOnceWith('assistant-1', parts, 'ready');
+  });
+
+  it('paints nothing for a terminal whose parts main withheld, such as a rolled-away turn', async () => {
+    const publish = vi.fn();
+    const reconciler = new LocalStreamReconciler({
+      fetchSeed: async () => nonDurableTerminal(),
+      publish,
+    });
+
+    await reconciler.hydrate();
+    reconciler.observeChunk(chunk('epoch-1', 0, 'late delta from the discarded turn'));
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it('retries a stale empty initial seed before releasing a deferred completion', async () => {
     const staleSeed = deferred<LocalStreamSeedResult>();
     const publish = vi.fn();

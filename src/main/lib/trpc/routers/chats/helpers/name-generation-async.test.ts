@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -78,7 +79,6 @@ const baseInput = {
   chatId: 'c1',
   subChatId: 's1',
   projectId: null,
-  projectPath: null,
   rawUserMessage: 'Tell me a very long story please please please please please',
   isFirstSubChat: true,
 };
@@ -124,33 +124,36 @@ describe('autoNameSubChat', () => {
     });
   });
 
-  // A codex account is token-null passthrough: never handed to the Claude SDK, and never a
-  // reason to substitute the user's default Claude account.
-  it('codex-assigned chat → deterministic fallback, never the default Claude account', async () => {
-    mocks.getProjectAiAccount.mockResolvedValue({ id: 'cred-codex', label: 'codex-acct' });
-    mocks.getClaudeCodeTokenById.mockResolvedValue({
-      token: null,
-      type: 'codex',
-      isApiKey: false,
-      label: 'codex-acct',
-      passthrough: true,
-    });
+  // Codex and agent accounts are token-null passthrough: never handed to the Claude SDK, and never
+  // a reason to substitute the user's default Claude account.
+  it.each(['codex', 'opencode'])(
+    '%s-assigned chat → deterministic fallback, never the default Claude account',
+    async (type) => {
+      mocks.getProjectAiAccount.mockResolvedValue({ id: 'cred-agent', label: 'agent-acct' });
+      mocks.getClaudeCodeTokenById.mockResolvedValue({
+        token: null,
+        type,
+        isApiKey: false,
+        label: 'agent-acct',
+        passthrough: true,
+      });
 
-    await autoNameSubChat({
-      ...baseInput,
-      projectId: 'proj1',
-      rawUserMessage: 'fix the login bug',
-    });
+      await autoNameSubChat({
+        ...baseInput,
+        projectId: 'proj1',
+        rawUserMessage: 'fix the login bug',
+      });
 
-    expect(mocks.sdkQuery).not.toHaveBeenCalled();
-    expect(mocks.getDefaultClaudeCodeToken).not.toHaveBeenCalled();
-    // AI fully unavailable → deterministic fallback is the raw message (no title reshaping).
-    expect(mocks.renameSubChatLocal).toHaveBeenCalledWith(
-      expect.anything(),
-      's1',
-      'fix the login bug',
-    );
-  });
+      expect(mocks.sdkQuery).not.toHaveBeenCalled();
+      expect(mocks.getDefaultClaudeCodeToken).not.toHaveBeenCalled();
+      // AI fully unavailable → deterministic fallback is the raw message (no title reshaping).
+      expect(mocks.renameSubChatLocal).toHaveBeenCalledWith(
+        expect.anything(),
+        's1',
+        'fix the login bug',
+      );
+    },
+  );
 
   // An UNRESOLVED claude-code account (mid-reauth / stale label → token-null) is NOT honoured:
   // it falls through to the default Claude account, as before. Only codex behaviour changed.
@@ -413,6 +416,8 @@ describe('maybeNameBuildProjectFromMessage', () => {
     });
     // Project naming keeps the stronger model so chit-chat abstention stays reliable.
     expect(mocks.sdkQuery.mock.calls[0]?.[0]?.options?.model).toBe('sonnet');
+    // Never the project folder, whose git log the CLI would hand the model.
+    expect(mocks.sdkQuery.mock.calls[0]?.[0]?.options?.cwd).toBe(tmpdir());
   });
 
   // A codex-assigned build keeps its placeholder rather than borrowing the default Claude account.

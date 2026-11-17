@@ -26,6 +26,22 @@ describe('usePastedTextFiles', () => {
     expect(result.current.pastedTextsRef.current).toHaveLength(1);
   });
 
+  it('names the chip by its label and the saved file by its filename when given', async () => {
+    mutateAsync.mockResolvedValue({ filePath: '/s/pasted/t.txt', filename: 't.txt', size: 9 });
+    const { result } = renderHook(() => usePastedTextFiles('sub-1'));
+
+    await act(() =>
+      result.current.addPastedText('FAIL a.ts', { label: 'Terminal 1 output', filename: 't.txt' }),
+    );
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      subChatId: 'sub-1',
+      text: 'FAIL a.ts',
+      filename: 't.txt',
+    });
+    expect(result.current.pastedTexts[0].preview).toBe('Terminal 1 output');
+  });
+
   // sc-3666: a swallowed failure left no chip and no text — the paste disappeared silently.
   it('rejects when the write fails, so the caller can fall back, and adds no chip', async () => {
     mutateAsync.mockImplementation(async () => {

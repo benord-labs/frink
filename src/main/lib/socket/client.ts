@@ -11,7 +11,7 @@ import type {
   TranscriptTerminalDurability,
 } from '../../../shared/types/assistant-message';
 import type { ChatMode } from '../../../shared/types/chat-mode';
-import type { ExecutionSettings } from '../../../shared/types/execution';
+import type { ConversationTurn, ExecutionSettings } from '../../../shared/types/execution';
 import type {
   SocketPermissionProjection as PermissionRequestPayload,
   SocketPermissionResponsePayload as PermissionResponsePayload,
@@ -33,6 +33,7 @@ import { captureMainException } from '../sentry/init';
 import { consumeDispatchMode, matchDispatchModeForSend } from '../task-executor/dispatch-registry';
 import { abortIfTaskNoLongerRunning } from '../tasks/dispatch-cancel-fence';
 import { runSendSideNaming } from './naming';
+import { describeDelivery, type MessageDelivery } from './execution/message-provenance/origin';
 import { withMessageAdmission } from './execution/send-admission';
 import { createLiveStreamTransport } from './streaming/live-stream/transport';
 
@@ -70,7 +71,7 @@ export type MessageSendPayload = {
    * left (decision `sub-chat-mode-ownership`).
    */
   mode?: ChatMode;
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   settings?: ExecutionSettings;
   /**
    * Approved plan context — injected into execution turns so the executor knows
@@ -153,15 +154,12 @@ type ExecuteRequestPayload = {
   /** Full user message parts (text + file/image) so executor can send images to Claude SDK */
   userMessageParts?: MessagePart[];
   mode: ChatMode;
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   settings?: ExecutionSettings;
   assistantMessageId?: string;
   streamId?: string;
   sessionId?: string;
-  continuity?: {
-    status: 'ok' | 'degraded';
-    reason?: string;
-  };
+  continuity?: { status: 'ok' | 'degraded'; reason?: string };
   /** Approved plan context — injected into execution prompts to survive session loss */
   approvedPlanContext?: ApprovedPlanContext;
   /** Dynamic-chat navigation session continuity across chat switches. */
@@ -169,6 +167,7 @@ type ExecuteRequestPayload = {
   /** Flow continuation guard — must match active map entry to use continuation task id. */
   expectedFlowTaskId?: string;
   sourceWebContentsId?: number;
+  delivery?: MessageDelivery;
   onExecutionStarted?: (error?: Error) => void;
 };
 
@@ -381,6 +380,7 @@ async function persistAndDispatchMessage(
     navigationSessionId: payload.navigationSessionId,
     expectedFlowTaskId: payload.expectedFlowTaskId,
     sourceWebContentsId: payload.sourceWebContentsId,
+    delivery: describeDelivery(payload, messageText),
     // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
     // Only the first acknowledgement decides: flows/startup also reports a handler that rejects
     // mid-run, and that turn did start, so its stream_id is not released.

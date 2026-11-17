@@ -5,7 +5,7 @@
 import { Cpu } from 'lucide-react';
 import { type ReactElement, useMemo, useState } from 'react';
 import { ModelSelector } from '../../../../agents/components/model-selector';
-import { flowModelVariant, getFlowPickerModels } from '../../hooks/flow-picker-models';
+import { flowModelVariant, useFlowModelPicker } from '../../hooks/flow-picker-models';
 import { NodeInheritableField } from '../NodeInheritableField';
 
 type ModelOption = { value: string; label: string };
@@ -19,6 +19,8 @@ type NodeModelFieldProps = {
   inheritOptionLabel: string;
   selectId?: string;
   onModelChange: (model: string | undefined) => void;
+  /** Why the project's provider can't run Flows; shown in place of the field. */
+  unsupportedMessage?: string;
 };
 
 export function NodeModelField({
@@ -29,10 +31,14 @@ export function NodeModelField({
   inheritOptionLabel,
   selectId,
   onModelChange,
+  unsupportedMessage,
 }: NodeModelFieldProps): ReactElement {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
-  const availableModels = useMemo(() => getFlowPickerModels(isCodexProject), [isCodexProject]);
+  const { availableModels, selectedPickerModel, staleModelId } = useFlowModelPicker(
+    isCodexProject,
+    model.trim(),
+  );
 
   const cardLabel = useMemo((): string => {
     const id = flowDefaultModel?.trim();
@@ -40,6 +46,9 @@ export function NodeModelField({
     return modelOptions.find((o) => o.value === id)?.label ?? id;
   }, [flowDefaultModel, modelOptions, inheritOptionLabel]);
 
+  if (unsupportedMessage) {
+    return <p className="text-sm text-muted-foreground">{unsupportedMessage}</p>;
+  }
   return (
     <NodeInheritableField
       value={model}
@@ -48,29 +57,21 @@ export function NodeModelField({
       inheritedLabel={cardLabel}
       alwaysCard
       onReset={() => onModelChange(undefined)}
-      renderPicker={({ hasOverride: pickerOverride }) => {
-        const modelTrim = model.trim();
-        const selectedPickerModel = modelTrim
-          ? availableModels.find((m) => m.id === modelTrim)
-          : undefined;
-        const staleModelId = modelTrim && !selectedPickerModel ? modelTrim : undefined;
-
-        return (
-          <ModelSelector
-            mode="flow"
-            flowInheritLabel={inheritOptionLabel}
-            triggerId={selectId}
-            selectedModel={pickerOverride ? selectedPickerModel : undefined}
-            staleModelId={pickerOverride ? staleModelId : undefined}
-            availableModels={availableModels}
-            onModelChange={(m) => onModelChange(m.id)}
-            onClearModel={() => onModelChange(undefined)}
-            modelVariant={flowModelVariant(isCodexProject)}
-            isOpen={modelMenuOpen}
-            onOpenChange={setModelMenuOpen}
-          />
-        );
-      }}
+      renderPicker={({ hasOverride: pickerOverride }) => (
+        <ModelSelector
+          mode="flow"
+          flowInheritLabel={inheritOptionLabel}
+          triggerId={selectId}
+          selectedModel={pickerOverride ? selectedPickerModel : undefined}
+          staleModelId={pickerOverride ? staleModelId : undefined}
+          availableModels={availableModels}
+          onModelChange={(m) => onModelChange(m.id)}
+          onClearModel={() => onModelChange(undefined)}
+          modelVariant={flowModelVariant(isCodexProject)}
+          isOpen={modelMenuOpen}
+          onOpenChange={setModelMenuOpen}
+        />
+      )}
     />
   );
 }

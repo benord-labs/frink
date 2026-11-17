@@ -1,7 +1,7 @@
 /**
  * schedule_trigger polling — local equivalent of pg-boss flow/scheduled-check.
  *
- * Every minute, scan enabled flows whose first node is `schedule_trigger`,
+ * Every minute, scan enabled flows that have a `schedule_trigger` node (at any index),
  * evaluate the cron expression against the current UTC minute, and if it
  * matches start a flow run with idempotency key `schedule:<flowId>:<slotMs>`
  * (so a tick that fires twice — clock jitter, app sleep/wake — never starts
@@ -14,11 +14,11 @@
 
 import { Cron } from 'croner';
 import log from 'electron-log';
-import { isTriggerBlockType } from '../../../shared/lib/block-registry';
 import { getDatabase } from '../db';
 import { getFlowRunByIdempotencyKey, hasActiveRunForFlow } from '../db/repos/flow-runs';
 import * as bindingsRepo from '../db/repos/flow-trigger-bindings';
 import { listEnabledFlowGraphs } from './flow-trigger-scan';
+import type { ParsedFlowGraph } from './graph';
 import { startFlowRun } from './start';
 
 const SCHEDULE_TICK_INTERVAL_MS = 60_000;
@@ -49,28 +49,31 @@ function cronMatchesUtcMinute(expression: string, timezone: string, now: Date): 
   }
 }
 
+/** By block type, not position: agent-built graphs append the trigger after other steps. */
+export function findScheduleTrigger(graph: ParsedFlowGraph) {
+  return graph.nodes.find((node) => node.blockType === SCHEDULE_TRIGGER_BLOCK);
+}
+
 /**
  * Run one scan pass. Exposed for tests / manual trigger.
  */
-async function runScheduledTriggerTick(
+type ScheduleTickDeps = { db: ReturnType<typeof getDatabase>; startRun: typeof startFlowRun };
+
+export async function runScheduledTriggerTick(
   now: Date = new Date(),
+  { db, startRun }: ScheduleTickDeps = { db: getDatabase(), startRun: startFlowRun },
 ): Promise<{ fired: number; skipped: number }> {
-  const db = getDatabase();
   const flowGraphs = await listEnabledFlowGraphs(db);
   let fired = 0;
   let skipped = 0;
 
   for (const { flow, graph } of flowGraphs) {
-    const firstNode = graph.nodes[0];
-    if (!firstNode || firstNode.blockType !== SCHEDULE_TRIGGER_BLOCK) {
+    const trigger = findScheduleTrigger(graph);
+    if (!trigger) {
       skipped += 1;
       continue;
     }
-    if (!isTriggerBlockType(firstNode.blockType)) {
-      skipped += 1;
-      continue;
-    }
-    const cfg = parseScheduleConfig(firstNode.config);
+    const cfg = parseScheduleConfig(trigger.config);
     if (!cronMatchesUtcMinute(cfg.cronExpression, cfg.timezone, now)) {
       skipped += 1;
       continue;
@@ -121,7 +124,7 @@ async function runScheduledTriggerTick(
     }
 
     try {
-      await startFlowRun({
+      await startRun({
         flowId: flow.id,
         triggerContext: {
           _frinkTrigger: SCHEDULE_TRIGGER_BLOCK,

@@ -11,6 +11,7 @@ vi.mock('../db/repos/tasks', () => ({ getTaskById: state.getTaskById }));
 vi.mock('../db/repos/flow-runs', () => ({ getFlowRun: state.getFlowRun }));
 vi.mock('../socket/flow-signal', () => ({ isSignalTargetDead: state.isSignalTargetDead }));
 
+import type { SecretRequest } from '../../../shared/types/task-signal';
 import { handleTaskSignalToolCall, type TaskSignalToolContext } from './task-signal-tool';
 
 const task = (status: string, result: Record<string, unknown> = {}) => ({
@@ -46,6 +47,21 @@ describe('handleTaskSignalToolCall — signal target check (sc-2771)', () => {
     });
     expect(ctx.latestTaskSignal?.state).toBe('done');
     expect(ctx.taskSignalEnabled).toBe(true);
+  });
+
+  it('records every accepted signal as a new object, even an identical repeat', async () => {
+    // The Stop hook tells a stale drafting park from a later one by identity; an in-place update
+    // would make every later signal look stale.
+    state.getTaskById.mockResolvedValue(task('running'));
+    const ctx = contextFor();
+    const park = { state: 'awaiting_input', summary: 'Which API?' };
+
+    await handleTaskSignalToolCall(ctx, park);
+    const first = ctx.latestTaskSignal;
+    await handleTaskSignalToolCall(ctx, park);
+
+    expect(first).toBeDefined();
+    expect(ctx.latestTaskSignal).not.toBe(first);
   });
 
   it('refuses a signal whose task or run can no longer consume it, and disarms the tool', async () => {
@@ -122,5 +138,87 @@ describe('handleTaskSignalToolCall — signal target check (sc-2771)', () => {
     expect(again.content[0]?.text).toContain('No active task expects a lifecycle signal');
     expect(state.getTaskById).not.toHaveBeenCalled();
     expect(ctx.latestTaskSignal).toBeUndefined();
+  });
+
+  it('refuses a later signal once a secret request parks the turn, keeping the park', async () => {
+    const ctx = contextFor();
+    const secretRequest: SecretRequest = {
+      id: 'req-1',
+      name: 'STRIPE_KEY',
+      chatId: 'chat-1',
+      file: '.env',
+      cwd: '/repo',
+      reason: 'Charge test cards',
+      replaces: false,
+      git: 'none',
+    };
+    ctx.latestTaskSignal = { state: 'awaiting_input', summary: 'Needs STRIPE_KEY', at: 'now', secretRequest };
+
+    const result = await handleTaskSignalToolCall(ctx, DONE);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('A secure secret request already parks this task');
+    expect(ctx.latestTaskSignal?.secretRequest).toBe(secretRequest);
+    expect(state.getTaskById).not.toHaveBeenCalled();
+  });
+
+  // A frink_task_signal already past the guard, waiting on its task read, must not land over a park
+  // that frink_request_secret set meanwhile.
+  it('does not overwrite a secret park set while it was reading the task', async () => {
+    let releaseRead: (task: unknown) => void = () => {};
+    state.getTaskById.mockReturnValue(new Promise((resolve) => (releaseRead = resolve)));
+    const ctx = contextFor();
+    const secretRequest: SecretRequest = {
+      id: 'req-2',
+      name: 'STRIPE_KEY',
+      chatId: 'chat-1',
+      file: '.env',
+      cwd: '/repo',
+      reason: 'Charge test cards',
+      replaces: false,
+      git: 'none',
+    };
+
+    const pending = handleTaskSignalToolCall(ctx, DONE);
+    ctx.latestTaskSignal = { state: 'awaiting_input', summary: 'Needs STRIPE_KEY', at: 'now', secretRequest };
+    releaseRead(task('running'));
+    const result = await pending;
+
+    expect(result.isError).toBe(true);
+    expect(ctx.latestTaskSignal?.secretRequest).toBe(secretRequest);
+  });
+
+  // The park must land in the same step as its guard: a `done` already reading the task cannot then
+  // replace it, and nothing can slip between setting the signal and attaching the request.
+  it('keeps a secret park against a done signal racing it from the same message', async () => {
+    let releaseDone: (task: unknown) => void = () => {};
+    let releasePark: (task: unknown) => void = () => {};
+    state.getTaskById
+      .mockReturnValueOnce(new Promise((resolve) => (releaseDone = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (releasePark = resolve)));
+    const ctx = contextFor();
+    const secretRequest: SecretRequest = {
+      id: 'req-3',
+      name: 'STRIPE_KEY',
+      chatId: 'chat-1',
+      file: '.env',
+      cwd: '/repo',
+      reason: 'Charge test cards',
+      replaces: false,
+      git: 'none',
+    };
+
+    const done = handleTaskSignalToolCall(ctx, DONE);
+    const park = handleTaskSignalToolCall(
+      ctx,
+      { state: 'awaiting_input', summary: 'Needs STRIPE_KEY' },
+      secretRequest,
+    );
+    releasePark(task('running'));
+    await park;
+    releaseDone(task('running'));
+
+    expect((await done).isError).toBe(true);
+    expect(ctx.latestTaskSignal).toMatchObject({ state: 'awaiting_input', secretRequest });
   });
 });

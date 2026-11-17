@@ -8,7 +8,7 @@
  * task's `triggerContext` — so a failed first run is never empty.
  *
  * It hides the instant a real user message exists (`userMsgIds` non-empty), so it can never
- * double-render: retry / carry-on re-delivers the prompt, the message persists, this yields to it.
+ * double-render: Retry / Continue re-delivers the prompt, the message persists, this yields to it.
  *
  * The task read shares TaskControls' `getActionableTaskForSubChat` query (same key, always mounted
  * via RunStatusRows) — no extra poll; TaskControls owns the cadence, this is a passive reader.

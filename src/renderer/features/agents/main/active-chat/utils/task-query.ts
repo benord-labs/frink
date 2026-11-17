@@ -1,4 +1,5 @@
 type TaskUtils = {
+  chats: { listActiveChats: { invalidate: () => void } };
   tasks: {
     listPaginated: { invalidate: () => void };
     listCounts: { invalidate: () => void };
@@ -28,6 +29,8 @@ export function getTaskRefetchInterval(status: string | undefined): number | fal
 }
 
 export function invalidateTaskQueries(utils: TaskUtils): void {
+  // The sidebar reads each chat's task status from listActiveChats.
+  utils.chats.listActiveChats.invalidate();
   utils.tasks.listPaginated.invalidate();
   utils.tasks.listCounts.invalidate();
   utils.tasks.getById.invalidate();

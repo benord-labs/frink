@@ -106,7 +106,7 @@ export function BackgroundWorkPopover({
         tabIndex={-1}
         // As wide as the row, but never so narrow that the titles stop being readable: below
         // 32rem the kind label and Stop text give their room to the title.
-        className="@container/bg-work max-h-(--radix-popover-content-available-height) w-(--radix-popover-trigger-width) min-w-[min(22rem,var(--radix-popover-content-available-width))] overflow-y-auto p-1"
+        className="@container/bg-work w-(--radix-popover-trigger-width) min-w-[min(22rem,var(--radix-popover-content-available-width))] overflow-y-auto p-1"
       >
         <div className={cn(overlayLabel, 'flex flex-wrap items-baseline justify-between gap-x-2')}>
           <span>Background work</span>

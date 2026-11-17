@@ -22,6 +22,7 @@ import {
   findUpstreamSession,
 } from './flow-upstream-session';
 import { LAUNCH_FLAGS } from '../launch-flags';
+import { conditionLoopConfigErrors, stuckConditionLoops } from './flows/graph/condition-loops';
 import {
   chatReplyTemplateWarnings,
   parseChatReplyTemplateConfig,
@@ -31,6 +32,7 @@ import {
   HTTP_REQUEST_MAX_HEADERS_JSON_BYTES,
   HTTP_REQUEST_MAX_URL_LENGTH,
 } from './http-request-limits';
+import { unreadableWebhookFilterMessage } from './webhook-match';
 
 const MODEL_SLUG_RE = /^[a-z0-9.-]+$/;
 
@@ -80,6 +82,7 @@ export function formatFlowNodeLabel(n: FlowNode): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+export { isRecord };
 
 function reachableFromTrigger(
   triggerId: string,
@@ -382,6 +385,11 @@ export function validateGraph(
     }
   }
 
+  // SAFETY: node shape errors returned above, so every entry is a FlowNode.
+  const stuck = stuckConditionLoops(nodes as FlowNode[], edges, formatFlowNodeLabel);
+  if (isRunMode) errors.push(...stuck.messages);
+  else warnings.unshift(...stuck.messages.map((m) => `${m} (fix it before running)`));
+
   // For each condition node that participates in a loop, warn unless it also has
   // a forward (non-looping) exit path; error if BOTH handles loop back.
   for (const n of nodes as FlowNode[]) {
@@ -394,35 +402,13 @@ export function validateGraph(
     const name = formatFlowNodeLabel(n);
     if (trueLoops && falseLoops) {
       errors.push(`Condition node "${name}" has no exit path — both branches loop back`);
-    } else if (trueLoops || falseLoops) {
+    } else if ((trueLoops || falseLoops) && !stuck.nodeIds.has(n.id)) {
       warnings.push(
         `Condition node "${name}" creates a loop — make sure your condition has an exit path`,
       );
     }
 
-    // Validate loop config when present
-    const loopCfg = isRecord(n.config) ? n.config.loop : undefined;
-    if (loopCfg !== undefined) {
-      if (!isRecord(loopCfg)) {
-        errors.push(`Condition node "${name}" loop config must be an object`);
-      } else {
-        const maxIter = loopCfg.maxIterations;
-        if (
-          typeof maxIter !== 'number' ||
-          !Number.isInteger(maxIter) ||
-          maxIter < 1 ||
-          maxIter > 50
-        ) {
-          errors.push(
-            `Condition node "${name}" loop.maxIterations must be an integer between 1 and 50`,
-          );
-        }
-        const onMax = loopCfg.onMaxReached;
-        if (onMax !== undefined && onMax !== 'fail' && onMax !== 'continue') {
-          errors.push(`Condition node "${name}" loop.onMaxReached must be "fail" or "continue"`);
-        }
-      }
-    }
+    errors.push(...conditionLoopConfigErrors(name, n.config));
   }
 
   const seen = reachableFromTrigger(triggerId, nodeIds, edges);
@@ -434,20 +420,20 @@ export function validateGraph(
     }
   }
 
-  // A saved binding outlives the catalog: rename or drop the event and the flow still looks
-  // fine while nothing can ever match it. Warn (never error) so an existing graph still saves.
+  // A retired event or an unreadable filter leaves a trigger that looks fine but never fires.
+  // Warn (never error) so an existing graph still saves; filters go first for the editor banner.
   const webhookProvider = options?.webhookProvider
     ? getProviderById(options.webhookProvider)
     : undefined;
-  if (webhookProvider) {
-    for (const n of nodeById.values()) {
-      if (n.blockType !== 'webhook_trigger') continue;
-      const et = n.config?.eventType;
-      if (!et || webhookProvider.events.some((e) => e.id === et)) continue;
-      warnings.push(
-        `Trigger event '${String(et)}' no longer exists for ${webhookProvider.display_name} — pick an event`,
-      );
-    }
+  for (const n of nodeById.values()) {
+    if (n.blockType !== 'webhook_trigger') continue;
+    const badFilters = unreadableWebhookFilterMessage(formatFlowNodeLabel(n), n.config);
+    if (badFilters) warnings.unshift(badFilters);
+    const et = n.config?.eventType;
+    if (!webhookProvider || !et || webhookProvider.events.some((e) => e.id === et)) continue;
+    warnings.push(
+      `Trigger event '${String(et)}' no longer exists for ${webhookProvider.display_name} — pick an event`,
+    );
   }
 
   // Per-block config validation: only enforced at run time (mode='run').

@@ -1,3 +1,5 @@
+import { aiProvider, unsupportedModeMessage } from '../../../shared/lib/ai-providers';
+import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
 import {
   getClaudeCodeTokenById,
   getDefaultClaudeCodeToken,
@@ -11,9 +13,22 @@ export type TaskExecutionAccountType = 'claude-code' | 'codex';
 
 type TaskAccount = { id: string; label: string | null } | null;
 
-/** Credential `type` → task execution account type (NULL/legacy/unknown → claude-code). */
-export const toTaskAccountType = (credType: string): TaskExecutionAccountType =>
-  credType === 'codex' ? 'codex' : 'claude-code';
+/** Credential `type` → task execution account type. Flows run only on Claude and Codex, and only
+ * in a mode the provider has. */
+export function toTaskAccountType(
+  credType: string,
+  startMode: ResolvedTaskStartMode,
+): TaskExecutionAccountType {
+  const provider = aiProvider(credType);
+  if (provider?.id === 'claude-code' || provider?.id === 'codex') {
+    const refusal = unsupportedModeMessage(provider.id, toChatMode(startMode));
+    if (!refusal) return provider.id;
+    throw Object.assign(new Error(`${refusal} Pick another mode.`), { permanent: true });
+  }
+  const name = provider?.name ?? 'This AI provider';
+  const err = new Error(`${name} can't run Flows yet. Pick Claude or OpenAI for this project.`);
+  throw Object.assign(err, { permanent: true });
+}
 
 /** A continued chat runs on its own stamped account; a new chat is stamped from the project. */
 export async function resolveTaskAccount(
@@ -30,10 +45,11 @@ export async function resolveTaskAccount(
  */
 export async function resolveTaskAccountType(
   account: TaskAccount,
+  { startMode }: { startMode: ResolvedTaskStartMode },
 ): Promise<TaskExecutionAccountType> {
-  if (!account) return toTaskAccountType((await getDefaultClaudeCodeToken()).type);
+  if (!account) return toTaskAccountType((await getDefaultClaudeCodeToken()).type, startMode);
   const cred = await getClaudeCodeTokenById(account.id);
-  if (isResolvedCredential(cred)) return toTaskAccountType(cred.type);
+  if (isResolvedCredential(cred)) return toTaskAccountType(cred.type, startMode);
   const err = new Error(
     `Account "${account.label ?? 'Unnamed account'}" is not authenticated on this machine. ` +
       `Please connect or authenticate it, then retry the task.`,

@@ -1,29 +1,30 @@
 import type { Chat } from '@ai-sdk/react';
 import { Button } from '@benord-labs/frink-primitives';
 import type { UIMessage } from 'ai';
+import { useAtomValue } from 'jotai';
 import { type ComponentType, memo, type ReactElement, useEffect, useMemo } from 'react';
 import { perfMark } from '../../../../../lib/perf/marks';
+import { heldSubChatsAtom } from '../../../../../lib/stores/active-transport-registry';
 import { agentChatStore } from '../../../stores/agent-chat-store';
 import type { SubChatMeta } from '../../../stores/sub-chat-store';
 import type { UseSubChatMessagesResult } from '../hooks/useSubChatMessages';
 import type { ChatViewInnerProps } from '../types';
-import { getFirstSubChatId } from '../utils';
+import { getFirstSubChatId, type UnauthAccountForSend } from '../utils';
 
 type Props = {
   /** The chat's one sub-chat, already checked to belong to `chatId` by the caller. */
   subChatId: string;
   agentSubChats: SubChatMeta[];
   allSubChats: SubChatMeta[];
-  getOrCreateChat: (subChatId: string) => Chat<UIMessage> | null;
+  getOrCreateChat: (subChatId: string, isWakeHeld: boolean) => Chat<UIMessage> | null;
   /** Paginated messages for the active sub-chat (loadOlder, hasMore, isLoading). */
   subChatMessages: UseSubChatMessagesResult;
   chatId: string;
   selectedTeamId: string | null;
   repository?: string;
   isMobileFullscreen: boolean;
-  sandboxId?: string | null;
   projectPath?: string | null;
-  /** UUID for @briefing mentions — prefer local equivalent when set (matches flow rows + execution routing) */
+  /** Project UUID — prefer local equivalent when set (matches flow rows + execution routing) */
   projectId?: string | null;
   /** Current git branch (from getBranches) for context bar under input */
   currentBranch?: string | null;
@@ -44,7 +45,7 @@ type Props = {
   isErrorResolvedAccount?: boolean;
   onRetryResolvedAccount?: () => void;
   /** When account exists but is not authenticated, surfaces the reconnect CTA in the composer area. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
   handleRestoreWorkspace: () => void;
   // biome-ignore lint/style/useNamingConvention: Renders as a component
   ChatViewInnerComponent: ComponentType<ChatViewInnerProps>;
@@ -61,7 +62,6 @@ export const ChatTabsRenderer = memo(function ChatTabsRenderer({
   selectedTeamId,
   repository,
   isMobileFullscreen,
-  sandboxId,
   projectPath,
   projectId,
   currentBranch,
@@ -95,7 +95,9 @@ export const ChatTabsRenderer = memo(function ChatTabsRenderer({
     return map;
   }, [allSubChats, agentSubChats]);
 
-  const chat = getOrCreateChat(subChatId);
+  // Subscribed here, not read inside getOrCreateChat: the hold ending must re-run its page check.
+  const isWakeHeld = useAtomValue(heldSubChatsAtom).has(subChatId);
+  const chat = getOrCreateChat(subChatId, isWakeHeld);
   const subChatData = agentSubChats.find((sc) => sc.id === subChatId);
 
   if (!chat) {
@@ -156,7 +158,6 @@ export const ChatTabsRenderer = memo(function ChatTabsRenderer({
           repository={repository}
           streamId={agentChatStore.getStreamId(subChatId)}
           isMobile={isMobileFullscreen}
-          sandboxId={sandboxId || undefined}
           projectPath={projectPath || undefined}
           projectId={projectId}
           currentBranch={currentBranch}

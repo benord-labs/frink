@@ -4,7 +4,7 @@
 /** Characters kept per command: about the last hundred lines of ordinary output. */
 const TAIL_CHARS = 8192;
 
-export type CodexCommandOutput = {
+type CodexCommandOutput = {
   startedAt: number;
   text: string;
   /** Older output was dropped, so `text` may open mid-line. */

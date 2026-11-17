@@ -44,6 +44,14 @@ export const dispatchRunCommand: Dispatcher = async (ctx) => {
     };
   }
   const command = renderTemplateForShell(config.command ?? '', variables);
+  // Nothing to run: stop here so the failure names the node instead of surfacing the
+  // executor's bare "Empty command".
+  if (command.trim() === '') {
+    return {
+      type: 'error',
+      message: `run_command "${ctx.node.label ?? ctx.node.id}": the command is empty, so nothing was run`,
+    };
+  }
 
   // Resolve the worktree from the flow's upstream start_task (not the immediate
   // predecessor — a condition/agent in between drops worktreePath; sc-802). Only

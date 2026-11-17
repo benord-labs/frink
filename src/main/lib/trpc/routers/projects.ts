@@ -1,21 +1,17 @@
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { basename, join } from 'node:path';
 import { TRPCError } from '@trpc/server';
 import { eq, inArray } from 'drizzle-orm';
 import { app, BrowserWindow, dialog } from 'electron';
 import log from 'electron-log';
 import { z } from 'zod';
-import { HTTPS_REPO_REGEX, SSH_REPO_REGEX } from '../../../../shared/lib/git-url';
-import { trackProjectOpened } from '../../analytics';
+import { trackProjectOpened, trackWorkspaceDeleted } from '../../analytics';
 import { getLaunchDirectory } from '../../cli';
 import { getDatabase } from '../../db';
 import {
   createProject as createProjectLocal,
+  beginProjectDeletion,
+  type DeleteProjectResult,
   deleteProject as deleteProjectLocal,
   getProjectById as getProjectByIdLocal,
-  getProjectByPath as getProjectByPathLocal,
   listProjects as listProjectsLocal,
   listProjectsByRecentActivity,
   updateProject as updateProjectLocal,
@@ -24,43 +20,141 @@ import { chats, subChats } from '../../db/schema';
 import { settleChatOwnedFlowDeletion } from '../../flows/deletion';
 import { cancelFlowRunsForChatOrThrow } from '../../flows/engine';
 import { getGitRemoteInfo } from '../../git';
+import { gitCache } from '../../git/cache';
+import {
+  createGitHubCloner,
+  createProjectAtPath,
+  openProjectAtPath,
+  spawnGit,
+} from '../../projects';
 import { removeManagedBuildFolder, scaffoldBuild } from '../../project-scaffold';
-import { abortActiveExecutionsForSubChats } from '../../socket/executor';
+import { abortActiveExecutionsForSubChats, clearCodexSession } from '../../socket/executor';
 import { publicProcedure, router } from '../index';
 import { removeProjectWorktrees } from './chats/teardown-worktree';
 import { frinkUserHome } from '../../platform/frink-home';
 
-/** Local-first projects router: every read/write goes through `db/repos/projects.ts`. */
+/** `chatIds`: the caller's snapshot of the project's chats, so the answer covers all of them. */
+const deleteInput = z.object({ id: z.string(), chatIds: z.array(z.string()).optional() });
 
-/**
- * Safe wrapper for spawning git commands.
- * Prevents command injection by using spawn with array arguments.
- */
-function spawnGit(args: string[], cwd?: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd });
-    let stderr = '';
-
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`git command failed: ${stderr || `exit code ${code}`}`));
-      } else {
-        resolve();
-      }
-    });
-  });
+/** Which of `chatIds` no longer exist: the authoritative answer, whoever deleted them. */
+async function goneChatIds(db: ReturnType<typeof getDatabase>, chatIds: string[] = []) {
+  if (chatIds.length === 0) return [];
+  const rows = await db.select({ id: chats.id }).from(chats).where(inArray(chats.id, chatIds));
+  const remaining = new Set(rows.map((row) => row.id));
+  return chatIds.filter((id) => !remaining.has(id));
 }
 
-const GIT_SUFFIX_REGEX = /\.git$/;
-const SHORT_REPO_REGEX = /^([^/]+)\/([^/]+)$/;
+/** The delete itself, run while the project is marked as being deleted. */
+async function deleteExistingProject(
+  db: ReturnType<typeof getDatabase>,
+  existing: NonNullable<Awaited<ReturnType<typeof getProjectByIdLocal>>>,
+  chatIds: string[] | undefined,
+) {
+  // Capture chats (+ worktree refs) and abort their executor streams before the FK cascade nukes the rows.
+  const projectChats = await db
+    .select({ id: chats.id, worktreePath: chats.worktreePath, branch: chats.branch })
+    .from(chats)
+    .where(eq(chats.projectId, existing.id));
+  if (projectChats.length > 0) {
+    const subChatRows = await db
+      .select({ id: subChats.id })
+      .from(subChats)
+      .where(
+        inArray(
+          subChats.chatId,
+          projectChats.map((c) => c.id),
+        ),
+      );
+    abortActiveExecutionsForSubChats(
+      subChatRows.map((r) => r.id),
+      'project deleted',
+    );
+    // Cancel the flow runs these chats drive (JSON link, no FK cascade — else they keep running).
+    for (const c of projectChats) await cancelFlowRunsForChatOrThrow(c.id);
+  }
+
+  const attempts: DeleteProjectResult[] = [];
+  await settleChatOwnedFlowDeletion(async () => {
+    const result = await deleteProjectLocal(db, existing.id);
+    attempts.push(result);
+    return result;
+  });
+  // A concurrent delete already took the row (and ran the cleanup below): nothing left to do.
+  const final = attempts.at(-1);
+  const deletedChats = final?.deleted && final.removed ? final.deletedChats : undefined;
+  if (!deletedChats) return { project: null, deletedChatIds: await goneChatIds(db, chatIds) };
+  // Clean up the chats the cascade really dropped, not the pre-delete snapshot: a chat moved to
+  // another project in between survives, and keeps its session, cache and worktree.
+  for (const c of deletedChats) {
+    clearCodexSession(c.id);
+    trackWorkspaceDeleted(c.id);
+    if (c.worktreePath) {
+      gitCache.invalidateStatus(c.worktreePath);
+      gitCache.invalidateParsedDiff(c.worktreePath);
+    }
+  }
+  // Frink-managed builds live under ~/.frink/builds — remove the folder too (no-op for user dirs).
+  await removeManagedBuildFolder(existing.path, frinkUserHome());
+  void removeProjectWorktrees(db, existing.path, deletedChats).catch((error) =>
+    log.warn('[projects.delete] worktree cleanup failed; boot sweep will reclaim', error),
+  );
+  const cascaded = deletedChats.map((c) => c.id);
+  const alsoGone = await goneChatIds(db, chatIds);
+  return { project: existing, deletedChatIds: [...new Set([...cascaded, ...alsoGone])] };
+}
+
+/** Local-first projects router: every read/write goes through `db/repos/projects.ts`. */
+
+const liveProjectDeps = {
+  getDb: getDatabase,
+  getGitRemoteInfo,
+  trackProjectOpened,
+  homeDir: frinkUserHome,
+  spawnGit,
+};
+const cloneGitHubRepo = createGitHubCloner(liveProjectDeps);
+
+function resolvePickerWindow(ctxWindow: BrowserWindow | null): BrowserWindow {
+  const window = ctxWindow ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (window) return window;
+  log.error('[projects.openFolder] No window available for folder picker', {
+    isPackaged: app.isPackaged,
+    windowCount: BrowserWindow.getAllWindows().length,
+  });
+  throw new Error('No app window available to open folder picker');
+}
+
+async function focusForPicker(window: BrowserWindow): Promise<void> {
+  if (window.isFocused()) return;
+  window.focus();
+  // Small delay to ensure focus is applied by the OS (fixes first-launch on macOS)
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+async function showFolderPicker(window: BrowserWindow): Promise<Electron.OpenDialogReturnValue> {
+  try {
+    return await dialog.showOpenDialog(window, {
+      properties: ['openDirectory', 'createDirectory'],
+      title: 'Select Project Folder',
+      buttonLabel: 'Open Project',
+    });
+  } catch (error) {
+    log.error('[projects.openFolder] Failed to show folder picker dialog', {
+      isPackaged: app.isPackaged,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new Error('Failed to open folder picker dialog');
+  }
+}
+
+/** The folder the user picked, or null when they cancelled. */
+async function pickProjectFolder(window: BrowserWindow): Promise<string | null> {
+  await focusForPicker(window);
+  const result = await showFolderPicker(window);
+  const folderPath = result.canceled ? undefined : result.filePaths[0];
+  if (!folderPath) log.info('[projects.openFolder] Folder picker canceled');
+  return folderPath ?? null;
+}
 
 export const projectsRouter = router({
   /**
@@ -126,74 +220,8 @@ export const projectsRouter = router({
    * Open folder picker and create (or refresh) a local project.
    */
   openFolder: publicProcedure.mutation(async ({ ctx }) => {
-    const window =
-      ctx.getWindow?.() ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-
-    if (!window) {
-      log.error('[projects.openFolder] No window available for folder picker', {
-        isPackaged: app.isPackaged,
-        windowCount: BrowserWindow.getAllWindows().length,
-      });
-      throw new Error('No app window available to open folder picker');
-    }
-
-    if (!window.isFocused()) {
-      window.focus();
-      // Small delay to ensure focus is applied by the OS (fixes first-launch on macOS)
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    let result: Electron.OpenDialogReturnValue;
-    try {
-      result = await dialog.showOpenDialog(window, {
-        properties: ['openDirectory', 'createDirectory'],
-        title: 'Select Project Folder',
-        buttonLabel: 'Open Project',
-      });
-    } catch (error) {
-      log.error('[projects.openFolder] Failed to show folder picker dialog', {
-        isPackaged: app.isPackaged,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw new Error('Failed to open folder picker dialog');
-    }
-
-    if (result.canceled || result.filePaths.length === 0) {
-      log.info('[projects.openFolder] Folder picker canceled');
-      return null;
-    }
-
-    const folderPath = result.filePaths[0] || '';
-    const folderName = basename(folderPath);
-
-    const gitInfo = await getGitRemoteInfo(folderPath);
-    const db = getDatabase();
-
-    // Refresh existing project (path is UNIQUE in the schema)
-    const existing = await getProjectByPathLocal(db, folderPath);
-    if (existing) {
-      const updated = await updateProjectLocal(db, existing.id, {
-        gitRemoteUrl: gitInfo.normalizedUrl,
-        gitProvider: gitInfo.provider,
-        gitOwner: gitInfo.owner,
-        gitRepo: gitInfo.repo,
-      });
-      const row = updated ?? existing;
-      trackProjectOpened({ id: row.id, hasGitRemote: !!gitInfo.remoteUrl });
-      return row;
-    }
-
-    // Create
-    const newProject = await createProjectLocal(db, {
-      name: folderName,
-      path: folderPath,
-      gitRemoteUrl: gitInfo.normalizedUrl,
-      gitProvider: gitInfo.provider,
-      gitOwner: gitInfo.owner,
-      gitRepo: gitInfo.repo,
-    });
-    trackProjectOpened({ id: newProject.id, hasGitRemote: !!gitInfo.remoteUrl });
-    return newProject;
+    const folderPath = await pickProjectFolder(resolvePickerWindow(ctx.getWindow?.() ?? null));
+    return folderPath ? openProjectAtPath(liveProjectDeps, folderPath) : null;
   }),
 
   /**
@@ -218,23 +246,7 @@ export const projectsRouter = router({
    */
   create: publicProcedure
     .input(z.object({ path: z.string(), name: z.string().optional() }))
-    .mutation(async ({ input }) => {
-      const db = getDatabase();
-      const existing = await getProjectByPathLocal(db, input.path);
-      if (existing) return existing;
-
-      const name = input.name || basename(input.path);
-      const gitInfo = await getGitRemoteInfo(input.path);
-      const newProject = await createProjectLocal(db, {
-        name,
-        path: input.path,
-        gitRemoteUrl: gitInfo.normalizedUrl,
-        gitProvider: gitInfo.provider,
-        gitOwner: gitInfo.owner,
-        gitRepo: gitInfo.repo,
-      });
-      return newProject;
-    }),
+    .mutation(({ input }) => createProjectAtPath(liveProjectDeps, input.path, input.name)),
 
   /**
    * Rename a project.
@@ -267,39 +279,17 @@ export const projectsRouter = router({
    * Aborts active executor streams BEFORE the delete so the SDK doesn't keep tool-calling
    * against rows we're about to cascade-nuke (mirrors the chats.delete fix, commit 6056c8).
    */
-  delete: publicProcedure.input(z.object({ id: z.string() })).mutation(async ({ input }) => {
+  delete: publicProcedure.input(deleteInput).mutation(async ({ input }) => {
     const db = getDatabase();
     const existing = await getProjectByIdLocal(db, input.id);
-    if (!existing) return null;
-
-    // Capture chats (+ worktree refs) and abort their executor streams before the FK cascade nukes the rows.
-    const projectChats = await db
-      .select({ id: chats.id, worktreePath: chats.worktreePath, branch: chats.branch })
-      .from(chats)
-      .where(eq(chats.projectId, input.id));
-    if (projectChats.length > 0) {
-      const subChatRows = await db
-        .select({ id: subChats.id })
-        .from(subChats)
-        .where(
-          inArray(
-            subChats.chatId,
-            projectChats.map((c) => c.id),
-          ),
-        );
-      abortActiveExecutionsForSubChats(
-        subChatRows.map((r) => r.id),
-        'project deleted',
-      );
-      // Cancel the flow runs these chats drive (JSON link, no FK cascade — else they keep running).
-      for (const c of projectChats) await cancelFlowRunsForChatOrThrow(c.id);
+    if (!existing) return { project: null, deletedChatIds: await goneChatIds(db, input.chatIds) };
+    // Held from before the snapshot until the cascade: no chat moves in or out in between.
+    const release = beginProjectDeletion(input.id);
+    try {
+      return await deleteExistingProject(db, existing, input.chatIds);
+    } finally {
+      release();
     }
-
-    await settleChatOwnedFlowDeletion(() => deleteProjectLocal(db, input.id));
-    // Frink-managed builds live under ~/.frink/builds — remove the folder too (no-op for user dirs).
-    await removeManagedBuildFolder(existing.path, frinkUserHome());
-    void removeProjectWorktrees(existing.path, projectChats);
-    return existing;
   }),
 
   /**
@@ -326,78 +316,5 @@ export const projectsRouter = router({
    */
   cloneFromGitHub: publicProcedure
     .input(z.object({ repoUrl: z.string() }))
-    .mutation(async ({ input }) => {
-      const { repoUrl } = input;
-
-      let owner: string | null = null;
-      let repo: string | null = null;
-
-      const httpsMatch = repoUrl.match(HTTPS_REPO_REGEX);
-      if (httpsMatch) {
-        owner = httpsMatch[2] || null;
-        repo = httpsMatch[3]?.replace(GIT_SUFFIX_REGEX, '') || null;
-      }
-      const sshMatch = repoUrl.match(SSH_REPO_REGEX);
-      if (sshMatch) {
-        owner = sshMatch[2] || null;
-        repo = sshMatch[3]?.replace(GIT_SUFFIX_REGEX, '') || null;
-      }
-      const shortMatch = repoUrl.match(SHORT_REPO_REGEX);
-      if (shortMatch) {
-        owner = shortMatch[1] || null;
-        repo = shortMatch[2]?.replace(GIT_SUFFIX_REGEX, '') || null;
-      }
-
-      if (!owner || !repo) {
-        throw new Error('Invalid GitHub URL or repo format');
-      }
-
-      const homePath = frinkUserHome();
-      const reposDir = join(homePath, '.frink', 'repos', owner);
-      const clonePath = join(reposDir, repo);
-      const db = getDatabase();
-
-      // Repo already cloned to disk — reuse the existing local project (or create one)
-      if (existsSync(clonePath)) {
-        const existingByPath = await getProjectByPathLocal(db, clonePath);
-        if (existingByPath) {
-          trackProjectOpened({
-            id: existingByPath.id,
-            hasGitRemote: !!existingByPath.gitRemoteUrl,
-          });
-          return existingByPath;
-        }
-
-        const gitInfo = await getGitRemoteInfo(clonePath);
-        const created = await createProjectLocal(db, {
-          name: repo,
-          path: clonePath,
-          gitRemoteUrl: gitInfo.normalizedUrl,
-          gitProvider: gitInfo.provider,
-          gitOwner: gitInfo.owner,
-          gitRepo: gitInfo.repo,
-        });
-        trackProjectOpened({ id: created.id, hasGitRemote: !!gitInfo.remoteUrl });
-        return created;
-      }
-
-      // Fresh clone
-      await mkdir(reposDir, { recursive: true });
-      const cloneUrl = repoUrl.startsWith('git@')
-        ? `git@github.com:${owner}/${repo}.git`
-        : `https://github.com/${owner}/${repo}.git`;
-      await spawnGit(['clone', cloneUrl, clonePath]);
-
-      const gitInfo = await getGitRemoteInfo(clonePath);
-      const created = await createProjectLocal(db, {
-        name: repo,
-        path: clonePath,
-        gitRemoteUrl: gitInfo.normalizedUrl,
-        gitProvider: gitInfo.provider,
-        gitOwner: gitInfo.owner,
-        gitRepo: gitInfo.repo,
-      });
-      trackProjectOpened({ id: created.id, hasGitRemote: !!gitInfo.remoteUrl });
-      return created;
-    }),
+    .mutation(({ input }) => cloneGitHubRepo(input.repoUrl)),
 });

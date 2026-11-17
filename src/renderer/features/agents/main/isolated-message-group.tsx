@@ -1,11 +1,12 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { useAtomValue } from 'jotai';
+import { atom, useAtomValue } from 'jotai';
 import { Code2, GitBranch, MessageSquare, Play, Undo2 } from 'lucide-react';
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
 import { pendingTurnCard } from '@/lib/agent-chat/planning/planning-status-message';
+import { hasTurnOutput } from '@/lib/agent-chat/turn-output';
 import {
   type AnsweredQuestion,
   readAnsweredQuestions,
@@ -103,15 +104,13 @@ type IsolatedMessageGroupProps = IsolatedChatSharedProps & {
 };
 
 /**
- * Recovery pair for a failed interactive turn — mirrors TaskControls' ordering: Retry (re-run the
- * failed turn from scratch) on the left, Carry on (resume the session and continue from where it
- * stopped — the default choice, e.g. after a usage limit resets) as the terminal action.
- *
- * Carry on needs a session to resume; with none, `onCarryOnChat` is null and only Retry renders.
+ * The one recovery button of a failed interactive turn: Continue resumes the session, keeping the
+ * partial output, when one exists and the turn produced output; otherwise Retry re-runs the turn.
  */
 function ChatRetryAfterGroupRow({
   chatId,
   subChatId,
+  assistantIds,
   retryInFlight,
   onRetryChat,
   onCarryOnChat,
@@ -119,35 +118,48 @@ function ChatRetryAfterGroupRow({
 }: {
   chatId: string;
   subChatId: string;
+  assistantIds: string[];
   retryInFlight: boolean;
   onRetryChat: () => void;
   onCarryOnChat: (() => void) | null;
   chatRetryTooltipText: string | null;
 }) {
   const pendingRetry = useAtomValue(pendingChatRetryAtomFamily(subChatId));
+  const groupHasOutput = useAtomValue(
+    useMemo(
+      () => atom((get) => hasTurnOutput(assistantIds.map((id) => get(messageAtomFamily(id))))),
+      [assistantIds],
+    ),
+  );
+  const onContinue = groupHasOutput ? onCarryOnChat : null;
+  // A login switch recovers only once it lands, so the action is picked then: output may have come.
+  // Set during render, so a switch landing before this render's effects still reads it.
+  const recoverRef = useRef(onRetryChat);
+  recoverRef.current = onContinue ?? onRetryChat;
   return (
     <div className="px-2 mt-1 flex justify-end gap-1">
       <ContinueAfterUsageLimit
         chatId={chatId}
         usageLimited={pendingRetry?.errorCategory === 'RATE_LIMIT_SDK'}
-        onRetry={onRetryChat}
+        onRetry={() => recoverRef.current()}
       />
-      <RetryActionButton
-        onClick={onRetryChat}
-        disabled={retryInFlight}
-        ariaLabel={retryInFlight ? 'Retrying chat send' : 'Retry chat send'}
-        ariaBusy={retryInFlight}
-        label={retryInFlight ? 'Retrying...' : 'Retry'}
-        tooltipText={chatRetryTooltipText ?? undefined}
-      />
-      {onCarryOnChat && (
+      {onContinue ? (
         <RetryActionButton
           icon={Play}
-          onClick={onCarryOnChat}
+          onClick={onContinue}
           disabled={retryInFlight}
-          ariaLabel="Carry on from where the chat stopped"
-          label="Carry on"
-          tooltipText="Resume the session and continue from where it stopped — nothing is redone."
+          ariaLabel="Continue from where the chat stopped"
+          label="Continue"
+          tooltipText="Picks up where the agent stopped — nothing is redone."
+        />
+      ) : (
+        <RetryActionButton
+          onClick={onRetryChat}
+          disabled={retryInFlight}
+          ariaLabel={retryInFlight ? 'Retrying chat send' : 'Retry chat send'}
+          ariaBusy={retryInFlight}
+          label={retryInFlight ? 'Retrying...' : 'Retry'}
+          tooltipText={chatRetryTooltipText ?? undefined}
         />
       )}
     </div>
@@ -275,6 +287,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
           <ChatRetryAfterGroupRow
             chatId={chatId}
             subChatId={subChatId}
+            assistantIds={assistantIds}
             retryInFlight={retryInFlight}
             onRetryChat={onRetryChat}
             onCarryOnChat={onCarryOnChat}
@@ -466,6 +479,7 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
         <ChatRetryAfterGroupRow
           chatId={chatId}
           subChatId={subChatId}
+          assistantIds={assistantIds}
           retryInFlight={retryInFlight}
           onRetryChat={onRetryChat}
           onCarryOnChat={onCarryOnChat}

@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeVersionSupportsUltra } from '../../claude';
 import { getClaudeCodeTokenById } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
 import { getMultiProjectContext } from '../../multi-project-prompt';
+import * as toolValidation from '../../permissions/tool-validation';
 import {
   __resetSessionsForTest,
   getSession,
@@ -14,10 +18,11 @@ import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
 import { abortActiveExecutionsForSubChats } from '../executor';
 import * as runtimeGate from '../runtime-gate';
-import { mockQuery, never } from './claude-turn-abort';
+import { mockQuery, never } from './claude-query-fake';
 import { flowDriven, RUNNING_TASK, TURN_END } from './claude-turn-bindings';
 import { answeringCli, replies } from './claude-warm-session';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
+import { gitAsTestUser as git } from '../../test-utils/git-as-test-user';
 
 type WarmSessionGuardHarness = Pick<
   ExecutorPermissionHarness,
@@ -69,6 +74,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       __resetSessionsForTest();
     });
     registerPlanApprovalReuseTests(claudeQueryMock, send);
+    registerAutoMemorySpawnTests(claudeQueryMock, send);
 
     it('Ultra spawns with the ultracode setting at any effort, and toggling it applies live', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
@@ -77,7 +83,8 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       await send('first', { settings: { effort: 'low', ultra: true } });
       await send('second', { sessionId: 'sess-held', settings: { effort: 'xhigh' } });
 
-      expect(spawned(0)?.settings).toEqual({ ultracode: true });
+      expect(spawned(0)?.settings).toMatchObject({ ultracode: true });
+      expect(spawned(0)?.settingSources).toEqual(['project', 'user', 'local']);
       expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
       expect(claudeQueryMock).toHaveBeenCalledTimes(1);
       expect(first.applyFlagSettings.mock.calls).toEqual([
@@ -103,7 +110,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       flowDriven();
       await send('flow turn', { settings: { effort: 'xhigh', ultra: true } });
       expect(claudeQueryMock.mock.calls[0]?.[0]?.options.effort).toBe('xhigh');
-      expect(claudeQueryMock.mock.calls[0]?.[0]?.options.settings).toBeUndefined();
+      expect(claudeQueryMock.mock.calls[0]?.[0]?.options.settings.ultracode).toBeUndefined();
     });
 
     it('a bundled CLI too old for Ultra at any effort never spawns or live-applies it', async () => {
@@ -112,7 +119,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       await send('first', { settings: { effort: 'low', ultra: true } });
       await send('second', { sessionId: 'sess-held', settings: { effort: 'low', ultra: true } });
       vi.mocked(claudeVersionSupportsUltra).mockReturnValue(true);
-      expect(claudeQueryMock.mock.calls[0]?.[0]?.options.settings).toBeUndefined();
+      expect(claudeQueryMock.mock.calls[0]?.[0]?.options.settings.ultracode).toBeUndefined();
       expect(warm.applyFlagSettings).not.toHaveBeenCalledWith({ ultracode: true });
     });
 
@@ -296,5 +303,76 @@ function registerPlanApprovalReuseTests(
 
     expect(hasWakeHold(payload.subChatId)).toBe(false);
     expect(getSession(payload.subChatId)).toBeUndefined();
+  });
+}
+
+type Send = (message: string, overrides?: Partial<Payload>) => Promise<void>;
+
+/** One turn from a new chat running in `cwd`; returns its CLI's spawn options. */
+async function sendFromChatIn(
+  claudeQueryMock: WarmSessionGuardHarness['claudeQueryMock'],
+  send: Send,
+  cwd: string,
+) {
+  // SAFETY: the executor reads only the chat's worktreePath and taskId from this row.
+  const row = { chat: { worktreePath: cwd, taskId: null }, account: null } as Awaited<
+    ReturnType<typeof getChatWithProjectAccount>
+  >;
+  vi.mocked(getChatWithProjectAccount).mockResolvedValue(row);
+  mockQuery(claudeQueryMock, answeringCli());
+  await send('hi', { subChatId: randomUUID() });
+  return claudeQueryMock.mock.calls.at(-1)?.[0]?.options;
+}
+
+/** Every chat of a project spawns on the project's one auto-memory folder, the one Claude Code uses
+ * outside Frink, whichever chat or worktree it runs in. */
+function registerAutoMemorySpawnTests(
+  claudeQueryMock: WarmSessionGuardHarness['claudeQueryMock'],
+  send: Send,
+): void {
+  it("two chats, one in a worktree, spawn on the root project's shared memory folder", async () => {
+    const tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'frink-memory-')));
+    try {
+      const repo = path.join(tmpRoot, 'repo');
+      git(tmpRoot, 'init', '-q', repo);
+      git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+      const worktree = path.join(tmpRoot, 'worktrees', 'feature');
+      git(repo, 'worktree', 'add', '-q', worktree);
+      const projectSlug = repo.replace(/[^a-zA-Z0-9]/g, '-');
+      const home = process.env.FRINK_HOME ?? '';
+      const projectMemory = path.join(home, '.claude', 'projects', projectSlug, 'memory');
+
+      const inCheckout = await sendFromChatIn(claudeQueryMock, send, repo);
+      const inWorktree = await sendFromChatIn(claudeQueryMock, send, worktree);
+
+      expect(inCheckout?.env.CLAUDE_CONFIG_DIR).not.toBe(inWorktree?.env.CLAUDE_CONFIG_DIR);
+      expect(inCheckout?.settings.autoMemoryDirectory).toBe(projectMemory);
+      expect(inWorktree?.settings.autoMemoryDirectory).toBe(projectMemory);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('a chat in a Frink-managed worktree reads project config from the root checkout', async () => {
+    const tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'frink-config-')));
+    try {
+      const repo = path.join(tmpRoot, 'repo');
+      git(tmpRoot, 'init', '-q', repo);
+      git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+      const worktree = path.join(tmpRoot, 'worktrees', 'feature');
+      git(repo, 'worktree', 'add', '-q', worktree);
+      vi.spyOn(toolValidation, 'resolvePermissionProjectPath').mockImplementation((p) =>
+        p === worktree ? repo : p,
+      );
+
+      const inCheckout = await sendFromChatIn(claudeQueryMock, send, repo);
+      const inWorktree = await sendFromChatIn(claudeQueryMock, send, worktree);
+
+      expect(inCheckout?.projectConfigRoot).toBeUndefined();
+      expect(inWorktree?.cwd).toBe(worktree);
+      expect(inWorktree?.projectConfigRoot).toBe(repo);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 }

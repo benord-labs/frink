@@ -36,6 +36,7 @@ import type { ChatMode } from '../../../../../../../shared/types/chat-mode';
 import type { CodexSpeed } from '../../../../../../../shared/types/execution';
 import { useFlowNoteField } from '../../../../../../lib/agent-chat/use-flow-note-field';
 import { useFlowResumeLock } from '../../../../../../lib/agent-chat/use-flow-resume-lock';
+import { agentChatStore } from '../../../../stores/agent-chat-store';
 import { trpc } from '../../../../../../lib/trpc';
 import { invalidateTaskQueries } from '../../utils';
 import { FlowReplyBox } from '../FlowReplyBox';
@@ -52,8 +53,8 @@ type FlowRunStripProps = {
   /** The running node's model picker id + mode — a read-only readout of what the composer showed. */
   modelId?: string;
   mode?: ChatMode;
-  /** The flow's Auto Mode consent, snapshotted onto the task at dispatch. */
-  autoReviewTools?: boolean;
+  /** The chat whose Auto switch the readout shows; null where no step is live to take it. */
+  autoChatId?: string | null;
   codexSpeed?: CodexSpeed;
   /** Sends a note through the normal send pipe (queues while streaming); returns whether sent. */
   onAddNote: (text: string) => boolean;
@@ -162,7 +163,7 @@ export const FlowRunStrip = memo(function FlowRunStrip({
   canPause,
   modelId,
   mode,
-  autoReviewTools,
+  autoChatId,
   codexSpeed,
   onAddNote,
   onStopTurn,
@@ -201,7 +202,7 @@ export const FlowRunStrip = memo(function FlowRunStrip({
         <FlowRunMeta
           modelId={modelId}
           mode={mode}
-          autoReviewTools={autoReviewTools}
+          autoChatId={autoChatId}
           codexSpeed={codexSpeed}
           confirming={confirming}
         />
@@ -268,7 +269,7 @@ type FlowPausedBarProps = {
   /** The paused node's model picker id + mode — the same read-only readout as the running strip. */
   modelId?: string;
   mode?: ChatMode;
-  autoReviewTools?: boolean;
+  autoChatId?: string | null;
   codexSpeed?: CodexSpeed;
   /** True after the accepted continuation enters submitted/streaming state. */
   isTurnActive: boolean;
@@ -284,7 +285,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
   subChatId,
   modelId,
   mode,
-  autoReviewTools,
+  autoChatId,
   codexSpeed,
   isTurnActive,
   onSubmitAnswer,
@@ -298,7 +299,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
     resumePending,
     start: startResume,
     markStopRequested,
-  } = useFlowResumeLock(flowRunId, subChatId, isTurnActive);
+  } = useFlowResumeLock(flowRunId, subChatId, isTurnActive, () => agentChatStore.get(subChatId));
 
   return (
     <FlowSurfaceCard
@@ -313,7 +314,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
         <FlowRunMeta
           modelId={modelId}
           mode={mode}
-          autoReviewTools={autoReviewTools}
+          autoChatId={autoChatId}
           codexSpeed={codexSpeed}
           confirming={confirming}
         />

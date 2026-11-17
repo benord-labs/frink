@@ -12,6 +12,11 @@
  *   more weak lines, OR one weak line alongside a strong signal.
  */
 
+import { MENTION_TOKEN_PATTERN_SRC } from '../../../shared/lib/mentions/mention-grammar';
+
+// A token's path may hold `__tests__` or `*`, so detection reads each token as a plain word.
+const MENTION_TOKEN_REGEX = new RegExp(MENTION_TOKEN_PATTERN_SRC, 'g');
+
 // Strong signals — one match implies markdown intent.
 const STRONG_PATTERNS: RegExp[] = [
   /\*\*[^\s*][^*]*\*\*/, // **bold**
@@ -31,7 +36,8 @@ const WEAK_LINE_PATTERNS: RegExp[] = [
   /^\s*\|.*\|\s*$/, // | table | row |
 ];
 
-export function containsMarkdown(text: string): boolean {
+export function containsMarkdown(rawText: string): boolean {
+  const text = rawText.replace(MENTION_TOKEN_REGEX, 'mention');
   if (!text) return false;
 
   const hasStrong = STRONG_PATTERNS.some((re) => re.test(text));

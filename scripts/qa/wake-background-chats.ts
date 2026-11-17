@@ -15,9 +15,15 @@ for (const chat of BACKGROUND_WORK_CHATS) {
     chatId: chat.chatId,
     subChatId: chat.subChatId,
     projectId: FIXTURE_PROJECT_ID,
-    userMessage: { id: `${chat.subChatId}-request`, role: 'user', parts: [{ type: 'text', text: chat.request }] },
+    userMessage: {
+      id: `${chat.subChatId}-request`,
+      role: 'user',
+      parts: [{ type: 'text', text: chat.request }],
+    },
   };
-  const result = await page.evaluate(`window.trpc.socket.sendMessage.mutate(${JSON.stringify(input)})`);
+  const result = await page.evaluate(
+    `window.trpc.socket.sendMessage.mutate(${JSON.stringify(input)})`,
+  );
   stamp(`${chat.name}: ${JSON.stringify(result)}`);
 }
 page.close();

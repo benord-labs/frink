@@ -2,8 +2,8 @@
  * Run-state + run actions for ONE flow batch — any batch, not just the flow's active one.
  * Consumed by the FlowEditor header FlowRunButton (the single run-action surface,
  * targeting the batch the user is looking at) so every surface derives identical state and shares
- * the same query invalidations. Recovering a batch that has already run is per-member (Retry /
- * Carry on in each run's chat); this hook only starts never-run batches.
+ * the same query invalidations. Recovering a batch that has already run is per-member (Continue /
+ * Retry in each run's chat); this hook only starts never-run batches.
  */
 
 import { useCallback, useMemo, useRef } from 'react';

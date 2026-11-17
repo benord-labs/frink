@@ -9,6 +9,7 @@
  */
 
 import { hostname } from 'node:os';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { getDatabase } from '../../db';
@@ -26,13 +27,10 @@ import {
   getTaskCounts,
   listTasksWithProjectPaginated,
   reassignTaskDetailed,
-  retryTaskDetailed,
   startExecutionFromReviewDetailed,
-  type TaskMutationFailureReason,
   updateTaskStatus,
 } from '../../db/repos/tasks';
 import type { Task } from '../../db/schema';
-import type { CarryOnFlowTaskResult } from '../../flows/rerun';
 import {
   isDispatchPending,
   listUndeliveredDispatches,
@@ -40,11 +38,16 @@ import {
 import { getTaskPoller } from '../../task-poller';
 import { cancelWorkQueueTask } from '../../tasks/cancel-work-queue-task';
 import { publicProcedure, router } from '../index';
+import { throwTaskMutationReason } from './task-refusals';
+import { taskRecoveryProcedures } from './tasks-recovery';
 import {
   getTaskWithRunOutcome,
   type TaskWithRunOutcome,
   taskSubChatProcedures,
+  withStoppedTaskRecoveries,
 } from './tasks-subchat';
+
+export { type FlowRunRecoveries, recoverTask } from './tasks-recovery';
 
 const taskSourceSchema = z.string().min(1).max(50);
 const workQueueSectionSchema = z.enum(['attention', 'inbox', 'running']);
@@ -79,53 +82,15 @@ const deleteMatchingInputSchema = z.object({
 });
 const paginatedCursorSchema = z.object({ createdAt: z.string(), id: z.string() });
 
-function throwTaskMutationReason(
-  reason: TaskMutationFailureReason | undefined,
-  messages: {
-    notFound: string;
-    invalidState: string;
-    fallback: string;
-    flowShellNotReassignable?: string;
-  },
-): never {
-  if (reason === 'not_found') throw new Error(messages.notFound);
-  if (reason === 'flow_shell_not_reassignable') {
-    throw new Error(
-      messages.flowShellNotReassignable ??
-        'This task is a flow-linked shell task and cannot be reassigned',
-    );
-  }
-  if (reason === 'invalid_state') throw new Error(messages.invalidState);
-  throw new Error(messages.fallback);
-}
-
-/** Maps a `carryOnFlowTask` failure to the same user-facing message each retry surface showed. */
-function throwCarryOnReason(
-  reason: Extract<CarryOnFlowTaskResult, { ok: false }>['reason'],
-): never {
-  const messages: Record<typeof reason, string> = {
-    'not-found': 'Task not found',
-    'no-session':
-      'Nothing to carry on — the failed attempt has no resumable session. Use Retry to run it again.',
-    'invalid-state': 'Only failed or attention-parked tasks can be retried',
-    'admission-required':
-      "Carry on isn't available for this run anymore — it lost its place in the run queue. Use Retry to continue from the last step.",
-  };
-  throw new Error(messages[reason]);
-}
-
-async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<void> {
-  if (!task?.flowRunId) return;
-  const { hasActiveFlowAdmission } = await import('../../flows/admission/runtime');
-  if (!(await hasActiveFlowAdmission(task.flowRunId))) {
-    throw new Error(
-      'This Flow run lost its place in the run queue. Open the Flow run and use Resume or Retry there.',
-    );
-  }
+async function startFlowPlanExecution(db: ReturnType<typeof getDatabase>, taskId: string) {
+  const { transitionFlowRun } = await import('../../flows/admission/runtime');
+  const { startPlanExecutionCommand } = await import('../../flows/transitions');
+  return transitionFlowRun(() => startPlanExecutionCommand(db, taskId, hostname()));
 }
 
 export const tasksRouter = router({
   ...taskSubChatProcedures,
+  ...taskRecoveryProcedures,
   create: publicProcedure
     .input(
       z.object({
@@ -211,40 +176,6 @@ export const tasksRouter = router({
       return task;
     }),
 
-  /**
-   * User-requested retry of a failed/parked task. Server-side so the scrub + CAS live in one
-   * place (repos/tasks.ts retryTaskDetailed) and the claim path can read `retryMode` to resume
-   * the persisted Claude session ('continue') or provision fresh ('restart').
-   */
-  retry: publicProcedure
-    .input(
-      z.object({
-        taskId: z.string().min(1),
-        mode: z.enum(['continue', 'restart']).default('continue'),
-      }),
-    )
-    .mutation(async ({ input }): Promise<Task> => {
-      const db = getDatabase();
-      // Carry on = session-resume + batch bookkeeping + task flip, all in one shared primitive so the
-      // chat and batch surfaces stay in lockstep. Restart provisions fresh via retryTaskDetailed.
-      // Dynamic import mirrors this router's other flows/rerun uses (avoids a static import cycle).
-      if (input.mode === 'continue') {
-        const { carryOnFlowTask } = await import('../../flows/rerun');
-        const res = await carryOnFlowTask(db, input.taskId);
-        if (!res.ok) throwCarryOnReason(res.reason);
-        return res.task;
-      }
-      const { task, reason } = await retryTaskDetailed(db, input.taskId, input.mode);
-      if (!task) {
-        throwTaskMutationReason(reason, {
-          notFound: 'Task not found',
-          invalidState: 'Only failed or attention-parked tasks can be retried',
-          fallback: 'Could not retry task',
-        });
-      }
-      return task;
-    }),
-
   complete: publicProcedure
     .input(z.object({ taskId: z.string().min(1), result: z.unknown().optional() }))
     .mutation(async ({ input }): Promise<Task | null> => {
@@ -291,8 +222,12 @@ export const tasksRouter = router({
     .input(z.object({ taskId: z.string().min(1) }))
     .mutation(async ({ input }): Promise<Task | null> => {
       const db = getDatabase();
-      await requireActiveFlowAdmissionForTask(await getTaskById(db, input.taskId));
-      const { task, reason } = await startExecutionFromReviewDetailed(db, input.taskId, hostname());
+      const existing = await getTaskById(db, input.taskId);
+      // A Flow task's admission check and its write commit together, so a release cannot land
+      // between them. A task with no Flow must not wait behind admission work.
+      const { task, reason } = existing?.flowRunId
+        ? await startFlowPlanExecution(db, input.taskId)
+        : await startExecutionFromReviewDetailed(db, input.taskId, hostname());
       if (!task) {
         throwTaskMutationReason(reason, {
           notFound: 'Task not found',
@@ -325,7 +260,8 @@ export const tasksRouter = router({
         }),
     )
     .query(async ({ input }) => {
-      return listTasksWithProjectPaginated(getDatabase(), {
+      const db = getDatabase();
+      const page = await listTasksWithProjectPaginated(db, {
         status: input.status,
         statuses: input.statuses,
         limit: input.limit,
@@ -333,6 +269,7 @@ export const tasksRouter = router({
         collapseByFlow: input.collapseByFlow,
         workQueueSection: input.workQueueSection,
       });
+      return { ...page, items: await withStoppedTaskRecoveries(db, page.items) };
     }),
 
   listCounts: publicProcedure

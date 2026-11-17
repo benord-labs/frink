@@ -101,6 +101,34 @@ function HighlightedJson({ code }: { code: string }) {
   );
 }
 
+/** Expanded section for a finished call: why it failed (if it did), then what it returned. */
+function ResultBody({
+  errorReason,
+  output,
+  hasInput,
+}: {
+  errorReason?: string;
+  output: string | null;
+  hasInput: boolean;
+}) {
+  if (!errorReason && !output) return null;
+  return (
+    <div
+      className={cn(
+        'px-2.5 py-1.5 max-h-[200px] overflow-y-auto',
+        hasInput && 'border-t border-border/60',
+      )}
+    >
+      {errorReason && (
+        <p className="text-[11px] text-destructive/80 font-mono whitespace-pre-wrap wrap-break-word">
+          {errorReason}
+        </p>
+      )}
+      {output && <HighlightedJson code={output} />}
+    </div>
+  );
+}
+
 export const AgentMcpToolCall = memo(function AgentMcpToolCall({
   part,
   mcpInfo,
@@ -129,13 +157,17 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
     return formatOutputForDisplay(part.output);
   }, [part.output]);
 
+  const errorReason = isError ? part.errorText : undefined;
+
   const outputPreview = useMemo(() => {
-    if (isPending || !part.output) return '';
-    return formatOutputPreview(part.output);
-  }, [isPending, part.output]);
+    const source = errorReason || part.output;
+    if (isPending || !source) return '';
+    return formatOutputPreview(source);
+  }, [isPending, errorReason, part.output]);
 
   const hasExpandableContent =
-    ((part.input && Object.keys(part.input).length > 0) || !!part.output) && !isPending;
+    ((part.input && Object.keys(part.input).length > 0) || !!part.output || !!errorReason) &&
+    !isPending;
 
   if (isInterrupted && !part.output) {
     return (
@@ -220,7 +252,10 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
       {!isExpanded && outputPreview && (
         <div
           title={outputPreview}
-          className="px-2.5 pb-1 text-[11px] text-muted-foreground/70 font-mono truncate border-t border-border/60 pt-1"
+          className={cn(
+            'px-2.5 pb-1 text-[11px] font-mono truncate border-t border-border/60 pt-1',
+            errorReason ? 'text-destructive/80' : 'text-muted-foreground/70',
+          )}
         >
           {outputPreview}
         </div>
@@ -247,16 +282,11 @@ export const AgentMcpToolCall = memo(function AgentMcpToolCall({
             </div>
           )}
 
-          {displayOutput && (
-            <div
-              className={cn(
-                'px-2.5 py-1.5 max-h-[200px] overflow-y-auto',
-                part.input && Object.keys(part.input).length > 0 && 'border-t border-border/60',
-              )}
-            >
-              <HighlightedJson code={displayOutput} />
-            </div>
-          )}
+          <ResultBody
+            errorReason={errorReason}
+            output={displayOutput}
+            hasInput={!!part.input && Object.keys(part.input).length > 0}
+          />
         </div>
       )}
     </div>

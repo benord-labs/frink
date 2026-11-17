@@ -1,4 +1,5 @@
 import { toast } from 'sonner';
+import type { AiProviderId } from '../../../../../../../shared/lib/ai-providers';
 import type { PendingAccountAuthState } from '../../../../../../lib/atoms';
 
 /** Default copy when blocking **send** from the active chat composer (and queue path). */
@@ -9,10 +10,7 @@ export const ACCOUNT_NOT_READY_TOAST_MESSAGE_SEND =
 export const ACCOUNT_NOT_READY_TOAST_MESSAGE_START_CHAT =
   'Connect a Claude account or add an API key to start a chat.';
 
-export type UnauthAccountForSend =
-  | { label: string; type: 'claude-code' | 'codex' }
-  | null
-  | undefined;
+export type UnauthAccountForSend = { label: string; type: AiProviderId } | null | undefined;
 
 export type ShowAccountNotReadyToastOptions = {
   /** Defaults to {@link ACCOUNT_NOT_READY_TOAST_MESSAGE_SEND}. */
@@ -39,9 +37,9 @@ export function showAccountNotReadyToast(
                 mode: 'reauth',
                 accountLabel: unauthAccount.label,
                 returnToSettings: false,
-                provider: unauthAccount.type === 'codex' ? 'codex' : undefined,
+                provider: unauthAccount.type,
               }
-            : { mode: 'add', accountLabel: '', returnToSettings: false },
+            : { mode: 'add', accountLabel: '', returnToSettings: false, provider: 'claude-code' },
         ),
     },
   });

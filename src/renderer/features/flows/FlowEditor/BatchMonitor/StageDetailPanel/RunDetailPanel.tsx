@@ -84,6 +84,10 @@ export function RunDetailPanel({
       void utils.flows.listBatchStageRuns.invalidate({ flowId });
       onReassigned(data.sourceStageId, data.targetStageId);
     },
+    // A rejected move means the cached run or stage status is stale.
+    onError: () => {
+      void utils.flows.listBatchStageRuns.invalidate({ flowId });
+    },
   });
 
   useEffect(() => {
@@ -110,7 +114,10 @@ export function RunDetailPanel({
 
   useEffect(() => () => clearTimeout(debounceRef.current), []);
 
-  const otherStages = stages.filter((s) => s.id !== currentStageId);
+  // A finished stage never dispatches again, so a run moved into it would never start.
+  const otherStages = stages.filter(
+    (s) => s.id !== currentStageId && (s.status === 'pending' || s.status === 'running'),
+  );
 
   return (
     <div className="flex flex-col h-full">

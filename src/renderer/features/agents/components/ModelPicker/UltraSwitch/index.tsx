@@ -23,8 +23,8 @@ export function UltraSwitch({
   );
 }
 
-/** Ultra's word, in the animated chroma Frink uses for power keywords (reduced-motion
- *  safe). Text only: the chroma fill is transparent, so it must not wrap `currentColor` icons. */
-export function UltraWord(): ReactElement {
-  return <span className="chroma-text chroma-text-animate font-medium">Ultra</span>;
+/** Ultra's word (or another word standing in for it), in the animated chroma Frink uses for power
+ *  keywords. Text only: the chroma fill is transparent, so it must not wrap `currentColor` icons. */
+export function UltraWord({ children = 'Ultra' }: { children?: string }): ReactElement {
+  return <span className="chroma-text chroma-text-animate font-medium">{children}</span>;
 }

@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { gitAsTestUser as git } from '../../test-utils/git-as-test-user';
 
 const MCP_URL = vi.hoisted(() => 'http://127.0.0.1:4312');
 const mocks = vi.hoisted(() => ({
@@ -24,7 +26,7 @@ vi.mock('../../permissions', () => ({
   resolvePermissionProjectPath: (worktreePath: string) => `perm:${worktreePath}`,
 }));
 
-import { resolveChatWorkspace } from './chat-workspace';
+import { claudeProjectConfigRoot, resolveChatWorkspace } from './chat-workspace';
 
 const PROJECT = { id: 'p1', name: 'solo', path: '/repo/solo' };
 
@@ -85,5 +87,59 @@ describe('resolveChatWorkspace — Frink MCP mount (sc-3854)', () => {
 
     expect(workspace.dynamicChatMcpUrl).toBe(MCP_URL);
     expect(mocks.getOrStartDynamicChatMcpUrl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the main checkout Claude reads a worktree chat project config from', () => {
+  let tmpRoot: string;
+  let repo: string;
+  let worktree: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'frink-config-root-')));
+    repo = path.join(tmpRoot, 'repo');
+    worktree = path.join(tmpRoot, 'worktrees', 'feature');
+    git(tmpRoot, 'init', '-q', repo);
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    git(repo, 'worktree', 'add', '-q', worktree);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('is the git main checkout of a Frink-managed worktree', () => {
+    expect(claudeProjectConfigRoot(worktree, '/projects/repo')).toBe(repo);
+  });
+
+  it('is not set for a folder Frink does not manage as a worktree', () => {
+    expect(claudeProjectConfigRoot(worktree, worktree)).toBeUndefined();
+  });
+
+  it('is not set when the worktree no longer links to a main checkout', () => {
+    fs.rmSync(path.join(repo, '.git'), { recursive: true, force: true });
+
+    expect(claudeProjectConfigRoot(worktree, '/projects/repo')).toBeUndefined();
+  });
+
+  it('is not set for a folder that is not a linked worktree', () => {
+    expect(claudeProjectConfigRoot(repo, '/projects/repo')).toBeUndefined();
+  });
+
+  it('reaches the workspace of a chat running in the worktree', async () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+    const workspace = await resolveChatWorkspace(PROJECT, { worktreePath: worktree }, 'agent');
+
+    expect(workspace.projectPath).toBe(worktree);
+    expect(workspace.projectConfigRoot).toBe(repo);
+  });
+
+  it('is not set for a chat in the project folder', async () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+    const workspace = await resolveChatWorkspace(PROJECT, { branch: 'main' }, 'agent');
+
+    expect(workspace.projectConfigRoot).toBeUndefined();
   });
 });

@@ -127,3 +127,42 @@ export function findBackEdges(graph: {
   }
   return backEdgeIds;
 }
+
+/**
+ * Strongly connected components that contain a cycle: every SCC with 2+ nodes, plus any
+ * single node with an edge to itself. Tarjan's algorithm; members keep `nodes` order.
+ */
+export function findCyclicComponents(graph: FlowGraphLike): string[][] {
+  const nodeIds = nodeIdSet(graph);
+  const adj = buildAdjacency(graph.edges, nodeIds);
+  const order = new Map(graph.nodes.map((n, i) => [n.id, i]));
+  const byOrder = (a: string, b: string) => (order.get(a) ?? 0) - (order.get(b) ?? 0);
+  const index = new Map<string, number>();
+  const stack: string[] = [];
+  const components: string[][] = [];
+
+  function popComponent(root: string): void {
+    const component = stack.splice(stack.indexOf(root));
+    const selfLoop = (adj.get(root) ?? []).includes(root);
+    if (component.length > 1 || selfLoop) components.push(component.sort(byOrder));
+  }
+
+  /** Returns `u`'s low-link: the smallest index reachable from it while still on the stack. */
+  function strongConnect(u: string): number {
+    const uIndex = index.size;
+    index.set(u, uIndex);
+    stack.push(u);
+    let low = uIndex;
+    for (const v of adj.get(u) ?? []) {
+      const vLow = index.get(v) ?? strongConnect(v);
+      if (stack.includes(v)) low = Math.min(low, vLow);
+    }
+    if (low === uIndex) popComponent(u);
+    return low;
+  }
+
+  for (const n of graph.nodes) {
+    if (nodeIds.has(n.id) && !index.has(n.id)) strongConnect(n.id);
+  }
+  return components;
+}

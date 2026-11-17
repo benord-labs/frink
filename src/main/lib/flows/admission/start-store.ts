@@ -1,23 +1,36 @@
 import { and, eq, isNull } from 'drizzle-orm';
+import { z } from 'zod';
 import {
   type FlowAdmissionIntentV1,
   isFlowAdmissionIntentV1,
 } from '../../../../shared/lib/flow-admission';
+import {
+  priorityQueueMode,
+  readyRunFirstRule,
+  runFirstRuleMatches,
+} from '../../../../shared/lib/flow-admission/run-first-rule';
+import { runFirstRowSchema } from '../../../../shared/types/flow-settings-schema';
 import type { getDatabase } from '../../db';
 import {
+  type BatchStageRun,
   batchStageRuns,
   batchStages,
   type FlowRun,
   flowRuns,
+  flowVersions,
   type NewFlowRun,
 } from '../../db/schema';
-import { assertStageHasSlot } from './batch-promotion';
+import { buildVariables } from '../block-context';
+import { resolveScalarText } from '../template-utils';
+import { assertStageHasSlot, StageRunMovedError } from './batch-promotion';
 import { enqueueFlowAdmission, type FlowRunAdmission, liveAdmissionForRun } from './store';
 
 type Db = ReturnType<typeof getDatabase>;
 
 export type EnqueueFlowStartInput = Omit<NewFlowRun, 'status' | 'startedAt' | 'completedAt'> & {
   batchStageRunId?: string | null;
+  /** The stage the dispatcher read the member from; admission refuses a member moved since. */
+  batchStageId?: string | null;
   requestedAt?: Date;
 };
 
@@ -37,7 +50,7 @@ function existingRunForStart(db: Db, idempotencyKey: string | null | undefined):
 
 function createPendingRun(
   db: Db,
-  input: Omit<EnqueueFlowStartInput, 'batchStageRunId' | 'requestedAt'>,
+  input: Omit<EnqueueFlowStartInput, 'batchStageRunId' | 'batchStageId' | 'requestedAt'>,
 ): FlowRun {
   return db
     .insert(flowRuns)
@@ -55,13 +68,75 @@ function isProvenUnstarted(run: FlowRun): boolean {
   return run.status === 'pending' && run.startedAt === null;
 }
 
-function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
+const memberAttachmentsSchema = z.object({ attachments: z.array(z.unknown()) });
+const runFirstGraphSchema = z.object({
+  settings: z.object({
+    runFirst: z.boolean().optional().catch(undefined),
+    runFirstWhen: z.array(runFirstRowSchema).optional().catch(undefined),
+  }),
+});
+
+/** Judged once, from the version the run is pinned to and the run's own saved trigger details. */
+function startRunsFirst(db: Db, run: FlowRun): boolean {
+  const version = db
+    .select({ graph: flowVersions.graph })
+    .from(flowVersions)
+    .where(eq(flowVersions.id, run.flowVersionId))
+    .get();
+  const settings = runFirstGraphSchema.safeParse(version?.graph).data?.settings;
+  const mode = priorityQueueMode(settings);
+  const rule = mode === 'match' ? readyRunFirstRule(settings?.runFirstWhen ?? []) : null;
+  if (!rule) return mode === 'every';
+  const scope = buildVariables({ triggerContext: run.triggerContext, previousOutput: undefined });
+  return runFirstRuleMatches(rule, (path) => resolveScalarText(scope, path));
+}
+
+/** Uploads append only while the member is pending, so this read is final for its run. */
+function withMemberAttachments(
+  db: Db,
+  run: FlowRun,
+  memberContext: BatchStageRun['triggerContext'],
+): FlowRun {
+  // Only a real list replaces the snapshot; a malformed value must not erase it.
+  const member = memberAttachmentsSchema.safeParse(memberContext);
+  if (!member.success) return run;
+  const triggerContext = {
+    ...run.triggerContext,
+    attachments: member.data.attachments,
+  };
+  return db
+    .update(flowRuns)
+    .set({ triggerContext })
+    .where(eq(flowRuns.id, run.id))
+    .returning()
+    .get();
+}
+
+/** A member moved since the dispatcher read it is its new stage's to admit, even on a replay. */
+function assertStillInStage(
+  db: Db,
+  batchStageRunId: string | null | undefined,
+  expectedStageId: string | null | undefined,
+): void {
+  if (!batchStageRunId || !expectedStageId) return;
+  const member = db
+    .select({ stageId: batchStageRuns.stageId })
+    .from(batchStageRuns)
+    .where(eq(batchStageRuns.id, batchStageRunId))
+    .get();
+  if (member && member.stageId !== expectedStageId) {
+    throw new StageRunMovedError(batchStageRunId, expectedStageId);
+  }
+}
+
+function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): FlowRun {
   const current = db
     .select({
       status: batchStageRuns.status,
       flowRunId: batchStageRuns.flowRunId,
       stageId: batchStageRuns.stageId,
       batchId: batchStages.batchId,
+      triggerContext: batchStageRuns.triggerContext,
     })
     .from(batchStageRuns)
     .innerJoin(batchStages, eq(batchStages.id, batchStageRuns.stageId))
@@ -72,7 +147,7 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
     current.flowRunId === run.id &&
     current.batchId === run.batchId
   ) {
-    return;
+    return run;
   }
   if (!run.batchId || current?.batchId !== run.batchId) {
     throw new Error(`Batch stage run ${batchStageRunId} is not eligible for admission`);
@@ -85,6 +160,7 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
     .where(
       and(
         eq(batchStageRuns.id, batchStageRunId),
+        eq(batchStageRuns.stageId, current.stageId),
         eq(batchStageRuns.status, 'pending'),
         isNull(batchStageRuns.flowRunId),
       ),
@@ -94,26 +170,28 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
   if (!linked) {
     throw new Error(`Batch stage run ${batchStageRunId} is not eligible for admission`);
   }
+  return withMemberAttachments(db, run, current.triggerContext);
 }
 
 /** Must run inside the controller's BEGIN IMMEDIATE transaction. */
 export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueFlowStartResult {
-  const { batchStageRunId, requestedAt, ...runInput } = input;
+  const { batchStageRunId, batchStageId, requestedAt, ...runInput } = input;
+  assertStillInStage(db, batchStageRunId, batchStageId);
   const existing = existingRunForStart(db, input.idempotencyKey);
-  const run = existing ?? createPendingRun(db, runInput);
+  const created = existing ?? createPendingRun(db, runInput);
   const isReplay = Boolean(existing);
-  if (!isProvenUnstarted(run)) return { run, isReplay, admission: null };
+  if (!isProvenUnstarted(created)) return { run: created, isReplay, admission: null };
 
-  const live = liveAdmissionForRun(db, run.id);
+  const live = liveAdmissionForRun(db, created.id);
   if (
     live &&
     batchStageRunId &&
     (!isFlowAdmissionIntentV1(live.intentJson) ||
       live.intentJson.batch_stage_run_id !== batchStageRunId)
   ) {
-    throw new Error(`Flow run ${run.id} already has a different live start admission`);
+    throw new Error(`Flow run ${created.id} already has a different live start admission`);
   }
-  if (batchStageRunId) queueBatchMember(db, batchStageRunId, run);
+  const run = batchStageRunId ? queueBatchMember(db, batchStageRunId, created) : created;
   if (live) return { run, isReplay, admission: live };
 
   const intent: FlowAdmissionIntentV1 = {
@@ -122,6 +200,10 @@ export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueF
     flow_run_id: run.id,
     ...(batchStageRunId ? { batch_stage_run_id: batchStageRunId } : {}),
   };
-  const { admission } = enqueueFlowAdmission(db, { intent, requestedAt });
+  const { admission } = enqueueFlowAdmission(db, {
+    intent,
+    requestedAt,
+    runFirst: startRunsFirst(db, run),
+  });
   return { run, isReplay, admission };
 }

@@ -3,7 +3,6 @@ import {
   flowChangeStringValue,
   normalizeFlowChangeText,
 } from '../../../shared/lib/flows/flow-change-text';
-import { unwrapMcpOutput } from '../../../shared/lib/mcp-output';
 import type {
   FlowChangeAction,
   FlowChangeGraph,
@@ -15,24 +14,14 @@ import type {
   FlowPatchChangeSummary,
   FlowSemanticChange,
 } from '../../../shared/types/flows/flow-change-presentation';
-import {
-  FLOW_PATCH_REASON_CODES,
-  FLOW_PATCH_VERSION_CONFLICT_CODE,
-} from '../../../shared/types/flows/flow-change-presentation';
+import { FLOW_PATCH_REASON_CODES } from '../../../shared/types/flows/flow-change-presentation';
 import { describeFallbackFlowChange } from './flow-change-fallback';
+import { type FlowToolPart, phaseFor, rawOutput } from './flow-change-phase';
 import {
   markFlowChangeGraph,
   projectProposedFlowGraph,
   toSafeFlowChangeGraph,
 } from './flow-change-graph';
-
-type FlowToolPart = {
-  state?: string;
-  input?: Record<string, unknown>;
-  output?: unknown;
-  result?: unknown;
-  errorText?: string;
-};
 
 export type FlowBaseSnapshot = {
   id: string;
@@ -64,27 +53,6 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function outputErrorMessage(output: Record<string, unknown> | undefined): string | undefined {
-  if (typeof output?.error === 'string') return output.error;
-  if (isPlainObject(output?.error) && typeof output.error.message === 'string') {
-    return output.error.message;
-  }
-  return undefined;
-}
-
-function rawOutput(part: FlowToolPart): Record<string, unknown> | undefined {
-  const value = unwrapMcpOutput(part.output ?? part.result);
-  const output = isPlainObject(value) ? value : undefined;
-  const nestedError = unwrapMcpOutput(outputErrorMessage(output));
-  const errorReceipt = unwrapMcpOutput(part.errorText);
-  if (!output && !isPlainObject(nestedError) && !isPlainObject(errorReceipt)) return undefined;
-  return {
-    ...output,
-    ...(isPlainObject(nestedError) ? nestedError : {}),
-    ...(isPlainObject(errorReceipt) ? errorReceipt : {}),
-  };
-}
-
 function operationsFrom(part: FlowToolPart): unknown[] {
   return Array.isArray(part.input?.operations)
     ? part.input.operations.slice(0, MAX_PRESENTATION_OPERATIONS)
@@ -99,86 +67,6 @@ function combineGraphs(...graphs: Array<FlowChangeGraph | undefined>): FlowChang
     for (const edge of graph?.edges ?? []) edges.set(edge.id, edge);
   }
   return { nodes: [...nodes.values()], edges: [...edges.values()] };
-}
-
-function isDeniedReceipt(
-  output: Record<string, unknown> | undefined,
-  errorMessage: string | undefined,
-): boolean {
-  return (
-    output?.permissionDenied === true ||
-    output?.rejected === true ||
-    errorMessage === 'User denied the MCP tool call.'
-  );
-}
-
-function isStaleReceipt(
-  output: Record<string, unknown> | undefined,
-  errorMessage: string | undefined,
-): boolean {
-  return Boolean(
-    output?.errorCode === FLOW_PATCH_VERSION_CONFLICT_CODE ||
-    errorMessage?.startsWith('Failed to save patched flow version (conflict):') ||
-    errorMessage?.includes('Flow version conflict'),
-  );
-}
-
-function hasRecognizedSuccessPersistence(output: Record<string, unknown>): boolean {
-  return (
-    output.persistence === undefined ||
-    output.persistence === 'saved' ||
-    output.persistence === 'unchanged'
-  );
-}
-
-function successfulReceiptPhase(output: Record<string, unknown>): FlowChangePhase {
-  if (!flowChangeStringValue(output.flowId) || !hasRecognizedSuccessPersistence(output)) {
-    return 'unconfirmed';
-  }
-  return output.persistence === 'unchanged' ? 'unchanged' : 'applied';
-}
-
-function receiptPhase(output: Record<string, unknown> | undefined): FlowChangePhase | undefined {
-  if (output?.status === 'partial') {
-    return flowChangeStringValue(output.flowId) && hasRecognizedSuccessPersistence(output)
-      ? 'partial'
-      : 'unconfirmed';
-  }
-  if (output?.status === 'failure') return 'unconfirmed';
-  return output?.status === 'success' ? successfulReceiptPhase(output) : undefined;
-}
-
-function errorPhase(
-  output: Record<string, unknown> | undefined,
-  errorMessage: string | undefined,
-): FlowChangePhase | undefined {
-  if (isDeniedReceipt(output, errorMessage)) return 'denied';
-  return isStaleReceipt(output, errorMessage) ? 'stale' : undefined;
-}
-
-function nonErrorPhase(
-  part: FlowToolPart,
-  output: Record<string, unknown> | undefined,
-  interrupted: boolean,
-): FlowChangePhase {
-  if (output?.status === 'failure' && output.persistence === 'none') return 'failed';
-  if (part.state === 'output-error') return 'unconfirmed';
-  return receiptPhase(output) ?? unfinishedPhase(part.state, interrupted);
-}
-
-function unfinishedPhase(state: string | undefined, interrupted: boolean): FlowChangePhase {
-  if (interrupted) return 'interrupted';
-  if (state === 'output-available') return 'unconfirmed';
-  return state === 'input-streaming' ? 'proposed' : 'applying';
-}
-
-function phaseFor(
-  part: FlowToolPart,
-  output: Record<string, unknown> | undefined,
-  interrupted: boolean,
-): FlowChangePhase {
-  const errorMessage = part.errorText ?? outputErrorMessage(output);
-  return errorPhase(output, errorMessage) ?? nonErrorPhase(part, output, interrupted);
 }
 
 function operationIndexValue(value: unknown): number | undefined {
@@ -257,6 +145,7 @@ function indexSet(value: unknown): Set<number> {
 
 const PHASE_STATUS_OVERRIDE: Partial<Record<FlowChangePhase, FlowChangeOperationStatus>> = {
   unconfirmed: 'unknown',
+  unread: 'unknown',
   interrupted: 'unknown',
   unchanged: 'unchanged',
   denied: 'skipped',
@@ -292,12 +181,8 @@ function statusForPhase(
   status: FlowChangeOperationStatus,
   phase: FlowChangePhase,
 ): FlowChangeOperationStatus {
-  if (phase === 'unconfirmed' || phase === 'interrupted') return 'unknown';
-  if (phase === 'unchanged') return 'unchanged';
-  if (phase === 'denied') return 'skipped';
-  if (phase === 'failed' || phase === 'stale') return 'failed';
   if (phase === 'proposed' || phase === 'applying') return 'pending';
-  return status;
+  return PHASE_STATUS_OVERRIDE[phase] ?? status;
 }
 
 function warningCount(output: Record<string, unknown> | undefined): number {

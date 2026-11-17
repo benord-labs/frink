@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addAccountLabel,
   buildPendingAddState,
   buildPendingReauthState,
   nextApiKeyName,
-  providerForAccount,
   shouldUseInlineCredentialEdit,
+  signInProviders,
 } from './auth-flow-utils';
 
 describe('buildPendingReauthState', () => {
@@ -14,7 +15,7 @@ describe('buildPendingReauthState', () => {
       accountLabel: 'Work Claude',
       mode: 'reauth',
       returnToSettings: true,
-      provider: undefined,
+      provider: 'claude-code',
     });
   });
 
@@ -24,7 +25,7 @@ describe('buildPendingReauthState', () => {
       accountLabel: '',
       mode: 'reauth',
       returnToSettings: true,
-      provider: undefined,
+      provider: 'claude-code',
     });
   });
 
@@ -38,38 +39,18 @@ describe('buildPendingReauthState', () => {
     });
   });
 
-  it('routes a codex-passthrough row to the codex connect page (by source)', () => {
-    expect(
-      buildPendingReauthState({ id: 'acc-3', label: 'OpenAI', source: 'codex-passthrough' }),
-    ).toEqual({
-      accountId: 'acc-3',
-      accountLabel: 'OpenAI',
-      mode: 'reauth',
-      returnToSettings: true,
-      provider: 'codex',
-    });
-  });
-});
-
-describe('providerForAccount', () => {
-  it('returns codex for a codex type or codex-passthrough source', () => {
-    expect(providerForAccount({ type: 'codex' })).toBe('codex');
-    expect(providerForAccount({ source: 'codex-passthrough' })).toBe('codex');
-  });
-
-  it('returns undefined (→ Claude) for claude rows', () => {
-    expect(providerForAccount({ type: 'claude-code' })).toBeUndefined();
-    expect(providerForAccount({ source: 'claude-passthrough' })).toBeUndefined();
+  it.each(['codex', 'opencode'] as const)('routes a %s row to its own connect page', (type) => {
+    expect(buildPendingReauthState({ id: 'acc-3', label: 'x', type }).provider).toBe(type);
   });
 });
 
 describe('buildPendingAddState', () => {
   it('leaves the label empty so the connect page names the account after the login', () => {
-    expect(buildPendingAddState()).toEqual({
+    expect(buildPendingAddState('claude-code')).toEqual({
       accountLabel: '',
       mode: 'add',
       returnToSettings: true,
-      provider: undefined,
+      provider: 'claude-code',
     });
   });
 
@@ -96,5 +77,43 @@ describe('nextApiKeyName', () => {
   it('numbers API-key names past any that are taken', () => {
     expect(nextApiKeyName(['Personal'])).toBe('Claude API key');
     expect(nextApiKeyName(['Claude API key', 'Claude API key 2'])).toBe('Claude API key 3');
+  });
+});
+
+describe('signInProviders', () => {
+  const ON = { codexAccounts: true, opencodeAccounts: true };
+
+  it('offers each switched-on provider this device has not connected yet, in table order', () => {
+    expect(signInProviders([], ON, 'darwin')).toEqual(['claude-code', 'codex', 'opencode']);
+    expect(signInProviders([{ source: 'opencode-passthrough' }], ON, 'darwin')).toEqual([
+      'claude-code',
+      'codex',
+    ]);
+  });
+
+  it('never offers an agent whose flag is off, nor an agent or Claude sign-in on Windows', () => {
+    expect(signInProviders([], { codexAccounts: true }, 'darwin')).toEqual([
+      'claude-code',
+      'codex',
+    ]);
+    expect(signInProviders([], ON, 'win32')).toEqual(['codex']);
+    expect(signInProviders([], { cursorAccounts: true }, 'darwin')).toEqual([
+      'claude-code',
+      'cursor',
+    ]);
+  });
+
+  it('keeps Claude sign-in when only a Claude API key is connected', () => {
+    expect(signInProviders([{ source: 'api-key' }], {}, 'darwin')).toEqual(['claude-code']);
+  });
+});
+
+describe('addAccountLabel', () => {
+  it('connects an installed agent and signs in to a provider login', () => {
+    expect(addAccountLabel('copilot')).toBe('Connect GitHub Copilot');
+    expect(addAccountLabel('opencode')).toBe('Connect OpenCode');
+    expect(addAccountLabel('cursor')).toBe('Connect Cursor');
+    expect(addAccountLabel('claude-code')).toBe('Sign in with Claude');
+    expect(addAccountLabel('codex')).toBe('Sign in with OpenAI');
   });
 });

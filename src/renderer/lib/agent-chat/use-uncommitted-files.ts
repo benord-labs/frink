@@ -16,7 +16,7 @@ export function useUncommittedFiles<File extends { displayPath: string }>(
   useFileChangeListener(worktreePath);
 
   const { data: gitStatus } = trpc.changes.getStatus.useQuery(
-    { worktreePath: worktreePath || '', defaultBranch: 'main' },
+    { worktreePath: worktreePath || '' },
     {
       enabled: !!worktreePath && changedFiles.length > 0 && !isStreaming,
       // No polling - updates triggered by file-changed events from Claude tools

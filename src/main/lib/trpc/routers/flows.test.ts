@@ -1,8 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
+import { getDatabase } from '../../db';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { FlowCopyNoSavedVersionError, FlowCopyNotFoundError } from '../../db/repos/flows';
+import { freshDb } from '../../db/test-utils/fresh-db';
+import * as flowsBatch from '../../flows/batch';
 import {
   TerminalResumeAdmissionError,
   TerminalResumeChatDeletedError,
@@ -31,6 +34,7 @@ const getVersionMock = vi.fn();
 const createBatchPlanTemplateMock = vi.fn();
 const updateStageRunLocalMock = vi.fn();
 const uploadAttachmentToStageRunMock = vi.fn();
+const removeAttachmentFromStageRunMock = vi.spyOn(flowsBatch, 'removeAttachmentFromStageRun');
 const resolveAttachmentToDataUrlMock = vi.fn();
 const parkFlowTaskForSubChatMock = vi.fn();
 const pauseActiveExecutionForSubChatMock = vi.fn();
@@ -39,6 +43,7 @@ const updateFlowAdmissionSettingsMock = vi.fn();
 const moveQueuedFlowAdmissionMock = vi.fn();
 const kickStalledFlowAdmissionDrainMock = vi.fn();
 const retryTerminalFlowRunMock = vi.fn();
+const resumeFlowRunMock = vi.fn();
 
 vi.mock('electron', () => ({
   app: { getPath: (name: string) => (name === 'home' ? '/mock/home' : '/mock') },
@@ -60,6 +65,10 @@ vi.mock('../../db/repos/flow-versions', async (importOriginal) => {
   return {
     ...actual,
     createFlowVersion: (...args: unknown[]) => createFlowVersionMock(...args),
+    createFlowVersionWithResult: async (...args: unknown[]) => ({
+      row: await createFlowVersionMock(...args),
+      inserted: true,
+    }),
     getLatestVersion: (...args: unknown[]) => getLatestVersionMock(...args),
     getVersion: (...args: unknown[]) => getVersionMock(...args),
   };
@@ -129,7 +138,7 @@ vi.mock('../../flows/engine', async (importOriginal) => {
     cancelFlowRun: (...args: unknown[]) => cancelFlowRunMock(...args),
     getFlowRunWithNodeRuns: (...args: unknown[]) => getFlowRunWithNodeRunsMock(...args),
     startFlowRun: (...args: unknown[]) => startFlowRunMock(...args),
-    resumeFlowRun: vi.fn(),
+    resumeFlowRun: (...args: unknown[]) => resumeFlowRunMock(...args),
   };
 });
 
@@ -203,6 +212,7 @@ describe('flowsRouter (local)', () => {
     createBatchPlanTemplateMock.mockReset();
     updateStageRunLocalMock.mockReset();
     uploadAttachmentToStageRunMock.mockReset();
+    removeAttachmentFromStageRunMock.mockReset();
     resolveAttachmentToDataUrlMock.mockReset();
     parkFlowTaskForSubChatMock.mockReset();
     pauseActiveExecutionForSubChatMock.mockReset();
@@ -211,6 +221,7 @@ describe('flowsRouter (local)', () => {
     moveQueuedFlowAdmissionMock.mockReset();
     kickStalledFlowAdmissionDrainMock.mockReset();
     retryTerminalFlowRunMock.mockReset();
+    resumeFlowRunMock.mockReset();
   });
 
   describe('copy', () => {
@@ -333,6 +344,13 @@ describe('flowsRouter (local)', () => {
       expect(kickStalledFlowAdmissionDrainMock).toHaveBeenCalledOnce();
     });
 
+    it('lists the runs waiting on an approval', async () => {
+      vi.mocked(getDatabase).mockReturnValueOnce(freshDb());
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.workQueueApprovals()).resolves.toEqual([]);
+    });
+
     it('returns only the authenticated user projection with the raw Flow DTO contract', async () => {
       queuedFlowAdmissionsMock.mockReturnValueOnce([
         {
@@ -340,6 +358,8 @@ describe('flowsRouter (local)', () => {
           flowName: 'Release checks',
           priorityClass: 'start',
           projectName: 'Frink',
+          requestedAt: new Date('2026-10-20T09:00:00Z'),
+          runFirst: true,
           ticket: 12,
           triggerContext: { source: 'shortcut', fullContent: { primary_id: 7 } },
         },
@@ -348,6 +368,8 @@ describe('flowsRouter (local)', () => {
           flowName: 'Migrate repo',
           priorityClass: 'start',
           projectName: 'Frink',
+          requestedAt: new Date('2026-10-20T09:05:00Z'),
+          runFirst: false,
           ticket: 13,
           triggerContext: null,
         },
@@ -360,6 +382,8 @@ describe('flowsRouter (local)', () => {
           is_batch_member: false,
           priority_class: 'start',
           project_name: 'Frink',
+          requested_at: new Date('2026-10-20T09:00:00Z'),
+          run_first: true,
           ticket: 12,
           trigger_context: { source: 'shortcut', fullContent: { primary_id: 7 } },
         },
@@ -368,6 +392,8 @@ describe('flowsRouter (local)', () => {
           is_batch_member: true,
           priority_class: 'start',
           project_name: 'Frink',
+          requested_at: new Date('2026-10-20T09:05:00Z'),
+          run_first: false,
           ticket: 13,
           trigger_context: null,
         },
@@ -420,6 +446,48 @@ describe('flowsRouter (local)', () => {
       await expect(caller.cancelWorkQueueAdmission({ ticket: 12 })).resolves.toEqual({
         status: 'stale',
       });
+    });
+  });
+
+  describe('onVersionCommitted', () => {
+    const FLOW_ID = '550e8400-e29b-41d4-a716-446655440000';
+    const saveInput = (flowId: string) => ({
+      flowId,
+      graph: {
+        nodes: [
+          { id: 'a', blockType: 'manual_trigger' as const },
+          { id: 'b', blockType: 'agent' as const, config: { instructions: 'step' } },
+        ],
+        edges: [{ id: 'e-ab', source: 'a', target: 'b' }],
+      },
+      expectedVersionNumber: 0,
+    });
+    const versionRow = (flowId: string, versionNumber: number) => ({
+      id: `v-${versionNumber}`,
+      flowId,
+      versionNumber,
+      graph: { nodes: [], edges: [] },
+      createdAt: new Date(),
+    });
+
+    it('pushes a saved version to a subscriber of that flow only, until it unsubscribes', async () => {
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      const received: unknown[] = [];
+      const stream = await caller.onVersionCommitted({ flowId: FLOW_ID });
+      const subscription = stream.subscribe({ next: (event) => received.push(event) });
+
+      createFlowVersionMock.mockResolvedValueOnce(versionRow('some-other-flow', 9));
+      await caller.saveVersion(saveInput('some-other-flow'));
+      expect(received).toEqual([]);
+
+      createFlowVersionMock.mockResolvedValueOnce(versionRow(FLOW_ID, 4));
+      await caller.saveVersion(saveInput(FLOW_ID));
+      expect(received).toEqual([{ flow_id: FLOW_ID, version_number: 4, source: 'ui' }]);
+
+      subscription.unsubscribe();
+      createFlowVersionMock.mockResolvedValueOnce(versionRow(FLOW_ID, 5));
+      await caller.saveVersion(saveInput(FLOW_ID));
+      expect(received).toHaveLength(1);
     });
   });
 
@@ -798,6 +866,11 @@ describe('flowsRouter (local)', () => {
   });
 
   describe('getRun', () => {
+    // Recovery resolution reads the restart marker and step tasks from a real, empty database.
+    beforeEach(() => {
+      vi.mocked(getDatabase).mockReturnValueOnce(freshDb());
+    });
+
     it('returns admission visibility for selected queued details', async () => {
       const run = {
         id: 'run-1',
@@ -868,6 +941,36 @@ describe('flowsRouter (local)', () => {
       await expect(
         flowsRouter.createCaller({ getWindow: () => null }).getRun({ runId: run.id }),
       ).resolves.toMatchObject({ status: 'running', admission_state: 'active' });
+    });
+
+    it("carries the run's recovery actions, resolved against its visible status", async () => {
+      const run = {
+        id: 'run-1',
+        flowVersionId: 'version-1',
+        status: 'running',
+        triggerContext: null,
+        idempotencyKey: null,
+        batchId: null,
+        startedAt: null,
+        completedAt: null,
+        createdAt: new Date('2026-08-01T09:00:00Z'),
+      };
+      // A started non-agent step with no session to continue: Retry, behind a side-effects check.
+      const nodeRuns = [
+        { id: 'nr-1', blockType: 'run_command', status: 'awaiting_input', startedAt: new Date() },
+      ];
+      getFlowRunWithNodeRunsMock.mockResolvedValueOnce({ run, nodeRuns });
+      flowRunAdmissionSnapshotsForRunsMock.mockReturnValueOnce(
+        new Map([[run.id, { runStatus: 'paused', admission: null }]]),
+      );
+
+      await expect(
+        flowsRouter.createCaller({ getWindow: () => null }).getRun({ runId: run.id }),
+      ).resolves.toMatchObject({
+        recoveries: [{ nodeRunId: 'nr-1', kind: 'retry', confirmSideEffects: true }],
+      });
+      // The steps getRun already read are reused, not queried a second time.
+      expect(listNodeRunsForFlowRunMock).not.toHaveBeenCalled();
     });
   });
 
@@ -985,6 +1088,51 @@ describe('flowsRouter (local)', () => {
     });
   });
 
+  describe('resumeRun', () => {
+    const runId = '550e8400-e29b-41d4-a716-446655440030';
+    const input = { runId, action: 'retry', nodeRunId: 'nr-1', kind: 'continue' } as const;
+
+    it('forwards the displayed recovery kind and returns the refreshed run', async () => {
+      const run = {
+        id: runId,
+        flowVersionId: '550e8400-e29b-41d4-a716-446655440031',
+        status: 'running',
+        triggerContext: null,
+        idempotencyKey: null,
+        batchId: null,
+        startedAt: new Date('2024-01-01T00:00:00.000Z'),
+        completedAt: null,
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      };
+      getFlowRunWithNodeRunsMock.mockResolvedValueOnce({ run, nodeRuns: [] });
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.resumeRun(input)).resolves.toMatchObject({
+        id: runId,
+        status: 'running',
+        nodeRuns: [],
+      });
+      expect(resumeFlowRunMock).toHaveBeenCalledWith(runId, 'retry', 'nr-1', undefined, 'continue');
+      expect(getVersionMock).toHaveBeenCalledWith(expect.anything(), run.flowVersionId);
+    });
+
+    it('throws NOT_FOUND when the run vanished after resuming', async () => {
+      getFlowRunWithNodeRunsMock.mockResolvedValueOnce(null);
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.resumeRun(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('passes a PRECONDITION_FAILED refusal through unchanged', async () => {
+      const refusal = new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Step moved on' });
+      resumeFlowRunMock.mockRejectedValueOnce(refusal);
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.resumeRun(input)).rejects.toBe(refusal);
+      expect(getFlowRunWithNodeRunsMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('retryRunFromLastNode', () => {
     it('maps terminal admission rejection to PRECONDITION_FAILED', async () => {
       const runId = '550e8400-e29b-41d4-a716-446655440020';
@@ -1004,14 +1152,12 @@ describe('flowsRouter (local)', () => {
       );
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy((error: unknown) => {
-        return (
-          error instanceof TRPCError &&
-          error.code === 'PRECONDITION_FAILED' &&
-          error.message === 'Flow retry could not be admitted: resume admission was cancelled'
-        );
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).rejects.toMatchObject({
+        name: 'TRPCError',
+        code: 'PRECONDITION_FAILED',
+        message: 'Flow retry could not be admitted: resume admission was cancelled',
       });
-      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId);
+      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId, 'retry');
     });
 
     it("surfaces a deleted chat's refusal in plain words, without the admission prefix", async () => {
@@ -1020,7 +1166,7 @@ describe('flowsRouter (local)', () => {
       retryTerminalFlowRunMock.mockRejectedValueOnce(new TerminalResumeChatDeletedError());
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy(
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).rejects.toSatisfy(
         (error: unknown) =>
           error instanceof TRPCError &&
           error.code === 'PRECONDITION_FAILED' &&
@@ -1035,7 +1181,7 @@ describe('flowsRouter (local)', () => {
       retryTerminalFlowRunMock.mockRejectedValueOnce(fault);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy(
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).rejects.toSatisfy(
         (error: unknown) =>
           error instanceof TRPCError &&
           error.code === 'INTERNAL_SERVER_ERROR' &&
@@ -1057,11 +1203,13 @@ describe('flowsRouter (local)', () => {
         completedAt: new Date('2024-01-01T00:01:00.000Z'),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       });
-      retryTerminalFlowRunMock.mockResolvedValueOnce(true);
+      retryTerminalFlowRunMock.mockResolvedValueOnce({ state: 'active', created: true });
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).resolves.toEqual({ ok: true });
-      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId);
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).resolves.toEqual({
+        ok: true,
+      });
+      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId, 'retry');
     });
   });
 
@@ -1095,20 +1243,6 @@ describe('flowsRouter (local)', () => {
 
       expect(await caller.pauseRun({ subChatId })).toEqual({ paused: false });
       expect(pauseActiveExecutionForSubChatMock).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('getBriefings', () => {
-    const projectId = '550e8400-e29b-41d4-a716-446655440099';
-
-    it('returns an empty array (cross-machine briefings deferred)', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await expect(caller.getBriefings({ projectId })).resolves.toEqual([]);
-    });
-
-    it('returns an empty array when called with no input', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await expect(caller.getBriefings()).resolves.toEqual([]);
     });
   });
 
@@ -1231,74 +1365,45 @@ describe('flowsRouter (local)', () => {
     });
   });
 
-  describe('updateStageRun attachments input validation', () => {
+  describe('removeStageRunAttachment', () => {
     const FLOW_ID = '550e8400-e29b-41d4-a716-446655440001';
     const RUN_ID = '660e8400-e29b-41d4-a716-446655440002';
+    const URL = `frink-attachment://${RUN_ID}/abcd1234-shot.png`;
 
-    it('accepts an empty attachments array', async () => {
-      updateStageRunLocalMock.mockResolvedValueOnce({ run: { id: RUN_ID, trigger_context: {} } });
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await caller.updateStageRun({ flowId: FLOW_ID, runId: RUN_ID, attachments: [] });
-      expect(updateStageRunLocalMock).toHaveBeenCalledOnce();
-    });
-
-    it('accepts a valid attachments array with type string', async () => {
-      updateStageRunLocalMock.mockResolvedValueOnce({ run: { id: RUN_ID, trigger_context: {} } });
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await caller.updateStageRun({
-        flowId: FLOW_ID,
-        runId: RUN_ID,
-        attachments: [
-          { url: 'https://cdn.example.com/img.png', type: 'image/png' },
-          { url: 'https://cdn.example.com/shot.webp', type: 'image/webp', label: 'After' },
-        ],
+    it('removes by URL', async () => {
+      removeAttachmentFromStageRunMock.mockReturnValueOnce({
+        run: { id: RUN_ID, trigger_context: { attachments: [] } },
       });
-      expect(updateStageRunLocalMock).toHaveBeenCalledOnce();
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      await caller.removeStageRunAttachment({ flowId: FLOW_ID, runId: RUN_ID, url: URL });
+      expect(removeAttachmentFromStageRunMock).toHaveBeenCalledWith({ runId: RUN_ID, url: URL });
     });
 
-    it('rejects attachments where type is an empty string', async () => {
+    // Catches: an off-by-one rejecting the longest URL an upload is allowed to store,
+    // leaving that attachment impossible to remove.
+    it('accepts a url at the stored-URL limit', async () => {
+      removeAttachmentFromStageRunMock.mockReturnValueOnce({
+        run: { id: RUN_ID, trigger_context: {} },
+      });
+      const url = `https://cdn.example.com/${'a'.repeat(2048 - 'https://cdn.example.com/'.length)}`;
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      await caller.removeStageRunAttachment({ flowId: FLOW_ID, runId: RUN_ID, url });
+      expect(removeAttachmentFromStageRunMock).toHaveBeenCalledWith({ runId: RUN_ID, url });
+    });
+
+    it.each([
+      ['empty', ''],
+      ['too long', `https://cdn.example.com/${'a'.repeat(2048)}`],
+    ])('rejects a url that is %s', async (_name, url) => {
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
-        await caller.updateStageRun({
-          flowId: FLOW_ID,
-          runId: RUN_ID,
-          attachments: [{ url: 'https://cdn.example.com/img.png', type: '' }],
-        });
+        await caller.removeStageRunAttachment({ flowId: FLOW_ID, runId: RUN_ID, url });
         expect.fail('expected rejection');
       } catch (e) {
         expect(e).toBeInstanceOf(TRPCError);
         expect((e as TRPCError).cause).toBeInstanceOf(ZodError);
       }
-    });
-
-    it('rejects when url is empty', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      try {
-        await caller.updateStageRun({
-          flowId: FLOW_ID,
-          runId: RUN_ID,
-          attachments: [{ url: '', type: 'image' }],
-        });
-        expect.fail('expected rejection');
-      } catch (e) {
-        expect(e).toBeInstanceOf(TRPCError);
-        expect((e as TRPCError).cause).toBeInstanceOf(ZodError);
-      }
-    });
-
-    it('rejects when more than 10 attachments provided', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      const attachments = Array.from({ length: 11 }, (_, i) => ({
-        url: `https://cdn.example.com/img${i}.png`,
-        type: 'image',
-      }));
-      try {
-        await caller.updateStageRun({ flowId: FLOW_ID, runId: RUN_ID, attachments });
-        expect.fail('expected rejection');
-      } catch (e) {
-        expect(e).toBeInstanceOf(TRPCError);
-        expect((e as TRPCError).cause).toBeInstanceOf(ZodError);
-      }
+      expect(removeAttachmentFromStageRunMock).not.toHaveBeenCalled();
     });
   });
 

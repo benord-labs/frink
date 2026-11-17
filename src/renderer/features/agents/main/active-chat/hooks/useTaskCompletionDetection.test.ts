@@ -54,10 +54,13 @@ let refetchTaskData: TaskData | null = null;
 vi.mock('../../../../../lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
+      chats: { listActiveChats: { invalidate: vi.fn() } },
       tasks: {
         listPaginated: { invalidate: invalidateListPaginated },
         listCounts: { invalidate: invalidateListCounts },
         getById: { invalidate: invalidateGetById },
+        getDrivingTaskForSubChat: { invalidate: vi.fn() },
+        getActionableTaskForSubChat: { invalidate: vi.fn() },
       },
     }),
     tasks: {

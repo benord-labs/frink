@@ -1,6 +1,10 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { memo, type ReactElement } from 'react';
 import { toast } from 'sonner';
+import {
+  useApprovalActions,
+  useAwaitingApprovals,
+} from '../../../../lib/work-queue/approvals/use-work-queue-approvals';
 import { useAttentionSelection } from '../../../../lib/work-queue/use-attention-selection';
 import type { Task } from '../../types';
 import {
@@ -9,6 +13,7 @@ import {
   getAttentionCopy,
 } from '../AttentionCarousel';
 import { InboxTaskList } from '../InboxTaskList';
+import { InterruptedRunsBanner } from '../InterruptedRunsBanner';
 import { QueuedAdmissions } from '../QueuedAdmissions';
 import { QueuePausedBanner } from '../QueuePausedBanner';
 import { QueueProgressSummary } from '../QueueProgressSummary';
@@ -17,7 +22,12 @@ import { OtherAttentionTasks } from './OtherAttentionTasks';
 
 type Props = {
   attentionTasks: Task[];
-  pagination?: Record<'attention' | 'inbox' | 'running', LanePagination>;
+  /** Per-lane paging, plus `refresh` to reload every lane (e.g. after Continue all). */
+  pagination?: Record<'attention' | 'inbox' | 'running', LanePagination> & {
+    refresh?: () => Promise<void>;
+  };
+  /** The interrupted-runs banner; replaced in tests that do not exercise it. */
+  interruptedRuns?: ReactElement | null;
   queuedAdmissions?: ReactElement;
   queuedCount: number;
   reviewCount: number;
@@ -57,6 +67,7 @@ function LoadOlderTasks({ label, pagination }: { label: string; pagination?: Lan
 export const QueueOverview = memo(function QueueOverview({
   attentionTasks,
   pagination,
+  interruptedRuns = <InterruptedRunsBanner onRecovered={() => void pagination?.refresh?.()} />,
   queuedAdmissions = <QueuedAdmissions />,
   queuedCount,
   reviewCount,
@@ -65,14 +76,23 @@ export const QueueOverview = memo(function QueueOverview({
   taskActions,
   waitingTasks,
 }: Props): ReactElement {
+  const approvals = useAwaitingApprovals();
+  const approvalActions = useApprovalActions();
   const {
     promoteTask: promoteAttentionTask,
     selectTask: selectAttentionTask,
     selectedTaskId: selectedAttentionTaskId,
     spotlightActionRef,
-  } = useAttentionSelection(attentionTasks);
+  } = useAttentionSelection([
+    ...approvals.map((gate) => ({ id: gate.flowRunId })),
+    ...attentionTasks,
+  ]);
   const hasSecondaryAttention =
-    attentionTasks.length > 1 || pagination?.attention.canLoadMore === true;
+    approvals.length + attentionTasks.length > 1 || pagination?.attention.canLoadMore === true;
+  // The Running poll can lag the approvals poll; a run never shows in both at once.
+  const shownRunningTasks = runningTasks.filter(
+    (task) => !approvals.some((gate) => gate.flowRunId === task.flowRunId),
+  );
 
   const openTaskCount = queuedCount + reviewCount + runningCount;
   const handleOpenTask = (task: Task) => {
@@ -89,6 +109,7 @@ export const QueueOverview = memo(function QueueOverview({
   return (
     <>
       <QueuePausedBanner />
+      {interruptedRuns}
       {openTaskCount > 0 && (
         <div className="mb-4 shrink-0">
           <QueueProgressSummary
@@ -101,6 +122,7 @@ export const QueueOverview = memo(function QueueOverview({
       {selectedAttentionTaskId && (
         <div className="mb-4 shrink-0">
           <AttentionCarousel
+            approvals={{ gates: approvals, actions: approvalActions }}
             tasks={attentionTasks}
             onOpenTask={handleOpenTask}
             onSelectTask={selectAttentionTask}
@@ -110,10 +132,10 @@ export const QueueOverview = memo(function QueueOverview({
           />
         </div>
       )}
-      {runningTasks.length > 0 && (
+      {shownRunningTasks.length > 0 && (
         <div className="mb-4 shrink-0">
           <RunningTaskList
-            tasks={runningTasks}
+            tasks={shownRunningTasks}
             taskActions={taskActions}
             onOpenTask={handleOpenTask}
           />
@@ -124,6 +146,7 @@ export const QueueOverview = memo(function QueueOverview({
         <div className="mb-4 shrink-0">
           <OtherAttentionTasks
             key={selectedAttentionTaskId}
+            approvals={approvals}
             canLoadMore={pagination?.attention.canLoadMore === true}
             getPresentation={getAttentionCopy}
             onPromoteTask={promoteAttentionTask}

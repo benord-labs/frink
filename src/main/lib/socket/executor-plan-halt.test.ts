@@ -101,6 +101,8 @@ vi.mock('../cloud-client', () => ({
 }));
 
 vi.mock('../db/repos/tasks', () => ({
+  claimTask: vi.fn(),
+  getPendingTaskIds: vi.fn(async () => []),
   getTaskById: vi.fn(),
   updateTaskStatus: vi.fn(),
   updateTaskResult: vi.fn(),
@@ -247,8 +249,9 @@ import {
 import { findUnapprovedPlanPart } from '../../../shared/types/plan';
 import { buildPartsFromChunks } from './claude-turn-context';
 import type { MessagePart } from './client';
-import { handleRemoteExecute, validateToolPermission } from './executor';
+import { handleRemoteExecute } from './executor';
 import { emitBurstPlanCard } from './streaming/burst-chunks';
+import { validateToolPermission } from './streaming/pending-permission/validate-tool-permission';
 import { PLAN_SUBMITTED_FOR_REVIEW } from './streaming/plan-auto-approve';
 import { claudePromptText } from './test-utils';
 
@@ -1174,6 +1177,28 @@ Done.
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
       expect(card?.input?.planPath).toBe(`${sessionPlansDir}/plan.md`);
       expect(fs.promises.readFile).toHaveBeenCalledWith(`${sessionPlansDir}/plan.md`, 'utf8');
+    });
+
+    it('cards an auto-approve draft that was never submitted without approving it or leaving plan mode', async () => {
+      const { getFlowDriveInfoForSubChat } = await import('../db/repos/tasks');
+      // SAFETY: flow-signal arming reads only these three fields of the drive info.
+      vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
+        active: true,
+        autoApprovePlan: true,
+        taskId: 'flow-task-draft-1',
+      } as never);
+      vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
+      queueTurn([writePlanChunk('write-draft-1')]);
+
+      await handleRemoteExecute({ ...basePayload, message: 'carry on' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const card = (await finalPartsOfLastComplete()).find(
+        (part) => part.type === 'tool-frink-plan',
+      );
+      expect(card?.input).toMatchObject({ status: 'awaiting_approval' });
+      const { sendSubChatModeChange } = await import('./client');
+      expect(vi.mocked(sendSubChatModeChange)).not.toHaveBeenCalled();
     });
 
     it('renders the plan file the CLI names and never scans the dir, even with a newer decoy', async () => {

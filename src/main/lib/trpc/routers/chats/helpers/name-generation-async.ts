@@ -22,6 +22,7 @@
 import { tmpdir } from 'node:os';
 import { BrowserWindow } from 'electron';
 import log from 'electron-log';
+import { runtimeFor } from '../../../../../../shared/lib/ai-providers';
 import { stripMessageMarkers } from '../../../../../../shared/lib/message-markers/strip-message-markers';
 import { parseTriggerBubbleMessage } from '../../../../../../shared/lib/trigger-bubble-marker';
 import { BUILD_PROJECT_PLACEHOLDER, isManagedBuildPath } from '../../../../builds-path';
@@ -167,7 +168,6 @@ export async function maybeNameBuildProjectFromMessage(
       // question-answer / trigger message — the naming prompt must see prose only.
       userMessage: stripMessageMarkers(userMessage),
       projectId,
-      projectPath: project.path,
     });
     if (!resolved) return; // abstain / AI fail → keep placeholder, retry on a later message
 
@@ -216,7 +216,6 @@ async function resolveCredentialForProject(
 async function generateWithClaudeSdk(
   userMessage: string,
   credential: CredentialResult,
-  cwd: string,
   prompt: string = buildPrompt(userMessage),
   model = 'haiku',
 ): Promise<string | null> {
@@ -233,7 +232,9 @@ async function generateWithClaudeSdk(
       prompt,
       options: {
         abortController,
-        cwd,
+        // Never the project folder: the CLI would hand the model its git status and recent
+        // commits, and the title then names a commit instead of the user's message.
+        cwd: tmpdir(),
         ...launch,
         // Same binary the executor spawns — and the only one download-claude-binary.mjs
         // asserts CLAUDE_SECURESTORAGE_CONFIG_DIR support on. Without this the SDK picks
@@ -241,7 +242,7 @@ async function generateWithClaudeSdk(
         pathToClaudeCodeExecutable: getBundledClaudeBinaryPath(),
         // Naming is a one-shot completion, not an agent run. These keep it fast:
         // a small model, no filesystem settings/CLAUDE.md discovery, and the
-        // preset prompt with its heavy per-user dynamic sections excluded.
+        // preset prompt, whose per-user dynamic sections the SDK re-sends as the first message.
         // (excludeDynamicSections has no effect unless the preset is used, so we
         // keep the preset rather than a fully custom string — also preserves the
         // build-intent abstention the project-name path relies on.)
@@ -290,18 +291,16 @@ async function generateWithClaudeSdk(
 type ResolveChatNameInput = {
   userMessage: string;
   projectId: string | null;
-  projectPath: string | null;
 };
 
 /** Resolve a chat name via the chat's own Claude account; null when that fails, so the caller
  * applies its deterministic fallback. No DB writes. */
 async function resolveChatNameViaAi(input: ResolveChatNameInput): Promise<string | null> {
-  const cwd = input.projectPath ?? tmpdir();
   const credential = await resolveCredentialForProject(input.projectId);
-  // `codex` is excluded on purpose: resolvable, but NOT a Claude account. claude-passthrough IS
-  // resolvable with a null token (the SDK reads the keychain), so token presence is the wrong gate.
-  if (credential && credential.type !== 'codex' && isResolvedCredential(credential)) {
-    return generateWithClaudeSdk(input.userMessage, credential, cwd);
+  // Other providers are excluded on purpose: resolvable, but NOT Claude accounts. claude-passthrough
+  // IS resolvable with a null token (the SDK reads the keychain), so token presence is the wrong gate.
+  if (credential && runtimeFor(credential.type) === 'claude' && isResolvedCredential(credential)) {
+    return generateWithClaudeSdk(input.userMessage, credential);
   }
   return null;
 }
@@ -309,15 +308,14 @@ async function resolveChatNameViaAi(input: ResolveChatNameInput): Promise<string
 /** Resolve a PROJECT name via the project's Claude account with the build-INTENT prompt; null on
  * failure OR abstention keeps the placeholder (no message-slice fallback). No DB writes. */
 async function resolveProjectNameViaAi(input: ResolveChatNameInput): Promise<string | null> {
-  const cwd = input.projectPath ?? tmpdir();
   const credential = await resolveCredentialForProject(input.projectId);
   const prompt = projectNamePrompt(input.userMessage);
   let name: string | null = null;
-  // See resolveChatNameViaAi for why codex is excluded and token presence isn't the gate.
+  // See resolveChatNameViaAi for why other providers are excluded and token presence isn't the gate.
   // Keep the stronger model: the build-intent abstention (reply NONE on chit-chat) is the
   // load-bearing behavior of build-project-display-naming.
-  if (credential && credential.type !== 'codex' && isResolvedCredential(credential)) {
-    name = await generateWithClaudeSdk(input.userMessage, credential, cwd, prompt, 'sonnet');
+  if (credential && runtimeFor(credential.type) === 'claude' && isResolvedCredential(credential)) {
+    name = await generateWithClaudeSdk(input.userMessage, credential, prompt, 'sonnet');
   }
   return isAbstention(name) ? null : name;
 }
@@ -327,7 +325,6 @@ export type AutoNameSubChatInput = {
   subChatId: string;
   rawUserMessage: string;
   projectId: string | null;
-  projectPath: string | null;
   isFirstSubChat: boolean;
 };
 
@@ -359,7 +356,6 @@ export async function autoNameSubChat(input: AutoNameSubChatInput): Promise<void
     resolvedName = await resolveChatNameViaAi({
       userMessage: messageForName,
       projectId: input.projectId,
-      projectPath: input.projectPath,
     });
   } catch (err) {
     log.warn('[chat-name] generation failed', err);

@@ -1,7 +1,7 @@
 import * as nodeFs from 'node:fs';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { EMPTY_DOCS, type ScopedDocs } from '../eval-rules';
 import type { PermissionsDoc } from '../types';
 import { checkSearch, searchRoot } from './index';
@@ -103,5 +103,27 @@ describe('checkSearch', () => {
       project,
     );
     expect(r).toEqual({ decision: 'allow' });
+  });
+});
+
+describe('checkSearch — case variants of protected roots', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const withPlatform = (value: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  };
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', realPlatform);
+  });
+
+  it('darwin: Grep of ~/.SSH is denied (APFS aliases it to ~/.ssh)', () => {
+    withPlatform('darwin');
+    const r = checkSearch('Grep', { pattern: 'x', path: '~/.SSH' }, EMPTY_DOCS, project);
+    expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
+  });
+
+  it('linux: ~/.SSH is a distinct folder, so no safety deny', () => {
+    withPlatform('linux');
+    const r = checkSearch('Grep', { pattern: 'x', path: '~/.SSH' }, EMPTY_DOCS, project);
+    expect(r).not.toMatchObject({ reason: { kind: 'safety:path' } });
   });
 });

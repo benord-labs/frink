@@ -1,7 +1,6 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { BrowserWindow, shell } from 'electron';
 import log from 'electron-log';
-import { AUTH_SERVER_PORT, IS_DEV } from '../constants';
 import {
   GLOBAL_MCP_PATH,
   getMcpServerConfig,
@@ -12,17 +11,14 @@ import {
 } from './claude-config';
 import { claudeMcpCacheKey, invalidateClaudeMcpToolsCache } from './mcp/claude-tools-cache';
 import { getFrinkMcpServerConfigForScope, setMcpCredentials } from './mcp/config';
-import { CraftOAuth, getMcpBaseUrl, type OAuthTokens } from './oauth';
+import { waitForCallback } from './mcp/runtime/vendor-plugin-oauth-http';
+import { CraftOAuth, generateState, getMcpBaseUrl, type OAuthTokens } from './oauth';
 import { retireRetainedSessions } from './socket/claude-session-registry';
 import { bringToFront } from './window';
 
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
-
-function getMcpOAuthRedirectUri(): string {
-  return IS_DEV
-    ? `http://localhost:${AUTH_SERVER_PORT}/callback`
-    : `http://127.0.0.1:${AUTH_SERVER_PORT}/callback`;
-}
+const CALLBACK_PATH = '/callback';
+const CANCELLED = 'Cancelled';
 
 type PendingOAuth = {
   serverName: string;
@@ -33,10 +29,13 @@ type PendingOAuth = {
   clientSecret?: string;
   redirectUri: string;
   resolve: (result: { success: boolean; error?: string }) => void;
-  timeoutId: NodeJS.Timeout;
+  /** Closes this flow's loopback listener; a no-op once it has already closed. */
+  closeListener: () => void;
 };
 
 const pendingOAuthFlows = new Map<string, PendingOAuth>();
+/** Listeners bound but not yet pending (discovery/registration in flight), so a cancel reaches them too. */
+const startingOAuthListeners = new Map<string, () => void>();
 
 /**
  * If Frink config has a URL for this server, persist it into ~/.claude.json so
@@ -96,34 +95,49 @@ export async function startMcpOAuth(
     return { success: false, error: `MCP server "${serverName}" URL not configured` };
   }
 
-  // 2. Use CraftOAuth for OAuth logic
-  const redirectUri = getMcpOAuthRedirectUri();
-  const oauth = new CraftOAuth(
-    { mcpBaseUrl: getMcpBaseUrl(serverConfig.url), redirectUri, resource: serverConfig.url },
-    {
-      onStatus: (_msg) => {},
-      onError: (_err) => {},
-    },
-  );
+  // 2. Bind the loopback before any redirect_uri exists: 127.0.0.1 on an ephemeral port, in every
+  // build, so the redirect_uri registered and sent is the port actually listened on.
+  const state = generateState();
+  const callback = waitForCallback(0, state, {
+    timeoutMs: OAUTH_TIMEOUT_MS,
+    callbackPath: CALLBACK_PATH,
+    cancelledMessage: CANCELLED,
+  });
+  startingOAuthListeners.set(state, callback.cancel);
+  let port: number;
+  try {
+    port = await callback.port;
+  } catch (error) {
+    startingOAuthListeners.delete(state);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const redirectUri = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
 
-  // 3. Start OAuth flow (fetches metadata from .well-known, then gets auth URL)
+  // 3. Start OAuth flow (fetches metadata from .well-known, registers, then gets auth URL)
   let authFlowResult: Awaited<ReturnType<CraftOAuth['startAuthFlow']>>;
   try {
+    const oauth = new CraftOAuth(
+      {
+        mcpBaseUrl: getMcpBaseUrl(serverConfig.url),
+        redirectUri,
+        resource: serverConfig.url,
+        state,
+      },
+      { onStatus: () => {}, onError: () => {} },
+    );
     authFlowResult = await oauth.startAuthFlow();
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return { success: false, error: msg };
+    startingOAuthListeners.delete(state);
+    callback.cancel();
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+  // A cancel (app quit) that landed while discovery ran has already closed the listener.
+  if (!startingOAuthListeners.delete(state)) return { success: false, error: CANCELLED };
 
-  const { authUrl, state, codeVerifier, tokenEndpoint, clientId, clientSecret } = authFlowResult;
+  const { authUrl, codeVerifier, tokenEndpoint, clientId, clientSecret } = authFlowResult;
 
-  // 4. Store pending flow and wait for callback
+  // 4. Store pending flow and wait for the browser to reach the loopback
   return new Promise((resolve) => {
-    const timeoutId = setTimeout(() => {
-      pendingOAuthFlows.delete(state);
-      resolve({ success: false, error: 'OAuth timeout' });
-    }, OAUTH_TIMEOUT_MS);
-
     pendingOAuthFlows.set(state, {
       serverName,
       projectPath,
@@ -133,10 +147,23 @@ export async function startMcpOAuth(
       clientSecret,
       redirectUri,
       resolve,
-      timeoutId,
+      closeListener: callback.cancel,
     });
 
-    // Open browser
+    callback.code.then(
+      (code) => handleMcpOAuthCallback(code, state),
+      // Timeout or a vendor denial; a flow already settled elsewhere is no longer pending.
+      (error) => {
+        const pending = pendingOAuthFlows.get(state);
+        if (!pending) return;
+        pendingOAuthFlows.delete(state);
+        pending.resolve({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    );
+
     shell.openExternal(authUrl);
   });
 }
@@ -150,8 +177,8 @@ export async function handleMcpOAuthCallback(code: string, state: string): Promi
     return;
   }
 
-  clearTimeout(pending.timeoutId);
   pendingOAuthFlows.delete(state);
+  pending.closeListener();
 
   try {
     // 1. Get server URL for CraftOAuth
@@ -397,11 +424,14 @@ async function saveTokensToClaudeJson(
 }
 
 export function cancelAllPendingOAuth(): void {
-  for (const [_state, pending] of pendingOAuthFlows) {
-    clearTimeout(pending.timeoutId);
-    pending.resolve({ success: false, error: 'Cancelled' });
-  }
+  for (const closeListener of startingOAuthListeners.values()) closeListener();
+  startingOAuthListeners.clear();
+  const flows = [...pendingOAuthFlows.values()];
   pendingOAuthFlows.clear();
+  for (const pending of flows) {
+    pending.closeListener();
+    pending.resolve({ success: false, error: CANCELLED });
+  }
 }
 
 /**

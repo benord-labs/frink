@@ -49,5 +49,6 @@ export function buildFailedRetryRow(taskId: string, createdAt: string, title = '
     projectId: null,
     linkedChatId: null,
     triggerContext: null,
+    recoveryKind: 'continue' as const,
   };
 }

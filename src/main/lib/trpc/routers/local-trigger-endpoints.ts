@@ -254,15 +254,18 @@ export async function localConfigureApiToken(
     (token) => localTriggerOptions(local.account, token),
   );
   if ('options' in resolved) return { success: false as const, options: resolved.options };
-  return withPluginLifecycleOperation(local.account.provider, async () => ({
-    ...registered(
+  return withPluginLifecycleOperation(local.account.provider, async () => {
+    const outcome = registered(
       await registerLocalTrigger(local.io, local.account, input.webhookId, {
         selection: resolved.selection,
         apiToken: resolved.token,
       }),
-    ),
-    options: [],
-  }));
+    );
+    // An account made after the plugin's sign-in has no identity yet; this is where it becomes usable.
+    if (outcome.success)
+      await ensureLocalAccountIdentity(local.io.db, local.account.provider, local.account.id);
+    return { ...outcome, options: [] };
+  });
 }
 
 /** A ClickUp webhook the user made by hand: its handle and its key land in one write. */

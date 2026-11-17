@@ -1,3 +1,4 @@
+import { WORK_QUEUE_SOURCE } from '../../../shared/lib/message-markers/person-authored';
 import { approvedPlanContextSchema } from '../../../shared/types/approved-plan-context-schema';
 import {
   type ApprovedPlanContext,
@@ -28,7 +29,12 @@ type ChatActions = {
   getSubChat: (id: string) => Promise<ResolvedWorkQueueSubChat | null>;
   seedUserMessageIfEmpty: (input: {
     id: string;
-    message: { id: string; role: 'user'; parts: [{ type: 'text'; text: string }] };
+    message: {
+      id: string;
+      role: 'user';
+      parts: [{ type: 'text'; text: string }];
+      metadata: { source: typeof WORK_QUEUE_SOURCE };
+    };
   }) => Promise<unknown>;
   navigate: (chatId: string, subChatId?: string) => boolean;
   isNotFoundError: (error: unknown) => boolean;
@@ -132,6 +138,7 @@ async function seedTaskPromptIfEmpty(
         id: `msg-task-${input.taskId}`,
         role: 'user',
         parts: [{ type: 'text', text: input.prompt }],
+        metadata: { source: WORK_QUEUE_SOURCE },
       },
     });
     return actions.ownsNavigation();

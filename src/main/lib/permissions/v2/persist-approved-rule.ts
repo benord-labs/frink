@@ -1,6 +1,5 @@
 /**
- * Shared persistence path for renderer-approved rules; `executor.ts:validateToolPermission`
- * routes here.
+ * Shared persistence path for renderer-approved rules; `validateToolPermission` routes here.
  *
  * Trust boundary: `promptResult.ruleString` comes from the renderer over
  * IPC and must be validated via `validateRuleString` before being written

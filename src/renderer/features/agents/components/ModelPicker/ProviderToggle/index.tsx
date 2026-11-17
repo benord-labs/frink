@@ -6,6 +6,7 @@ import {
   CODEX_ULTRAFAST_SPEED_MULTIPLIER,
 } from '../../../../../../shared/lib/codex-cli-models';
 import type { CodexSpeed } from '../../../../../../shared/types/execution';
+import type { ModelVariant } from '../../../../../lib/ai-providers/chat-options';
 import { extendedThinkingEnabledAtom } from '../../../../../lib/atoms';
 import { codexSpeedAtomFamily } from '../../../../../lib/atoms/codex-speed';
 import { cn } from '../../../../../lib/utils';
@@ -13,11 +14,13 @@ import { cn } from '../../../../../lib/utils';
 type PaidSpeed = Exclude<CodexSpeed, 'standard'>;
 
 /** Where Codex speed lives: an existing chat's setting, or the ref a New Chat form stages it in.
- *  `credits` holds each paid speed's multiplier for the model; `null` hides that speed. */
+ *  `credits` holds each paid speed's multiplier for the model (`null`: none); `offered` is whether
+ *  the account can use it. A speed already on stays shown, so it can always be turned off. */
 export type SpeedScope = {
   chatId?: string;
   newChatSpeedRef?: { current: CodexSpeed };
   credits: Record<PaidSpeed, number | null>;
+  offered: Record<PaidSpeed, boolean>;
 };
 
 export const ICON_BUTTON_CLASS =
@@ -28,14 +31,14 @@ export function ProviderToggle({
   variant,
   speed,
 }: {
-  variant: 'claude' | 'codex';
+  variant: ModelVariant;
   speed: SpeedScope | undefined;
 }): ReactElement | null {
   if (variant === 'claude') return <ThinkingToggle />;
   if (!speed) return null;
-  if (speed.chatId) return <ChatSpeedToggles chatId={speed.chatId} credits={speed.credits} />;
+  if (speed.chatId) return <ChatSpeedToggles chatId={speed.chatId} scope={speed} />;
   return speed.newChatSpeedRef ? (
-    <NewChatSpeedToggles speedRef={speed.newChatSpeedRef} credits={speed.credits} />
+    <NewChatSpeedToggles speedRef={speed.newChatSpeedRef} scope={speed} />
   ) : null;
 }
 
@@ -56,24 +59,18 @@ function ThinkingToggle(): ReactElement {
   );
 }
 
-function ChatSpeedToggles({
-  chatId,
-  credits,
-}: {
-  chatId: string;
-  credits: SpeedScope['credits'];
-}): ReactElement {
+function ChatSpeedToggles({ chatId, scope }: { chatId: string; scope: SpeedScope }): ReactElement {
   const [speed, setSpeed] = useAtom(codexSpeedAtomFamily(chatId));
-  return <SpeedToggles speed={speed} onChange={setSpeed} credits={credits} />;
+  return <SpeedToggles speed={speed} onChange={setSpeed} scope={scope} />;
 }
 
 /** Stages speed on the New Chat form's ref; the popover remounts per open, so it re-reads the ref. */
 function NewChatSpeedToggles({
   speedRef,
-  credits,
+  scope,
 }: {
   speedRef: { current: CodexSpeed };
-  credits: SpeedScope['credits'];
+  scope: SpeedScope;
 }): ReactElement {
   const [speed, setSpeed] = useState(speedRef.current);
   return (
@@ -83,7 +80,7 @@ function NewChatSpeedToggles({
         speedRef.current = next;
         setSpeed(next);
       }}
-      credits={credits}
+      scope={scope}
     />
   );
 }
@@ -103,18 +100,18 @@ const SPEED_BUTTONS = [
 function SpeedToggles({
   speed,
   onChange,
-  credits,
+  scope,
 }: {
   speed: CodexSpeed;
   onChange: (speed: CodexSpeed) => void;
-  credits: SpeedScope['credits'];
+  scope: SpeedScope;
 }): ReactElement {
   return (
     <>
       {SPEED_BUTTONS.map(({ speed: option, name, Icon, pace }) => {
-        const multiplier = credits[option];
-        if (multiplier === null) return null;
+        const multiplier = scope.credits[option];
         const enabled = speed === option;
+        if (multiplier === null || (!scope.offered[option] && !enabled)) return null;
         const disclosure = `${name} — ${pace} · ${multiplier}× ChatGPT credits`;
         return (
           <button

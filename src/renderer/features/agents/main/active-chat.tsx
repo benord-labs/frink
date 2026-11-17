@@ -1,5 +1,4 @@
 /* eslint-disable max-lines, max-lines-per-function */
-// e2b API routes are used instead of useSandboxManager for agents
 import { type Chat, useChat } from '@ai-sdk/react';
 import type { UIMessage } from 'ai';
 import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
@@ -17,6 +16,7 @@ import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
 import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 // SplitViewContainer moved to agents-content.tsx for top-level chat splitting
 import { buildAnswerMessage } from '../../../../shared/lib/agent-questions/answered-questions';
+import type { AiProviderId } from '../../../../shared/lib/ai-providers';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePrefersReducedMotion } from '../../../hooks/use-prefers-reduced-motion';
@@ -55,7 +55,6 @@ import { terminalSidebarOpenAtomFamily } from '../../terminal/atoms';
 import { TerminalBottomPanelGate } from '../../terminal/terminal-bottom-panel-gate';
 import type { AgentUserQuestionHandle } from '../AgentUserQuestion';
 import {
-  agentsPreviewSidebarOpenAtom,
   agentsSubChatUnseenChangesAtom,
   agentsUnseenChangesAtom,
   chatModeAtomFamily,
@@ -92,7 +91,12 @@ import { useTextContextSelection } from '../hooks/use-text-context-selection';
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { createAgentChat } from '../lib/create-agent-chat';
 import { clearSubChatDraft, getSubChatDraftFull } from '../lib/drafts';
-import { createQueueItem, generateQueueId, toQueuedImage } from '../lib/queue-utils';
+import {
+  createQueueItem,
+  generateQueueId,
+  queuedSendMetadata,
+  toQueuedImage,
+} from '../lib/queue-utils';
 import { requestClaudePrewarm } from '../lib/websocket-chat-transport';
 import { type AgentsMentionsEditorHandle } from '../mentions';
 import { RunStatusRows } from '../RunStatusRows';
@@ -271,7 +275,6 @@ const ChatViewInner = memo(function ChatViewInner({
   sandboxSetupStatus = 'ready',
   sandboxSetupError,
   onRetrySetup,
-  sandboxId,
   projectPath,
   projectId,
   currentBranch,
@@ -725,10 +728,8 @@ const ChatViewInner = memo(function ChatViewInner({
   if (!isStreaming) messageTokenSnapshotRef.current = computedMessageTokenData;
   const messageTokenData = messageTokenSnapshotRef.current;
 
-  // Carry on: resume the persisted session and continue from where the turn stopped — a hidden
-  // wake message (never rendered; the executor strips the marker before the model sees it). The
-  // failed partial response is KEPT (unlike Retry, which drops it and re-runs the turn). Default
-  // recovery after a transient failure (usage limit reset, API error).
+  // Continue: send a hidden wake message (marker stripped by executor) to resume the session,
+  // KEEPING the failed partial response unlike Retry; offered whenever the turn produced output.
   const handleCarryOnChat = useCallback(() => {
     // Keep the pending-retry state recoverable: it is the ONLY affordance left on a failed turn,
     // so it must not be cleared unless the wake message actually goes out (restored if it rejects).
@@ -936,16 +937,6 @@ const ChatViewInner = memo(function ChatViewInner({
   const activeFileExcludedRef = useRef(activeFileDismissed);
   activeFileExcludedRef.current = activeFileDismissed;
 
-  // Reset dismissed when user switches to a different file (new file shows again)
-  const prevActiveFilePathRef = useRef<string | null>(chatContextFile?.path ?? null);
-  useEffect(() => {
-    const currentPath = chatContextFile?.path ?? null;
-    if (prevActiveFilePathRef.current !== currentPath) {
-      prevActiveFilePathRef.current = currentPath;
-      setActiveFileDismissed(false);
-    }
-  }, [chatContextFile?.path, setActiveFileDismissed]);
-
   // Stable handler — inlining this as `() => setActiveFileDismissed(true)` in the
   // ChatInputSection JSX busts its memo on every ChatViewInner re-render, pulling
   // the entire input subtree (editor, dropdowns, send button) into the per-chunk
@@ -1134,7 +1125,13 @@ const ChatViewInner = memo(function ChatViewInner({
             useMessageQueueStore.getState().prependItem(subChatId, item);
             return;
           }
-          // Steer (or requeue) rather than abort; only a turn this view shows streaming is stopped.
+          // Steer (or requeue) rather than abort. A steer carries no metadata, so a dispatched item
+          // waits in the queue for the turn to end instead.
+          if (canSteer && item.dispatchTaskId) {
+            useMessageQueueStore.getState().prependItem(subChatId, item);
+            toast.info('This prompt will be sent when the current step finishes.');
+            return;
+          }
           if (canSteer) {
             const text = parts.find((p) => p.type === 'text')?.text ?? '';
             await steerOrQueue(text, item.images, () =>
@@ -1147,7 +1144,7 @@ const ChatViewInner = memo(function ChatViewInner({
           await handleStop();
         }
 
-        await snapshotSendMessage({ role: 'user', parts });
+        await snapshotSendMessage({ role: 'user', parts, ...queuedSendMetadata(item) });
       } catch (_error) {
         // Requeue the item so it is not lost on send failures.
         useMessageQueueStore.getState().prependItem(subChatId, item);
@@ -1368,7 +1365,7 @@ const ChatViewInner = memo(function ChatViewInner({
         hasUnapprovedPlan={hasUnapprovedPlan}
         chatMode={chatMode}
         editorRef={editorRef}
-        stop={stop}
+        stop={handleStop}
         handleQuestionsSkip={handleDisplayQuestionsSkip}
         handleApprovePlan={handleApprovePlanSingleShot}
         scrollToBottom={scrollToBottom}
@@ -1464,7 +1461,6 @@ const ChatViewInner = memo(function ChatViewInner({
             subChatId={subChatId}
             pinnedTaskId={taskId ?? null}
             chatId={parentChatId ?? null}
-            guardedSend={guardedFlowSend}
             isTurnActive={isStreaming}
             flowSurfaceOwnsStop={flowSurfaceOwnsStop}
           />
@@ -1542,7 +1538,6 @@ const ChatViewInner = memo(function ChatViewInner({
               parentChatId={parentChatId}
               teamId={teamId}
               repository={repository}
-              sandboxId={sandboxId}
               projectPath={projectPath}
               projectId={projectId}
               changedFiles={changedFilesForSubChat}
@@ -1574,7 +1569,6 @@ export const ChatView = memo(function ChatView({
   selectedTeamImageUrl: _selectedTeamImageUrl,
   isMobileFullscreen = false,
   onBackToChats,
-  onOpenPreview,
   onOpenDiff,
   onOpenTerminal,
   splitPaneIndex,
@@ -1593,7 +1587,6 @@ export const ChatView = memo(function ChatView({
 
   // Check if any chat has unseen changes
   const hasAnyUnseenChanges = unseenChanges.size > 0;
-  const [isPreviewSidebarOpen, setIsPreviewSidebarOpen] = useAtom(agentsPreviewSidebarOpenAtom);
   // Per-chat diff sidebar state - each chat remembers its own open/close state
   const diffSidebarAtom = useMemo(() => diffSidebarOpenAtomFamily(chatId), [chatId]);
   const [isDiffSidebarOpen, setIsDiffSidebarOpen] = useAtom(diffSidebarAtom);
@@ -1708,9 +1701,6 @@ export const ChatView = memo(function ChatView({
 
   // Desktop: original project path for MCP config lookup
   const _originalProjectPath = (agentChat?.project?.path as string | undefined) ?? undefined;
-  // Fallback for web: use sandboxId
-  const sandboxId = agentChat?.sandboxId ?? null;
-  const sandboxUrl = sandboxId ? `https://3003-${sandboxId}.e2b.app` : null;
 
   // Get home path for general chats (no project context)
   const homePath = trpc.external.getHomePath.useQuery(undefined, { staleTime: 300_000 }).data;
@@ -1755,8 +1745,6 @@ export const ChatView = memo(function ChatView({
     projectResolved,
     homePath,
   ]);
-  // Desktop uses worktreePath, web uses sandboxUrl
-  const chatWorkingDir = effectiveCwd || sandboxUrl;
 
   // Listen for file changes from Claude Write/Edit tools and invalidate git status
   useFileChangeListener(worktreePath);
@@ -1786,12 +1774,8 @@ export const ChatView = memo(function ChatView({
     return () => cleanup?.();
   }, [worktreePath, chatId, trpcUtils, isSplitActive, effectiveActiveSubChatId]);
 
-  // Extract port, repository, and quick setup flag from meta
-  const meta = agentChat?.meta as {
-    sandboxConfig?: { port?: number };
-    repository?: string;
-    isQuickSetup?: boolean;
-  } | null;
+  // SAFETY: getAgentChat leaves meta untyped; repository, the one field read, is an "owner/repo" string or absent.
+  const meta = agentChat?.meta as { repository?: string } | null;
 
   // Parse repository string (e.g., "owner/repo") into object
   const repositoryString = meta?.repository;
@@ -1802,23 +1786,8 @@ export const ChatView = memo(function ChatView({
       })()
     : null;
 
-  // Track if we've already triggered sandbox setup for this chat
-  // Check if this is a quick setup (no preview available)
-  const isQuickSetup = meta?.isQuickSetup || !meta?.sandboxConfig?.port;
-  const previewPort = meta?.sandboxConfig?.port ?? 3000;
-
-  // Check if preview can be opened (sandbox with port exists and not quick setup)
-  const canOpenPreview = !!(sandboxId && !isQuickSetup && meta?.sandboxConfig?.port);
-
   // The diff sidebar reads the worktree; getParsedDiff has no other source.
   const canOpenDiff = !!worktreePath;
-
-  // Close preview sidebar if preview becomes unavailable
-  useEffect(() => {
-    if (!canOpenPreview && isPreviewSidebarOpen) {
-      setIsPreviewSidebarOpen(false);
-    }
-  }, [canOpenPreview, isPreviewSidebarOpen, setIsPreviewSidebarOpen]);
 
   // Note: We no longer forcibly close diff sidebar when canOpenDiff is false.
   // The sidebar render is guarded by canOpenDiff, so it naturally hides.
@@ -2060,17 +2029,16 @@ export const ChatView = memo(function ChatView({
   );
   // Assigned during render, not in an effect: child effects (first-message auto-generate) run
   // before a parent effect would, and must already see the resolved type.
-  const executionAccountTypeRef = useRef<'claude-code' | 'codex'>('claude-code');
+  const executionAccountTypeRef = useRef<AiProviderId>('claude-code');
   if (resolvedAccountForExecution?.type != null) {
     executionAccountTypeRef.current = resolvedAccountForExecution.type;
   }
 
   // Create or get Chat instance for a sub-chat
   const getOrCreateChat = useCallback(
-    (subChatId: string): Chat<UIMessage> | null => {
-      // Desktop uses worktreePath, web uses sandboxUrl
+    (subChatId: string, isWakeHeld: boolean): Chat<UIMessage> | null => {
       if (!agentChat) return null;
-      if (!chatWorkingDir) return null;
+      if (!effectiveCwd) return null;
 
       // Guard: prevent rendering sub-chats from a different parent chat.
       // During single-view chat transitions, the rendered sub-chat id may briefly be one
@@ -2114,7 +2082,7 @@ export const ChatView = memo(function ChatView({
         const rehydrationDecision =
           isActiveSubChat && hasUsableCurrentPageSnapshot
             ? classifyDurableMessageRehydration({
-                isActiveSubChat,
+                isWakeHeld,
                 isExistingChatStreaming,
                 existingMessages: existing.messages,
                 fetchedMessages: subChatMessages.messages,
@@ -2187,7 +2155,7 @@ export const ChatView = memo(function ChatView({
     [
       effectiveActiveSubChatId,
       agentChat,
-      chatWorkingDir,
+      effectiveCwd,
       chatId,
       chatMode,
       isSplitActive,
@@ -2276,21 +2244,16 @@ export const ChatView = memo(function ChatView({
                 onToggleSidebar={onToggleSidebar}
                 splitPaneIndex={splitPaneIndex}
                 hasAnyUnseenChanges={hasAnyUnseenChanges}
-                isPreviewSidebarOpen={isPreviewSidebarOpen}
-                setIsPreviewSidebarOpen={setIsPreviewSidebarOpen}
                 isTerminalSidebarOpen={isTerminalSidebarOpen}
                 setIsTerminalSidebarOpen={setIsTerminalSidebarOpen}
                 setIsDiffSidebarOpen={setIsDiffSidebarOpen}
                 chatId={chatId}
                 gitContextPath={gitContextPath}
-                sandboxId={sandboxId ?? null}
-                canOpenPreview={canOpenPreview}
                 canOpenDiff={canOpenDiff}
                 diffStats={diffStats}
                 isArchived={isArchived}
                 taskId={agentChat?.taskId ?? null}
                 onBackToChats={onBackToChats ?? (() => {})}
-                onOpenPreview={onOpenPreview ?? (() => {})}
                 onOpenDiff={onOpenDiff ?? (() => {})}
                 onOpenTerminal={onOpenTerminal ?? (() => {})}
                 handleRestoreWorkspace={handleRestoreWorkspace}
@@ -2308,7 +2271,6 @@ export const ChatView = memo(function ChatView({
                   selectedTeamId={selectedTeamId}
                   repository={repository ? `${repository.owner}/${repository.name}` : undefined}
                   isMobileFullscreen={isMobileFullscreen}
-                  sandboxId={sandboxId ?? undefined}
                   projectPath={gitContextPath ?? undefined}
                   projectId={localProjectId ?? agentChat?.projectId ?? null}
                   currentBranch={
@@ -2345,7 +2307,7 @@ export const ChatView = memo(function ChatView({
             </div>
           </ChatAtmosphereSurface>
 
-          {/* All sidebars (Plan, Diff, Preview, Terminal, Details) */}
+          {/* All sidebars (Plan, Diff, Terminal, Details) */}
           <SidebarsSection
             isActive={isActive}
             isMobileFullscreen={isMobileFullscreen}
@@ -2355,13 +2317,6 @@ export const ChatView = memo(function ChatView({
             diffPanel={diffPanel}
             gitContextPath={gitContextPath}
             chatId={chatId}
-            sandboxId={sandboxId}
-            repository={repository}
-            canOpenPreview={canOpenPreview}
-            isPreviewSidebarOpen={isPreviewSidebarOpen}
-            setIsPreviewSidebarOpen={setIsPreviewSidebarOpen}
-            isQuickSetup={isQuickSetup}
-            previewPort={previewPort}
           />
         </div>
 

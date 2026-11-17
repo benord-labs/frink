@@ -18,30 +18,15 @@
  * review HIGH #1 (May 2026).
  */
 
-import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
-import log from 'electron-log';
-import {
-  CLAUDE_CONFIG_FILE_LINUX,
-  isMacOSKeychainAuthorizationError,
-  isMacOSKeychainTimeoutError,
-  sanitizeError,
-} from './detect';
+import { CLAUDE_CONFIG_FILE_LINUX } from './detect';
 import { CODEX_KEYCHAIN_SERVICE, codexKeyringAccount, resolveCodexHome } from './detect-codex';
-import { KEYCHAIN_READ_TIMEOUT_MS } from './keychain-shared';
-
-// Promisified, non-blocking. Returning a Promise lets the event loop continue
-// while `security` is queued in libuv's process pool, so chat
-// IPC and SQLite reads on the main thread aren't stalled by a slow keychain.
-const execFileAsync = promisify(execFile);
+import { type ProbeResult, probeDarwinKeychainItem } from './keychain-probe';
 
 // Top-level regexes (perf rule).
 const WINDOWS_DRIVE_PREFIX_RE = /^\/(?=[A-Za-z]:)/;
-
-type ProbeResult = { ok: true } | { error: 'missing' | 'denied' | 'malformed'; detail?: string };
 
 const DARWIN_KEYCHAIN_SCHEME = 'darwin-keychain://';
 const FILE_SCHEME = 'file://';
@@ -87,7 +72,7 @@ export async function probeCodexPassthroughSource(): Promise<ProbeResult> {
   if (authFile === 'present') return { ok: true };
   // EACCES/EMFILE etc. say nothing about the login — transient, never a logout.
   if (authFile === 'unreadable') return { error: 'denied', detail: 'auth.json is unreadable' };
-  return probeDarwinKeychainItem(CODEX_KEYCHAIN_SERVICE, codexKeyringAccount(codexHome));
+  return probeDarwinKeychainItem(CODEX_KEYCHAIN_SERVICE, await codexKeyringAccount(codexHome));
 }
 
 // Pre-sc-3807 keyring row: the CLI reads only the credentials file on Linux, and secret-tool
@@ -111,38 +96,6 @@ async function probeDarwinKeychain(sourcePath: string): Promise<ProbeResult> {
     return { error: 'malformed', detail: 'empty keychain service name' };
   }
   return probeDarwinKeychainItem(serviceName);
-}
-
-async function probeDarwinKeychainItem(
-  serviceName: string,
-  account?: string,
-): Promise<ProbeResult> {
-  if (process.platform !== 'darwin') {
-    return { error: 'missing', detail: 'darwin-keychain source not available on this OS' };
-  }
-
-  try {
-    // No `-w`: that flag prints the secret and consults the item's ACL. Metadata alone
-    // answers "does this login exist", costs no TCC prompt, and keeps the token out of
-    // frink's memory entirely. Do not add `-w` back.
-    const args = ['find-generic-password', '-s', serviceName];
-    if (account) args.push('-a', account);
-    await execFileAsync('security', args, {
-      encoding: 'utf-8',
-      // Hard cap so a locked keychain (screen saver, fresh boot before unlock)
-      // can't hang the executor. After SIGTERM we treat it as a denial — transient,
-      // nothing persisted; the next resolution re-probes once the keychain unlocks.
-      timeout: KEYCHAIN_READ_TIMEOUT_MS,
-    });
-  } catch (error) {
-    if (isMacOSKeychainAuthorizationError(error) || isMacOSKeychainTimeoutError(error)) {
-      log.warn('[source-readers] keychain access denied/timed out:', sanitizeError(error));
-      return { error: 'denied', detail: 'macOS denied keychain access or the read timed out' };
-    }
-    log.debug('[source-readers] keychain probe failed:', sanitizeError(error));
-    return { error: 'missing', detail: 'keychain entry not found' };
-  }
-  return { ok: true };
 }
 
 function probeFile(sourcePath: string): ProbeResult {

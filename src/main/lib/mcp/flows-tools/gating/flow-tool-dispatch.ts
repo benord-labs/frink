@@ -2,6 +2,7 @@ import {
   FRINK_DYNAMIC_CHAT_MCP_KEY,
   FRINK_MUTATING_FLOW_TOOLS,
 } from '../../../../../shared/lib/mcp-tool-name';
+import type { AgentRuntime } from '../../../../../shared/lib/ai-providers';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import type {
@@ -50,7 +51,7 @@ export type FlowGateContext = {
   chatId: string;
   subChatId: string;
   projectPath?: string;
-  runtime?: 'claude' | 'codex';
+  runtime?: AgentRuntime;
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
   isFlowDrivenTurn?: boolean;

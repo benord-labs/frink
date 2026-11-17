@@ -1,13 +1,13 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
-import { Button } from '@benord-labs/frink-primitives';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ChatAtmosphereSurface } from '@/components/ChatAtmosphereSurface';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { type NewChatTarget, shouldScaffoldNewProject } from '@/lib/agent-chat/new-chat-target';
 import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
+import { unsupportedChatControls } from '@/lib/ai-providers/chat-options';
+import { useProviderModels } from '@/lib/ai-providers/use-provider-models';
 import {
   chatContextFileAtomFamily,
   chatContextFileDismissedAtomFamily,
@@ -16,22 +16,20 @@ import {
 } from '@/lib/code-editor/state';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
-import { pastedTextMention } from '@/lib/mentions/queued-message-text';
-import type { TaskData } from '@/lib/tasks/format-task-message';
 import {
-  CLAUDE_CODE_MODELS,
-  CODEX_MODELS,
-  claudeModelToPickerItem,
-  codexModelToPickerItem,
-  isClaudeModelVisible,
-  isCodexModelVisible,
-} from '../../../../shared/lib/models';
+  attachedContextFile,
+  codeSelectionMention,
+  openFileMention,
+  pastedTextMention,
+} from '@/lib/mentions/queued-message-text';
+import type { TaskData } from '@/lib/tasks/format-task-message';
+import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
+import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePersistedToggle } from '../../../hooks/use-persisted-toggle';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
-  hiddenModelsAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
 import { useNewChatAccount } from '../../../lib/hooks/use-new-chat-account';
@@ -51,11 +49,12 @@ import {
 } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
+  insertPickedCommand,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
 } from '../commands';
+import { EditorContextChip } from '../components/EditorContextChip';
 import { NewChatFormHeader } from '../components/new-chat-form-header';
 import { NoAccountsEmptyState } from '../components/no-accounts-empty-state';
 import { shouldShowWorktreeBanner, WorktreeBanner } from '../components/worktree-banner';
@@ -68,7 +67,7 @@ import { useEffectiveChatModeForPane } from '../hooks/use-effective-plan-mode-fo
 import { useEffectiveProjectForPane } from '../hooks/use-effective-project-for-pane';
 import { useEffectiveWorkModeForPane } from '../hooks/use-effective-work-mode-for-pane';
 import { useFocusInputOnEnter } from '../hooks/use-focus-input-on-enter';
-import { useModelNormalization } from '../hooks/use-model-normalization';
+import { useModelNormalization, useNewAgentChatModel } from '../hooks/use-model-normalization';
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { newChatDraftKey } from '../lib/drafts';
 import { createNewChatStaging, seedNewChatNavigation } from '../lib/new-chat-navigation';
@@ -77,7 +76,6 @@ import {
   AgentsFileMention,
   type AgentsMentionsEditorHandle,
   type FileMentionOption,
-  MENTION_PREVIEW_SANITIZE_REGEX,
 } from '../mentions';
 import { ActionsToolbar } from './ActionsToolbar';
 import { ChatInputContextBar } from './active-chat/components/ChatInputContextBar';
@@ -87,7 +85,6 @@ import {
   ACCOUNT_NOT_READY_TOAST_MESSAGE_START_CHAT,
   showAccountNotReadyToast,
   type UnauthAccountForSend,
-  utf8ToBase64,
 } from './active-chat/utils';
 import { EditorSection } from './EditorSection';
 import { LIMITS, STRINGS } from './new-chat-form-constants';
@@ -129,6 +126,12 @@ export function NewChatForm({
   const chatContextFile = useAtomValue(chatContextFileAtomFamily(NEW_CHAT_PANE));
   const activeFileDismissed = useAtomValue(chatContextFileDismissedAtomFamily(NEW_CHAT_PANE));
   const setActiveFileDismissed = useSetAtom(chatContextFileDismissedAtomFamily(NEW_CHAT_PANE));
+  // One value feeds the composer chip and the send path, so what is shown is what is sent.
+  const attachedFile = attachedContextFile(
+    chatContextFile,
+    activeFileDismissed,
+    codeSelectionContext,
+  );
 
   // TerminalBottomPanel skips its own registration to avoid duplicate active-chat handlers.
   useEffect(() => {
@@ -178,8 +181,12 @@ export function NewChatForm({
 
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
 
+  const newChatAccount = useNewChatAccount(validatedProject?.id, accountGateRefetchInterval);
+  const { account: resolvedAccount, accountResolved, pickedAccountId } = newChatAccount;
+  const controls = unsupportedChatControls(resolvedAccount?.type);
   const { chatMode, setChatMode, cycleChatMode } = useEffectiveChatModeForPane(splitPaneIndex, {
     hasProject: Boolean(selectedProject),
+    hiddenModes: controls.modes,
   });
   const [staging] = useState(createNewChatStaging);
   const { workMode, setWorkMode } = useEffectiveWorkModeForPane(splitPaneIndex);
@@ -226,47 +233,19 @@ export function NewChatForm({
     }
   };
 
-  const newChatAccount = useNewChatAccount(validatedProject?.id, accountGateRefetchInterval);
-  const { account: resolvedAccount, accountResolved, pickedAccountId } = newChatAccount;
-  const isCodexAccount = resolvedAccount?.type === 'codex';
-
-  const hiddenModelFamilies = useAtomValue(hiddenModelsAtom);
   const { lastSelectedModelId, setLastSelectedModelId } = useEffectiveModelForPane(splitPaneIndex);
-  // Claude models: filter by visibility and map to picker items
-  const visibleClaudeModels = useMemo(
-    () => CLAUDE_CODE_MODELS.filter((m) => isClaudeModelVisible(m, hiddenModelFamilies)),
-    [hiddenModelFamilies],
-  );
-  const claudeModelsList = useMemo(
-    () => visibleClaudeModels.map(claudeModelToPickerItem),
-    [visibleClaudeModels],
-  );
-
-  // Codex models: filter by visibility and map to picker items
-  const visibleCodexModels = useMemo(
-    () => CODEX_MODELS.filter((m) => isCodexModelVisible(m, hiddenModelFamilies)),
-    [hiddenModelFamilies],
-  );
-  const codexModelsList = useMemo(
-    () => visibleCodexModels.map(codexModelToPickerItem),
-    [visibleCodexModels],
-  );
-
-  const modelsList = isCodexAccount ? codexModelsList : claudeModelsList;
-  const selectedModel = isCodexAccount
-    ? codexModelToPickerItem(
-        visibleCodexModels.find((m) => m.id === lastSelectedModelId) ??
-          visibleCodexModels[0] ??
-          CODEX_MODELS[0],
-      )
-    : (claudeModelsList.find((m) => m.id === lastSelectedModelId) ?? claudeModelsList[0]);
-
+  // A new chat starts on the stored choice, or the account's default when the account can't use
+  // it. For an installed agent, the stored choice is replaced only when the agent would refuse it.
+  const models = useProviderModels(resolvedAccount?.type, lastSelectedModelId);
+  const { codexCatalog } = models;
+  useNewAgentChatModel(models, lastSelectedModelId, setLastSelectedModelId);
   // Normalize model selection when account type changes (Codex ↔ Claude)
   useModelNormalization(
-    isCodexAccount,
+    resolvedAccount?.type,
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
+    codexCatalog,
   );
 
   // Editor and file input refs
@@ -292,6 +271,7 @@ export function NewChatForm({
     resumeDraftPersistence,
     hasAttachments,
   } = useDraftManagement({ editorRef, setHasContent, draftKey });
+  useTerminalOutputIntake({ chatId: terminalId, addPastedText, editorRef });
 
   // Editor handlers (mentions, slash, paste, drag & drop)
   const editorHandlers = useEditorHandlers({
@@ -367,10 +347,12 @@ export function NewChatForm({
 
       // Navigate + seed per-chat atoms (shared with the goal-first build flow).
       seedNewChatNavigation(appStore.get, appStore.set, data.id, {
-        isCodexAccount,
+        providerId: resolvedAccount?.type,
+        codexCatalog,
         subChatId: data.subChats?.[0]?.id,
         autoModeEnabled: staging.pending.autoMode,
         codexSpeed: staging.pending.codexSpeed,
+        hiddenModes: controls.modes,
       });
 
       // Chat created — keep the scaffolded project and release the send guard.
@@ -467,15 +449,10 @@ export function NewChatForm({
         },
       }));
 
-    // Add code selection as mention (same format as active-chat useMessageSend)
-    // Encode fileName so colons (e.g. Windows drive) don't break delimiter-based parsing
     let mentionPrefix = '';
-    if (codeSelectionContext) {
-      const preview = codeSelectionContext.preview.replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
-      const encodedText = utf8ToBase64(codeSelectionContext.text);
-      const safeFileName = encodeURIComponent(codeSelectionContext.fileName);
-      mentionPrefix = `@[code:${safeFileName}:${codeSelectionContext.startLine}-${codeSelectionContext.endLine}:${preview}:${encodedText}] `;
-    }
+    if (codeSelectionContext) mentionPrefix = `${codeSelectionMention(codeSelectionContext)} `;
+    const fileMention = openFileMention(attachedFile, message);
+    if (fileMention) mentionPrefix += `${fileMention} `;
 
     // Add pasted text as pasted mentions (format: pasted:size:preview|filepath)
     // Use "|" as separator since file paths can contain colons.
@@ -566,6 +543,7 @@ export function NewChatForm({
     images,
     pastedTexts,
     codeSelectionContext,
+    attachedFile,
     chatMode,
     utils,
     accountResolved,
@@ -611,38 +589,21 @@ export function NewChatForm({
       editorRef.current?.clearSlashCommand();
       editorHandlers.handleCloseSlashTrigger();
 
-      // Handle builtin commands
+      // Mode switches act here; every other pick is written into the composer
       if (command.category === 'builtin') {
         switch (command.name) {
           case 'plan':
             if (chatMode !== 'plan') setChatMode('plan');
-            break;
+            return;
           case 'agent':
             if (chatMode !== 'agent') setChatMode('agent');
-            break;
+            return;
           case 'debug':
             if (selectedProject && chatMode !== 'debug') setChatMode('debug');
-            break;
-          // Prompt-based commands - insert as highlighted command block
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
+            return;
         }
-        return;
       }
-
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      insertPickedCommand(editorRef.current, command);
     },
     [chatMode, setChatMode, editorHandlers, selectedProject],
   );
@@ -768,62 +729,21 @@ export function NewChatForm({
                         }
                       }}
                     >
-                      {/* Code selection / active file context chip (same UX as chat input) */}
-                      {(codeSelectionContext || (chatContextFile && !activeFileDismissed)) && (
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {codeSelectionContext ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() => {
-                                    clearCodeSelectionContext();
-                                    setActiveFileDismissed(true);
-                                  }}
-                                  className="flex gap-1 min-h-[44px] min-w-[44px] h-auto px-2 py-1 text-xs rounded-md font-normal"
-                                  aria-label={`Remove code selection and file from context: ${codeSelectionContext.fileName} lines ${codeSelectionContext.startLine}-${codeSelectionContext.endLine}`}
-                                >
-                                  <span className="truncate max-w-[100px]">
-                                    {codeSelectionContext.fileName}
-                                  </span>
-                                  <span className="text-muted-foreground/60">
-                                    L{codeSelectionContext.startLine}-{codeSelectionContext.endLine}
-                                  </span>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {codeSelectionContext.fileName} (L{codeSelectionContext.startLine}-
-                                {codeSelectionContext.endLine})
-                                <br />
-                                Click to remove selection and file from context
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : chatContextFile ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() => setActiveFileDismissed(true)}
-                                  className="flex min-h-[44px] min-w-[44px] h-auto px-2 py-1 text-xs rounded-md font-normal"
-                                  aria-label={`Remove ${chatContextFile.name} from context`}
-                                >
-                                  <span className="truncate max-w-[120px]">
-                                    {chatContextFile.name}
-                                  </span>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {chatContextFile.name} — click to remove from context
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : null}
-                        </div>
-                      )}
                       <EditorSection
                         editorRef={editorRef}
                         images={images}
                         pastedTexts={pastedTexts}
                         attachedTask={taskAttachment.attachedTask}
+                        contextChip={
+                          (codeSelectionContext || attachedFile) && (
+                            <EditorContextChip
+                              selection={codeSelectionContext}
+                              fileName={attachedFile?.name}
+                              onRemoveSelection={clearCodeSelectionContext}
+                              onRemoveFile={() => setActiveFileDismissed(true)}
+                            />
+                          )
+                        }
                         isFocused={editorHandlers.isFocused}
                         isDragOver={editorHandlers.isDragOver}
                         isDisabled={createChatMutation.isPending || scaffoldProject.isPending}
@@ -860,17 +780,27 @@ export function NewChatForm({
                           onModeTooltipChange={setModeTooltip}
                           tooltipTimeoutRef={tooltipTimeoutRef}
                           hasShownTooltipRef={hasShownTooltipRef}
-                          disableDebugMode={!selectedProject}
+                          hiddenModes={
+                            selectedProject ? controls.modes : [...controls.modes, 'debug']
+                          }
                           autoMode={{
                             autoModeRef: staging.autoMode,
                             accountResolved,
                             account: resolvedAccount,
-                            selectedModelId: lastSelectedModelId,
+                            selectedModelId:
+                              models.variant === 'codex'
+                                ? normalizeModelIdForExecutionAccount(
+                                    'codex',
+                                    lastSelectedModelId,
+                                    codexCatalog,
+                                  )
+                                : lastSelectedModelId,
                           }}
-                          selectedModel={selectedModel}
-                          availableModels={modelsList}
+                          selectedModel={models.selected}
+                          availableModels={models.items}
                           onModelChange={(model) => setLastSelectedModelId(model.id)}
-                          modelVariant={isCodexAccount ? 'codex' : 'claude'}
+                          modelVariant={models.variant}
+                          modelHint={models.hint}
                           isModelDropdownOpen={isModelDropdownOpen}
                           onModelDropdownOpenChange={setIsModelDropdownOpen}
                           onOpenModelSettings={handleOpenModelSettings}
@@ -939,6 +869,7 @@ export function NewChatForm({
                         projectPath={localProjectPath}
                         hasProject={Boolean(selectedProject)}
                         chatMode={chatMode}
+                        disabledCommands={controls.commands}
                         onCreateCommand={commandEditor.openCreate}
                         onEditCommand={commandEditor.openEdit}
                         onForkCommand={commandEditor.handleFork}

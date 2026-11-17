@@ -1,11 +1,15 @@
 import { Button } from '@benord-labs/frink-primitives';
 import type { ReactNode } from 'react';
+import { useAtomValue } from 'jotai';
 import { memo } from 'react';
+import { chatContextFileAtomFamily } from '@/lib/code-editor/state';
+import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
 import { NoAccountsEmptyState } from '../../../components/no-accounts-empty-state';
-import type { PastedTextFile } from '../../../hooks/use-pasted-text-files';
+import type { PastedTextFile, PastedTextOptions } from '../../../hooks/use-pasted-text-files';
 import type { CodeSelectionContext, DiffTextContext } from '../../../lib/queue-utils';
 import { ChatInputArea } from '../../chat-input-area';
 import type { ComposerForwardedProps } from '../types';
+import type { UnauthAccountForSend } from '../utils';
 
 type Props = ComposerForwardedProps & {
   // Required here, optional on ChatInputArea — this surface always supplies them.
@@ -17,7 +21,7 @@ type Props = ComposerForwardedProps & {
   activeFileDismissed: boolean;
   onDismissActiveFile: () => void;
   pastedTexts: PastedTextFile[];
-  onAddPastedText: (text: string) => Promise<void>;
+  onAddPastedText: (text: string, options?: PastedTextOptions) => Promise<void>;
   onRemovePastedText: (id: string) => void;
   isMobile: boolean;
   queueLength: number;
@@ -32,7 +36,7 @@ type Props = ComposerForwardedProps & {
   /** Refetch execution account (shown on error). */
   onRetryResolvedAccount?: () => void;
   /** Unauthenticated account info for the reconnect CTA. Null when no account is configured at all. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
 };
 
 /** ChatInputSection — the composer, or an account state in its place, in ChatDock's stack.
@@ -69,7 +73,6 @@ export const ChatInputSection = memo(function ChatInputSection({
   parentChatId,
   teamId,
   repository,
-  sandboxId,
   projectPath,
   projectId,
   changedFiles,
@@ -84,6 +87,9 @@ export const ChatInputSection = memo(function ChatInputSection({
   onRetryResolvedAccount,
   unauthAccount = null,
 }: Props): ReactNode {
+  useTerminalOutputIntake({ chatId: parentChatId, addPastedText: onAddPastedText, editorRef });
+  const activeFilePath = useAtomValue(chatContextFileAtomFamily(parentChatId))?.path ?? null;
+
   // Full composer width, like NoAccountsEmptyState's compact card: the transcript scrolls under it.
   const composerCardClass =
     'w-full rounded-2xl composer-slot-surface border border-border glass-float text-center shadow-xs ring-1 ring-inset ring-foreground/4 space-y-3 p-5';
@@ -111,6 +117,7 @@ export const ChatInputSection = memo(function ChatInputSection({
       codeSelectionContext={codeSelectionContext}
       onClearCodeSelection={onClearCodeSelection}
       activeFileName={activeFileName}
+      activeFilePath={activeFilePath}
       activeFileDismissed={activeFileDismissed}
       onDismissActiveFile={onDismissActiveFile}
       pastedTexts={pastedTexts}
@@ -121,7 +128,6 @@ export const ChatInputSection = memo(function ChatInputSection({
       parentChatId={parentChatId}
       teamId={teamId}
       repository={repository}
-      sandboxId={sandboxId}
       projectPath={projectPath}
       projectId={projectId}
       changedFiles={changedFiles}
@@ -184,6 +190,7 @@ export const ChatInputSection = memo(function ChatInputSection({
       codeSelectionContext={codeSelectionContext}
       onClearCodeSelection={onClearCodeSelection}
       activeFileName={activeFileName}
+      activeFilePath={activeFilePath}
       activeFileDismissed={activeFileDismissed}
       onDismissActiveFile={onDismissActiveFile}
       pastedTexts={pastedTexts}
@@ -194,7 +201,6 @@ export const ChatInputSection = memo(function ChatInputSection({
       parentChatId={parentChatId}
       teamId={teamId}
       repository={repository}
-      sandboxId={sandboxId}
       projectPath={projectPath}
       projectId={projectId}
       changedFiles={changedFiles}

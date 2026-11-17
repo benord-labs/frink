@@ -358,6 +358,95 @@ describe('the session-lifetime reader', () => {
   });
 });
 
+/** What the CLI streams after the main reply's `result` while one backgrounded Agent works: the
+ * subagent's own frames, a notification for the subagent's own Bash call, and stream noise. */
+const backgroundSubagentFrames = (): SDKMessage[] => [
+  msg('assistant', { parent_tool_use_id: 'toolu_agent' }),
+  msg('system', { subtype: 'task_progress' }),
+  msg('system', { subtype: 'task_notification', status: 'completed' }),
+  msg('user', { parent_tool_use_id: 'toolu_agent' }),
+  msg('rate_limit_event'),
+];
+
+describe('a background subagent working while the main agent idles', () => {
+  beforeEach(() => {
+    __resetSessionsForTest();
+    __resetSubagentTaskStatusForTest();
+  });
+
+  it('opens no wake burst until the main agent itself starts a turn', async () => {
+    const ch = channelQuery();
+    const session = createSession('bg-subagent', () => ch.query);
+    const log = newLog();
+    armIdle(session, wakeCallbacks(log));
+    for (const frame of backgroundSubagentFrames()) ch.emit(frame);
+    await vi.waitFor(() => expect(ch.reads()).toBeGreaterThan(5));
+    expect(log.starts).toBe(0);
+
+    ch.emit(msg('system', { subtype: 'init' }));
+    ch.emit(msg('assistant', { parent_tool_use_id: null }));
+    ch.emit(resultMsg());
+    await vi.waitFor(() => expect(log.ends).toBe(1));
+    expect(log.starts).toBe(1);
+  });
+
+  it('pushes a message sent meanwhile straight to the CLI instead of parking it', async () => {
+    const ch = channelQuery();
+    const session = createSession('bg-subagent-send', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    for (const frame of backgroundSubagentFrames()) ch.emit(frame);
+    await vi.waitFor(() => expect(ch.reads()).toBeGreaterThan(5));
+
+    const pushed = vi.fn();
+    const taken = arming.startTurn(userTurn('follow-up'), () => {}, undefined, pushed);
+    await vi.waitFor(() => expect(pushed).toHaveBeenCalledOnce());
+    ch.emit(resultMsg());
+    await taken;
+    expect(await arming.done).toEqual({ reason: 'turn-taken-over' });
+  });
+
+  it("keeps the still-streaming subagent's frames out of the user's new reply", async () => {
+    const ch = channelQuery();
+    const session = createSession('bg-subagent-reply', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    const seen: string[] = [];
+    const taken = arming.startTurn(userTurn('follow-up'), (m) => {
+      seen.push(`${m.type}:${('parent_tool_use_id' in m && m.parent_tool_use_id) || 'root'}`);
+    });
+    for (const frame of backgroundSubagentFrames()) ch.emit(frame);
+    ch.emit(msg('assistant'));
+    ch.emit(resultMsg());
+    await taken;
+    expect(seen.filter((s) => !s.startsWith('system'))).toEqual([
+      'rate_limit_event:root',
+      'assistant:root',
+      'result:root',
+    ]);
+  });
+
+  // The CLI may run the notification's own wake turn before the user's message.
+  it('resolves a message sent between a notification and its wake turn only on its own result', async () => {
+    const ch = channelQuery();
+    const session = createSession('bg-notification-window', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    ch.emit(msg('system', { subtype: 'task_notification', status: 'completed' }));
+    await vi.waitFor(() => expect(ch.reads()).toBeGreaterThan(1));
+
+    let settled = false;
+    const taken = arming.startTurn(userTurn('follow-up'), () => {}).then(() => (settled = true));
+    ch.emit(msg('system', { subtype: 'init' }));
+    ch.emit(msg('assistant'));
+    ch.emit(msg('result', { subtype: 'success', origin: { kind: 'task-notification' } }));
+    await vi.waitFor(() => expect(ch.reads()).toBeGreaterThan(4));
+    expect(settled).toBe(false);
+
+    ch.emit(msg('assistant'));
+    ch.emit(resultMsg());
+    await taken;
+    expect(await arming.done).toEqual({ reason: 'turn-taken-over' });
+  });
+});
+
 /**
  * The wait's liveness rule ends its ADVERTISEMENT and closes stdin; it never stops the reader. The
  * CLI writes complete queued turns for seconds after EOF, so a consumer that stopped there lost
@@ -606,10 +695,15 @@ describe('a wait that is over', () => {
       await vi.advanceTimersByTimeAsync(1_000);
 
       expect(await arming.done).toEqual({ reason: 'work-finished', bursts: 1 });
+      // Nothing followed the close: this is the wedged CLI, told apart from a reap over late work.
       expect(captureMainMessage).toHaveBeenCalledWith(
         expect.stringContaining('never exited'),
         'warning',
-        expect.objectContaining({ surface: 'wake-pump-stand-down' }),
+        expect.objectContaining({
+          surface: 'wake-pump-stand-down',
+          burstsSinceClose: '0',
+          sinceLastBurstMs: expect.stringMatching(/^6000\d$/),
+        }),
       );
     } finally {
       vi.useRealTimers();
@@ -656,6 +750,80 @@ describe('a wait that is over', () => {
         'warning',
         expect.objectContaining({ surface: 'wake-pump-stand-down' }),
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  // A task's own frames are ambient, so the quiet clock that restarted when the burst opened is
+  // the only one running: work a burst launches after stdin closed is ended with the silence.
+  it('reaps work a burst launched after stdin closed, once that burst has gone quiet', async () => {
+    vi.useFakeTimers();
+    try {
+      const ch = channelQuery();
+      const session = createSession('reap-launched', () => ch.query);
+      const arming = armIdle(
+        session,
+        wakeCallbacks(newLog(), () => true),
+      );
+
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(session.queue.closed).toBe(true);
+
+      ch.emit(msg('assistant'));
+      ch.emit(msg('system', { subtype: 'task_started', task_id: 'late' }));
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(arming.isEnded()).toBe(false);
+
+      for (let i = 0; i < 7; i++) {
+        ch.emit(ambient()); // the launched task reporting progress
+        ch.emit(msg('assistant', { parent_tool_use_id: 'toolu_late' })); // or a subagent working
+        await vi.advanceTimersByTimeAsync(10_000);
+      }
+
+      expect(await arming.done).toEqual({ reason: 'work-finished', bursts: 2 });
+      expect(captureMainMessage).toHaveBeenCalledWith(
+        expect.stringContaining('never exited'),
+        'warning',
+        // Measured from the burst's first frame, not its result or the task's last heartbeat.
+        expect.objectContaining({
+          subChatId: 'reap-launched',
+          burstsSinceClose: '1',
+          sinceLastBurstMs: expect.stringMatching(/^6000\d$/),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holds the reap while the launched work reports back inside the quiet window', async () => {
+    vi.useFakeTimers();
+    try {
+      const ch = channelQuery();
+      const session = createSession('reap-reported', () => ch.query);
+      const arming = armIdle(
+        session,
+        wakeCallbacks(newLog(), () => true),
+      );
+
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(0);
+      ch.emit(msg('assistant'));
+      ch.emit(msg('system', { subtype: 'task_started', task_id: 'late' }));
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(50_000);
+
+      // Its completion's wake turn opens a burst of its own: the clock restarts and nothing ends it.
+      ch.emit(msg('system', { subtype: 'task_notification', status: 'completed' }));
+      ch.emit(msg('system', { subtype: 'init' }));
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(arming.isEnded()).toBe(false);
+
+      ch.emit(resultMsg());
+      ch.end();
+      expect(await arming.done).toEqual({ reason: 'work-finished', bursts: 3 });
     } finally {
       vi.useRealTimers();
     }

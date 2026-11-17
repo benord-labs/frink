@@ -1,9 +1,8 @@
 /**
  * Redaction-safe semantic receipt for a Flow graph patch.
  *
- * The MCP response still contains the full graph for agents. Chat renderers must
- * prefer this projection so node config, instructions, paths, and secret-like
- * values never become presentation copy by accident.
+ * The MCP response echoes only this topology, so node config, instructions, paths,
+ * and secret-like values never reach the receipt or become presentation copy.
  */
 
 export type FlowChangeMode = 'create' | 'update';
@@ -83,6 +82,8 @@ export type FlowChangePhase =
   | 'unchanged'
   | 'failed'
   | 'unconfirmed'
+  /** The tool returned a result the harness would not hand over, so its outcome is unread. */
+  | 'unread'
   | 'denied'
   | 'stale'
   | 'interrupted';

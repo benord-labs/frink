@@ -2,7 +2,7 @@
  * Derives the Flow editor "Run batch" button state from the batch's stage detail (the already-
  * fetched trpc.flows.listBatchStages output). The primary (one-click) action adapts to where the
  * batch is: never-run → start it; running → disable it; already run → disable it, since recovery
- * is per-member (Retry / Carry on in each run's chat), not a whole-batch action. No new query.
+ * is per-member (Continue / Retry in each run's chat), not a whole-batch action. No new query.
  */
 
 type BatchPrimaryAction = 'start' | 'running' | 'unavailable';

@@ -6,12 +6,20 @@
  * when it should test the packaged copy (or vice versa). The native load itself only
  * runs under Electron in CI; this is the one branch worth unit-pinning.
  */
+import { cpSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { isAbsolute, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { isAbsolute, join, resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { resolveModulesRoot } = require('./smoke-native.cjs');
+const {
+  checkCursorPlatform,
+  cursorPlatformDir,
+  packedEntry,
+  packedModulesRoot,
+  resolveModulesRoot,
+} = require('./smoke-native.cjs');
 
 describe('resolveModulesRoot', () => {
   it('honours an explicit FRINK_SMOKE_MODULES_ROOT override even when a packaged build exists', () => {
@@ -40,5 +48,78 @@ describe('resolveModulesRoot', () => {
 
   it('falls back to dev node_modules with no override and no packaged build', () => {
     expect(resolveModulesRoot({}, false)).toBe(resolve('node_modules'));
+  });
+});
+
+describe('packedModulesRoot', () => {
+  it('looks for plain JavaScript in app.asar beside the unpacked native modules', () => {
+    expect(packedModulesRoot('/r/resources/app.asar.unpacked/node_modules')).toBe(
+      '/r/resources/app.asar/node_modules',
+    );
+    expect(packedModulesRoot('/repo/node_modules')).toBe('/repo/node_modules');
+  });
+});
+
+describe('packedEntry', () => {
+  it('picks the ES module build the main process imports, not the CommonJS one', () => {
+    const root = realpathSync('node_modules');
+    expect(packedEntry(root, '@github/copilot-sdk')).toBe(
+      join(root, '@github/copilot-sdk/dist/index.js'),
+    );
+    expect(packedEntry(root, '@agentclientprotocol/sdk')).toBe(
+      join(root, '@agentclientprotocol/sdk/dist/acp.js'),
+    );
+  });
+});
+
+describe('cursorPlatformDir', () => {
+  it('finds the platform package beside a packaged Linux or macOS app', () => {
+    expect(
+      cursorPlatformDir('/opt/Frink/resources/app.asar.unpacked/node_modules', 'linux', 'arm64'),
+    ).toBe('/opt/Frink/resources/node_modules/@cursor/sdk-linux-arm64');
+    const mac = '/A/Frink.app/Contents/Resources/app.asar.unpacked/node_modules';
+    expect(cursorPlatformDir(mac, 'darwin', 'x64')).toBe(
+      '/A/Frink.app/Contents/Resources/node_modules/@cursor/sdk-darwin-x64',
+    );
+  });
+
+  it('skips Windows, which ships no Cursor, and a dev node_modules', () => {
+    expect(
+      cursorPlatformDir('/r/resources/app.asar.unpacked/node_modules', 'win32', 'x64'),
+    ).toBeNull();
+    expect(cursorPlatformDir('/repo/node_modules', 'linux', 'x64')).toBeNull();
+  });
+});
+
+const installedCursor = resolve('node_modules/@cursor', `sdk-${process.platform}-${process.arch}`);
+const copies = [];
+
+/** A temp copy of this machine's installed Cursor platform package holding only `parts`. */
+function partialCopy(parts) {
+  const copy = mkdtempSync(join(tmpdir(), 'frink-smoke-cursor-'));
+  copies.push(copy);
+  for (const part of parts)
+    cpSync(join(installedCursor, part), join(copy, part), { recursive: true });
+  return copy;
+}
+
+describe('checkCursorPlatform', () => {
+  afterEach(() => {
+    for (const copy of copies.splice(0)) rmSync(copy, { recursive: true, force: true });
+  });
+
+  it('accepts the installed platform package and loads both shell parsers', () => {
+    expect(() => checkCursorPlatform(installedCursor)).not.toThrow();
+  });
+
+  it('needs only rg, since Frink never starts cursorsandbox', () => {
+    expect(() => checkCursorPlatform(partialCopy(['bin/rg', 'vendor']))).not.toThrow();
+  });
+
+  it('fails without rg or a loadable shell parser', () => {
+    expect(() => checkCursorPlatform(partialCopy(['vendor']))).toThrow(/no rg/);
+    expect(() => checkCursorPlatform(partialCopy(['bin/rg', 'vendor/tree-sitter']))).toThrow(
+      /tree-sitter-bash/,
+    );
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAdjacency,
   canReachInGraph,
+  findCyclicComponents,
   flowGraphHasDirectedCycle,
   wouldNewEdgeCreateCycle,
 } from './flow-graph-cycle';
@@ -122,5 +123,51 @@ describe('flowGraphHasDirectedCycle', () => {
         ],
       }),
     ).toBe(false);
+  });
+});
+
+describe('findCyclicComponents', () => {
+  const nodes = (...ids: string[]) => ids.map((id) => ({ id }));
+
+  it('returns nothing for an acyclic graph', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ];
+    expect(findCyclicComponents({ nodes: nodes('a', 'b', 'c'), edges })).toEqual([]);
+  });
+
+  it('returns a single node that loops to itself', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'b' },
+    ];
+    expect(findCyclicComponents({ nodes: nodes('a', 'b'), edges })).toEqual([['b']]);
+  });
+
+  it('returns each disjoint cycle with members in node order', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'a' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'e' },
+      { source: 'e', target: 'd' },
+      { source: 'd', target: 'c' },
+    ];
+    const components = findCyclicComponents({
+      nodes: nodes('a', 'b', 'c', 'd', 'e'),
+      edges,
+    });
+    expect(components).toHaveLength(2);
+    expect(components).toContainEqual(['a', 'b']);
+    expect(components).toContainEqual(['c', 'd', 'e']);
+  });
+
+  it('ignores edges to nodes that are not in the graph', () => {
+    const edges = [
+      { source: 'a', target: 'ghost' },
+      { source: 'ghost', target: 'a' },
+    ];
+    expect(findCyclicComponents({ nodes: nodes('a'), edges })).toEqual([]);
   });
 });

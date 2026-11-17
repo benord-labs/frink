@@ -36,6 +36,10 @@ describe('describeToolSwitch (sc-840 at-switch toast copy)', () => {
     expect(describeToolSwitch(undefined, undefined)).toBeNull();
     expect(describeToolSwitch('codex', undefined)).toBeNull();
   });
+
+  it('a provider with no checked sentence → null, never the Claude or OpenAI copy', () => {
+    expect(describeToolSwitch('claude-code', 'opencode')).toBeNull();
+  });
 });
 
 describe('notifyToolSwitch', () => {

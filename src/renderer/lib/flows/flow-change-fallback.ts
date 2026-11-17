@@ -11,6 +11,8 @@ const SETTINGS_LABELS: Record<string, string> = {
   defaultModel: 'Default model',
   defaultProjectId: 'Default project',
   briefing: 'Flow briefing',
+  runFirst: 'Priority queue',
+  runFirstWhen: 'Priority queue rule',
   pauseOnFailure: 'Failure handling',
   maxBatchConcurrency: 'Batch concurrency',
   batchTriggerSchema: 'Batch trigger inputs',
@@ -131,6 +133,16 @@ function describeSettingsChange(
   };
 }
 
+function describeLayoutReset(common: FallbackChangeCommon): FlowSemanticChange {
+  return {
+    ...common,
+    action: 'update',
+    kind: 'settings',
+    label: 'Canvas layout',
+    detail: 'Reset to automatic layout',
+  };
+}
+
 type FallbackChangeHandler = (
   operation: Record<string, unknown>,
   common: FallbackChangeCommon,
@@ -145,6 +157,7 @@ const FALLBACK_CHANGE_HANDLERS = new Map<string, FallbackChangeHandler>([
   ['update_edge', describeExistingEdge],
   ['remove_edge', describeExistingEdge],
   ['update_settings', describeSettingsChange],
+  ['auto_layout', (_operation, common) => describeLayoutReset(common)],
 ]);
 
 export function describeFallbackFlowChange(

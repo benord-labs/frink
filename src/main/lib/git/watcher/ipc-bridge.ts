@@ -1,25 +1,9 @@
-import * as path from 'node:path';
 import { type BrowserWindow, ipcMain } from 'electron';
 import { invalidateFileListCache, invalidateGitStatusCache } from '../../trpc/routers/files';
 import { gitCache } from '../cache';
 import { isGitPointerRelatedPath } from './git-head-path';
 import { type GitWatchEvent, gitWatcherRegistry } from './git-watcher';
-
-/** IDE config directories that trigger discovery notifications.
- *  Note: .cursor/mcp.json is excluded — MCP has its own auto-import pipeline (`runMcpImporter`). */
-const IDE_CONFIG_PATTERNS = [
-  '.cursor/agents/',
-  '.cursor/skills/',
-  '.cursor/commands/',
-  '.cursor/hooks/',
-  '.claude/agents/',
-  '.claude/skills/',
-  '.claude/commands/',
-  '.claude/hooks/',
-];
-
-const BACKSLASH_RE = /\\/g;
-const TRAILING_SLASH_RE = /\/$/;
+import { findIdeConfigPattern } from './ide-config-path';
 
 /** Check if a file change is in an IDE config directory */
 function getIdeConfigChanges(
@@ -28,19 +12,25 @@ function getIdeConfigChanges(
 ): Array<{ path: string; type: string; resourceType: string; origin: string }> {
   const results: Array<{ path: string; type: string; resourceType: string; origin: string }> = [];
   for (const change of changes) {
-    // Get relative path from worktree
-    const relPath = path.relative(worktreePath, change.path).replace(BACKSLASH_RE, '/');
-    for (const pattern of IDE_CONFIG_PATTERNS) {
-      if (relPath.startsWith(pattern) || relPath === pattern.replace(TRAILING_SLASH_RE, '')) {
-        const parts = pattern.split('/');
-        const origin = parts[0].replace('.', ''); // 'cursor' or 'claude'
-        const resourceType = parts[1]; // 'agents', 'skills', 'commands', or 'hooks'
-        results.push({ path: change.path, type: change.type, resourceType, origin });
-        break;
-      }
-    }
+    const pattern = findIdeConfigPattern(worktreePath, change.path);
+    if (!pattern) continue;
+    const parts = pattern.split('/');
+    const origin = parts[0].replace('.', ''); // 'cursor' or 'claude'
+    const resourceType = parts[1]; // 'agents', 'skills', 'commands', or 'hooks'
+    results.push({ path: change.path, type: change.type, resourceType, origin });
   }
   return results;
+}
+
+/** `later` carrying the changes of a held-back `earlier` event too, so no changed path is lost. */
+function withEarlierChanges(
+  earlier: GitWatchEvent | undefined,
+  later: GitWatchEvent,
+): GitWatchEvent {
+  if (!earlier) return later;
+  const laterPaths = new Set(later.changes.map((change) => change.path));
+  const carried = earlier.changes.filter((change) => !laterPaths.has(change.path));
+  return { ...later, changes: [...carried, ...later.changes] };
 }
 
 function hasGitPointerChange(changes: Array<{ path: string; type: string }>): boolean {
@@ -76,26 +66,13 @@ const EVENT_THROTTLE_MS = 500; // Minimum 500ms between events to renderer
  * Call this once during app initialization.
  */
 export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): void {
-  const forwardStatusChangeToRenderer = (
-    event: GitWatchEvent,
-    containsGitPointerChange: boolean,
-  ): void => {
+  const forwardStatusChangeToRenderer = (event: GitWatchEvent): void => {
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
 
     const worktreePath = event.worktreePath;
     gitCache.invalidateStatus(worktreePath);
     gitCache.invalidateParsedDiff(worktreePath);
-    if (containsGitPointerChange) {
-      gitCache.invalidateAllFileContents(worktreePath);
-    } else {
-      for (const change of event.changes) {
-        if (isGitPointerRelatedPath(change.path)) continue;
-        const relativePath = path.relative(worktreePath, change.path).replace(BACKSLASH_RE, '/');
-        if (!relativePath || relativePath.startsWith('..')) continue;
-        gitCache.invalidateFileContentsByPath(worktreePath, relativePath);
-      }
-    }
     invalidateGitStatusCache(worktreePath);
     invalidateFileListCache(worktreePath);
 
@@ -166,7 +143,10 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
       const now = Date.now();
       const lastTime = lastEventTime.get(eventWorktreePath) || 0;
       if (!containsGitPointerChange && now - lastTime < EVENT_THROTTLE_MS) {
-        pendingEventByWorktree.set(eventWorktreePath, event);
+        pendingEventByWorktree.set(
+          eventWorktreePath,
+          withEarlierChanges(pendingEventByWorktree.get(eventWorktreePath), event),
+        );
         if (!pendingEventTimerByWorktree.has(eventWorktreePath)) {
           const delay = EVENT_THROTTLE_MS - (now - lastTime);
           const timer = setTimeout(() => {
@@ -175,17 +155,17 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
             if (!pendingEvent) return;
             pendingEventByWorktree.delete(eventWorktreePath);
             lastEventTime.set(eventWorktreePath, Date.now());
-            forwardStatusChangeToRenderer(pendingEvent, hasGitPointerChange(pendingEvent.changes));
+            forwardStatusChangeToRenderer(pendingEvent);
           }, delay);
           pendingEventTimerByWorktree.set(eventWorktreePath, timer);
         }
         return;
       }
-      if (containsGitPointerChange) {
-        clearPendingEventForWorktree(eventWorktreePath);
-      }
+      // A pointer event jumps the queue; it takes the held-back changes with it
+      const heldBack = pendingEventByWorktree.get(eventWorktreePath);
+      clearPendingEventForWorktree(eventWorktreePath);
       lastEventTime.set(eventWorktreePath, now);
-      forwardStatusChangeToRenderer(event, containsGitPointerChange);
+      forwardStatusChangeToRenderer(withEarlierChanges(heldBack, event));
     });
 
     const subscription: WatcherSubscription = { ready, count: 1 };

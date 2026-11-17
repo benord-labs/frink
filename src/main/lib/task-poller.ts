@@ -5,12 +5,23 @@
 
 import { EventEmitter } from 'node:events';
 import { hostname } from 'node:os';
+import log from 'electron-log';
 import { getDatabase } from './db';
 import { claimTask, getPendingTaskIds } from './db/repos/tasks';
 import { computeExponentialBackoffMs } from './retry-backoff';
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds
 const MAX_BACKOFF_MS = 30000;
+const BACKOFF_JITTER_MAX_MS = 1000;
+
+export type TaskPollerDeps = {
+  getDatabase: typeof getDatabase;
+  getPendingTaskIds: typeof getPendingTaskIds;
+  claimTask: typeof claimTask;
+  log: Pick<typeof log, 'warn' | 'error'>;
+};
+
+const defaultDeps: TaskPollerDeps = { getDatabase, getPendingTaskIds, claimTask, log };
 
 class TaskPoller extends EventEmitter {
   private interval: NodeJS.Timeout | null = null;
@@ -19,6 +30,10 @@ class TaskPoller extends EventEmitter {
   private isPaused = false;
   private consecutiveFailures = 0;
   private backoffUntilMs = 0;
+
+  constructor(private readonly deps: TaskPollerDeps = defaultDeps) {
+    super();
+  }
 
   /**
    * Start the polling loop
@@ -88,31 +103,35 @@ class TaskPoller extends EventEmitter {
     if (this.isPaused || this.isPolling || !this.machineId) {
       return;
     }
-    if (Date.now() < this.backoffUntilMs) {
+    // Monotonic clock: a wall-clock jump (NTP, manual change) must not stretch or cancel a backoff.
+    if (performance.now() < this.backoffUntilMs) {
       return;
     }
 
     this.isPolling = true;
-    this.emit('poll:start');
+    this.emitSafely('poll:start');
 
     try {
       let tasks: { id: string }[];
       try {
-        tasks = await getPendingTaskIds(getDatabase(), 1);
-        this.resetBackoff();
+        tasks = await this.deps.getPendingTaskIds(this.deps.getDatabase(), 1);
       } catch (error) {
-        if (error instanceof TypeError) {
-          this.scheduleBackoff();
-          this.emit('poll:complete', 0);
-          return;
-        }
-        throw error;
+        // Any failure to read the queue (SQLITE_BUSY, disk I/O, DB init/migration)
+        // backs off — retrying every tick would hammer a failing database.
+        this.deps.log.warn(
+          '[task-poller] Failed to fetch pending tasks; backing off',
+          this.scheduleBackoff(),
+          error,
+        );
+        this.emitSafely('task:error', error);
+        this.emitSafely('poll:complete', 0);
+        return;
       }
 
-      this.emit('poll:complete', tasks.length);
+      this.emitSafely('poll:complete', tasks.length);
 
       if (tasks.length === 0) {
-        this.isPolling = false;
+        this.resetBackoff();
         return;
       }
 
@@ -120,7 +139,7 @@ class TaskPoller extends EventEmitter {
       const task = tasks[0];
       await this.processTask(task);
     } catch (error) {
-      this.emit('task:error', error as Error);
+      this.emitSafely('task:error', error);
     } finally {
       this.isPolling = false;
     }
@@ -132,19 +151,42 @@ class TaskPoller extends EventEmitter {
   private async processTask(task: { id: string }): Promise<void> {
     if (!this.machineId) return;
 
+    let claimed: Awaited<ReturnType<TaskPollerDeps['claimTask']>>;
     try {
       // Atomic claim — prevents double-claim within this process. Single
       // electron instance owns the local DB, so cross-machine races vanish.
-      const claimed = await claimTask(getDatabase(), task.id, this.machineId);
+      claimed = await this.deps.claimTask(this.deps.getDatabase(), task.id, this.machineId);
+    } catch (error) {
+      // The claim is a DB write, so it fails the same way the read does.
+      this.deps.log.warn(
+        '[task-poller] Failed to claim task; backing off',
+        this.scheduleBackoff(),
+        error,
+      );
+      this.emitSafely('task:error', error, task);
+      return;
+    }
+    this.resetBackoff();
 
-      if (!claimed) {
-        return;
-      }
+    if (!claimed) {
+      return;
+    }
 
+    try {
       // Emit for execution handler (3.3 will handle this)
       this.emit('task:claimed', claimed);
     } catch (error) {
-      this.emit('task:error', error as Error, task);
+      this.emitSafely('task:error', error, task);
+    }
+  }
+
+  // A throwing listener must not reject poll(): on the first poll that would reject
+  // start() before the interval exists, so polling would never start.
+  private emitSafely(event: string, ...args: unknown[]): void {
+    try {
+      this.emit(event, ...args);
+    } catch (listenerError) {
+      this.deps.log.error(`[task-poller] A '${event}' listener threw`, listenerError);
     }
   }
 
@@ -153,14 +195,15 @@ class TaskPoller extends EventEmitter {
     this.backoffUntilMs = 0;
   }
 
-  private scheduleBackoff(): void {
+  private scheduleBackoff() {
     this.consecutiveFailures = Math.min(this.consecutiveFailures + 1, 6);
     const retryDelayMs = computeExponentialBackoffMs(this.consecutiveFailures, {
       baseMs: POLL_INTERVAL_MS,
       maxMs: MAX_BACKOFF_MS,
-      jitterMaxMs: 1000,
+      jitterMaxMs: BACKOFF_JITTER_MAX_MS,
     });
-    this.backoffUntilMs = Date.now() + retryDelayMs;
+    this.backoffUntilMs = performance.now() + retryDelayMs;
+    return { consecutiveFailures: this.consecutiveFailures, retryInMs: retryDelayMs };
   }
 }
 

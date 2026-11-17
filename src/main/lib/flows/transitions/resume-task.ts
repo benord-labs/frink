@@ -1,11 +1,11 @@
-import { eq } from 'drizzle-orm';
 import { type TaskResultRecord, taskResultSchema } from '../../../../shared/types/task-result';
 import type { getDatabase } from '../../db';
 import { resumeQuietIdlePark } from '../../db/repos/task-parking/quiet-marker';
 import { scrubResumedResult } from '../../db/repos/task-parking/resume-scrub';
 import { parseResultRecord, updateTaskStatus } from '../../db/repos/tasks';
-import { type NodeRun, type Task, tasks } from '../../db/schema';
-import { flowStillRunning, reviveMarkedNode, unparkFlowCommand } from './unpark';
+import type { NodeRun, Task } from '../../db/schema';
+import { readRun } from './run-rows';
+import { flowStillRunning, hasActiveSlot, unparkFlowCommand } from './unpark';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -43,26 +43,6 @@ function resumedResult(
   });
 }
 
-/** Revives a restart-interrupted run in place for a chat follow-up: its cancelled driving task and
- * marked node back to running. The follow-up turn continues the work, so nothing is re-dispatched. */
-export function reviveInPlaceCommand(
-  db: Db,
-  taskId: string,
-  flowRunId: string,
-  now = new Date(),
-): NodeRun | null {
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-  if (task?.status !== 'cancelled') return null;
-  const node = reviveMarkedNode(db, flowRunId);
-  if (node) {
-    updateTaskStatus(db, taskId, 'running', {
-      result: resumedResult(task, 'follow_up_message', now),
-      expectStatuses: ['cancelled'],
-    });
-  }
-  return node;
-}
-
 /** A parked task back to running together with its flow; null when the task left its park. A
  * follow-up keeps the task running when the flow cannot follow; a wake or a plan approval then
  * writes nothing. */
@@ -87,6 +67,12 @@ function resumeTaskThenFlow(
   now: Date,
 ): ResumedTask | null {
   if (isPlanApprovalResume(task, resumedBy)) return approvePlanThenFlow(db, task, now);
+  // A paused run that gave its slot up continues only once a resume ticket takes it back, so the
+  // task stays parked instead of running ahead of its flow.
+  const { flowRunId } = task;
+  if (flowRunId && readRun(db, flowRunId)?.status === 'paused' && !hasActiveSlot(db, flowRunId)) {
+    throw new ResumeDeclined();
+  }
   const result = resumedResult(task, resumedBy, now);
   // A wake holds only while the row is still the exact quiet-idle park it read.
   const resumed =

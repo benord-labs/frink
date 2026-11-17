@@ -25,7 +25,7 @@ import {
   _registerExecutionForTests,
 } from '../streaming/execution-registry';
 import { answeringCli, replies } from './claude-warm-session';
-import { mockQuery, never } from './claude-turn-abort';
+import { mockQuery, never } from './claude-query-fake';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type PrewarmHarness = Pick<ExecutorPermissionHarness, 'basePayload' | 'handleRemoteExecute'> & {
@@ -438,6 +438,16 @@ function registerSkipTests(claudeQueryMock: PrewarmHarness['claudeQueryMock'], s
       'not-claude',
       () =>
         vi.mocked(getClaudeCodeTokenById).mockResolvedValueOnce({ ...credential, type: 'codex' }),
+    ],
+    [
+      'not-claude',
+      () =>
+        vi.mocked(getClaudeCodeTokenById).mockResolvedValueOnce({
+          ...credential,
+          token: null,
+          type: 'opencode',
+          passthrough: true,
+        }),
     ],
     [
       'login-removed',

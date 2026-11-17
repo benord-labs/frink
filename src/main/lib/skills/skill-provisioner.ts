@@ -18,8 +18,8 @@
  *
  * Because the per-tool copies are now independent of the canonical store, an
  * edit to a projected copy diverges from `~/.frink/skills` (a symlink edit used
- * to write through to it). A shipped update then preserves+warns on the edited
- * copy rather than overwriting it (see `skill-projection` reconcile). The copy
+ * to write through to it). A shipped update then keeps the edited files of that
+ * copy and updates the rest of it (see `skill-projection` reconcile). The copy
  * path also needs no Windows symlink/Developer-Mode permission, removing a prior
  * silent "skipped" failure mode.
  *
@@ -28,25 +28,18 @@
  */
 
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
 import log from 'electron-log';
 import { canonicalStringify } from '../../../shared/lib/canonical-stringify';
 import { getFrinkSkillsDir } from '../frink-skills-dir';
 import { ensureDirExistsAsync } from '../fs-helpers';
 import { resolveElectronResourcePath } from '../platform/electron-resource-path';
 import { captureContained } from '../sentry';
-import { replaceDir, sha256 } from './skill-fs';
+import { type Baseline, copyFiles, readBaseline, replaceDir, sha256 } from './skill-fs';
 import { projectSkill } from './skill-projection';
 
 const SKILLS_TO_PROVISION: readonly string[] = ['frink-flows'];
-
-type BaselineFile = { sha256: string; bytes: number };
-type Baseline = {
-  generatedAt: string;
-  version: string;
-  files: Record<string, BaselineFile>;
-};
 
 export type ProvisionOutcome = {
   skill: string;
@@ -87,16 +80,6 @@ function baselinesEqual(a: Baseline, b: Baseline): boolean {
     canonicalStringify({ version: a.version, files: a.files }) ===
     canonicalStringify({ version: b.version, files: b.files })
   );
-}
-
-async function readBaseline(dir: string): Promise<Baseline | null> {
-  try {
-    const raw = await readFile(join(dir, '.baseline.json'), 'utf8');
-    return JSON.parse(raw) as Baseline;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
 }
 
 /** Files in `dir` edited relative to `baseline`; missing files and content equal to the
@@ -162,16 +145,9 @@ async function restoreMissingFiles(
   shipped: Baseline,
 ): Promise<string[]> {
   const missing = Object.keys(shipped.files).filter((rel) => !existsSync(join(dest, rel)));
-  await copyFiles(src, dest, missing);
+  // A file the user puts there meanwhile wins: the restore never overwrites.
+  await copyFiles(src, dest, missing, { overwrite: false });
   return missing;
-}
-
-/** Copy `relPaths` from `from` into `into`, creating parent dirs. */
-async function copyFiles(from: string, into: string, relPaths: string[]): Promise<void> {
-  for (const relPath of relPaths) {
-    await mkdir(dirname(join(into, relPath)), { recursive: true });
-    await cp(join(from, relPath), join(into, relPath));
-  }
 }
 
 /**

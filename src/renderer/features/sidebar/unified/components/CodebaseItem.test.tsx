@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SidebarBatchGroup } from '../../../../../shared/types/flows/sidebar-batch-group';
+import { PAGINATION } from '../constants';
 import type { ChatItem, CodebaseGroup } from '../types';
 import { CodebaseItem } from './CodebaseItem';
 
@@ -139,6 +140,7 @@ const BATCH_NOT_IN_MAP = 'b2b3c4d5-e6f7-4892-b234-567890123456';
 function makeBatchSummary(batchId: string, flowName = 'Flow'): SidebarBatchGroup {
   return {
     batch_id: batchId,
+    kind: 'batch',
     flow_name: flowName,
     run_count: 2,
     completed_count: 1,
@@ -344,6 +346,86 @@ describe('CodebaseItem', () => {
     it('drops the folder badges once expanded, where the chat rows carry them', () => {
       renderFolder(true, new Map([['chat-a', 1]]));
       expect(screen.queryByTitle(/^Open in pane/)).toBeNull();
+    });
+  });
+
+  describe('open chats past the "Show more" cut', () => {
+    const FOLDER_KEY = 'git@github.com:acme/repo.git';
+    /** One chat more than a page holds: the idle `old-chat` sorts last, behind "Show more". */
+    const chats = [
+      ...Array.from({ length: PAGINATION.FOLDER_CHAT_PAGE_SIZE }, (_, i) =>
+        makeChat({ id: `recent-${i}`, name: `Recent${i}`, updatedAt: new Date(2026, 3, 8, 12, i) }),
+      ),
+      makeChat({ id: 'old-chat', name: 'Old chat', updatedAt: new Date('2025-01-01') }),
+    ];
+    const renderFolder = (
+      props: Partial<
+        Pick<
+          Parameters<typeof CodebaseItem>[0],
+          'selectedChatId' | 'chatPaneMap' | 'codebase' | 'batchGroups'
+        >
+      >,
+      onLoadMoreChats = vi.fn(async () => {}),
+    ) => {
+      render(
+        <CodebaseItem
+          codebaseKey={FOLDER_KEY}
+          codebase={buildSingleProjectCodebase(chats)}
+          isExpanded
+          toggleCodebase={vi.fn()}
+          selectedChatId={null}
+          onChatSelect={vi.fn()}
+          totalChatsCount={80}
+          hasMoreChatsFromServer
+          onLoadMoreChats={onLoadMoreChats}
+          {...props}
+        />,
+      );
+      return onLoadMoreChats;
+    };
+
+    it('hides an idle chat behind "Show more"', () => {
+      renderFolder({});
+      expect(screen.queryByText('Old chat')).toBeNull();
+      expect(screen.getByText('Recent0')).toBeTruthy();
+    });
+
+    it('keeps a chat that is open in a split pane listed', () => {
+      renderFolder({ chatPaneMap: new Map([['old-chat', 2]]) });
+      expect(screen.getByText('Old chat')).toBeTruthy();
+    });
+
+    it('keeps the selected chat listed in single view', () => {
+      renderFolder({ selectedChatId: 'old-chat' });
+      expect(screen.getByText('Old chat')).toBeTruthy();
+    });
+
+    it('keeps the batch group holding an open chat listed', () => {
+      const batched = { ...chats[chats.length - 1], batchId: BATCH_IN_MAP };
+      renderFolder({
+        codebase: buildSingleProjectCodebase([...chats.slice(0, -1), batched]),
+        batchGroups: new Map([[BATCH_IN_MAP, makeBatchSummary(BATCH_IN_MAP)]]),
+        chatPaneMap: new Map([['old-chat', 2]]),
+      });
+      expect(screen.getByTestId('batch-group').textContent).toContain('Old chat');
+    });
+
+    it('does not count a selection that no split pane shows as open', () => {
+      renderFolder({ selectedChatId: 'old-chat', chatPaneMap: new Map([['recent-0', 1]]) });
+      expect(screen.queryByText('Old chat')).toBeNull();
+    });
+
+    it('fetches older chats on the first "Show more" click when only an open chat is past the cut', () => {
+      const onLoadMoreChats = renderFolder({ selectedChatId: 'old-chat' });
+      fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+      expect(onLoadMoreChats).toHaveBeenCalledWith(FOLDER_KEY);
+    });
+
+    it('reveals a hidden page before fetching when an idle chat is past the cut', () => {
+      const onLoadMoreChats = renderFolder({});
+      fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+      expect(onLoadMoreChats).not.toHaveBeenCalled();
+      expect(screen.getByText('Old chat')).toBeTruthy();
     });
   });
 
@@ -993,24 +1075,18 @@ describe('CodebaseItem row-render isolation', () => {
   // whole list forever; a field compare must still let a genuinely changed reason through.
   it('ignores a re-derived reason map but forwards a changed reason', () => {
     const props = baseProps([makeChat({ id: CHAT_A }), makeChat({ id: CHAT_B })]);
-    const reason = new Map([[CHAT_A, { summary: 'waiting', details: 'on input' }]]);
+    const reason = new Map([[CHAT_A, { summary: 'waiting' }]]);
     const { rerender } = render(<CodebaseItem {...props} chatReasonByChatId={reason} />);
     const before = new Map(renderTally.rows);
 
     rerender(
-      <CodebaseItem
-        {...props}
-        chatReasonByChatId={new Map([[CHAT_A, { summary: 'waiting', details: 'on input' }]])}
-      />,
+      <CodebaseItem {...props} chatReasonByChatId={new Map([[CHAT_A, { summary: 'waiting' }]])} />,
     );
     expect(renderTally.rows.get(CHAT_A)).toBe(before.get(CHAT_A));
     expect(renderTally.rows.get(CHAT_B)).toBe(before.get(CHAT_B));
 
     rerender(
-      <CodebaseItem
-        {...props}
-        chatReasonByChatId={new Map([[CHAT_A, { summary: 'blocked', details: 'on input' }]])}
-      />,
+      <CodebaseItem {...props} chatReasonByChatId={new Map([[CHAT_A, { summary: 'blocked' }]])} />,
     );
     expect(renderTally.rows.get(CHAT_A)).toBe((before.get(CHAT_A) ?? 0) + 1);
   });

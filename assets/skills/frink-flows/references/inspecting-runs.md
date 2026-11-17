@@ -15,14 +15,14 @@ Read consent outcomes: `permissionDenied: true` is a refusal; do not retry. A fa
 | Entity | Statuses |
 |---|---|
 | Run | pending, running, completed, failed, cancelled, paused |
-| Node | pending, running, completed, failed, cancelled, timed_out, awaiting_input |
+| Node | pending, running, completed, failed, cancelled, timed_out, awaiting_input, blocked, skipped, superseded |
 
 Fan-out inspection summarizes `totalLanes`, `completedLanes`, `failedLanes`, `failedLaneNodeRunIds`; drill into a failed id. This summary is distinct from continuation `previous.results`, which is keyed by branch-root id per item.
-`attemptNumber > 1` marks an automatic retry; inspect `retryable` and the error.
+`attemptNumber > 1` marks a retry (automatic or a user Retry); the attempt it replaced stays as a `superseded` row for the same node. Inspect `retryable` and the error.
 
 ## Pauses and failures
 
 Approval, questions and failure checkpoints pause the run. Awaiting nodes have `awaiting_input`; users approve/retry in the Flow UI. Agents cannot directly resume paused runs.
-Default node failure terminates the run. Set `graph.settings.pauseOnFailure: true` with an `update_settings` patch to preserve pending execution state and let the user Retry or Skip in the UI. Paused runs retain their machine-admission slot until terminal; persisted state survives restarts/offline periods.
+Default node failure terminates the run. Set `graph.settings.pauseOnFailure: true` with an `update_settings` patch to preserve pending execution state and let the user Retry or Skip in the UI. A paused run keeps its machine-admission slot, except one waiting only on a user reply to an agent step, which frees it once the step's prompt cache goes cold (at most an hour after the step settled) and takes one back when the user continues; persisted state survives restarts/offline periods.
 
 To change a saved flow, fetch its current graph and patch its `flowId`; do not create duplicates. Read the patch response: saved topology does not establish valid execution config or a successful run.

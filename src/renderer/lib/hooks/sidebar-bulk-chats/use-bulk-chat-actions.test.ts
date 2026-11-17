@@ -6,6 +6,7 @@ import { createIdSelectionStore } from '../../tree-navigation';
 import { useBulkChatActions } from './use-bulk-chat-actions';
 
 type SetupOverrides = {
+  invalidateBatchViews?: () => Promise<void>;
   moveOne?: (chatId: string, target: string | null) => Promise<void>;
   archiveMutateAsync?: (input: { id: string; killTerminals?: boolean }) => Promise<object | null>;
   activeTasks?: Array<{ taskId: string }>;
@@ -16,6 +17,7 @@ type SetupOverrides = {
 };
 
 function setup({
+  invalidateBatchViews = async () => {},
   moveOne = vi.fn(async () => {}),
   archiveMutateAsync = vi.fn(async () => ({})),
   activeTasks = [],
@@ -29,6 +31,7 @@ function setup({
     setSelectedChatId: vi.fn(),
     setShowArchived: vi.fn(),
     openTaskAwareDialog: vi.fn(),
+    deleteMutateAsync: vi.fn(async () => ({})),
   };
   const { result } = renderHook(() =>
     useBulkChatActions({
@@ -42,7 +45,7 @@ function setup({
           },
         },
       },
-      invalidateBatchViews: async () => {},
+      invalidateBatchViews,
       loadedChats: [
         { id: 'a', projectId: 'p1', taskId: null },
         { id: 'b', projectId: 'p1', taskId: null },
@@ -56,7 +59,7 @@ function setup({
       syncSidebarCountsOrFullRefresh: vi.fn(async () => {}),
       setSelectedChatId: deps.setSelectedChatId,
       setShowArchived: deps.setShowArchived,
-      deleteMutRef: { current: { mutateAsync: vi.fn(async () => ({})) } },
+      deleteMutRef: { current: { mutateAsync: deps.deleteMutateAsync } },
       archiveMutRef: { current: { mutateAsync: archiveMutateAsync } },
       moveOne,
       getActiveLinkedTasks,
@@ -278,5 +281,85 @@ describe('useBulkChatActions bulk archive and delete', () => {
       }),
     );
     expect(result.current.pendingDeleteCount).toBe(0);
+  });
+});
+
+describe('useBulkChatActions runChatsAtomically', () => {
+  it('restores every pane and keeps the chats when the one mutation fails (sc-3279)', async () => {
+    const { result, deps } = setup();
+    const failure = new Error('database is locked');
+
+    await expect(
+      act(() =>
+        result.current.runChatsAtomically([{ id: 'a' }, { id: 'b' }], async () => {
+          throw failure;
+        }),
+      ),
+    ).rejects.toBe(failure);
+
+    expect(deps.restorePaneAt).toHaveBeenCalledWith(1, 'a');
+    expect(deps.removeChatsFromLoadedFolders).not.toHaveBeenCalled();
+    expect(deps.setSelectedChatId).not.toHaveBeenCalled();
+    expect(deps.deleteMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('drops every chat from the sidebar once the one mutation succeeds', async () => {
+    const { result, deps } = setup();
+    const mutateAll = vi.fn(async () => ['a', 'b']);
+
+    await act(() => result.current.runChatsAtomically([{ id: 'a' }, { id: 'b' }], mutateAll));
+
+    expect(mutateAll).toHaveBeenCalledTimes(1);
+    expect(deps.deleteMutateAsync).not.toHaveBeenCalled();
+    expect(deps.restorePaneAt).not.toHaveBeenCalled();
+    expect(deps.removeChatsFromLoadedFolders).toHaveBeenCalledWith(new Set(['a', 'b']));
+    const clearSelection = deps.setSelectedChatId.mock.calls[0][0];
+    expect(clearSelection('b')).toBeNull();
+    expect(clearSelection('there')).toBe('there');
+  });
+
+  it('still runs the one mutation for a project with no chats', async () => {
+    const { result, deps } = setup();
+    const mutateAll = vi.fn(async (): Promise<string[]> => []);
+
+    await act(() => result.current.runChatsAtomically([], mutateAll));
+
+    expect(mutateAll).toHaveBeenCalledTimes(1);
+    expect(deps.restorePaneAt).not.toHaveBeenCalled();
+    expect(deps.removeChatsFromLoadedFolders).toHaveBeenCalledWith(new Set());
+  });
+
+  it('warns instead of failing when the refresh after a committed delete fails', async () => {
+    const toastWarning = vi.spyOn(toast, 'warning').mockImplementation(() => '');
+    const { result, deps } = setup({
+      invalidateBatchViews: async () => {
+        throw new Error('refetch failed');
+      },
+    });
+
+    await act(() => result.current.runChatsAtomically([{ id: 'a' }], async () => ['a']));
+
+    expect(toastWarning).toHaveBeenCalledWith('Deleted; refreshing sidebar', {
+      description: 'refetch failed',
+    });
+    toastWarning.mockRestore();
+
+    expect(deps.removeChatsFromLoadedFolders).toHaveBeenCalledWith(new Set(['a']));
+    expect(deps.restorePaneAt).not.toHaveBeenCalled();
+    const clearSelection = deps.setSelectedChatId.mock.calls[0][0];
+    expect(clearSelection('a')).toBeNull();
+  });
+
+  it('keeps a chat the delete did not remove (moved to another project meanwhile)', async () => {
+    const { result, deps } = setup();
+
+    await act(() =>
+      result.current.runChatsAtomically([{ id: 'a' }, { id: 'b' }], async () => ['b']),
+    );
+
+    expect(deps.restorePaneAt.mock.calls).toEqual([[1, 'a']]);
+    expect(deps.removeChatsFromLoadedFolders).toHaveBeenCalledWith(new Set(['b']));
+    const clearSelection = deps.setSelectedChatId.mock.calls[0][0];
+    expect(clearSelection('a')).toBe('a');
   });
 });

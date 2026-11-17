@@ -1,6 +1,6 @@
 # Frink for iPhone
 
-A native Expo / React Native companion to the Frink desktop app. Start with the Work queue, answer your agent's questions, review and run Flows, or continue a chat. Execution and project files stay on your computer. This package has its own dependencies and lockfile, alongside the desktop and relay packages in the Frink repository.
+A native Expo / React Native companion to the Frink desktop app. Start with a conversation. Open History to find chats and projects, or use the Queue button to review work needing attention. Execution and project files stay on your computer. This package has its own dependencies and lockfile, alongside the desktop and relay packages in the Frink repository.
 
 ## Development
 
@@ -33,11 +33,11 @@ The connection works over cellular or other Wi-Fi networks. Keep Frink open with
 
 ## Use and recovery
 
-In **Settings → Appearance**, choose Light or Dark, or System to follow your iPhone. The choice is saved on this phone and applies to every paired computer.
+Open **History → Settings** to choose Light, Dark, or System appearance and one of five Transparency levels. Both choices are saved on this phone and apply to every paired computer. iOS Reduce Transparency always uses opaque material. The subtle background stays constant as transparency changes.
 
 - **Queue:** see work needing attention and open its chat or Flow. Answer structured and free-text questions; allow or deny supported pending tool requests.
-- **Flows:** inspect runs and step output, read a plan before approving it, skip supported failed steps, start a run, stop it, or enable/disable its automation. Retry failed steps on desktop.
-- **Chats:** continue conversations, load earlier messages, stop an active response, and start a chat in an existing project using the desktop's configured provider.
+- **Flows:** open from History to inspect runs and step output, read a plan before approving it, skip supported failed steps, start a run, stop it, or enable/disable its automation. Retry failed steps on desktop.
+- **History:** search recent conversations or browse projects. Close the drawer to return to the same draft and reading position. Continue conversations, load earlier messages, stop an active response, and start a chat in an existing project using the desktop's configured provider.
 - Revoke a phone from desktop Mobile settings. Disabling mobile access revokes all phones. A revoked phone must pair again.
 - Connection errors preserve the current draft. Commands are never automatically retried. After an uncertain response, refresh and check the computer's state before sending again.
 
@@ -73,7 +73,7 @@ The desktop bridge and domain tests are part of the repository-root `bun run tes
 
 ### Review on the iOS simulator against fixture data
 
-The web preview has no native navigation bar or menus, so judge layout on the simulator. `tests/fixtures/sim-relay.ts` stands in for a Mac: it speaks the phone's real channel protocol over TLS on 127.0.0.1 and answers with the UI tests' fixture data. Use a simulator that is not paired to your real Mac, since pairing replaces that pairing.
+The web preview shares the navigation structure, but native bars and menus differ; verify native layout on the simulator. `tests/fixtures/sim-relay.ts` stands in for a Mac: it speaks the phone's real channel protocol over TLS on 127.0.0.1 and answers with the UI tests' fixture data. Use a simulator that is not paired to your real Mac, since pairing replaces that pairing.
 
 ```sh
 mkdir -p /tmp/frink-sim-relay && cd /tmp/frink-sim-relay

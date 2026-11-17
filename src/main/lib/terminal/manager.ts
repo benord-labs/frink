@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
 import { SHELL_CRASH_THRESHOLD_MS } from './env';
-import { portManager } from './port-manager';
 import { createSession, setupInitialCommands } from './session';
 import type { CreateSessionParams, SessionResult, TerminalSession } from './types';
 
@@ -44,7 +43,7 @@ export class TerminalManager extends EventEmitter {
   private async doCreateSession(
     params: CreateSessionParams & { useFallbackShell?: boolean },
   ): Promise<SessionResult> {
-    const { paneId, workspaceId, initialCommands } = params;
+    const { paneId, initialCommands } = params;
 
     // Create the session
     const session = await createSession(params, (id, data) => {
@@ -58,7 +57,6 @@ export class TerminalManager extends EventEmitter {
     this.setupExitHandler(session, params);
 
     this.sessions.set(paneId, session);
-    portManager.registerSession(session, workspaceId || '');
 
     return {
       isNew: true,
@@ -92,9 +90,6 @@ export class TerminalManager extends EventEmitter {
           return; // Recovered - don't emit exit
         } catch (_fallbackError) {}
       }
-
-      // Unregister from port manager (also removes detected ports)
-      portManager.unregisterSession(paneId);
 
       this.emit(`exit:${paneId}`, exitCode, signal);
 

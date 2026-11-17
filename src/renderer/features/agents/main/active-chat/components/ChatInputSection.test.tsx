@@ -1,12 +1,17 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createStore, Provider } from 'jotai';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chatContextFileAtomFamily } from '@/lib/code-editor/state';
+import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
 import { ChatInputSection } from './ChatInputSection';
 
 vi.mock('../../chat-input-area', () => ({
-  ChatInputArea: () => <div data-testid="chat-input-area" />,
+  ChatInputArea: ({ activeFilePath }: { activeFilePath?: string | null }) => (
+    <div data-testid="chat-input-area" data-active-file-path={activeFilePath ?? 'none'} />
+  ),
 }));
 
 vi.mock('../../../components/no-accounts-empty-state', () => ({
@@ -61,7 +66,6 @@ function createProps(): ComponentProps<typeof ChatInputSection> {
     parentChatId: 'chat-1',
     teamId: undefined,
     repository: undefined,
-    sandboxId: undefined,
     projectPath: '/tmp/project',
     changedFiles: [],
     isMobile: false,
@@ -74,12 +78,58 @@ function createProps(): ComponentProps<typeof ChatInputSection> {
 }
 
 describe('ChatInputSection', () => {
+  it("takes its chat's terminal output as a chip", () => {
+    const store = createStore();
+    store.set(pendingTerminalOutputAtomFamily('chat-1'), {
+      text: 'FAIL',
+      label: 'Terminal 1 output',
+    });
+    const props = createProps();
+
+    render(
+      <Provider store={store}>
+        <ChatInputSection {...props} />
+      </Provider>,
+    );
+
+    expect(props.onAddPastedText).toHaveBeenCalledWith('FAIL', {
+      label: 'Terminal 1 output',
+      filename: expect.stringMatching(/^terminal_\d+\.txt$/),
+    });
+  });
+
   it('renders the input area', () => {
     const props = createProps();
 
     render(<ChatInputSection {...props} />);
 
     expect(screen.getByTestId('chat-input-area')).toBeInTheDocument();
+  });
+
+  it.each([
+    { state: 'ready', ready: true, loading: false },
+    { state: 'account loading', ready: false, loading: true },
+  ])("gives the composer its chat's open-file path when the account is $state", (c) => {
+    const store = createStore();
+    store.set(chatContextFileAtomFamily('other-chat'), { name: 'b.ts', path: '/repo/b.ts' });
+    store.set(chatContextFileAtomFamily('chat-1'), {
+      name: 'index.ts',
+      path: '/repo/src/a/index.ts',
+    });
+    const props = createProps();
+    props.isResolvedExecutionAccountReady = c.ready;
+    props.isLoadingResolvedAccount = c.loading;
+
+    render(
+      <Provider store={store}>
+        <ChatInputSection {...props} />
+      </Provider>,
+    );
+
+    expect(screen.getByTestId('chat-input-area')).toHaveAttribute(
+      'data-active-file-path',
+      '/repo/src/a/index.ts',
+    );
   });
 
   it('does not render chat retry controls in input section', () => {

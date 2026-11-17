@@ -1,5 +1,5 @@
 /**
- * BatchGroup - Collapsible batch sub-folder within a codebase folder.
+ * BatchGroup - Collapsible sub-folder within a codebase folder for a batch or a Fan Out run's chats.
  *
  * Displays a batch flow run group header with progress badge and failed-run indicator.
  * When expanded, fetches all chats for this batch_id via chats.listByBatch.
@@ -20,7 +20,7 @@ import { trpc } from '../../../../../lib/trpc';
 import { cn } from '../../../../../lib/utils';
 import type { SidebarTaskStatus } from '../../constants';
 import type { ChatItem } from '../../types';
-import type { ChatReason, SidebarChatListItem } from '../../utils';
+import { type ChatReason, getFolderActiveState, type SidebarChatListItem } from '../../utils';
 import { areChatRowMemoEqual } from '../../utils/chat-equality';
 import { ChatListItem } from '../ChatListItem';
 import { useChatRowSelection } from '../ChatSelection';
@@ -238,6 +238,18 @@ function toBatchChatItem(chat: SidebarChatListItem, context: BatchChatItemContex
   };
 }
 
+/** Opens the group whenever it comes to hold the open chat or a member that needs the user; a manual
+ * collapse sticks until that attention clears. */
+function useAttentionExpand(holdsAttention: boolean) {
+  const [isExpanded, setIsExpanded] = useState(holdsAttention);
+  const [openedForAttention, setOpenedForAttention] = useState(holdsAttention);
+  if (holdsAttention !== openedForAttention) {
+    setOpenedForAttention(holdsAttention);
+    if (holdsAttention) setIsExpanded(true);
+  }
+  return [isExpanded, setIsExpanded] as const;
+}
+
 export const BatchGroup = memo(function BatchGroup({
   summary,
   localChats,
@@ -256,7 +268,13 @@ export const BatchGroup = memo(function BatchGroup({
   chatReasonByChatId,
   pendingQuestionIds,
 }: BatchGroupProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const holdsAttention = localChats.some(
+    (chat) =>
+      chat.id === selectedChatId ||
+      chat.hasPendingQuestion ||
+      chatTaskStatusByChatId?.get(chat.id) === 'needs_attention',
+  );
+  const [isExpanded, setIsExpanded] = useAttentionExpand(holdsAttention);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const {
@@ -278,6 +296,9 @@ export const BatchGroup = memo(function BatchGroup({
 
   const isActive = running_count > 0;
   const dateLabel = formatBatchDate(last_activity_at);
+  const unit = summary.kind === 'run' ? 'item' : 'run';
+  // Collapsed only, like a folder row: expanded rows carry their own dots.
+  const groupState = isExpanded ? null : getFolderActiveState(localChats, chatTaskStatusByChatId);
 
   const listFetchFailed = isExpanded && isError;
 
@@ -306,14 +327,24 @@ export const BatchGroup = memo(function BatchGroup({
       }
       rightContent={
         <span className="flex items-center gap-1 shrink-0">
+          {groupState && (
+            <span
+              role="img"
+              aria-label={`${groupState.label}: ${groupState.count}`}
+              title={`${groupState.label}: ${groupState.count}`}
+              className={cn('h-1.5 w-1.5 shrink-0 rounded-full', groupState.dotClassName)}
+            />
+          )}
           {/* Failed count badge */}
           {failed_count > 0 && (
             <span
               className="inline-flex items-center px-1 rounded text-[10px] font-semibold bg-destructive/15 text-destructive"
-              title={`${failed_count} failed runs`}
+              title={`${failed_count} failed ${unit}s`}
             >
               <span aria-hidden="true">{failed_count}✕</span>
-              <span className="sr-only">{failed_count} failed runs</span>
+              <span className="sr-only">
+                {failed_count} failed {unit}s
+              </span>
             </span>
           )}
           {/* Progress badge: "28/35 runs" */}
@@ -322,13 +353,13 @@ export const BatchGroup = memo(function BatchGroup({
               'text-[10px] font-medium px-1 rounded',
               isActive ? 'bg-primary/15 text-[hsl(var(--primary))]' : 'text-muted-foreground/60',
             )}
-            title={`${completed_count} of ${run_count} runs completed`}
+            title={`${completed_count} of ${run_count} ${unit}s completed`}
           >
             <span aria-hidden="true">
               {completed_count}/{run_count}
             </span>
             <span className="sr-only">
-              {completed_count} of {run_count} runs completed
+              {completed_count} of {run_count} {unit}s completed
             </span>
           </span>
           {/* Batch actions menu */}
@@ -345,7 +376,7 @@ export const BatchGroup = memo(function BatchGroup({
                     'focus-visible:opacity-100',
                     isMenuOpen && 'opacity-100',
                   )}
-                  aria-label="Batch actions"
+                  aria-label={summary.kind === 'run' ? 'Run actions' : 'Batch actions'}
                 >
                   <MoreHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 </Button>
@@ -359,7 +390,7 @@ export const BatchGroup = memo(function BatchGroup({
                   className="text-destructive focus:text-destructive"
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
-                  Delete batch
+                  {summary.kind === 'run' ? 'Delete run' : 'Delete batch'}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -389,7 +420,7 @@ export const BatchGroup = memo(function BatchGroup({
         ) : displayChats.length === 0 ? (
           <BatchEmptyOrLoading loading={isLoading} />
         ) : (
-          <fieldset aria-label={`${flow_name} batch chats`} className="contents">
+          <fieldset aria-label={`${flow_name} ${summary.kind} chats`} className="contents">
             {displayChats.map((chat) => (
               <BatchChatRow
                 key={chat.id}

@@ -1,6 +1,13 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
 import type { ClaudeSdkEffortLevel } from '../../types/execution';
-import { CODEX_CLI_MODELS, CODEX_DEFAULT_MODEL_ID, type CodexCliModel } from '../codex-cli-models';
+import { aiProvider } from '../ai-providers';
+import {
+  CODEX_CLI_MODELS,
+  type CodexAccountCatalog,
+  type CodexCliModel,
+  codexDefaultModelIdForAccount,
+  isCodexModelUnavailable,
+} from '../codex-cli-models';
 import {
   CLAUDE_CODE_MODELS_CATALOG,
   CLAUDE_ULTRA_SUFFIX,
@@ -30,6 +37,13 @@ export const CLAUDE_MODEL_IDS = CLAUDE_CODE_MODELS.map((m) => m.id);
 
 /** Fallback Claude model when a selection is unknown or cross-provider (short alias, always valid). */
 const CLAUDE_DEFAULT_MODEL = 'sonnet';
+/** An agent chat on this id runs the agent's default: a turn never sends Claude's ids to an agent. */
+export const AGENT_DEFAULT_MODEL_ID = CLAUDE_DEFAULT_MODEL;
+const BUILT_IN_MODEL_IDS = new Set(
+  [...CLAUDE_CODE_MODELS_CATALOG, ...CODEX_CLI_MODELS].map(({ id }) => id),
+);
+/** A Claude or Codex picker id, which a turn on an installed agent leaves out. */
+export const isBuiltInModelId = (id: string): boolean => BUILT_IN_MODEL_IDS.has(id);
 
 /**
  * CLI values whose family uses adaptive thinking — derived from the catalog so the SDK thinking
@@ -124,13 +138,13 @@ export function getClaudeCliModel(modelId: string): string {
   return model?.cliValue ?? CLAUDE_DEFAULT_MODEL;
 }
 
-const CLAUDE_AUTO_MODEL_VERSION_RE = /^claude-(?:opus|sonnet)-(\d+)(?:-(\d+))?/;
+const CLAUDE_AUTO_MODEL_VERSION_RE = /^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d+))?/;
 
 function claudeModelSupportsNativeAutoReview(model: string): boolean {
   const normalized = model.toLowerCase();
-  if (normalized.includes('haiku')) return false;
   const version = CLAUDE_AUTO_MODEL_VERSION_RE.exec(normalized);
-  if (!version) return true; // Current aliases (`sonnet`, `opus`) and forward models.
+  // Picker ids, current aliases and forward models pass; `claude-3-*` ids predate Auto.
+  if (!version) return !/^claude-\d/.test(normalized);
   const major = Number(version[1]);
   const minor = Number(version[2] ?? 0);
   return major > 4 || (major === 4 && minor >= 6);
@@ -138,7 +152,7 @@ function claudeModelSupportsNativeAutoReview(model: string): boolean {
 
 /**
  * Whether the selected provider/model has a provider-owned AI approval reviewer.
- * Claude Auto excludes Haiku plus pre-4.6 models.
+ * Claude Auto excludes pre-4.6 models, Haiku 4.5 included.
  * Account/admin eligibility remains provider-owned and is reported at runtime.
  */
 export function supportsNativeAutoReview(
@@ -171,7 +185,7 @@ export function isClaudeUltraModel(modelId: string): boolean {
 
 /**
  * Maps picker model id to Claude Agent SDK `effort` (adaptive thinking + Opus 4.7 / 4.8 / 5 tiers).
- * Default tier (no suffix) → `medium`, except Fable 5.1 / Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5.5 / Sonnet 5 whose default is `high`.
+ * Default tier (no suffix) → `medium`, except Fable 5.2 / 5.1 / 5 / Opus 5 / Opus 4.8 / Sonnet 5.5 / Sonnet 5 whose default is `high`.
  */
 export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | undefined {
   if (isClaudeUltraModel(modelId)) {
@@ -182,7 +196,7 @@ export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | unde
   if (modelId.endsWith('-low')) return 'low';
   if (modelId.endsWith('-medium')) return 'medium';
   if (modelId.endsWith('-high')) return 'high';
-  // Fable 5.1 / Fable 5 + Opus 5 + Opus 4.8 + Sonnet 5.5 / 5 default to High effort (bare id, no suffix); others to Medium.
+  // Fable 5.2 / 5.1 / 5 + Opus 5 + Opus 4.8 + Sonnet 5.5 / 5 default to High effort (bare id, no suffix); others to Medium.
   if (modelId.startsWith('fable-5')) return 'high';
   if (modelId.startsWith('opus-5.5')) return 'medium'; // before `opus-5`, which it also prefixes
   if (modelId.startsWith('opus-5')) return 'high';
@@ -192,7 +206,7 @@ export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | unde
     modelId.startsWith('opus-4.7') ||
     modelId.startsWith('opus-') ||
     modelId.startsWith('sonnet') ||
-    modelId === 'haiku'
+    modelId.startsWith('haiku') // also covers `haiku-5.5`
   ) {
     return 'medium';
   }
@@ -216,17 +230,22 @@ export function claudeModelToPickerItem(m: ClaudeCodeModel): ModelPickerItem & {
 export const CLAUDE_PICKER_MODELS = CLAUDE_CODE_MODELS.map(claudeModelToPickerItem);
 
 /**
- * Coerce a picker model id to one valid for the resolved execution account (Codex / Claude).
- * Shared by `useModelNormalization` and new-chat seeding — keep catalog rules in one place. An account
- * switch (e.g. Claude → Codex) leaves a stale cross-provider id that must snap to that provider's default.
+ * Coerce a picker model id for the chat's provider. Claude and Codex snap a stale or unlisted id to
+ * their default (`keepUnavailable` keeps an unlisted Codex id); other agents keep their own ids.
  */
 export function normalizeModelIdForExecutionAccount(
-  isCodexAccount: boolean,
+  providerId: string | null | undefined,
   modelId: string,
+  catalog: CodexAccountCatalog | null = null,
+  { keepUnavailable = false }: { keepUnavailable?: boolean } = {},
 ): string {
-  if (isCodexAccount) {
-    return CODEX_MODELS.some((m) => m.id === modelId) ? modelId : CODEX_DEFAULT_MODEL_ID;
+  const runtime = aiProvider(providerId)?.runtime;
+  if (runtime === 'codex') {
+    const known = CODEX_MODELS.some((m) => m.id === modelId);
+    const usable = keepUnavailable || !isCodexModelUnavailable(modelId, catalog);
+    return known && usable ? modelId : codexDefaultModelIdForAccount(catalog);
   }
+  if (runtime !== 'claude') return modelId;
   if (!CLAUDE_MODEL_IDS.includes(modelId)) return CLAUDE_DEFAULT_MODEL;
   return modelId;
 }

@@ -3,15 +3,13 @@ import type { BuiltinCommandAction, SlashCommandOption } from '@/lib/commands/ty
 /**
  * Prompt texts for prompt-based slash commands
  */
-export const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction['type'], string>> = {
+const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction['type'], string>> = {
   review:
     'Please review the code in the current context and provide feedback on code quality, potential bugs, and improvements.',
   'pr-comments': 'Generate detailed PR review comments for the changes in the current context.',
   'release-notes': 'Generate release notes summarizing the changes in this codebase.',
   'security-review':
     'Perform a security audit of the code in the current context. Identify vulnerabilities, security risks, and suggest fixes.',
-  commit:
-    'Закоммить это аккуратно, не трогая больше ничего. Сделай коммит только для staged изменений, не добавляй никакие другие файлы и не вноси дополнительных изменений.',
   'worktree-setup': `Create a worktree setup script for this project.
 
 Your task:
@@ -23,16 +21,15 @@ The goal is to reproduce the EXACT same working state as the original repo in th
 Rules:
 - Use only "setup-worktree" key (works on all platforms)
 - Install dependencies using the project's package manager (check for bun.lockb, pnpm-lock.yaml, yarn.lock, package-lock.json)
-- Copy ALL real env files that exist (.env, .env.local, .env.development, etc) - NOT example files
+- Don't copy .env files: Frink copies them into each new worktree automatically
+- If a worktree needs other gitignored files (local config, certificates), list them in a .worktreeinclude file at the repo root (gitignore syntax) instead of copying them with a command. A .worktreeinclude replaces the automatic .env copy, so list the .env files in it too
 - Use $ROOT_WORKTREE_PATH to reference the main repo path
 - Don't include build steps unless absolutely necessary for the project to work
 
 Example output for .frink/worktrees.json:
 {
   "setup-worktree": [
-    "bun install",
-    "cp $ROOT_WORKTREE_PATH/.env .env",
-    "cp $ROOT_WORKTREE_PATH/.env.local .env.local"
+    "bun install"
   ]
 }
 
@@ -66,6 +63,15 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     command: '/debug',
     description: 'Switch to Debug mode (hypothesis-driven debugging)',
     category: 'builtin',
+  },
+  {
+    id: 'builtin:goal',
+    name: 'goal',
+    command: '/goal',
+    description: 'Keep working until a goal you describe is met',
+    category: 'builtin',
+    argumentHint: 'what done looks like',
+    takesArguments: true,
   },
   {
     id: 'builtin:compact',
@@ -104,13 +110,6 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: 'builtin',
   },
   {
-    id: 'builtin:commit',
-    name: 'commit',
-    command: '/commit',
-    description: 'Commit staged changes carefully without touching anything else',
-    category: 'builtin',
-  },
-  {
     id: 'builtin:worktree-setup',
     name: 'worktree-setup',
     command: '/worktree-setup',
@@ -118,6 +117,41 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: 'builtin',
   },
 ];
+
+const PROMPT_COMMANDS: BuiltinCommandAction['type'][] = [
+  'review',
+  'pr-comments',
+  'release-notes',
+  'security-review',
+  'worktree-setup',
+];
+
+type CommandEditor = {
+  getValue: () => string;
+  setValue: (value: string) => void;
+  setCommandValue: (commandName: string, content: string) => void;
+};
+
+/** Writes a picked command into the composer: `/goal` as text the user finishes with what done looks
+ * like, a prompt-based built-in or a custom command as a highlighted block. */
+export function insertPickedCommand(
+  editor: CommandEditor | null,
+  command: SlashCommandOption,
+): void {
+  if (command.category === 'builtin' && command.name === 'goal') {
+    editor?.setValue(`/goal ${editor.getValue()}`);
+    return;
+  }
+  const builtin = PROMPT_COMMANDS.find((name) => name === command.name);
+  const prompt =
+    command.category === 'builtin' ? builtin && COMMAND_PROMPTS[builtin] : command.prompt;
+  if (prompt) editor?.setCommandValue(command.name, prompt);
+}
+
+/** A built-in with nothing to do in this mode: the mode's own switch, and `/goal` while planning. */
+export function hiddenInMode(name: string, mode: string): boolean {
+  return name === mode || (mode === 'plan' && name === 'goal');
+}
 
 export type BuiltinCommandsFilterContext = {
   hasProject: boolean;

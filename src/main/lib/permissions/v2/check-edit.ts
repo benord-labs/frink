@@ -61,6 +61,11 @@ function isFrinkShippedSkillRead(absolute: string, roots: string[]): boolean {
  */
 function isSessionScopedRead(absolute: string, sessionDirRoot: string): boolean {
   if (isAutoAllowedPath(absolute, nodePath.join(sessionDirRoot, 'pasted'))) return true;
+  return isSessionToolResultPath(absolute, sessionDirRoot);
+}
+
+/** A CLI tool-result spill file under the session's `projects/**\/tool-results/**`. */
+export function isSessionToolResultPath(absolute: string, sessionDirRoot: string): boolean {
   if (!isAutoAllowedPath(absolute, nodePath.join(sessionDirRoot, 'projects'))) return false;
   const parts = nodePath
     .relative(nodePath.resolve(sessionDirRoot), nodePath.resolve(absolute))

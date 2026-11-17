@@ -25,19 +25,9 @@ export function AgentsModelsTab(): ReactElement {
   // (see `listAccounts` in claude-code.ts), so downstream components can branch
   // on it directly.
   const accountRows = accounts ?? [];
-  // One Claude Code login per device — used to disable the "Use Claude Code login"
-  // CTA in the AddAccountForm so the user doesn't accidentally rename their
-  // existing passthrough by adding a "new" account with a different label.
-  const hasClaudePassthrough = accountRows.some(
-    (account) => account.source === 'claude-passthrough',
-  );
-  // One Codex login per device — mirrors hasClaudePassthrough for the Codex connect CTA.
-  const hasCodexPassthrough = accountRows.some((account) => account.source === 'codex-passthrough');
-
   const authGateReady = accountsQuerySuccess;
   const accountsListFailed = accountsQueryFetched && accountsQueryError;
-  const showClaudeModels = accountRows.some((a) => a.type === 'claude-code' && a.isAuthenticated);
-  const showCodexModels = accountRows.some((a) => a.type === 'codex' && a.isAuthenticated);
+  const connected = accountRows.filter((a) => a.isAuthenticated).map((a) => a.type);
 
   const handleAuthenticate = (account: AccountAuthSelection) => {
     setPendingAccountAuth(buildPendingReauthState(account));
@@ -60,8 +50,6 @@ export function AgentsModelsTab(): ReactElement {
           onAuthenticate={handleAuthenticate}
           accounts={accountRows}
           refetchAccounts={refetchAccounts}
-          hasClaudePassthrough={hasClaudePassthrough}
-          hasCodexPassthrough={hasCodexPassthrough}
           accountsListFailed={accountsListFailed}
         />
       </SettingsSection>
@@ -72,8 +60,7 @@ export function AgentsModelsTab(): ReactElement {
       >
         <ModelsSection
           authGateReady={authGateReady}
-          showClaudeModels={showClaudeModels}
-          showCodexModels={showCodexModels}
+          connected={connected}
           accountsListFailed={accountsListFailed}
           onRetryAccounts={refetchAccounts}
         />

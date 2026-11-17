@@ -16,6 +16,7 @@ import type { NodeOutput } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import { deleteKv, getKv, setKv } from '../db/repos/flow-kv-state';
 import { flowKvState } from '../db/schema';
+import { STATE_KEY_PREFIX } from './fan-out/sql';
 
 export type FanOutIterationState = {
   items: unknown[];
@@ -39,7 +40,7 @@ export type FanOutBodyMemberEntry = {
 };
 
 const stateKey = (flowRunId: string, fanOutNodeId: string): string =>
-  `_fanOut:${flowRunId}:${fanOutNodeId}`;
+  `${STATE_KEY_PREFIX}${flowRunId}:${fanOutNodeId}`;
 
 const memberKey = (flowRunId: string, chainNodeId: string): string =>
   `_fanOutBodyMember:${flowRunId}:${chainNodeId}`;

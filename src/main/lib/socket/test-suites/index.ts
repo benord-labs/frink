@@ -5,6 +5,15 @@ export { registerClaudeTurnAbortTests } from './claude-turn-abort';
 export { registerClaudeTurnBindingTests } from './claude-turn-bindings';
 export { registerClaudeWarmSessionTests } from './claude-warm-session';
 export { registerClaudeWarmSessionGuardTests } from './claude-warm-session-guards';
+export { registerComposerContextTests } from './composer-context';
+export { registerConformanceTests } from './conformance';
 export { registerExecutorPermissionTests } from './executor-codex-permissions';
-export { registerPermissionDbUnavailableTests } from './executor-permission-db-unavailable';
+export {
+  registerFlowRunEndedTests,
+  registerOperatorReminderDeliveryTests,
+} from './operator-reminders';
 export { registerCustomNodeTransportTest } from './executor-custom-node-permissions';
+export { registerCodexSessionCacheTests } from './codex-session-cache';
+export { registerValidateToolPermissionTests } from './validate-tool-permission';
+export { registerUndeliveredMessageTests } from './undelivered-messages';
+export { registerTurnUsageStampTests } from './turn-usage';

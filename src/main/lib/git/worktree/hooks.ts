@@ -143,7 +143,7 @@ async function pathExists(path: string): Promise<boolean> {
     .catch(() => false);
 }
 
-function isPathInside(rootPath: string, candidatePath: string): boolean {
+export function isPathInside(rootPath: string, candidatePath: string): boolean {
   const fromRoot = relative(resolve(rootPath), resolve(candidatePath));
   return (
     Boolean(fromRoot) &&

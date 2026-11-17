@@ -264,25 +264,6 @@ describe('useGitWatcher', () => {
     expect(unsubscribeFromGitWatcherMock).toHaveBeenCalledWith('/tmp/project-a');
   });
 
-  it('invalidates status and branches on branch-only events (no file edits)', async () => {
-    const worktreePath = '/tmp/project-a';
-    const wrapper = createWrapper(queryClient);
-    renderHook(() => useGitWatcher(worktreePath), { wrapper });
-
-    onGitStatusChangedCallback?.({
-      worktreePath,
-      changes: [],
-    });
-    vi.advanceTimersByTime(150);
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: [['changes', 'getStatus'], { input: { worktreePath } }],
-    });
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
-      queryKey: [['changes', 'getBranches'], { input: { worktreePath } }],
-    });
-    expect(hasScopedWorkingLineInvalidationCall(invalidateQueriesSpy, worktreePath)).toBe(true);
-  });
-
   it('invalidates on unlink events as well as change/add', async () => {
     const worktreePath = '/tmp/project-a';
     const wrapper = createWrapper(queryClient);
@@ -299,24 +280,50 @@ describe('useGitWatcher', () => {
     expect(hasScopedWorkingLineInvalidationCall(invalidateQueriesSpy, worktreePath)).toBe(true);
   });
 
-  it('invalidates status and branches on git pointer updates', async () => {
+  it.each([
+    ['a working-tree file', '/tmp/project-a/src/index.ts'],
+    ['the index', '/tmp/project-a/.git/index'],
+    ['a linked worktree index', '/tmp/main/.git/worktrees/project-a/index'],
+  ])('refreshes status but not branches or worktrees when only %s changed', (_label, path) => {
+    const worktreePath = '/tmp/project-a';
+    const wrapper = createWrapper(queryClient);
+    renderHook(() => useGitWatcher(worktreePath), { wrapper });
+
+    onGitStatusChangedCallback?.({ worktreePath, changes: [{ path, type: 'change' }] });
+    vi.advanceTimersByTime(150);
+
+    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+      queryKey: [['changes', 'getStatus'], { input: { worktreePath } }],
+    });
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
+      queryKey: [['changes', 'getBranches'], { input: { worktreePath } }],
+    });
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: [['changes', 'getWorktrees'], expect.anything()] }),
+    );
+  });
+
+  // Pickers load the branch list when opened; the branch label reads getStatus.
+  it('never refetches the branch list, even when HEAD moves', () => {
     const worktreePath = '/tmp/project-a';
     const wrapper = createWrapper(queryClient);
     renderHook(() => useGitWatcher(worktreePath), { wrapper });
 
     onGitStatusChangedCallback?.({
       worktreePath,
-      changes: [{ path: '/tmp/project-a/.git/index', type: 'change' }],
+      changes: [
+        { path: '/tmp/project-a/.git/HEAD', type: 'change' },
+        { path: '/tmp/project-a/.git/refs/heads/main', type: 'change' },
+      ],
     });
     vi.advanceTimersByTime(150);
 
     expect(invalidateQueriesSpy).toHaveBeenCalledWith({
       queryKey: [['changes', 'getStatus'], { input: { worktreePath } }],
     });
-    expect(invalidateQueriesSpy).toHaveBeenCalledWith({
+    expect(invalidateQueriesSpy).not.toHaveBeenCalledWith({
       queryKey: [['changes', 'getBranches'], { input: { worktreePath } }],
     });
-    expect(hasScopedWorkingLineInvalidationCall(invalidateQueriesSpy, worktreePath)).toBe(true);
   });
 
   it('ignores events from other worktrees (split pane isolation)', () => {
@@ -403,7 +410,8 @@ describe('useGitWatcher', () => {
       changes: [{ path: '/tmp/project-a/src/first.ts', type: 'change' }],
     });
     vi.advanceTimersByTime(150);
-    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(6);
+    // Status and line changes per pane; no ref moved, so the branch list stays put
+    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(4);
 
     invalidateQueriesSpy.mockClear();
     hookA.unmount();
@@ -414,7 +422,7 @@ describe('useGitWatcher', () => {
     });
     vi.advanceTimersByTime(150);
 
-    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(3);
+    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(2);
 
     hookB.unmount();
   });
@@ -425,7 +433,10 @@ describe('useGitWatcher', () => {
     const wrapper = createWrapper(queryClient);
     renderHook(() => useGitWatcher(worktreePath, onStatusChanged), { wrapper });
 
-    onGitStatusChangedCallback?.({ worktreePath: '/tmp/project-b', changes: [] });
+    onGitStatusChangedCallback?.({
+      worktreePath: '/tmp/project-b',
+      changes: [],
+    });
     expect(onStatusChanged).not.toHaveBeenCalled();
 
     onGitStatusChangedCallback?.({ worktreePath, changes: [] });

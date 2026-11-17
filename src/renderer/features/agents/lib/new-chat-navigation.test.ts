@@ -12,6 +12,7 @@ import {
 import {
   agentsMobileViewModeAtom,
   autoModePerChatAtomFamily,
+  chatModeAtom,
   chatModeAtomFamily,
   justCreatedIdsAtom,
   lastSelectedModelIdAtom,
@@ -44,7 +45,7 @@ describe('seedNewChatNavigation', () => {
     const store = freshStore();
 
     seedNewChatNavigation(store.get, store.set, 'chat-1', {
-      isCodexAccount: false,
+      providerId: 'claude-code',
     });
 
     expect(store.get(selectedAgentChatIdAtom)).toBe('chat-1');
@@ -54,11 +55,23 @@ describe('seedNewChatNavigation', () => {
     expect(store.get(autoModePerChatAtomFamily('chat-1'))).toBe(true);
   });
 
+  it('seeds Agent when the saved mode is one the chat agent hides', () => {
+    const store = freshStore();
+    store.set(chatModeAtom, 'debug');
+
+    seedNewChatNavigation(store.get, store.set, 'chat-hidden', {
+      providerId: 'opencode',
+      hiddenModes: ['debug'],
+    });
+
+    expect(store.get(chatModeAtomFamily('chat-hidden'))).toBe('agent');
+  });
+
   it('copies a locally staged Auto opt-out to the created chat', () => {
     const store = freshStore();
 
     seedNewChatNavigation(store.get, store.set, 'chat-auto', {
-      isCodexAccount: false,
+      providerId: 'claude-code',
       autoModeEnabled: false,
     });
 
@@ -66,13 +79,14 @@ describe('seedNewChatNavigation', () => {
   });
 
   it.each([
-    [true, 'ultrafast'],
-    [false, 'standard'],
-  ])('Codex account %s: staged Ultrafast seeds the chat as %s', (isCodexAccount, seeded) => {
+    ['codex', 'ultrafast'],
+    ['claude-code', 'standard'],
+    ['opencode', 'standard'],
+  ])('%s account: staged Ultrafast seeds the chat as %s', (providerId, seeded) => {
     const store = freshStore();
 
     seedNewChatNavigation(store.get, store.set, 'chat-fast', {
-      isCodexAccount,
+      providerId,
       codexSpeed: 'ultrafast',
     });
 
@@ -83,7 +97,7 @@ describe('seedNewChatNavigation', () => {
     const store = freshStore();
 
     seedNewChatNavigation(store.get, store.set, 'chat-2', {
-      isCodexAccount: false,
+      providerId: 'claude-code',
       subChatId: 'sub-2',
     });
 
@@ -96,7 +110,7 @@ describe('seedNewChatNavigation', () => {
     const store = freshStore(); // global model is 'sonnet' (not a Codex model)
 
     seedNewChatNavigation(store.get, store.set, 'chat-codex', {
-      isCodexAccount: true,
+      providerId: 'codex',
     });
 
     expect(store.get(lastSelectedModelIdAtomFamily('chat-codex'))).toBe(CODEX_DEFAULT_MODEL_ID);
@@ -106,10 +120,22 @@ describe('seedNewChatNavigation', () => {
     const store = freshStore();
     store.set(lastSelectedModelIdAtom, 'codex-gpt-5.5-high'); // valid codex id, non-default effort
     seedNewChatNavigation(store.get, store.set, 'chat-cx2', {
-      isCodexAccount: true,
+      providerId: 'codex',
     });
     // Preserved end-to-end (getEffectiveModelIdForPane → normalize), NOT snapped to the default.
     expect(store.get(lastSelectedModelIdAtomFamily('chat-cx2'))).toBe('codex-gpt-5.5-high');
+  });
+
+  it("starts a free account's chat on its own default, not a model it can't use", () => {
+    const store = freshStore();
+    store.set(lastSelectedModelIdAtom, CODEX_DEFAULT_MODEL_ID); // GPT-6 Astra
+    seedNewChatNavigation(store.get, store.set, 'chat-free', {
+      providerId: 'codex',
+      codexCatalog: { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' },
+    });
+    expect(store.get(lastSelectedModelIdAtomFamily('chat-free'))).toBe('codex-gpt-6-luna-medium');
+    // The new-chat preference itself is kept, for an account that can use it.
+    expect(store.get(lastSelectedModelIdAtom)).toBe(CODEX_DEFAULT_MODEL_ID);
   });
 
   it('split-pane: fills the NEW_CHAT_PANE pane and clears that pane index map', () => {
@@ -124,13 +150,26 @@ describe('seedNewChatNavigation', () => {
     });
 
     seedNewChatNavigation(store.get, store.set, 'chat-4', {
-      isCodexAccount: false,
+      providerId: 'claude-code',
     });
 
     const split = store.get(splitViewAtom);
     expect(split.chatIds[0]).toBe('chat-4'); // pane filled
     expect(store.get(newChatPaneProjectMapAtom)[0]).toBeUndefined(); // pane map cleared
     expect(store.get(justCreatedIdsAtom).has('chat-4')).toBe(true);
+  });
+
+  it.each([
+    ['claude-code', 'sonnet'],
+    ['codex', CODEX_DEFAULT_MODEL_ID],
+    ['opencode', 'anthropic/claude-sonnet-4-5'],
+  ])('on %s, seeds an agent-qualified id as %s', (providerId, seeded) => {
+    const store = freshStore();
+    store.set(lastSelectedModelIdAtom, 'anthropic/claude-sonnet-4-5');
+
+    seedNewChatNavigation(store.get, store.set, 'chat-agent', { providerId });
+
+    expect(store.get(lastSelectedModelIdAtomFamily('chat-agent'))).toBe(seeded);
   });
 });
 

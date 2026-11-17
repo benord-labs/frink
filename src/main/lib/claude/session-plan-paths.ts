@@ -11,6 +11,12 @@ export function isValidSubChatIdForSessionPaths(id: string): boolean {
   return SUBCHAT_ID_PATH_SAFE_RE.test(id);
 }
 
+/** This chat's isolated Claude config dir (`CLAUDE_CONFIG_DIR`), or undefined for an unsafe id. */
+export function claudeSessionConfigDir(subChatId: string): string | undefined {
+  if (!isValidSubChatIdForSessionPaths(subChatId)) return undefined;
+  return path.join(app.getPath('userData'), 'claude-sessions', subChatId);
+}
+
 function getClaudePlansDir(): string {
   return path.join(app.getPath('home'), ...CLAUDE_PLANS_DIR);
 }

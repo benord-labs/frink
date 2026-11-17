@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import stableStringify from 'fast-json-stable-stringify';
 import { CODEX_TASK_STOP_GUARD_TOOL_NAME } from '../../../mcp/dynamic-chat-tool-catalog';
+import type { LaunchHooks } from '../../../provider/hooks/store';
+import { codexThreadHooks } from '../hooks';
 
 const BEARER_HEADER = /^Bearer\s+(.+)$/i;
 /** Patched-Codex marker: discard lower-layer `mcp_servers` instead of merging into them. */
@@ -87,6 +89,8 @@ export function buildCodexMcpBinding(params: {
   canonicalServers: Record<string, unknown>;
   envByServer?: Record<string, Record<string, string>>;
   taskSignalEnabled?: boolean;
+  /** The user's stored hooks for this launch, in Claude's settings shape. */
+  userHooks?: LaunchHooks['hooks'];
 }): CodexMcpBinding {
   const mcpServers: Record<string, unknown> = { [REPLACE_SENTINEL]: true };
 
@@ -107,27 +111,19 @@ export function buildCodexMcpBinding(params: {
     mcp_oauth_credentials_store: 'file',
     mcp_servers: mcpServers,
   };
-  const threadConfig =
-    params.taskSignalEnabled && mcpServers.frink_dynamic_chat
-      ? {
-          ...baseThreadConfig,
-          hooks: {
-            Stop: [
-              {
-                hooks: [
-                  {
-                    type: 'mcp_tool',
-                    server: 'frink_dynamic_chat',
-                    tool: CODEX_TASK_STOP_GUARD_TOOL_NAME,
-                    input: { stop_hook_active: `\${stop_hook_active}` },
-                    timeout: 5,
-                  },
-                ],
-              },
-            ],
-          },
-        }
-      : baseThreadConfig;
+  const stopGuard = {
+    type: 'mcp_tool' as const,
+    server: 'frink_dynamic_chat',
+    tool: CODEX_TASK_STOP_GUARD_TOOL_NAME,
+    input: { stop_hook_active: `\${stop_hook_active}` },
+    timeout: 5,
+  };
+  const guarded = params.taskSignalEnabled && mcpServers.frink_dynamic_chat;
+  const hooks = codexThreadHooks(
+    params.userHooks,
+    guarded ? { Stop: [{ hooks: [stopGuard] }] } : {},
+  );
+  const threadConfig = hooks ? { ...baseThreadConfig, hooks } : baseThreadConfig;
   const revision = crypto
     .createHash('sha256')
     .update(stableStringify(threadConfig))

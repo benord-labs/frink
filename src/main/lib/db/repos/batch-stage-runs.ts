@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
+import type { RunAttachment } from '../../../../shared/types/run-attachment';
 import type { getDatabase } from '../index';
-import { type BatchStageRun, batchStageRuns, type NewBatchStageRun } from '../schema';
+import { type BatchStageRun, batchStageRuns, flowRuns, type NewBatchStageRun } from '../schema';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -35,6 +37,109 @@ export async function listRunsForStage(db: Db, stageId: string): Promise<BatchSt
 export async function getBatchStageRun(db: Db, id: string): Promise<BatchStageRun | null> {
   const [row] = await db.select().from(batchStageRuns).where(eq(batchStageRuns.id, id)).limit(1);
   return row ?? null;
+}
+
+/** A run's trigger_context; only the attachment list is typed, other keys pass through. */
+export const stageRunTriggerContextSchema = z
+  .looseObject({
+    attachments: z
+      .array(
+        z.looseObject({
+          url: z.string(),
+          type: z.string(),
+          label: z.string().optional(),
+          mimeType: z.string().optional(),
+        }),
+      )
+      .default([]),
+  })
+  .nullable()
+  .transform((tc) => tc ?? { attachments: [] });
+
+export type StageRunTriggerContext = z.infer<typeof stageRunTriggerContextSchema>;
+
+export type AppendAttachmentResult =
+  | { ok: true; triggerContext: StageRunTriggerContext }
+  | { ok: false; reason: 'not_found' | 'not_pending' | 'cap' | 'invalid' };
+
+/**
+ * Append one attachment under `max` in a single transaction, building on the
+ * current trigger_context so concurrent uploads and edits are never lost.
+ * Pending runs only: dispatch copies trigger_context once, when it queues the run.
+ */
+export function appendStageRunAttachment(
+  db: Db,
+  runId: string,
+  attachment: RunAttachment,
+  max: number,
+): AppendAttachmentResult {
+  return db.transaction((tx): AppendAttachmentResult => {
+    const row = tx
+      .select({ status: batchStageRuns.status, triggerContext: batchStageRuns.triggerContext })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!row) return { ok: false, reason: 'not_found' };
+    if (row.status !== 'pending') return { ok: false, reason: 'not_pending' };
+    // Refuse rather than rewrite a context we cannot read: that would drop its attachments.
+    const parsed = stageRunTriggerContextSchema.safeParse(row.triggerContext);
+    if (!parsed.success) return { ok: false, reason: 'invalid' };
+    if (parsed.data.attachments.length >= max) return { ok: false, reason: 'cap' };
+    const next = { ...parsed.data, attachments: [...parsed.data.attachments, attachment] };
+    tx.update(batchStageRuns)
+      .set({ triggerContext: next })
+      .where(eq(batchStageRuns.id, runId))
+      .run();
+    return { ok: true, triggerContext: next };
+  });
+}
+
+/** Entries keep whatever shape their writer gave them: an MCP tool may omit the upload's fields. */
+const removableTriggerContextSchema = z
+  .looseObject({ attachments: z.array(z.unknown()).optional().catch(undefined) })
+  .catch({});
+const attachmentUrlSchema = z.looseObject({ url: z.unknown() });
+
+export type RemovableTriggerContext = z.infer<typeof removableTriggerContextSchema>;
+
+export type RemoveAttachmentResult =
+  | { ok: true; triggerContext: RemovableTriggerContext; removed: boolean }
+  | { ok: false; reason: 'not_found' | 'not_pending' };
+
+/** Removes against the stored list, so a stale caller cannot drop a newer upload. Refuses a run
+ * admission has queued or started (not pending, or linked to a flow run): its entry was copied. */
+export function removeStageRunAttachment(
+  db: Db,
+  runId: string,
+  url: string,
+): RemoveAttachmentResult {
+  return db.transaction((tx): RemoveAttachmentResult => {
+    const row = tx
+      .select({
+        status: batchStageRuns.status,
+        flowRunId: batchStageRuns.flowRunId,
+        triggerContext: batchStageRuns.triggerContext,
+      })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!row) return { ok: false, reason: 'not_found' };
+    if (row.status !== 'pending' || row.flowRunId !== null) {
+      return { ok: false, reason: 'not_pending' };
+    }
+    const current = removableTriggerContextSchema.parse(row.triggerContext);
+    const existing = current.attachments ?? [];
+    const kept = existing.filter((entry) => attachmentUrlSchema.safeParse(entry).data?.url !== url);
+    if (kept.length === existing.length) {
+      return { ok: true, triggerContext: current, removed: false };
+    }
+    const next = { ...current, attachments: kept };
+    tx.update(batchStageRuns)
+      .set({ triggerContext: next })
+      .where(eq(batchStageRuns.id, runId))
+      .run();
+    return { ok: true, triggerContext: next, removed: true };
+  });
 }
 
 export async function setStageRunStatus(
@@ -73,6 +178,25 @@ export async function setStageRunStatusIf(
     .where(and(eq(batchStageRuns.id, id), inArray(batchStageRuns.status, fromStatuses)))
     .returning();
   return row ?? null;
+}
+
+/** Settle an in-flight stage run from its run row, reading and writing in ONE synchronous transaction:
+ * a Retry promoted since the caller looked has the run running again, and must not be settled. */
+export function settleStageRunFromRun(db: Db, id: string, flowRunId: string): void {
+  db.transaction(() => {
+    const run = db
+      .select({ status: flowRuns.status })
+      .from(flowRuns)
+      .where(eq(flowRuns.id, flowRunId))
+      .get();
+    if (!run || !['completed', 'failed', 'cancelled'].includes(run.status)) return;
+    db.update(batchStageRuns)
+      .set({ status: run.status === 'completed' ? 'completed' : 'failed', flowRunId })
+      .where(
+        and(eq(batchStageRuns.id, id), inArray(batchStageRuns.status, [...ACTIVE_BSR_STATUSES])),
+      )
+      .run();
+  });
 }
 
 export async function getStageRunByFlowRunId(

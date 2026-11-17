@@ -13,8 +13,11 @@ import type { ConnectAccountFlow, ConnectFlowState } from '../../hooks/useConnec
 import { BUTTON_SHADOW } from '../../lib/button-shadow';
 import { cn } from '../../lib/utils';
 
-const PRIMARY_CTA =
+export const PRIMARY_CTA =
   'w-full min-h-[44px] bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+
+/** Why no login was found; `action` replaces Check again with the one step that fixes it. */
+type NotFound = { title: string; detail?: ReactNode; action?: ReactNode };
 
 type ConnectAccountShellProps = {
   /** Provider brand glyph rendered beside the Frink logo in the header. */
@@ -23,12 +26,18 @@ type ConnectAccountShellProps = {
   providerIconBgClassName: string;
   /** Human provider name used in the title/heading copy ("Claude" / "Codex"). */
   providerName: string;
-  /** CLI command shown in the "no login detected" instructions (e.g. `codex login`). */
-  authCommand: string;
+  /** Shown after the provider's name in the title, such as its Preview tag. */
+  providerTag?: ReactNode;
+  /** Command shown in the "no login detected" steps when `notFound` gives none (e.g. `codex login`). */
+  authCommand?: string;
   /** Sub-heading line under the title (provider-specific token-storage reassurance). */
   headerDescription: ReactNode;
   /** Optional copy inside the "login found" panel (e.g. the macOS keychain prompt note). */
   loginFoundNote?: ReactNode;
+  /** Heading of the "login found" panel when no email is known (default "<name> login found"). */
+  foundTitle?: string;
+  /** Replaces the sign-in steps for an agent Frink finds as an installed program. */
+  notFound?: NotFound;
 
   /** Whether a usable login was detected on this machine. */
   detectionAvailable: boolean;
@@ -57,6 +66,7 @@ type ConnectAccountShellProps = {
 
 function LoginFoundPanel({
   providerName,
+  foundTitle,
   loginFoundNote,
   detectionEmail,
   isReauthFlow,
@@ -66,6 +76,7 @@ function LoginFoundPanel({
   onConnect,
 }: {
   providerName: string;
+  foundTitle?: string;
   loginFoundNote?: ReactNode;
   detectionEmail?: string | null;
   isReauthFlow: boolean;
@@ -83,7 +94,9 @@ function LoginFoundPanel({
             aria-hidden="true"
           />
           <p className="text-sm font-medium text-foreground">
-            {detectionEmail ? `Connected to ${detectionEmail}` : `${providerName} login found`}
+            {detectionEmail
+              ? `Connected to ${detectionEmail}`
+              : (foundTitle ?? `${providerName} login found`)}
           </p>
         </div>
         {loginFoundNote && <p className="text-xs text-muted-foreground">{loginFoundNote}</p>}
@@ -106,53 +119,84 @@ function LoginFoundPanel({
   );
 }
 
+/** A command the user types in Terminal. */
+export function TerminalCommand({ children }: { children: string }) {
+  return <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono">{children}</code>;
+}
+
+/** How to sign in with the provider's own command line tool, then come back. */
+function SignInSteps({ authCommand }: { authCommand: string }) {
+  return (
+    <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+      <li>
+        Open Terminal and run: <TerminalCommand>{authCommand}</TerminalCommand>
+      </li>
+      <li>Complete the login in your browser</li>
+      <li>Return here and click refresh</li>
+    </ol>
+  );
+}
+
+function RefreshButton({
+  label,
+  isRefreshing,
+  onRefresh,
+}: {
+  label: string;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <Button onClick={onRefresh} disabled={isRefreshing} className={cn(PRIMARY_CTA, BUTTON_SHADOW)}>
+      {isRefreshing ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <>
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          {label}
+        </>
+      )}
+    </Button>
+  );
+}
+
 function NoLoginPanel({
   providerName,
   authCommand,
   detectionHint,
+  notFound,
   isRefreshing,
   onRefresh,
 }: {
   providerName: string;
-  authCommand: string;
+  authCommand?: string;
   detectionHint?: string | null;
+  notFound?: NotFound;
   isRefreshing: boolean;
   onRefresh: () => void;
 }) {
   return (
     <div className="space-y-4">
-      <div className="p-4 bg-muted/50 border border-border rounded-lg">
-        <div className="flex items-center gap-2 mb-3">
-          <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
-          <p className="text-sm font-medium">No {providerName} login detected</p>
+      <div className="p-4 bg-muted/50 border border-border rounded-lg space-y-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <p className="text-sm font-medium">
+            {notFound?.title ?? `No ${providerName} login detected`}
+          </p>
         </div>
-        <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
-          <li>
-            Open Terminal and run:{' '}
-            <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono">
-              {authCommand}
-            </code>
-          </li>
-          <li>Complete the login in your browser</li>
-          <li>Return here and click refresh</li>
-        </ol>
-        {detectionHint && <p className="text-xs text-muted-foreground mt-3">{detectionHint}</p>}
+        {notFound
+          ? notFound.detail && <p className="text-sm text-muted-foreground">{notFound.detail}</p>
+          : authCommand && <SignInSteps authCommand={authCommand} />}
+        {detectionHint && <p className="text-xs text-muted-foreground">{detectionHint}</p>}
       </div>
 
-      <Button
-        onClick={onRefresh}
-        disabled={isRefreshing}
-        className={cn(PRIMARY_CTA, BUTTON_SHADOW)}
-      >
-        {isRefreshing ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <>
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            Check for Login
-          </>
-        )}
-      </Button>
+      {notFound?.action ?? (
+        <RefreshButton
+          label={notFound ? 'Check again' : 'Check for Login'}
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
+        />
+      )}
     </div>
   );
 }
@@ -216,14 +260,14 @@ export function connectFlowProps<TDetection>(flow: ConnectAccountFlow<TDetection
     accountLabel: flow.accountLabel,
     onAccountLabelChange: flow.setAccountLabel,
     onBack: flow.handleBack,
-    onConnect: flow.handleConnect,
+    onConnect: () => void flow.handleConnect(),
     onRefresh: flow.handleRefresh,
     onErrorDismiss: flow.dismissError,
   };
 }
 
 /**
- * Presentational shell shared by the Claude and Codex connect/reconnect pages.
+ * Presentational shell shared by the Claude page and the page for every other provider.
  *
  * Owns every structural element both providers duplicate — the draggable title bar,
  * back button, logo + provider-icon header, account-label input, the "login found"
@@ -231,13 +275,18 @@ export function connectFlowProps<TDetection>(flow: ConnectAccountFlow<TDetection
  * the error/retry block — so the per-provider pages stay thin wrappers that only supply
  * their detection/connect wiring.
  */
+// Reason: one shell serves every provider's connect page; agents add found, missing and version states.
+// fallow-ignore-next-line complexity
 export function ConnectAccountShell({
   providerIcon,
   providerIconBgClassName,
   providerName,
+  providerTag,
   authCommand,
   headerDescription,
   loginFoundNote,
+  foundTitle,
+  notFound,
   detectionAvailable,
   detectionEmail,
   detectionHint,
@@ -293,10 +342,11 @@ export function ConnectAccountShell({
             </div>
           </div>
           <div className="space-y-1">
-            <h1 className="text-base font-semibold tracking-tight">
+            <h1 className="flex items-center justify-center gap-2 text-base font-semibold tracking-tight">
               {isReauthFlow
                 ? `Reconnect ${providerName} Account`
                 : `Connect ${providerName} Account`}
+              {providerTag}
             </h1>
             <p className="text-sm text-muted-foreground">{headerDescription}</p>
           </div>
@@ -324,6 +374,7 @@ export function ConnectAccountShell({
           {!isLoading && detectionAvailable && flowState !== 'error' && (
             <LoginFoundPanel
               providerName={providerName}
+              foundTitle={foundTitle}
               loginFoundNote={loginFoundNote}
               detectionEmail={detectionEmail}
               isReauthFlow={isReauthFlow}
@@ -339,6 +390,7 @@ export function ConnectAccountShell({
               providerName={providerName}
               authCommand={authCommand}
               detectionHint={detectionHint}
+              notFound={notFound}
               isRefreshing={isRefreshing}
               onRefresh={onRefresh}
             />

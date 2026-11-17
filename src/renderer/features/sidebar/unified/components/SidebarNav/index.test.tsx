@@ -55,8 +55,6 @@ const WORK_QUEUE_RUNNING_LABEL_REGEX =
   /Work Queue\. Inbox 0 - Needs attention 0 - Failed 0 - Review 0 - Running 1\. Click to open\./;
 const WORK_QUEUE_EMPTY_LABEL_REGEX =
   /Work Queue\. Inbox 0 - Needs attention 0 - Failed 0 - Review 0 - Running 0\. Click to open\./;
-const WORK_QUEUE_HAS_MORE_LABEL_REGEX =
-  /Work Queue\. Inbox 1 - Needs attention 0 - Failed 0 - Review 2 - Running 3 - More tracked tasks available\. Click to open\./;
 afterEach(() => {
   vi.restoreAllMocks();
   launchFlags.flows = true;
@@ -118,16 +116,6 @@ describe('SidebarNav work queue indicator', () => {
     renderNav();
     expect(screen.getByRole('button', { name: WORK_QUEUE_EMPTY_LABEL_REGEX })).toBeTruthy();
     expect(screen.queryByTestId('work-queue-notification')).toBeNull();
-  });
-
-  it('includes has-more suffix when activeTasksHasMore is true', () => {
-    renderNav({
-      inboxTaskCount: 1,
-      pendingReviewCount: 2,
-      runningTaskCount: 3,
-      activeTasksHasMore: true,
-    });
-    expect(screen.getByRole('button', { name: WORK_QUEUE_HAS_MORE_LABEL_REGEX })).toBeTruthy();
   });
 
   it('marks the active destination and forwards its trigger ref', () => {

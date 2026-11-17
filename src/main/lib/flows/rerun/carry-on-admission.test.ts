@@ -12,10 +12,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../admission/runtime', () => ({
   hasActiveFlowAdmission: mocks.hasActiveFlowAdmission,
+  // Loaded by the paused-run resume this suite observes.
+  registerParkedFlowResumeDispatcher: vi.fn(),
 }));
 
 import { setFlowAdmissionLifecycleHooks } from '../admission/activity';
+import * as parkedResume from '../admission/terminal-resume/parked-resume';
 import { carryOnFlowTask } from './carry-on';
+
+const requestParkedFlowResume = vi.spyOn(parkedResume, 'requestParkedFlowResume');
 
 const GRAPH: FlowGraph = {
   nodes: [{ id: 'agent', blockType: 'agent', config: { instructions: 'work' } }],
@@ -48,6 +53,7 @@ beforeEach(async () => {
   mocks.hasActiveFlowAdmission.mockResolvedValue(true);
   setFlowAdmissionLifecycleHooks({
     reconcile: mocks.reconcile,
+    reconcileTicket: vi.fn(async () => {}),
     requestRelease: vi.fn(async () => {}),
   });
 });
@@ -68,6 +74,90 @@ async function seedTranscript(answered: boolean): Promise<void> {
 const taskStatus = async (): Promise<string> =>
   (await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1))[0]?.status ?? 'missing';
 
+describe('carryOnFlowTask — only the current attempt of a node carries on', () => {
+  /** A Retry of the seeded task's node: its attempt becomes history and a new one takes its place. */
+  async function retryNode(newAttemptStatus: string): Promise<void> {
+    await db.update(tasks).set({ nodeRunId: 'nr-1', status: 'failed' }).where(eq(tasks.id, taskId));
+    await db.update(nodeRuns).set({ status: 'superseded' }).where(eq(nodeRuns.id, 'nr-1'));
+    await db.insert(nodeRuns).values({
+      id: 'nr-2',
+      flowRunId,
+      nodeId: 'agent',
+      blockType: 'agent',
+      status: newAttemptStatus,
+      attemptNumber: 2,
+    });
+  }
+
+  it('refuses the attempt a Retry replaced while the new one runs under the re-paused run', async () => {
+    await retryNode('awaiting_input');
+    await db.insert(tasks).values({
+      id: 'task-2',
+      description: 'Retry of the step',
+      source: 'flow',
+      status: 'running',
+      flowRunId,
+      sourceId: 'nr-2',
+      nodeRunId: 'nr-2',
+      result: { subChatId: 'sub-1' },
+    });
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({ ok: false, reason: 'superseded' });
+    expect(await taskStatus()).toBe('failed');
+  });
+
+  it('still refuses the replaced attempt when the new one failed too, and carries on the new one', async () => {
+    await retryNode('failed');
+    await db.insert(tasks).values({
+      id: 'task-2',
+      description: 'Retry of the step',
+      source: 'flow',
+      status: 'failed',
+      flowRunId,
+      sourceId: 'nr-2',
+      nodeRunId: 'nr-2',
+      result: { subChatId: 'sub-1' },
+    });
+    const prompt = { id: 'u2', role: 'user', parts: [], metadata: { dispatchTaskId: 'task-2' } };
+    await db.insert(subChatMessages).values([
+      { subChatId: 'sub-1', seq: 2, message: JSON.stringify(prompt) },
+      {
+        subChatId: 'sub-1',
+        seq: 3,
+        message: JSON.stringify({ id: 'a2', role: 'assistant', parts: [] }),
+      },
+    ]);
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({ ok: false, reason: 'superseded' });
+    expect(await taskStatus()).toBe('failed');
+    await expect(carryOnFlowTask(db, 'task-2')).resolves.toMatchObject({ ok: true });
+  });
+
+  it('names the replaced attempt rather than the lost admission, whose advice is to Retry', async () => {
+    await retryNode('awaiting_input');
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({ ok: false, reason: 'superseded' });
+    expect(mocks.hasActiveFlowAdmission).not.toHaveBeenCalled();
+  });
+
+  it('does not flip the task pending when a Retry replaces its attempt after the attempt check', async () => {
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+    mocks.hasActiveFlowAdmission.mockImplementation(async () => {
+      await db
+        .insert(nodeRuns)
+        .values({ id: 'nr-2', flowRunId, nodeId: 'agent', blockType: 'agent', attemptNumber: 2 });
+      return true;
+    });
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({
+      ok: false,
+      reason: 'invalid-state',
+    });
+    expect(await taskStatus()).toBe('needs_attention');
+  });
+});
+
 describe('carryOnFlowTask admission', () => {
   it('continues a paused non-batch Flow through its active admission', async () => {
     await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({ ok: true });
@@ -85,12 +175,52 @@ describe('carryOnFlowTask admission', () => {
     expect(await taskStatus()).toBe('needs_attention');
   });
 
-  it('refuses the continuation after the Flow admission is gone', async () => {
+  it('refuses the continuation of a step it cannot name once the Flow admission is gone', async () => {
     mocks.hasActiveFlowAdmission.mockResolvedValue(false);
 
     await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({
       ok: false,
       reason: 'admission-required',
+    });
+    expect(requestParkedFlowResume).not.toHaveBeenCalled();
+    expect(await taskStatus()).toBe('needs_attention');
+  });
+
+  it('reports a repeat Continue as merged into the resume already waiting', async () => {
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+    requestParkedFlowResume.mockResolvedValueOnce({ state: 'queued', created: false });
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({
+      ok: true,
+      outcome: 'already-queued',
+    });
+  });
+
+  it('reports a repeat Continue that lands on a resume already running as resumed', async () => {
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+    requestParkedFlowResume.mockResolvedValueOnce({ state: 'active', created: false });
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({
+      ok: true,
+      outcome: 'resumed',
+    });
+  });
+
+  it('queues a paused Flow that gave its slot up, leaving the task parked until the claim', async () => {
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+    requestParkedFlowResume.mockResolvedValueOnce({ state: 'queued', created: true });
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({
+      ok: true,
+      outcome: 'queued',
+    });
+    expect(requestParkedFlowResume).toHaveBeenCalledWith({
+      flowRunId,
+      nodeRunId: 'nr-1',
+      kind: 'continue',
     });
     expect(await taskStatus()).toBe('needs_attention');
   });

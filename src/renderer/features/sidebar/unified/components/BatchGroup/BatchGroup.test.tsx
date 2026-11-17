@@ -118,6 +118,7 @@ afterEach(() => {
 function makeSummary(overrides: Partial<SidebarBatchGroup> = {}): SidebarBatchGroup {
   return {
     batch_id: 'a1b2c3d4-e5f6-4890-8bcd-ef1234567890',
+    kind: 'batch',
     flow_name: 'PR Review Flow',
     run_count: 35,
     completed_count: 28,
@@ -639,5 +640,77 @@ describe('BatchGroup', () => {
 
     expect(screen.getByText('Worktree chat')).toBeDefined();
     expect(screen.getByText('(worktree)')).toBeDefined();
+  });
+});
+
+describe('BatchGroup for a Fan Out run', () => {
+  const runSummary = () =>
+    makeSummary({ kind: 'run', flow_name: 'List outreach', run_count: 5, completed_count: 3 });
+
+  it('counts items and names its actions after the run', () => {
+    render(
+      <BatchGroup
+        summary={runSummary()}
+        localChats={[]}
+        selectedChatId={null}
+        onChatSelect={vi.fn()}
+        onDeleteBatch={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('3 of 5 items completed')).toBeDefined();
+    fireEvent.click(screen.getByLabelText('Run actions'));
+    expect(screen.getByText('Delete run')).toBeDefined();
+  });
+
+  it('opens on its own when it holds the open chat, and a manual collapse sticks', () => {
+    const chats = [makeChatItem({ id: 'item-1', name: 'Outreach: item one' })];
+    const props = { summary: runSummary(), localChats: chats, onChatSelect: vi.fn() };
+    const { rerender } = render(<BatchGroup {...props} selectedChatId="item-1" />);
+    expect(screen.getByText('Outreach: item one')).toBeDefined();
+
+    fireEvent.click(screen.getByText('List outreach'));
+    rerender(<BatchGroup {...props} selectedChatId="item-1" />);
+    expect(screen.queryByText('Outreach: item one')).toBeNull();
+  });
+
+  it('opens when the open chat moves into it after it rendered collapsed', () => {
+    const chats = [makeChatItem({ id: 'item-1', name: 'Outreach: item one' })];
+    const props = { summary: runSummary(), localChats: chats, onChatSelect: vi.fn() };
+    const { rerender } = render(<BatchGroup {...props} selectedChatId={null} />);
+    expect(screen.queryByText('Outreach: item one')).toBeNull();
+
+    rerender(<BatchGroup {...props} selectedChatId="item-1" />);
+    expect(screen.getByText('Outreach: item one')).toBeDefined();
+  });
+
+  it('opens on its own when a member needs the user', () => {
+    render(
+      <BatchGroup
+        summary={runSummary()}
+        localChats={[makeChatItem({ id: 'item-1', name: 'Outreach: item one' })]}
+        selectedChatId={null}
+        onChatSelect={vi.fn()}
+        chatTaskStatusByChatId={new Map([['item-1', 'needs_attention']])}
+      />,
+    );
+    expect(screen.getByText('Outreach: item one')).toBeDefined();
+  });
+
+  it('shows its members’ most urgent state on the collapsed header', () => {
+    render(
+      <BatchGroup
+        summary={runSummary()}
+        localChats={[makeChatItem({ id: 'item-1' }), makeChatItem({ id: 'item-2' })]}
+        selectedChatId={null}
+        onChatSelect={vi.fn()}
+        chatTaskStatusByChatId={
+          new Map([
+            ['item-1', 'running'],
+            ['item-2', 'failed'],
+          ])
+        }
+      />,
+    );
+    expect(screen.getByRole('img', { name: 'Failed: 1' })).toBeDefined();
   });
 });

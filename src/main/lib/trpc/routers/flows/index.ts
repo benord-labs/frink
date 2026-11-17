@@ -5,11 +5,10 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import {
-  flowGraphEdgeSchema,
-  flowGraphNodeSchema,
-} from '../../../../../shared/types/flow-graph-schema';
-import { flowSettingsSchema } from '../../../../../shared/types/flow';
-import { flowResumeSnapshotSchema } from '../../../../../shared/types/flow-run/resume';
+  recoveryKindSchema,
+  resumeRunInputSchema,
+} from '../../../../../shared/types/flow-run/resume';
+import { MAX_ATTACHMENT_URL_LENGTH } from '../../../../../shared/types/run-attachment';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
   BatchStageDetail,
@@ -35,19 +34,19 @@ import {
   listChatIdsWithActiveFlowRun,
   listIncompleteFlowRunIdsForChat,
 } from '../../../db/repos/flow-runs';
-import { createFlowVersion, getLatestVersion, getVersion } from '../../../db/repos/flow-versions';
+import { getLatestVersion, getVersion } from '../../../db/repos/flow-versions';
 import {
   createFlow as createFlowLocal,
   getFlowById,
   updateFlow as updateFlowLocal,
 } from '../../../db/repos/flows';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
+import { listAwaitingApprovals } from '../../../db/repos/task-queries/work-queue-overview-filter';
 import {
   toDbBatchPlanTemplate,
   toDbBriefingStash,
   toDbFlow,
   toDbFlowRunWithNodeRuns,
-  toDbFlowVersion,
   toDbFlowWithLatestVersion,
 } from '../../../flows/adapters';
 import { flowRunAdmissionSnapshotsForRuns } from '../../../flows/admission/visibility';
@@ -55,10 +54,9 @@ import { validateDag } from '../../../flows/dag-validation';
 import {
   cancelFlowRun as cancelFlowRunLocal,
   getFlowRunWithNodeRuns,
-  rerunFlowRunFromInterruption as rerunFlowRunLocal,
-  resumeFlowRun as resumeFlowRunLocal,
   startFlowRun as startFlowRunLocal,
 } from '../../../flows/engine';
+import { resolveRunRecoveries } from '../../../flows/rerun';
 import { describeInterruptedRunForChat, pauseFlowRunForSubChat } from '../../../flows/resume';
 import { pauseActiveExecutionForSubChat } from '../../../socket/executor';
 // Flows use snake_case DTOs end-to-end (cloud-API contract); opt out of the
@@ -68,17 +66,20 @@ import { flowAdmissionQueueProcedures } from './admission-queue';
 import { flowAdmissionSettingsProcedures } from './admission-settings';
 import { createFlowCopyProcedures } from './copy';
 import { createFlowListProcedures, flowGraphMeta } from './list';
-import { flowStartResponse, mapEngineError, retrySettledFlowRun } from './run-actions';
+import {
+  flowStartResponse,
+  mapEngineError,
+  resumeRunAndReload,
+  retryRunFromLastNode,
+} from './run-actions';
+import { createFlowVersionProcedures } from './versions';
 
-const flowGraphSchema = z.object({
-  nodes: z.array(flowGraphNodeSchema),
-  edges: z.array(flowGraphEdgeSchema),
-  settings: flowSettingsSchema,
-});
 export const flowsRouter = router({
   ...createFlowListProcedures(),
   ...createFlowCopyProcedures(),
   ...flowAdmissionQueueProcedures(),
+  workQueueApprovals: publicProcedureRaw.query(() => listAwaitingApprovals(getDatabase())),
+  ...createFlowVersionProcedures(),
   get: publicProcedureRaw.input(z.object({ id: z.string().min(1) })).query(async ({ input }) => {
     const db = getDatabase();
     const row = await getFlowById(db, input.id);
@@ -98,12 +99,11 @@ export const flowsRouter = router({
       const ids = await listIncompleteFlowRunIdsForChat(db, input.chatId);
       return ids.length > 0;
     }),
-  // Drives the in-chat interrupted-run row (describeInterruptedRunForChat owns the rules). Note the
-  // sub-chat scope: the run is chat-wide, but only the tab whose session drives the interrupted node
-  // can be woken by a message — the rest resolve `redispatch`. Polled like hasIncompleteRunForChat.
+  // Drives the in-chat interrupted-run row (describeInterruptedRunForChat owns the rules). Polled
+  // like hasIncompleteRunForChat.
   interruptedRunForChat: publicProcedureRaw
-    .input(z.object({ chatId: z.string().min(1), subChatId: z.string().min(1) }))
-    .query(({ input }) => describeInterruptedRunForChat(input.chatId, input.subChatId)),
+    .input(z.object({ chatId: z.string().min(1) }))
+    .query(({ input }) => describeInterruptedRunForChat(input.chatId)),
 
   // chatIds that have a non-terminal flow_run — the sidebar polls this to keep a 'Run' badge on a
   // running flow's chat even in taskless windows (pre-first-agent, non-agent nodes) where no tracked
@@ -161,28 +161,6 @@ export const flowsRouter = router({
       return { ok: true as const };
     }),
 
-  saveVersion: publicProcedureRaw
-    .input(
-      z.object({
-        flowId: z.string().min(1),
-        graph: flowGraphSchema,
-        expectedVersionNumber: z.number().int().min(0).optional(),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const db = getDatabase();
-      try {
-        const row = await createFlowVersion(db, {
-          flowId: input.flowId,
-          graph: input.graph,
-          expectedVersionNumber: input.expectedVersionNumber,
-        });
-        return toDbFlowVersion(row);
-      } catch (e) {
-        mapEngineError(e);
-      }
-    }),
-
   startRun: publicProcedureRaw
     .input(
       z.object({
@@ -214,7 +192,10 @@ export const flowsRouter = router({
       const graph = version?.graph ?? null;
       const snapshot = flowRunAdmissionSnapshotsForRuns(db, [detail.run.id]).get(detail.run.id);
       const run = { ...detail.run, status: snapshot?.runStatus ?? detail.run.status };
-      return toDbFlowRunWithNodeRuns(run, detail.nodeRuns, graph, snapshot?.admission ?? null);
+      return {
+        ...toDbFlowRunWithNodeRuns(run, detail.nodeRuns, graph, snapshot?.admission ?? null),
+        recoveries: await resolveRunRecoveries(db, run, detail.nodeRuns),
+      };
     }),
 
   cancelRun: publicProcedureRaw
@@ -235,60 +216,16 @@ export const flowsRouter = router({
     ),
 
   resumeRun: publicProcedureRaw
-    .input(
-      z.object({
-        runId: z.string().min(1),
-        action: z.enum(['approve', 'retry', 'skip']),
-        nodeRunId: z.string().min(1),
-        expectedSnapshot: flowResumeSnapshotSchema.optional(),
-      }),
-    )
-    .mutation(async ({ input: { runId, action, nodeRunId, expectedSnapshot } }) => {
-      try {
-        await resumeFlowRunLocal(runId, action, nodeRunId, expectedSnapshot);
-        const detail = await getFlowRunWithNodeRuns(runId);
-        if (!detail) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-        const version = await getVersion(getDatabase(), detail.run.flowVersionId);
-        return toDbFlowRunWithNodeRuns(detail.run, detail.nodeRuns, version?.graph ?? null);
-      } catch (e) {
-        mapEngineError(e);
-      }
-    }),
-
-  rerunRun: publicProcedureRaw
-    .input(z.object({ runId: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      try {
-        await rerunFlowRunLocal(input.runId);
-        const detail = await getFlowRunWithNodeRuns(input.runId);
-        if (!detail) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-        const db = getDatabase();
-        const version = await getVersion(db, detail.run.flowVersionId);
-        return toDbFlowRunWithNodeRuns(detail.run, detail.nodeRuns, version?.graph ?? null);
-      } catch (e) {
-        mapEngineError(e);
-      }
-    }),
+    .input(resumeRunInputSchema)
+    .mutation(({ input }) => resumeRunAndReload(input)),
 
   retryRunFromLastNode: publicProcedureRaw
-    .input(z.object({ runId: z.string().min(1) }))
+    .input(z.object({ runId: z.string().min(1), kind: recoveryKindSchema }))
     .mutation(async ({ input }) => {
       const db = getDatabase();
       const run = await getFlowRun(db, input.runId);
       if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-      if (run.status !== 'failed' && run.status !== 'cancelled' && run.status !== 'completed') {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: `Flow run is ${run.status}; retry requires a settled run — use Carry on instead.`,
-        });
-      }
-      const ok = await retrySettledFlowRun(db, input.runId);
-      if (!ok) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'Flow run context unavailable; flow or version may have been deleted.',
-        });
-      }
+      await retryRunFromLastNode(db, run, input.kind);
       return { ok: true };
     }),
 
@@ -356,10 +293,6 @@ export const flowsRouter = router({
       const { patchBatchStageDepsLocal } = await import('../../../flows/batch-mutations');
       return patchBatchStageDepsLocal(input.batch_id, input.stages);
     }),
-
-  getBriefings: publicProcedureRaw
-    .input(z.object({ projectId: z.string().min(1).nullable().optional() }).optional())
-    .query((): Array<{ id: string; name: string; briefing: string }> => []),
 
   listStashes: publicProcedureRaw.query(async () => {
     const db = getDatabase();
@@ -499,29 +432,26 @@ export const flowsRouter = router({
         runId: z.string().min(1),
         label: z.string().optional(),
         customInstructions: z.string().max(10_000).optional(),
-        attachments: z
-          .array(
-            z.object({
-              url: z.string().min(1).max(2048),
-              type: z.string().min(1),
-              label: z.string().optional(),
-              mimeType: z.string().optional(),
-            }),
-          )
-          .max(10)
-          .optional(),
         configOverrides: z.record(z.string(), z.unknown()).optional(),
       }),
     )
     .mutation(async ({ input }) => {
       const { updateStageRunLocal } = await import('../../../flows/batch-mutations');
-      return updateStageRunLocal({
-        runId: input.runId,
-        label: input.label,
-        customInstructions: input.customInstructions,
-        attachments: input.attachments,
-        configOverrides: input.configOverrides,
-      });
+      return updateStageRunLocal(input);
+    }),
+
+  /** Remove one attachment by its URL; a run's attachment list is never replaced wholesale. */
+  removeStageRunAttachment: publicProcedureRaw
+    .input(
+      z.object({
+        flowId: z.string().min(1),
+        runId: z.string().min(1),
+        url: z.string().min(1).max(MAX_ATTACHMENT_URL_LENGTH),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { removeAttachmentFromStageRun } = await import('../../../flows/batch');
+      return removeAttachmentFromStageRun({ runId: input.runId, url: input.url });
     }),
 
   reassignStageRun: publicProcedureRaw
@@ -534,7 +464,7 @@ export const flowsRouter = router({
     )
     .mutation(async ({ input }) => {
       const { reassignStageRunLocal } = await import('../../../flows/batch-mutations');
-      return reassignStageRunLocal(input.runId, input.targetStageId);
+      return reassignStageRunLocal(input.flowId, input.runId, input.targetStageId);
     }),
 
   fetchAttachmentDataUrl: publicProcedureRaw

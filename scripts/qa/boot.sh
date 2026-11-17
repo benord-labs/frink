@@ -1,47 +1,66 @@
 #!/bin/bash
-# Boots the prebuilt QA app on its isolated profile, with CDP on :9223.
-# Boot-only: app-state prep (profile wipe, fixture DB) lives in seed.sh, which
-# qavis runs first — this script owns what must span the app's lifetime: the
-# single-run lock and launch. Isolated from the owner's running dev app (own
-# userData/lock/sqlite via AUTH_SERVER_PORT suffix, own CDP port).
-# Launches the bundle build.sh produced (the recipe's `bootstrap` step), not `electron-vite dev`.
-# Triage: the `frink-qa` skill. Manual run:
+# Boots the prebuilt QA app on its instance's own profile and DevTools port (env.sh; default :9223).
+# Boot-only: app-state prep (profile wipe, fixture DB) lives in seed.sh, which runs first.
+# Isolated from the owner's running dev app (own userData, sqlite and DevTools port).
+# Launches the bundle build.sh produced, not `electron-vite dev`.
+# Usage and triage: scripts/qa/README.md. Manual run:
 #   bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
+. "$(dirname "$0")/scrub-host-env.sh"
 
-mkdir -p "$QA_HOME"
-
-# One QA run at a time: the rig is single-tenant — one CDP port (9223) and one
-# $HOME QA profile — so a second concurrent run would wipe and re-seed the
-# profile the first one is driving.
-if ! mkdir "$LOCK" 2>/dev/null; then
-  HOLDER=$(cat "$LOCK/pid" 2>/dev/null || echo "")
-  if [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; then
-    echo "frink QA already running (pid $HOLDER) — one run at a time." >&2
-    exit 1
-  fi
-  rm -rf "$LOCK" && mkdir "$LOCK" # stale lock from a killed run — steal it
-fi
-echo $$ > "$LOCK/pid"
+# Before the .env load below, so the worktree's own VITE_*/MAIN_VITE_* keys survive. Inherited
+# from an agent shell, ELECTRON_RENDERER_URL would load the host's dev server, not out-qa.
+qa_scrub_host_dev_env
 
 DEV_PID=""
+CLAIM="$$:$(qa_started $$)"
+# A stop passes on to the app (electron's launcher forwards TERM), and this script exits only once
+# the app has. Ctrl-C lands here too: a backgrounded app ignores SIGINT.
 cleanup() {
-  # qavis SIGTERMs the whole process group, so electron is already shutting
-  # down; wait for the dev wrapper to exit before releasing the run lock.
-  if [ -n "$DEV_PID" ]; then wait "$DEV_PID" 2>/dev/null || true; fi
-  rm -rf "$LOCK"
+  if [ -n "$DEV_PID" ]; then
+    kill -TERM "$DEV_PID" 2>/dev/null || true
+    wait "$DEV_PID" 2>/dev/null || true
+  fi
+  # Only our own claim: one this boot.sh found and refused belongs to the instance's running boot.
+  [ "$(readlink "$QA_BOOT_LOCK" 2>/dev/null)" != "$CLAIM" ] || rm -f "$QA_BOOT_LOCK"
 }
-trap cleanup TERM INT EXIT
+# A signal ends the script, so a stop that lands before the launch never starts the app.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap cleanup EXIT
+
+mkdir -p "$QA_USER_DATA"
+if ! ln -s "$CLAIM" "$QA_BOOT_LOCK" 2>/dev/null; then
+  if RUNNING=$(qa_running_pid); then
+    echo "The QA instance on port $QA_CDP_PORT is already running (boot.sh pid $RUNNING)." >&2
+    exit 1
+  fi
+  rm -f "$QA_BOOT_LOCK" # left by a boot.sh that no longer runs
+  if ! ln -s "$CLAIM" "$QA_BOOT_LOCK" 2>/dev/null; then
+    echo "Another boot.sh claimed the QA instance on port $QA_CDP_PORT first." >&2
+    exit 1
+  fi
+fi
 
 cd "$(dirname "$0")/../.."
 
 # Fail loud when build.sh has not run, rather than let Electron's "module not found" stand in.
 if [ ! -s "out-qa/main/index.js" ]; then
-  rm -rf "$LOCK"
-  echo "frink is not built — run: bash scripts/qa/build.sh first (qavis does via the recipe's bootstrap step)." >&2
+  echo "frink is not built — run: bash scripts/qa/build.sh first." >&2
   exit 1
 fi
+
+# The seeded Claude account always resolves, so whichever `claude` this build runs answers every
+# send. Default to the scripted fake (no model call, no quota); the real CLI on the operator's own
+# login is an explicit opt-in. Announced, so a log shows which one a run used.
+if [ "${QA_REAL_CLAUDE:-}" = "1" ]; then
+  bash scripts/qa/use-real-claude.sh
+else
+  bash scripts/qa/use-fake-claude.sh
+fi
+# The direct launch makes out-qa/main the app path, so the menu bar icons are linked in beside bin.
+ln -sfn "$PWD/resources/tray" out-qa/main/resources/tray
 
 # Provision Electron's app binary. electron@43 declares NO install lifecycle script, so the binary
 # is absent after a clean install and launching electron dies with "Electron uninstall". Doing it
@@ -72,12 +91,10 @@ fi
 
 # QA_FRINK_HOME (env.sh) is the app's own state root; the app refuses to boot if FRINK_HOME is
 # unset or resolves to the real home. seed.sh created and seeded it before this launch.
-# qavis exports QAVIS_EVIDENCE_DIR (its per-run bundle) to `start`; without it — a manual boot, or an
-# older qavis — the log stays profile-local. Announced because a silent fallback would let a run
-# "pass" while the log it was meant to capture landed outside the evidence bundle.
-QA_LOG_DIR="${QAVIS_EVIDENCE_DIR:-$QA_USER_DATA/logs}"
+# The app's log goes under the instance's profile, announced so a run knows where to read it.
+QA_LOG_DIR="$QA_USER_DATA/logs"
 mkdir -p "$QA_FRINK_HOME" "$QA_LOG_DIR"
-echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR${QAVIS_EVIDENCE_DIR:+ (qavis run dir)}" >&2
+echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR" >&2
 
 # ELECTRON_RUN_AS_NODE must be unset or electron runs as plain node (no window, no CDP).
 # FRINK_CDP_PORT keeps clear of the owner's 9222; FRINK_CUSTOM_NODES_DIR keeps the node palette on
@@ -87,8 +104,13 @@ echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR${QAVIS_EVIDE
 # drain freeze reads it from process.env at runtime, so it must be exported here as well.
 # A blank FRINK_WEBHOOK_BASE_URL keeps the rig local-only; unset, every build dials Frink's public relay.
 # The entry is given explicitly: package.json's `main` points at out/, which this build never touches.
+# FRINK_QA_BUNDLE marks this as the prebuilt rig bundle: main refuses to boot it with an
+# ELECTRON_RENDERER_URL, so a launch that skipped the scrub above fails loud instead of silently
+# rendering someone else's dev server.
 env -u ELECTRON_RUN_AS_NODE \
-  FRINK_CDP_PORT=9223 \
+  FRINK_QA_BUNDLE=1 \
+  FRINK_CDP_PORT="$QA_CDP_PORT" \
+  FRINK_AUTH_SERVER_PORT="$QA_PROFILE_PORT" \
   FRINK_CUSTOM_NODES_DIR="$QA_USER_DATA/nodes" \
   FRINK_HOME="$QA_FRINK_HOME" \
   FRINK_WEBHOOK_BASE_URL= \
@@ -105,5 +127,6 @@ DEV_PID=$!
 # becoming ready".
 DEV_EXIT=0
 wait "$DEV_PID" || DEV_EXIT=$?
+DEV_PID="" # reaped, so cleanup has nothing left to stop
 echo "[boot.sh] app process exited with code $DEV_EXIT" >&2
 exit "$DEV_EXIT"

@@ -1,6 +1,6 @@
 /**
  * Syncs the server-authoritative batchTriggerSchema into local graph state when
- * the editor is not dirty. The effect calls the raw `setGraph` setter (not
+ * the working copy has no unsaved edits. The effect calls the raw `setGraph` setter (not
  * `updateGraph`) so it never marks the flow as dirty.
  */
 
@@ -10,7 +10,8 @@ import type { FlowSettings } from '../../../../../shared/types/flow';
 
 type UseBatchTriggerSchemaSyncParams = {
   hydrated: boolean;
-  isDirty: boolean;
+  /** Working copy differs from its baseline graph. Not the shared nav-guard atom, which sibling surfaces clear. */
+  modified: boolean;
   graph: FlowGraph;
   setGraph: Dispatch<SetStateAction<FlowGraph>>;
   serverBatchTriggerSchema: FlowSettings['batchTriggerSchema'];
@@ -18,13 +19,13 @@ type UseBatchTriggerSchemaSyncParams = {
 
 export function useBatchTriggerSchemaSync({
   hydrated,
-  isDirty,
+  modified,
   graph,
   setGraph,
   serverBatchTriggerSchema,
 }: UseBatchTriggerSchemaSyncParams): void {
   useEffect(() => {
-    if (!hydrated || isDirty) return;
+    if (!hydrated || modified) return;
     const localSchema = graph.settings?.batchTriggerSchema;
     if (JSON.stringify(localSchema ?? null) === JSON.stringify(serverBatchTriggerSchema ?? null)) {
       return;
@@ -38,5 +39,5 @@ export function useBatchTriggerSchemaSync({
       }
       return { ...prev, settings: nextSettings };
     });
-  }, [graph.settings?.batchTriggerSchema, hydrated, isDirty, serverBatchTriggerSchema, setGraph]);
+  }, [graph.settings?.batchTriggerSchema, hydrated, modified, serverBatchTriggerSchema, setGraph]);
 }

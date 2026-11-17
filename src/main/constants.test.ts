@@ -50,3 +50,33 @@ describe('PROTOCOL (single source of truth for index.ts and debug.ts)', () => {
     expect(PROTOCOL).toBe('frink');
   });
 });
+
+describe("AUTH_SERVER_PORT (names an isolated instance's profile)", () => {
+  const load = async (env: Record<string, string | undefined>) => {
+    vi.stubEnv('ELECTRON_RENDERER_URL', undefined);
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    return (await import('./constants')).AUTH_SERVER_PORT;
+  };
+  const rig = { FRINK_CDP_PORT: '40010', MAIN_VITE_AUTH_SERVER_PORT: '21399' };
+
+  it('takes the port a launch names, so one build runs under any profile', async () => {
+    expect(await load({ ...rig, FRINK_AUTH_SERVER_PORT: '40010' })).toBe(40010);
+  });
+
+  it.each(['', 'abc', '0', '40010.5'])(
+    'keeps the built-in port when the launch names %j, never the default profile',
+    async (named) => {
+      expect(await load({ ...rig, FRINK_AUTH_SERVER_PORT: named })).toBe(21399);
+    },
+  );
+
+  it('ignores the named port in a production launch', async () => {
+    const env = { FRINK_CDP_PORT: undefined, MAIN_VITE_AUTH_SERVER_PORT: undefined };
+    expect(await load({ ...env, FRINK_AUTH_SERVER_PORT: '40010' })).toBe(21321);
+  });
+
+  it('falls back to the dev default when nothing names a port', async () => {
+    const env = { FRINK_CDP_PORT: '9223', MAIN_VITE_AUTH_SERVER_PORT: undefined };
+    expect(await load({ ...env, FRINK_AUTH_SERVER_PORT: undefined })).toBe(21322);
+  });
+});

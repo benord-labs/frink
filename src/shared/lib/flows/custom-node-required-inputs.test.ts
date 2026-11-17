@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   findMissingRequiredCustomNodeInputs,
+  isTemplateRenderedInput,
   parseManifestInputDeclarations,
 } from './custom-node-required-inputs';
 
@@ -144,6 +145,19 @@ describe('parseManifestInputDeclarations', () => {
     expect(findMissingRequiredCustomNodeInputs(parsed, {})).toEqual([]);
   });
 
+  it('keeps a "template": false opt-out, including on an otherwise malformed declaration', () => {
+    expect(parseManifestInputDeclarations({ q: { type: 'string', template: false } })).toEqual({
+      q: { type: 'string', template: false },
+    });
+    // Salvage keeps only an explicit false; anything else stays rendered (the default).
+    expect(
+      parseManifestInputDeclarations({
+        a: { required: 'yes', template: false },
+        b: { required: 'yes', template: 'no' },
+      }),
+    ).toEqual({ a: { template: false }, b: {} });
+  });
+
   it('keeps entries that are not objects as bare optional declarations', () => {
     expect(parseManifestInputDeclarations({ a: 'not-an-object', b: 42, c: null })).toEqual({
       a: {},
@@ -156,5 +170,23 @@ describe('parseManifestInputDeclarations', () => {
     expect(parseManifestInputDeclarations([])).toEqual({});
     expect(parseManifestInputDeclarations(null)).toEqual({});
     expect(parseManifestInputDeclarations('nonsense')).toEqual({});
+  });
+});
+
+describe('isTemplateRenderedInput', () => {
+  it('renders by default and opts out only on an explicit false', () => {
+    expect(isTemplateRenderedInput(undefined)).toBe(true);
+    expect(isTemplateRenderedInput({})).toBe(true);
+    expect(isTemplateRenderedInput({ template: true })).toBe(true);
+    expect(isTemplateRenderedInput({ template: false })).toBe(false);
+  });
+
+  it('counts an opted-out required value holding {{...}} as present', () => {
+    expect(
+      findMissingRequiredCustomNodeInputs(
+        { q: { required: true, template: false } },
+        { q: '{{field}}' },
+      ),
+    ).toEqual([]);
   });
 });

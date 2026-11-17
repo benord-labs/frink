@@ -1,5 +1,6 @@
 /* eslint-disable project-structure/folder-structure */
 import { atom, type Getter, type Setter } from 'jotai';
+import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
 import type { CodexSpeed } from '../../../../shared/types/execution';
 import { leaveOverlayStackForChatSurfaceAtom } from '../../../lib/atoms';
@@ -18,6 +19,7 @@ import {
   splitViewAtom,
 } from '../atoms';
 import { getEffectiveModelIdForPane } from '../hooks/use-effective-model-for-pane';
+import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { getEffectiveChatModeForPane } from '../hooks/use-effective-plan-mode-for-pane';
 import { fillNewChatInSplitState, resolveFillPaneIndex } from '../main/new-chat-form.split-routing';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
@@ -26,14 +28,18 @@ import { getUrlParam } from '../../../lib/utils/url-params';
 import { newChatDraftKey, replaceDraftText } from './drafts';
 
 type SeedOptions = {
-  /** Whether the resolved execution account is a Codex account (coerces the seeded model id). */
-  isCodexAccount: boolean;
+  /** The resolved execution account's provider (coerces the seeded model id). */
+  providerId: string | null | undefined;
+  /** The Codex account's catalog: a model it can't use seeds as its default instead. */
+  codexCatalog?: CodexAccountCatalog | null;
   /** First sub-chat id, if present — seeds its mode before the tRPC query hydrates the store. */
   subChatId?: string;
   /** Staged manual Auto Mode state from New Chat. Defaults on for all fresh chats. */
   autoModeEnabled?: boolean;
   /** Staged Codex speed from New Chat; applied only on a Codex account. Defaults to standard. */
   codexSpeed?: CodexSpeed;
+  /** Modes the chat's agent has no equivalent for: a saved one seeds as Agent. */
+  hiddenModes?: readonly ChatMode[];
 };
 
 /** Toggles one New Chat form stages before its chat exists; `capture` freezes them at send, so a
@@ -61,25 +67,33 @@ export function seedNewChatNavigation(
   get: Getter,
   set: Setter,
   chatId: string,
-  { isCodexAccount, subChatId, autoModeEnabled = true, codexSpeed = 'standard' }: SeedOptions,
+  {
+    providerId,
+    codexCatalog = null,
+    subChatId,
+    autoModeEnabled = true,
+    codexSpeed = 'standard',
+    hiddenModes,
+  }: SeedOptions,
 ): void {
   set(selectedAgentChatIdAtom, chatId);
 
   // Snapshot the fill target before setSplitView mutates chatIds — seeding reads it.
   const prevSplit = get(splitViewAtom);
   const filledPaneIndex = resolveFillPaneIndex(prevSplit.chatIds, chatId);
-  const effectiveChatMode = getEffectiveChatModeForPane(get, filledPaneIndex);
+  const savedChatMode = getEffectiveChatModeForPane(get, filledPaneIndex);
+  const effectiveChatMode = hiddenModes?.includes(savedChatMode) ? 'agent' : savedChatMode;
 
   set(splitViewAtom, (prev: SplitViewState) => fillNewChatInSplitState(prev, chatId));
 
   const rawModelId = getEffectiveModelIdForPane(get, filledPaneIndex);
   set(
     lastSelectedModelIdAtomFamily(chatId),
-    normalizeModelIdForExecutionAccount(isCodexAccount, rawModelId),
+    normalizeModelIdForExecutionAccount(providerId, rawModelId, codexCatalog),
   );
   set(chatModeAtomFamily(chatId), effectiveChatMode);
   set(autoModePerChatAtomFamily(chatId), autoModeEnabled);
-  set(codexSpeedAtomFamily(chatId), isCodexAccount ? codexSpeed : 'standard');
+  set(codexSpeedAtomFamily(chatId), providerId === 'codex' ? codexSpeed : 'standard');
 
   if (subChatId) {
     useAgentSubChatStore.getState().updateSubChatMode(subChatId, effectiveChatMode, chatId);

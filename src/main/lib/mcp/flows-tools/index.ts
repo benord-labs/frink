@@ -14,9 +14,10 @@
 import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
-import { manifestOutputsToSchema } from '../../../../shared/lib/output-schemas';
 import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-flow-graph';
+import { unreadableWebhookFilterMessage } from '../../../../shared/lib/webhook-match';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
+import { patchTemplateWarnings } from './patch-template-warnings';
 import {
   addStageRunsLimiter,
   defineStagesLimiter,
@@ -39,15 +40,10 @@ export {
   resetStartBatchCount,
 } from './gating/session-call-limiters';
 
-import {
-  computeNodeVariables,
-  validateFlowTemplateVariables,
-} from '../../../../shared/lib/validate-flow-templates';
 import { getCommandContent, listCommands } from '../../commands';
-import { discoverCustomNodes } from '../../custom-nodes/discovery';
-import { listPluginNodes } from '../../integrations/plugin-node-derivation';
 import { getDatabase } from '../../db';
 import { getProjectById } from '../../db/repos/projects';
+import { type BatchStatusBuckets, bucketBatchStatusCounts } from '../../flows/batch';
 import {
   addStageRuns,
   type BatchRunRow,
@@ -73,9 +69,11 @@ import { type McpToolResult, toolResult } from '../tool-result';
 import { handleIntegrationsList, handleNodesList, handleProjectsList } from './catalog';
 import { expandAgentCommandsInGraph, formatExpansionFailures } from './expand-commands';
 import { applyPatchOperations, patchArgsSchema, seedDefaultProject } from './flow-patch';
+import { PATCH_OPERATIONS_INPUT_SCHEMA } from './patch';
 import {
   buildFlowPatchReceipt,
   buildFlowPatchResult,
+  operationsTouchPositions,
   buildFlowPatchUnexpectedError,
   flowPatchError,
   rollbackCreatedFlow,
@@ -83,12 +81,31 @@ import {
 } from './flow-patch-result';
 import { buildFlowRunLaunchResult } from './flow-run-launch-result';
 import { mapFlowRunToSummary } from './map-flow-run';
+import {
+  claimCreatedFlowName,
+  recordCreatedFlowId,
+  releaseUnsavedFlowName,
+  resetCreatedFlowNames,
+} from './gating/patch-create-names';
 import { handleRegisterNode, REGISTER_NODE_TOOL, type RegisterNodeOptions } from './register-node';
 import { resolveCreationProject } from './resolve-creation-project';
 import { describeFlowRunBlockers } from './run-readiness';
 import { truncateNodeOutput } from './truncate-node-output';
 
 export { resetRegisterNodeCount } from './register-node';
+
+/** Only a run that queued names the slots held by runs waiting on the user. The run exists already,
+ * so a failed count drops the note rather than report a failed launch that a retry would repeat. */
+async function slotsHeldByWaitingRuns(run: DbFlowRun): Promise<number> {
+  if (run.started_at !== null) return 0;
+  try {
+    const { getFlowAdmissionSettings } = await import('../../flows/admission/runtime');
+    return (await getFlowAdmissionSettings()).held_by_waiting_runs;
+  } catch (error) {
+    log.warn('[Flows MCP] could not count slots held by waiting runs', { error });
+    return 0;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Argument schemas (Zod)
@@ -354,6 +371,7 @@ function releasePatchCreateSlot(sessionKey: string): void {
 }
 
 export function resetFlowsPatchCreateCount(executionId?: string): void {
+  resetCreatedFlowNames(executionId);
   if (executionId === undefined) {
     patchCreateCounts.clear();
     return;
@@ -361,146 +379,15 @@ export function resetFlowsPatchCreateCount(executionId?: string): void {
   patchCreateCounts.delete(executionId);
 }
 
-// ---------------------------------------------------------------------------
-// Shared JSON Schema fragment reused in multiple tool inputSchema definitions
-// ---------------------------------------------------------------------------
-
-const GRAPH_INPUT_SCHEMA = {
-  type: 'object',
-  description:
-    'Flow graph with nodes and edges. Each node needs id, blockType, and optional config. Each edge needs id, source, target.',
-  properties: {
-    nodes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          blockType: { type: 'string' },
-          parentId: {
-            type: 'string',
-            description: 'Fan Out node id when this node belongs to its per-item body.',
-          },
-          label: { type: 'string' },
-          config: { type: 'object' },
-        },
-        required: ['id', 'blockType'],
-      },
-    },
-    edges: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          source: { type: 'string' },
-          target: { type: 'string' },
-          sourceHandle: { type: 'string', enum: ['true', 'false'] },
-          label: { type: 'string' },
-        },
-        required: ['id', 'source', 'target'],
-      },
-    },
-  },
-  required: ['nodes', 'edges'],
-} as const;
-
-/** MCP JSON Schema hint for patch operations (Zod is authoritative in handler). */
-const PATCH_OPERATIONS_INPUT_SCHEMA = {
-  type: 'array',
-  minItems: 1,
-  maxItems: 50,
-  description:
-    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings).',
-  items: {
-    type: 'object',
-    properties: {
-      op: {
-        type: 'string',
-        enum: [
-          'update_node',
-          'add_node',
-          'remove_node',
-          'add_edge',
-          'remove_edge',
-          'update_edge',
-          'update_settings',
-        ],
-      },
-      nodeId: { type: 'string' },
-      parentId: {
-        type: ['string', 'null'],
-        description: 'Fan Out owner id; null removes ownership.',
-      },
-      edgeId: { type: 'string' },
-      label: { type: 'string' },
-      config: { type: 'object' },
-      position: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } } },
-      node: GRAPH_INPUT_SCHEMA.properties.nodes.items,
-      edge: GRAPH_INPUT_SCHEMA.properties.edges.items,
-      sourceHandle: { type: 'string', enum: ['true', 'false'] },
-      settings: {
-        type: 'object',
-        description:
-          'Flow-level settings for update_settings op. Supports: defaultModel (string), defaultProjectId (UUID string), briefing (string, max 10000 chars — shared PRD/spec delivered once per session as a system prompt to every agent in the flow; do not reference it in instructions; set to "" to clear), pauseOnFailure (boolean — when true, flow pauses instead of terminating on node failure, allowing retry or skip from run history), maxBatchConcurrency (number 1–20 — per-stage concurrent BSR ceiling; defaults to the built-in dispatch ceiling of 5 and can only cap below that ceiling), batchTriggerSchema (array — declare expected {{trigger.*}} variables for manual_trigger batch flows so they appear as typed chips in the editor; each item: { key: string (valid JS identifier, max 64 chars), type: "string"|"number"|"boolean"|"object"|"array", description?: string, example?: string }; max 100 entries; merging keys from triggerContext at run time is best-effort, non-blocking, and only for supported trigger types — not guaranteed for every key).',
-        properties: {
-          defaultModel: { type: 'string' },
-          defaultProjectId: { type: 'string' },
-          briefing: {
-            type: 'string',
-            description:
-              'Shared context (PRD, spec, checklist) delivered once per flow session as a system prompt to every agent in the flow — never repeated in each agent\'s message, and not referenced in instructions. Rendered against {{trigger.*}} only. Max 10,000 chars. Set to "" to clear.',
-          },
-          pauseOnFailure: {
-            type: 'boolean',
-            description:
-              'When true, the flow pauses instead of terminating when a node fails. The failed node can then be retried or skipped from the run history UI. State is preserved in Postgres indefinitely. Defaults to false (terminate on failure).',
-          },
-          maxBatchConcurrency: {
-            type: 'number',
-            description:
-              'Per-stage concurrent batch-run dispatch ceiling (integer 1–20). Defaults to the built-in ceiling of 5. Values above 5 are clamped to 5; lower values cap how many runs from a stage are submitted at once.',
-          },
-          batchTriggerSchema: {
-            type: 'array',
-            maxItems: 100,
-            description:
-              'Declare expected {{trigger.*}} variables for manual_trigger batch flows. Each declared variable shows as a typed chip in the Available Variables panel. The server may best-effort merge keys seen in triggerContext from frink_flows_define_stages or frink_flows_add_stage_runs into this array (non-blocking; failures ignored; only flows using supported trigger types such as manual_trigger) — do not rely on merge alone or assume every key (e.g. label, workstreamId, customInstructions) is added; set this field explicitly for design-time declarations and types/descriptions. Max 100 entries.',
-            items: {
-              type: 'object',
-              properties: {
-                key: {
-                  type: 'string',
-                  maxLength: 64,
-                  pattern: '^[a-zA-Z_]\\w*$',
-                  description:
-                    'Variable name — must be a valid JS identifier (/^[a-zA-Z_]\\w*$/, max 64 chars). Used as {{trigger.<key>}} in agent instructions.',
-                },
-                type: {
-                  type: 'string',
-                  enum: ['string', 'number', 'boolean', 'object', 'array'],
-                  description: 'Value type for display in the Available Variables panel.',
-                },
-                description: {
-                  type: 'string',
-                  maxLength: 200,
-                  description: 'Optional description (max 200 chars).',
-                },
-                example: {
-                  type: 'string',
-                  maxLength: 200,
-                  description: 'Optional example value (max 200 chars).',
-                },
-              },
-              required: ['key', 'type'],
-            },
-          },
-        },
-      },
-    },
-    required: ['op'],
-  },
-} as const;
+async function flowExists(flowId: string): Promise<boolean> {
+  try {
+    await getFlow(flowId);
+    return true;
+  } catch (err) {
+    if (isTrpcNotFound(err)) return false;
+    throw err;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -510,7 +397,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_patch',
     description:
-      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and per-node available variables are included in every response. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
+      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and a topology-only graph (node ids, labels, block types, edges) are included in every response; call frink_flows_get for full node config. If a result is missing, cut short, or replaced by a note such as \"saved to <path>\", the call may have finished: check with frink_flows_get (or frink_flows_list after a create) before retrying, and never resend a create — a repeated name-create in the same chat is rejected. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -625,7 +512,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_get_batch',
     description:
-      'Inspect batch/run execution state for a flow. Three modes: (1) omit batchId — list the flow’s recent runs (status, batch_id, timing); (2) pass batchId — batch summary with completed/failed/active counts + per-run status (optional status filter); (3) pass batchId with include:["stages"] — the staged-batch stage breakdown (per-stage run counts + dependencies), for monitoring frink_flows_define_stages. Rate limit: 40 calls per chat session.',
+      'Inspect batch/run execution state for a flow. Three modes: (1) omit batchId — list the flow’s recent runs (status, batch_id, timing); (2) pass batchId — batch summary with completed/failed/active counts + per-run status (optional status filter). The counts and batch_total always cover every run in the batch, whatever limit and status are; total is the number of runs matching the status filter, and runs is one page of them; (3) pass batchId with include:["stages"] — the staged-batch stage breakdown (per-stage run counts + dependencies), for monitoring frink_flows_define_stages. Rate limit: 40 calls per chat session.',
     annotations: { readOnlyHint: true },
     inputSchema: {
       type: 'object' as const,
@@ -690,7 +577,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_define_stages',
     description:
-      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. On partial failure use success: "partial" with failedStages — re-call with full run list for failed numbers.',
+      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. A call that returns an error saved nothing from that call — fix the input and re-send the same stages.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -975,19 +862,23 @@ export async function handleFlowsToolCall(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/** Patch-time setup hints for webhook triggers left without a real integration binding (a
- * webhook_trigger fires only when config.integrationId + config.eventType are set). */
+/** Patch-time hints for webhook triggers that can never fire: no integrationId + eventType
+ * binding, or filters the matcher cannot read. */
 function collectWebhookSetupHints(graph: FlowGraph): string[] {
   const hints: string[] = [];
   for (const node of graph.nodes) {
     if (node.blockType !== 'webhook_trigger') continue;
     const config = (node.config ?? {}) as Record<string, unknown>;
+    const label = node.label?.trim() || node.id;
     const iid = typeof config.integrationId === 'string' ? config.integrationId.trim() : '';
     const et = typeof config.eventType === 'string' ? config.eventType.trim() : '';
-    if (iid && et) continue;
-    hints.push(
-      `Webhook trigger "${node.label ?? node.id}" needs integrationId + eventType — call frink_flows_list_catalog({ kind: 'integrations' }) to get valid values.`,
-    );
+    if (!iid || !et) {
+      hints.push(
+        `Webhook trigger "${label}" needs integrationId + eventType — call frink_flows_list_catalog({ kind: 'integrations' }) to get valid values.`,
+      );
+    }
+    const filterMessage = unreadableWebhookFilterMessage(label, node.config);
+    if (filterMessage) hints.push(filterMessage);
   }
   return hints;
 }
@@ -1019,6 +910,8 @@ async function handlePatch(
   let creationProjectNote: string | null = null;
   let persistenceAttempted = false;
   let persistenceCompleted = false;
+  // Session-scoped name claim; skipped without an executionId (the global key spans chats).
+  let claimedName: string | null = null;
 
   try {
     let flowId: string;
@@ -1028,6 +921,11 @@ async function handlePatch(
     let flowProjectId: string | undefined;
 
     if (name !== undefined) {
+      if (executionId !== undefined) {
+        const claim = await claimCreatedFlowName(executionId, name, flowExists);
+        if (!claim.ok) return flowPatchError(claim.message, 'none');
+        claimedName = name;
+      }
       // Creating a new flow -- check creation sub-limit first
       if (!tryAcquirePatchCreateSlot(sessionKey)) {
         return flowPatchError(
@@ -1053,6 +951,9 @@ async function handlePatch(
         projectId: resolution.projectId,
       });
       createdFlowId = flow.id;
+      if (claimedName !== null && executionId !== undefined) {
+        recordCreatedFlowId(executionId, claimedName, flow.id);
+      }
       flowId = flow.id;
       flowName = flow.name;
       flowProjectId = resolution.projectId ?? undefined;
@@ -1152,13 +1053,7 @@ async function handlePatch(
           );
         }
 
-        // Plugin nodes are derived, never in `valid`; reading only `valid` broke {{previous.*}} (sc-2508).
-        const { valid } = discoverCustomNodes();
-        const customNodeOutputs = new Map(
-          [...valid, ...listPluginNodes()].map((m) => [m.name, manifestOutputsToSchema(m.outputs)]),
-        );
-        const nodeVariables = computeNodeVariables(applied.graph, { customNodeOutputs });
-        const patchTemplateWarnings = validateFlowTemplateVariables(applied.graph, nodeVariables);
+        const templateWarnings = patchTemplateWarnings(applied.graph);
         const webhookSetup = collectWebhookSetupHints(applied.graph);
 
         persistenceAttempted = true;
@@ -1190,8 +1085,9 @@ async function handlePatch(
           operationCount: operations.length,
           creationProjectNote,
           createdFlow: Boolean(createdFlowId),
-          templateWarnings: patchTemplateWarnings,
+          templateWarnings,
           webhookSetup,
+          positionsTouched: operationsTouchPositions(operations),
         });
       }
     }
@@ -1213,6 +1109,7 @@ async function handlePatch(
     });
   } finally {
     releasePatchInFlight(sessionKey);
+    releaseUnsavedFlowName(sessionKey, claimedName, persistenceCompleted);
   }
 }
 
@@ -1410,7 +1307,7 @@ async function handleRun(
       triggerContext: triggerContext ?? null,
     })) as DbFlowRun & { flowRunId?: string; batchId?: string | null };
 
-    const launchResult = buildFlowRunLaunchResult(flowId, run);
+    const launchResult = buildFlowRunLaunchResult(flowId, run, await slotsHeldByWaitingRuns(run));
     if (!launchResult.isError) recordRunSuccess(sessionKey);
     return toolResult(JSON.stringify(launchResult.body, null, 2), launchResult.isError);
   } catch (err) {
@@ -1629,28 +1526,26 @@ async function handleGetBatch(args: Record<string, unknown>): Promise<McpToolRes
 
   let runs: BatchRunRow[];
   let total: number;
+  let counts: BatchStatusBuckets;
   try {
     // listFlowBatchRuns is a plain DB read — an unknown batchId yields an empty result, never a throw.
     const result = await listFlowBatchRuns(flowId, batchId, { status, limit });
     runs = result.runs;
     total = result.total;
+    counts = bucketBatchStatusCounts(result.statusCounts);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return toolResult(`Failed to fetch batch: ${message}`, true);
   }
 
-  const statusCounts = runs.reduce<Record<string, number>>((acc, r) => {
-    acc[r.status] = (acc[r.status] ?? 0) + 1;
-    return acc;
-  }, {});
-
   const data = {
     flowId,
     batchId,
     total,
-    completed: statusCounts.completed ?? 0,
-    failed: (statusCounts.failed ?? 0) + (statusCounts.cancelled ?? 0),
-    active: (statusCounts.running ?? 0) + (statusCounts.paused ?? 0) + (statusCounts.pending ?? 0),
+    batch_total: counts.total,
+    completed: counts.completed,
+    failed: counts.failed,
+    active: counts.active,
     runs: runs.map((r) => ({
       id: r.id,
       status: r.status,
@@ -1732,25 +1627,6 @@ async function handleDefineStages(
       runCount: s.runCount,
       dependsOnStageNumbers: s.dependsOnStageNumbers,
     }));
-
-    if (result.partial && result.failedStages?.length) {
-      const failedNums = result.failedStages.map((f) => f.stageNumber).join(', ');
-      return toolResult(
-        JSON.stringify(
-          {
-            success: 'partial',
-            stageCount: result.stages.length,
-            rootStageCount: result.rootStageCount,
-            maxDepth: result.maxDepth,
-            stages: stageSummary,
-            failedStages: result.failedStages,
-            message: `${result.stages.length} stage(s) defined, ${result.failedStages.length} failed. Re-call frink_flows_define_stages with the full run list for failed stage numbers: [${failedNums}]. Existing runs for those stages will be replaced.`,
-          },
-          null,
-          2,
-        ),
-      );
-    }
 
     return toolResult(
       JSON.stringify(

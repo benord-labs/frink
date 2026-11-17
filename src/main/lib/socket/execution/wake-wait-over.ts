@@ -25,18 +25,19 @@ import type { WakePumpCallbacks } from './wake-pump-types';
  * The drain's only bound, for a CLI that never exits after EOF. Not a wait ceiling: it arms only
  * once the wait is already over, restarts on every burst, and refuses to fire while one is open —
  * a burst parked on an approval or an unanswered question has no result frame, so it stays open.
+ * It can still end a task or subagent launched after stdin closed: its frames start no main turn.
  */
 const REAP_QUIET_MS = 60_000;
 
 export interface WaitOverDrain {
   /** A burst opened after stdin closed — the frame the old stand-down window used to lose.
-   * Restarts the quiet deadline; ambient chatter never reaches here, so it cannot. */
+   * Restarts the quiet deadline; a frame that starts no main turn never reaches here. */
   noteBurst: (msg: SDKMessage) => void;
   /** The reader is gone — stop the reap. */
   cancel: () => void;
 }
 
-export function beginWaitOverDrain(params: {
+function beginWaitOverDrain(params: {
   session: ClaudeSession;
   /** Publish held=false on the same lane every other wait end uses. */
   retract: () => void;
@@ -49,6 +50,8 @@ export function beginWaitOverDrain(params: {
   params.releaseBusy();
   if (!session.queue.closed) session.queue.close();
   const closedAt = Date.now();
+  let bursts = 0;
+  let lastBurstAt = closedAt;
   let timer: NodeJS.Timeout | null = null;
   const armReap = (): void => {
     timer = setTimeout(() => {
@@ -62,6 +65,8 @@ export function beginWaitOverDrain(params: {
         captureMainMessage('wake drain reaped a CLI that never exited after EOF', 'warning', {
           surface: 'wake-pump-stand-down',
           subChatId: session.subChatId,
+          burstsSinceClose: String(bursts),
+          sinceLastBurstMs: String(Date.now() - lastBurstAt),
         });
         void session.query.return(undefined);
       }, 0);
@@ -71,6 +76,8 @@ export function beginWaitOverDrain(params: {
   return {
     noteBurst: (msg) => {
       if (timer) clearTimeout(timer);
+      bursts += 1;
+      lastBurstAt = Date.now();
       armReap();
       log.info(`[Socket] ${session.subChatId}: wake burst landed after EOF`);
       // The only field measure of how much text the drain saves — a cluster here is the evidence

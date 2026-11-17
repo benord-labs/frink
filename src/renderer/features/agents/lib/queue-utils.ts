@@ -3,8 +3,10 @@
  * Adapted from canvas chat queue implementation
  */
 
+import { FLOW_DISPATCH_SOURCE } from '../../../../shared/lib/message-markers/person-authored';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
 import type { UploadedFile, UploadedImage } from '../hooks/use-agents-file-upload';
+import { createTextPreview } from '@/lib/mentions/queued-message-text';
 
 type QueuedImage = {
   id: string;
@@ -103,13 +105,7 @@ type QueuedCodeSelectionContext = {
   endLine: number;
 };
 
-/**
- * Marks prompts enqueued by the flow/task pipeline rather than typed by the user. Carried into the
- * outgoing UIMessage `metadata` so the send path can tell a flow-dispatched node prompt from a
- * manual chat reply (a manual reply to a parked flow plan means approve-then-execute; a flow
- * prompt never does — see decision `flow-agent-node-mode`).
- */
-export const FLOW_DISPATCH_SOURCE = 'flow-dispatch' as const;
+export { createTextPreview, FLOW_DISPATCH_SOURCE };
 
 export type AgentQueueItem = {
   id: string;
@@ -135,6 +131,18 @@ export type AgentQueueItem = {
    * never sent partially (`message-queue-reload-persistence`). */
   attachmentsLost?: true;
 };
+
+type QueuedSendMetadata = { source?: typeof FLOW_DISPATCH_SOURCE; dispatchTaskId?: string };
+type QueuedSendFields = { metadata?: QueuedSendMetadata };
+
+/** The metadata a queued item's manual send must carry, as the auto-drain sends it; nothing for a
+ * typed message. */
+export function queuedSendMetadata(item: AgentQueueItem): QueuedSendFields {
+  const metadata: QueuedSendMetadata = {};
+  if (item.source) metadata.source = item.source;
+  if (item.dispatchTaskId) metadata.dispatchTaskId = item.dispatchTaskId;
+  return Object.keys(metadata).length > 0 ? { metadata } : {};
+}
 
 export function isInternalQueueItem(item: AgentQueueItem | undefined): boolean {
   return item?.approvedPlanContext !== undefined;
@@ -248,11 +256,4 @@ export function toQueuedCodeSelectionContext(
     startLine: ctx.startLine,
     endLine: ctx.endLine,
   };
-}
-
-// Helper to create a truncated preview from text
-export function createTextPreview(text: string, maxLength: number = 50): string {
-  const trimmed = text.trim().replace(/\s+/g, ' ');
-  if (trimmed.length <= maxLength) return trimmed;
-  return `${trimmed.slice(0, maxLength)}...`;
 }

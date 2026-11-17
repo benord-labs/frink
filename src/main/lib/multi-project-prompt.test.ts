@@ -8,7 +8,8 @@ vi.mock('./db', () => ({
   getDatabase: vi.fn(() => ({})),
 }));
 vi.mock('./db/repos/projects', () => ({
-  listProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
+  // No `listProjects`: it includes virtual folders, and calling a missing mock export throws.
+  listRealProjects: () => listProjectsMock(),
 }));
 
 const MCP_URL = 'http://127.0.0.1:12345';
