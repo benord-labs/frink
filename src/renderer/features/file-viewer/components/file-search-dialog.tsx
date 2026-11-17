@@ -1,12 +1,12 @@
 import { Badge } from '@benord-labs/frink-primitives';
 import { useAtom } from 'jotai';
 import type React from 'react';
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo } from 'react';
 import { getPaneColor } from '@/lib/pane-colors';
-import { trpc, type trpcClient } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 import { findProjectForPath } from '@/lib/workspace-context/project-paths';
 import type { QuickOpenRoot } from '@/lib/workspace-context/use-quick-open-roots';
+import { useRootSearches } from '@/lib/workspace-context/use-root-searches';
 import { recentlyOpenedFilesAtom } from '../../agents/atoms';
 import { getFileSearchIcon } from '../utils/file-icon';
 import { SearchDialogShell } from './search-dialog-shell';
@@ -23,35 +23,10 @@ type FileSearchDialogProps = {
   activePaneIndex?: number;
 };
 
-type SearchEntry = Awaited<ReturnType<typeof trpcClient.files.search.query>>[number];
 /** A file by its path relative to the folder it was found in */
 type FileItem = { id: string; label: string; path: string; root: QuickOpenRoot };
 
 const absolutePathOf = (item: FileItem) => `${item.root.path}/${item.path}`;
-
-/**
- * Searches each folder. useQueries starts a new observer for every new query, so `placeholderData`
- * has no previous result of its own: each folder's last results come from a ref instead, and stay
- * on screen while its next search loads.
- */
-function useRootSearches(roots: QuickOpenRoot[], query: string, enabled: boolean) {
-  const lastResults = useRef(new Map<string, SearchEntry[]>());
-  const searches = trpc.useQueries((t) =>
-    roots.map((root) =>
-      t.files.search(
-        { projectPath: root.path, query, limit: 50 },
-        { enabled, placeholderData: () => lastResults.current.get(root.path) },
-      ),
-    ),
-  );
-  useEffect(() => {
-    searches.forEach(({ data, isPlaceholderData }, i) => {
-      const root = roots[i];
-      if (root && data && !isPlaceholderData) lastResults.current.set(root.path, data);
-    });
-  });
-  return searches.map((search) => search.data);
-}
 
 export const FileSearchDialog = memo(function FileSearchDialog({
   open,
@@ -84,7 +59,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
     () => (activeScope === null ? roots : roots.filter((root) => root.path === activeScope)),
     [roots, activeScope],
   );
-  const results = useRootSearches(inScope, debouncedQuery, isOpen);
+  const { results } = useRootSearches(inScope, debouncedQuery, isOpen);
 
   // Build recent file items directly from atom (independent of search results)
   const recentItems = useMemo(() => {

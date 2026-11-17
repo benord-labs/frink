@@ -8,6 +8,7 @@ const AT_SIGN = 64;
 const OPEN_BRACKET = 91;
 const CLOSE_BRACKET = 93;
 const WHITESPACE = /\s/;
+const PATH_SEPARATOR = /[/\\]/;
 
 // Structural slices of the micromark and mdast-util-from-markdown APIs used below.
 type Code = number | null;
@@ -34,14 +35,18 @@ type MentionProcessor = { data(): object };
 type ParserExtensions = { micromarkExtensions?: object[]; fromMarkdownExtensions?: object[] };
 
 /** Reads `@[id]` to the bracket that closes it and accepts it when `id` parses as a mention.
- * With `paired`, the id has no whitespace and its brackets pair up, as in `app/[id]`. */
+ * With `paired`, the id's brackets pair up, as in `app/[id]`, with no whitespace inside a pair or
+ * between a pair and the next `/`, `\` or the id's end. */
 function mentionTokenizer(paired: boolean): Construct['tokenize'] {
   return (effects, ok, nok) => {
     let id = '';
     let depth = 0;
+    // A pair has closed, and no path separator has come since.
+    let afterPair = false;
     const inside: State = (code) => {
       if (code === null || code < 0) return nok(code);
-      if (paired && WHITESPACE.test(String.fromCodePoint(code))) return nok(code);
+      const char = String.fromCodePoint(code);
+      if (paired && (depth > 0 || afterPair) && WHITESPACE.test(char)) return nok(code);
       if (code === CLOSE_BRACKET && depth === 0) {
         if (!parseMention(id)) return nok(code);
         effects.consume(code);
@@ -50,7 +55,9 @@ function mentionTokenizer(paired: boolean): Construct['tokenize'] {
       }
       if (paired && code === OPEN_BRACKET) depth += 1;
       if (paired && code === CLOSE_BRACKET) depth -= 1;
-      id += String.fromCodePoint(code);
+      if (code === CLOSE_BRACKET) afterPair = true;
+      else if (PATH_SEPARATOR.test(char)) afterPair = false;
+      id += char;
       effects.consume(code);
       return inside;
     };

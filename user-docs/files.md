@@ -75,7 +75,7 @@ The footer counts the projects, for example **2 projects in this tree**. On the 
 
 Linked projects are read-only in the tree: you can't create, rename, move, paste, drop or delete files there. You can still open a file and edit it in the editor.
 
-Links are saved with the chat, so they stay after Frink restarts and every window shows the same ones. The file tree, **Search files** and the **Search** tab all cover the chat's linked projects. The chat's folder, branch and worktree stay on its main project.
+Links are saved with the chat, so they stay after Frink restarts and every window shows the same ones. The file tree, **Search files**, the **Search** tab and the [**@** menu](./projects.md#linked-projects) in the message box all cover the chat's linked projects. The chat's folder, branch and worktree stay on its main project.
 
 The picker lists your other projects, except the ones already linked and any project inside the chat's folder or holding it. If the messages in the sub-chat you have open name a project's folder by its full path, that project is marked **Mentioned in this chat** and listed first. When you search, it comes first among the projects that match equally well. Only messages Frink has loaded are checked, so older messages you haven't scrolled back to don't count. **Link project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
 

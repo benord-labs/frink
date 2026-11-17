@@ -57,6 +57,7 @@ A chat has one main project. The chat's working folder, branch, worktree and `CL
 
 - A linked project is its registered folder, on whatever branch is checked out there. Its row in the file tree shows that branch.
 - Under the message box, linked projects show as chips next to the chat's project name. Use the **×** on a chip to unlink that project, or **Link project** (just a plus when the row is narrow) to link another. Up to two show as chips, and the rest sit behind a count such as **+1 linked**, which lists them with their own **×**. When the row is narrow, fewer chips show and more sit behind the count. A warning sign on a chip or on the count means a project's folder can't be found.
+- Typing **@** in the message box finds files in the chat's project and in its linked projects, grouped under each project's name: the chat's project first, then each linked project, marked **linked**. A file you pick from a linked project goes into your message with its full path, so the agent looks for it in that project and not in the chat's folder.
 - General chats and chats in a virtual folder can't link projects.
 - Moving a chat into one of its linked projects makes that project its main project.
 - **Fork chat** keeps the chat's links on the copy.

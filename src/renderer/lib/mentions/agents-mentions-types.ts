@@ -4,6 +4,7 @@ export type FileMentionOption = {
   path: string; // full path or skill description
   repository: string;
   truncatedPath?: string; // directory path for inline display or skill description
+  treePath?: string; // a linked project's folder from the project's name, drawn in its tooltip
   additions?: number; // for changed files
   deletions?: number; // for changed files
   type?: 'file' | 'folder' | 'skill' | 'agent' | 'category' | 'tool' | 'briefing'; // entry type (default: file)

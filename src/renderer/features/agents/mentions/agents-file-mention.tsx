@@ -12,7 +12,7 @@ import { __iconData as filesData } from 'lucide-react/dist/esm/icons/files.mjs';
 import { __iconData as folderOpenData } from 'lucide-react/dist/esm/icons/folder-open.mjs';
 // @ts-expect-error - untyped lucide per-icon module
 import { __iconData as toolCaseData } from 'lucide-react/dist/esm/icons/tool-case.mjs';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
 import {
@@ -23,9 +23,18 @@ import {
 import { fileTypeIcon } from '../../../../shared/lib/file-type-icons';
 import {
   isGlobalSearchNonFileSubpage as checkGlobalSearchNonFileSubpage,
+  matchesMultiWordSearch,
   showsEmptyMentionList,
+  sortFilesByRelevance,
 } from '@/lib/mentions/agents-file-mention-search-helpers';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
+import {
+  followSelection,
+  groupMentionOptionsByProject,
+  linkedMentionGroups,
+} from '@/lib/mentions/group-mention-options-by-project';
+import { useRootSearches } from '@/lib/workspace-context/use-root-searches';
+import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { MENTION_PREFIXES } from '../../../../shared/lib/mentions/mention-grammar';
 import {
   Tooltip,
@@ -48,7 +57,6 @@ const HEIGHT_CLASS_REGEX = /h-3\b/;
 const WIDTH_CLASS_REGEX = /w-3\b/;
 const WHITESPACE_REGEX = /\s+/;
 const WHITESPACE_GLOBAL_REGEX = /\s+/g;
-const FILE_EXT_REGEX = /\.[^.]+$/;
 const UNDERSCORE_GLOBAL_REGEX = /_/g;
 const WORD_BOUNDARY_CAPITALIZE_REGEX = /\b\w/g;
 
@@ -69,6 +77,7 @@ type AgentsFileMentionProps = {
   repository?: string;
   branch?: string; // For fetching files from specific branch via GitHub API
   projectPath?: string; // For fetching files from local project directory (desktop)
+  chatId?: string; // The chat whose linked projects are searched as well
   changedFiles?: ChangedFile[]; // Files changed in current sub-chat (shown at top)
   // Subpage navigation state
   showingFilesList?: boolean;
@@ -228,102 +237,6 @@ function renderFolderTree(path: string) {
 }
 
 /**
- * Check if a string matches all search words (multi-word search)
- * Splits search by whitespace, all words must be present in target
- */
-function matchesMultiWordSearch(target: string, searchLower: string): boolean {
-  if (!searchLower) return true;
-  const searchWords = searchLower.split(WHITESPACE_REGEX).filter(Boolean);
-  if (searchWords.length === 0) return true;
-  const targetLower = target.toLowerCase();
-  return searchWords.every((word) => targetLower.includes(word));
-}
-
-/**
- * Sort files by relevance to search query
- * Priority: exact match > starts with > shorter match > contains in filename > alphabetical
- * Supports multi-word search - splits by whitespace, all words must match
- * When search ends with space, prioritize files with hyphen/underscore (e.g. "agents " -> "agents-sidebar")
- */
-function sortFilesByRelevance<T extends { label: string; path?: string }>(
-  files: T[],
-  searchText: string,
-): T[] {
-  if (!searchText) return files;
-
-  const searchLower = searchText.toLowerCase();
-  const searchWords = searchLower.split(WHITESPACE_REGEX).filter(Boolean);
-  const isSingleWord = searchWords.length <= 1;
-  // Check if search ends with space - user wants to continue with hyphenated names
-  const endsWithSpace = searchText.endsWith(' ');
-
-  return [...files].sort((a, b) => {
-    const aLabelLower = a.label.toLowerCase();
-    const bLabelLower = b.label.toLowerCase();
-
-    // Get filename without extension for matching
-    const aNameNoExt = aLabelLower.replace(FILE_EXT_REGEX, '');
-    const bNameNoExt = bLabelLower.replace(FILE_EXT_REGEX, '');
-
-    // For multi-word search, prioritize files where all words match in filename
-    if (!isSingleWord) {
-      const aAllInFilename = searchWords.every((w) => aLabelLower.includes(w));
-      const bAllInFilename = searchWords.every((w) => bLabelLower.includes(w));
-      if (aAllInFilename && !bAllInFilename) return -1;
-      if (!aAllInFilename && bAllInFilename) return 1;
-    }
-
-    // When search ends with space, prioritize files with hyphen/underscore after first word
-    // e.g. "agents " should show "agents-sidebar" before "agents" folder
-    if (endsWithSpace && searchWords.length >= 1) {
-      const lastWord = searchWords[searchWords.length - 1];
-      // Check if filename has hyphen/underscore continuation after matching word
-      const aHasContinuation =
-        aNameNoExt.includes(`${lastWord}-`) || aNameNoExt.includes(`${lastWord}_`);
-      const bHasContinuation =
-        bNameNoExt.includes(`${lastWord}-`) || bNameNoExt.includes(`${lastWord}_`);
-      if (aHasContinuation && !bHasContinuation) return -1;
-      if (!aHasContinuation && bHasContinuation) return 1;
-    }
-
-    // Priority 1: EXACT match (chat.tsx when searching "chat") - single word only, not when ending with space
-    if (isSingleWord && !endsWithSpace) {
-      const aExact = aNameNoExt === searchLower;
-      const bExact = bNameNoExt === searchLower;
-      if (aExact && !bExact) return -1;
-      if (!aExact && bExact) return 1;
-    }
-
-    // Priority 2: filename STARTS with first search word
-    const firstWord = searchWords[0] || searchLower;
-    const aStartsWith = aNameNoExt.startsWith(firstWord);
-    const bStartsWith = bNameNoExt.startsWith(firstWord);
-    if (aStartsWith && !bStartsWith) return -1;
-    if (!aStartsWith && bStartsWith) return 1;
-
-    // Priority 3: If both start with query, shorter name = higher match %
-    // But when ending with space, prefer longer (hyphenated) names
-    if (aStartsWith && bStartsWith) {
-      if (aNameNoExt.length !== bNameNoExt.length) {
-        if (endsWithSpace) {
-          return bNameNoExt.length - aNameNoExt.length; // longer first when space at end
-        }
-        return aNameNoExt.length - bNameNoExt.length; // shorter first normally
-      }
-    }
-
-    // Priority 4: filename CONTAINS first word (but doesn't start with it)
-    const aFilenameMatch = aLabelLower.includes(firstWord);
-    const bFilenameMatch = bLabelLower.includes(firstWord);
-    if (aFilenameMatch && !bFilenameMatch) return -1;
-    if (!aFilenameMatch && bFilenameMatch) return 1;
-
-    // Finally: alphabetically by label
-    return a.label.localeCompare(b.label);
-  });
-}
-
-/**
  * Render tooltip content for a mention option
  * Skills/agents show description, tools, model info
  * Tools show MCP server name
@@ -331,7 +244,7 @@ function sortFilesByRelevance<T extends { label: string; path?: string }>(
  */
 function renderTooltipContent(option: FileMentionOption) {
   if (option.type === 'folder') {
-    return renderFolderTree(option.path);
+    return renderFolderTree(option.treePath ?? option.path);
   }
 
   if (option.type === 'skill' || option.type === 'agent') {
@@ -375,6 +288,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   repository,
   branch,
   projectPath,
+  chatId,
   changedFiles = [],
   showingFilesList = false,
   showingSkillsList = false,
@@ -437,7 +351,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const {
     data: rawFileResults,
     isLoading: filesLoading,
-    isFetching: filesFetching,
+    isFetching: mainFilesFetching,
     error: filesError,
   } = api.github.searchFiles.useQuery(
     {
@@ -458,6 +372,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     },
   );
   const fileResults = Array.isArray(rawFileResults) ? rawFileResults : [];
+  const { main: chatProject, extras } = useTreeProjects(chatId);
   // Convert changed files to options (shown at top in separate group)
   const changedFileOptions: FileMentionOption[] = useMemo(() => {
     if (!changedFiles.length) return [];
@@ -633,6 +548,22 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // Determine if we're in a subpage view (or showing files directly when no skills/agents/tools)
   const isInSubpage =
     showingFilesList || showingSkillsList || showingAgentsList || showingToolsList || hasOnlyFiles;
+  const fileHeavyView = showingFilesList || hasOnlyFiles;
+  // Root global search merges file results; suppress empty until they settle.
+  const isGlobalSearchNonFileSubpage = checkGlobalSearchNonFileSubpage({
+    debouncedSearchText,
+    fileHeavyView,
+    showingSkillsList,
+    showingAgentsList,
+    showingToolsList,
+  });
+
+  // Wherever the chat's own files show, each project linked to it is searched too, unless its
+  // folder is gone. Skills and agents still come from the chat's own project alone.
+  const showsLinkedFiles = fileHeavyView || isGlobalSearchNonFileSubpage;
+  const linkedRoots = chatProject ? extras.filter((project) => !project.missing) : [];
+  const linkedSearch = useRootSearches(linkedRoots, apiSearchQuery, isOpen && showsLinkedFiles);
+  const filesFetching = mainFilesFetching || linkedSearch.isFetching;
 
   // Filter category options based on available data
   const availableCategoryOptions = useMemo(() => {
@@ -650,7 +581,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // Root view shows changed files + category navigation options
   // Search filters globally in root view, within category in subpage
   // If no skills, agents, or tools, skip root view and show files directly
-  const options: FileMentionOption[] = useMemo(() => {
+  const mainOptions: FileMentionOption[] = useMemo(() => {
     // SUBPAGE: Files (or if no skills/agents/tools, show files directly)
     if (showingFilesList || hasOnlyFiles) {
       const allFiles = [...changedFileOptions, ...repoFileOptions];
@@ -710,6 +641,14 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     availableCategoryOptions,
   ]);
 
+  const { sections, options, keys } = groupMentionOptionsByProject(
+    { path: projectPath ?? '', name: chatProject?.name ?? '', options: mainOptions },
+    showsLinkedFiles
+      ? linkedMentionGroups(linkedRoots, linkedSearch.results, debouncedSearchText)
+      : [],
+  );
+  const keySignature = keys.join('\n');
+
   // Track previous values for smarter selection reset
   const prevIsOpenRef = useRef(isOpen);
   const prevSearchRef = useRef(debouncedSearchText);
@@ -717,6 +656,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const prevShowingSkillsListRef = useRef(showingSkillsList);
   const prevShowingAgentsListRef = useRef(showingAgentsList);
   const prevShowingToolsListRef = useRef(showingToolsList);
+  const prevKeysRef = useRef(keys);
 
   // CONSOLIDATED: Single useLayoutEffect for selection management (was 3 separate)
   useLayoutEffect(() => {
@@ -732,9 +672,10 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     if (didJustOpen || didSearchChange || didSubpageChange) {
       setSelectedIndex(0);
     }
-    // Clamp to valid range if options shrunk
-    else if (options.length > 0 && selectedIndex >= options.length) {
-      setSelectedIndex(Math.max(0, options.length - 1));
+    // Stay on the selected row as results land around it, since each project's search settles
+    // on its own, else clamp to the list
+    else if (keySignature !== prevKeysRef.current.join('\n')) {
+      setSelectedIndex(followSelection(prevKeysRef.current, keys, selectedIndex));
     }
 
     // Update refs
@@ -744,10 +685,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     prevShowingSkillsListRef.current = showingSkillsList;
     prevShowingAgentsListRef.current = showingAgentsList;
     prevShowingToolsListRef.current = showingToolsList;
+    prevKeysRef.current = keys;
   }, [
     isOpen,
     debouncedSearchText,
-    options.length,
+    keySignature,
     selectedIndex,
     showingFilesList,
     showingSkillsList,
@@ -816,6 +758,10 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     const elements = dropdownRef.current.querySelectorAll('[data-option-index]');
     const selectedElement = elements[selectedIndex] as HTMLElement;
     if (selectedElement) {
+      // A project's first option brings the project's heading into view with it
+      dropdownRef.current
+        .querySelector(`[data-heading-for="${selectedIndex}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
       selectedElement.scrollIntoView({ block: 'nearest' });
     }
   }, [selectedIndex, isOpen]);
@@ -846,16 +792,8 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     !showingToolsList &&
     !hasOnlyFiles;
 
-  const fileHeavyView = showingFilesList || hasOnlyFiles;
-  const showFullPanelLoadingFiles = filesLoading && options.length === 0 && fileHeavyView;
-  // Root global search merges file results; suppress empty until they settle.
-  const isGlobalSearchNonFileSubpage = checkGlobalSearchNonFileSubpage({
-    debouncedSearchText,
-    fileHeavyView,
-    showingSkillsList,
-    showingAgentsList,
-    showingToolsList,
-  });
+  const showFullPanelLoadingFiles =
+    (filesLoading || linkedSearch.isLoading) && options.length === 0 && fileHeavyView;
   const globalSearchAwaitingData =
     isGlobalSearchNonFileSubpage && options.length === 0 && (filesLoading || filesFetching);
   const showGlobalSearchPanelLoading = globalSearchAwaitingData;
@@ -894,11 +832,15 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   const dropdownWidth = useNarrowWidth ? 200 : 320;
   const itemHeight = 28;
   const headerHeight = 28; // header with py-1.5 and text-xs
-  // Only add header height when header is actually shown (in subpages or when searching)
+  // Only add header height when header is actually shown (in subpages or when searching), plus
+  // each project's heading
   const showsHeader = !isRootView || !!debouncedSearchText;
+  const headingCount = sections.filter((section) => section.name !== null).length;
+  const hasUsualHeader = showsHeader && (!sections[0] || sections[0].name === null);
+  const headerRows = headingCount + (hasUsualHeader ? 1 : 0);
   const paddingHeight = 8; // py-1 on container = 4px top + 4px bottom
   const requestedHeight = Math.min(
-    options.length * itemHeight + (showsHeader ? headerHeight : 0) + paddingHeight,
+    options.length * itemHeight + headerRows * headerHeight + paddingHeight,
     200,
   );
   const gap = 8;
@@ -1008,119 +950,153 @@ export const AgentsFileMention = memo(function AgentsFileMention({
               </div>
             )}
 
-            {/* Header - only show in subpages or when searching, not in root view */}
-            {(isInSubpage || debouncedSearchText) && (
-              <div className="px-2.5 py-1.5 mx-1 text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <span>
-                  {showingFilesList || hasOnlyFiles
-                    ? 'Files & Folders'
-                    : showingSkillsList
-                      ? 'Skills'
-                      : showingAgentsList
-                        ? 'Agents'
-                        : showingToolsList
-                          ? 'MCP Tools'
-                          : 'Results'}
-                </span>
-                {showHeaderSpinner && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
-              </div>
-            )}
-            {options.map((option, index) => {
-              const isSelected = selectedIndex === index;
-              // biome-ignore lint/style/useNamingConvention: component type variable
-              const OptionIcon = getOptionIcon(option);
-              const isCategory = option.type === 'category';
-              const showTooltip = !isCategory && option.path;
+            {sections.map((section, sectionIndex) => {
+              const spinner = showHeaderSpinner && sectionIndex === 0 && (
+                <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin" />
+              );
+              const optionRows = section.rows.map(({ key, option, index }) => {
+                const isSelected = selectedIndex === index;
+                // biome-ignore lint/style/useNamingConvention: component type variable
+                const OptionIcon = getOptionIcon(option);
+                const isCategory = option.type === 'category';
+                const showTooltip = !isCategory && option.path;
 
-              const itemContent = (
-                <div
-                  data-option-index={index}
-                  onClick={() => onSelect(option)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onSelect(option);
-                    }
-                  }}
-                  onMouseEnter={() => {
-                    setHoverIndex(index);
-                    setSelectedIndex(index);
-                  }}
-                  onMouseLeave={() => {
-                    setHoverIndex((prev) => (prev === index ? null : prev));
-                  }}
-                  role="option"
-                  tabIndex={0}
-                  aria-selected={isSelected}
-                  className={cn(
-                    'group inline-flex w-[calc(100%-8px)] mx-1 items-center whitespace-nowrap outline-hidden',
-                    'h-7 px-1.5 justify-start text-xs rounded-md',
-                    'transition-colors cursor-pointer select-none gap-1.5',
-                    'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring',
-                    isSelected
-                      ? 'dark:bg-neutral-800 bg-accent text-foreground'
-                      : 'text-muted-foreground dark:hover:bg-neutral-800 hover:bg-accent hover:text-foreground',
-                  )}
-                >
-                  <OptionIcon className="h-3 w-3 text-muted-foreground shrink-0" />
-                  <span className="flex items-center gap-1 w-full min-w-0">
-                    <span className={cn('shrink-0 whitespace-nowrap', isCategory && 'font-medium')}>
-                      {option.label}
-                    </span>
-                    {/* Diff stats for changed files */}
-                    {(option.additions || option.deletions) && (
-                      <span className="shrink-0 flex items-center gap-1 text-[10px] font-mono">
-                        {option.additions ? (
-                          <span className="text-green-500">+{option.additions}</span>
-                        ) : null}
-                        {option.deletions ? (
-                          <span className="text-red-500">-{option.deletions}</span>
-                        ) : null}
-                      </span>
+                const itemContent = (
+                  <div
+                    data-option-index={index}
+                    onClick={() => onSelect(option)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelect(option);
+                      }
+                    }}
+                    onMouseEnter={() => {
+                      setHoverIndex(index);
+                      setSelectedIndex(index);
+                    }}
+                    onMouseLeave={() => {
+                      setHoverIndex((prev) => (prev === index ? null : prev));
+                    }}
+                    role="option"
+                    tabIndex={0}
+                    aria-selected={isSelected}
+                    className={cn(
+                      'group inline-flex w-[calc(100%-8px)] mx-1 items-center whitespace-nowrap outline-hidden',
+                      'h-7 px-1.5 justify-start text-xs rounded-md',
+                      'transition-colors cursor-pointer select-none gap-1.5',
+                      'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring',
+                      isSelected
+                        ? 'dark:bg-neutral-800 bg-accent text-foreground'
+                        : 'text-muted-foreground dark:hover:bg-neutral-800 hover:bg-accent hover:text-foreground',
                     )}
-                    {/* Show truncated path for files only, not for skills/agents (they show in tooltip) */}
-                    {option.truncatedPath &&
-                      !isCategory &&
-                      option.type !== 'skill' &&
-                      option.type !== 'agent' && (
-                        <span
-                          className="text-muted-foreground flex-1 min-w-0 ml-2 font-mono overflow-hidden text-[10px]"
-                          style={{
-                            direction: 'rtl',
-                            textAlign: 'left',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <span style={{ direction: 'ltr' }}>{option.truncatedPath}</span>
+                  >
+                    <OptionIcon className="h-3 w-3 text-muted-foreground shrink-0" />
+                    <span className="flex items-center gap-1 w-full min-w-0">
+                      <span
+                        className={cn('shrink-0 whitespace-nowrap', isCategory && 'font-medium')}
+                      >
+                        {option.label}
+                      </span>
+                      {/* Diff stats for changed files */}
+                      {(option.additions || option.deletions) && (
+                        <span className="shrink-0 flex items-center gap-1 text-[10px] font-mono">
+                          {option.additions ? (
+                            <span className="text-green-500">+{option.additions}</span>
+                          ) : null}
+                          {option.deletions ? (
+                            <span className="text-red-500">-{option.deletions}</span>
+                          ) : null}
                         </span>
                       )}
-                  </span>
-                  {/* ChevronRight for category items (navigate to subpage) */}
-                  {isCategory && (
-                    <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  )}
-                </div>
-              );
+                      {/* Show truncated path for files only, not for skills/agents (they show in tooltip) */}
+                      {option.truncatedPath &&
+                        !isCategory &&
+                        option.type !== 'skill' &&
+                        option.type !== 'agent' && (
+                          <span
+                            className="text-muted-foreground flex-1 min-w-0 ml-2 font-mono overflow-hidden text-[10px]"
+                            style={{
+                              direction: 'rtl',
+                              textAlign: 'left',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            <span style={{ direction: 'ltr' }}>{option.truncatedPath}</span>
+                          </span>
+                        )}
+                    </span>
+                    {/* ChevronRight for category items (navigate to subpage) */}
+                    {isCategory && (
+                      <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    )}
+                  </div>
+                );
 
-              if (showTooltip) {
+                if (showTooltip) {
+                  return (
+                    <Tooltip key={key} open={isSelected}>
+                      <TooltipTrigger asChild>{itemContent}</TooltipTrigger>
+                      <TooltipContent
+                        side="left"
+                        align="start"
+                        sideOffset={8}
+                        collisionPadding={16}
+                        avoidCollisions
+                        className="overflow-hidden"
+                      >
+                        {renderTooltipContent(option)}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                }
+
+                return <div key={key}>{itemContent}</div>;
+              });
+              if (section.name === null) {
                 return (
-                  <Tooltip key={option.id} open={isSelected}>
-                    <TooltipTrigger asChild>{itemContent}</TooltipTrigger>
-                    <TooltipContent
-                      side="left"
-                      align="start"
-                      sideOffset={8}
-                      collisionPadding={16}
-                      avoidCollisions
-                      className="overflow-hidden"
-                    >
-                      {renderTooltipContent(option)}
-                    </TooltipContent>
-                  </Tooltip>
+                  <Fragment key={section.key}>
+                    {/* Header - only show in subpages or when searching, not in root view */}
+                    {(isInSubpage || debouncedSearchText) && (
+                      <div className="px-2.5 py-1.5 mx-1 text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <span>
+                          {showingFilesList || hasOnlyFiles
+                            ? 'Files & Folders'
+                            : showingSkillsList
+                              ? 'Skills'
+                              : showingAgentsList
+                                ? 'Agents'
+                                : showingToolsList
+                                  ? 'MCP Tools'
+                                  : 'Results'}
+                        </span>
+                        {spinner}
+                      </div>
+                    )}
+                    {optionRows}
+                  </Fragment>
                 );
               }
-
-              return <div key={option.id}>{itemContent}</div>;
+              // Each project's files sit under its name, which also names them to a screen reader
+              return (
+                // biome-ignore lint/a11y/useSemanticElements: role="group" inside listbox is WAI-ARIA pattern; <fieldset> is for forms
+                <div
+                  key={section.key}
+                  role="group"
+                  aria-label={section.linked ? `${section.name}, linked` : section.name}
+                >
+                  <div
+                    aria-hidden="true"
+                    data-heading-for={section.rows[0]?.index}
+                    className="px-2.5 py-1.5 mx-1 text-xs font-medium text-muted-foreground flex items-center gap-1.5"
+                  >
+                    <span className="truncate min-w-0">{section.name}</span>
+                    {section.linked && <span className="shrink-0 font-normal">· linked</span>}
+                    {spinner}
+                  </div>
+                  {optionRows}
+                </div>
+              );
             })}
           </>
         )}
