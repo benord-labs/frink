@@ -44,7 +44,15 @@ async function importFlowFile(contents: string) {
     { name, description, projectId, isEnabled: false, agentInvocable: false },
     graph,
   );
-  trackFlowCreated({ id, triggerType: flowTriggerKind(graph), createdBy: 'import' });
+  // The flow is already saved, so a failed count must not report the import as failed
+  try {
+    trackFlowCreated({ id, triggerType: flowTriggerKind(graph), createdBy: 'import' });
+  } catch (error) {
+    log.warn('[Flows] Could not count flow import', {
+      flowId: id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   return { id, name, needsSetup };
 }
 

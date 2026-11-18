@@ -143,6 +143,17 @@ describe('flows.importFile', () => {
     ]);
   });
 
+  it('returns the imported flow when counting it fails', async () => {
+    trackFlowCreated.mockImplementationOnce(() => {
+      throw new Error('capture failed');
+    });
+
+    const imported = await caller.importFile({ contents: flowFile(RELEASE) });
+
+    expect(trackFlowCreated).toHaveBeenCalledOnce();
+    expect(await getFlowById(db, imported.id)).toMatchObject({ name: 'Release' });
+  });
+
   it('refuses a file that is not a flow and saves nothing', async () => {
     await expect(caller.importFile({ contents: '{"name":"Dusk"}' })).rejects.toThrow(
       "This file isn't a Frink flow.",
