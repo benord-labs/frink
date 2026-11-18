@@ -623,7 +623,7 @@ describe('FilesSidebar with another project in the tree', () => {
         })),
     ).toEqual([
       {
-        path: '/w/api/src/a.ts',
+        path: 'src/a.ts',
         projectPath: '/w/api',
         isOtherProject: true,
         sourceChatId: 'chat-1',

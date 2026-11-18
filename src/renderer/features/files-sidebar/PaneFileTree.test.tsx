@@ -1037,12 +1037,10 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
     const [own, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
     fireEvent.click(own);
     expect(openTab()).toEqual([
-      { path: '/tmp/proj/src/a.ts', projectPath: '/tmp/proj', isOtherProject: undefined },
+      { path: 'src/a.ts', projectPath: '/tmp/proj', isOtherProject: undefined },
     ]);
     fireEvent.click(browsed);
-    expect(openTab()).toEqual([
-      { path: '/w/api/src/a.ts', projectPath: '/w/api', isOtherProject: true },
-    ]);
+    expect(openTab()).toEqual([{ path: 'src/a.ts', projectPath: '/w/api', isOtherProject: true }]);
   });
 
   it("names the pane's folder in Main's tooltip, the folder its matches come from", () => {

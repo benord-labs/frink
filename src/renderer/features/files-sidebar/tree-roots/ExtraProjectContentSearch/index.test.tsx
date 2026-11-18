@@ -198,7 +198,7 @@ describe('ExtraProjectContentSearch', () => {
 
     expect(store.get(openFilesAtom)).toEqual([
       expect.objectContaining({
-        path: '/w/api/src/orders.ts',
+        path: 'src/orders.ts',
         name: 'orders.ts',
         projectPath: '/w/api',
         isOtherProject: true,

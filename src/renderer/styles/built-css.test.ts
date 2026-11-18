@@ -225,4 +225,23 @@ describe('production CSS', () => {
     // The rim's glint reads the root token from plain CSS, so it must still be emitted.
     expect(await built).toMatch(/--color-primary:/);
   });
+
+  // The secondary Button's ring is a gradient through the package's --muted, a colour. Frink's
+  // --muted is an HSL triplet for bg-muted, which voids the gradient and leaves bare text. The
+  // hover fill must also outrank the package's unlayered `background: transparent`.
+  it('gives secondary buttons their ring and hover fill', async () => {
+    const rules: Rule[] = [];
+    postcss.parse(await built).walkRules((rule) => {
+      if (rule.selector.startsWith('.glow-rim:')) rules.push(rule);
+    });
+    const ring = rules.filter((rule) => /^\.glow-rim::?before$/.test(rule.selector));
+    expect(ring.map((rule) => valueOf(rule, 'background'))).toContainEqual(
+      expect.stringContaining('var(--muted) 60deg'),
+    );
+    expect(ring.map((rule) => valueOf(rule, '--muted'))).toContain('var(--muted-fg)');
+    const hover = rules.find((rule) => valueOf(rule, 'background-color'));
+    expect(hover?.selector).toMatch(/^\.glow-rim:hover/);
+    expect(valueOf(hover, 'background-color')).toBe('var(--hover-overlay)');
+    expect(hover?.parent?.type).toBe('root');
+  });
 });

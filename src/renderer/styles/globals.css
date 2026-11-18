@@ -385,6 +385,18 @@
   --ring: 255 92% 76%;
 }
 
+/* The secondary Button (.glow-rim) lights its ring with the package's --muted, a colour equal to its
+   --muted-fg. Frink's --muted above is a surface triplet, which voids the whole gradient and leaves
+   the button with no ring, so the ring alone reads the muted text colour. The package's unlayered
+   `background: transparent` also beats the variant's layered hover:bg-[var(--hover-overlay)], so
+   the hover fill is restated here. */
+.glow-rim::before {
+  --muted: var(--muted-fg);
+}
+.glow-rim:hover:not(:disabled):not([aria-disabled="true"]) {
+  background-color: var(--hover-overlay);
+}
+
 /* @benord-labs/frink-primitives tokens follow frink's THEME system. A non-stock theme
    (lib/themes/palette/apply.ts) sets the semantic vars below inline on :root, so
    deriving the package's tokens from them makes the primitives re-skin with every

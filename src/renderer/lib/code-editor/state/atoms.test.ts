@@ -1,5 +1,6 @@
 import { createStore } from 'jotai';
 import { describe, expect, it } from 'vitest';
+import { arrangeTabsByProject } from '@/lib/code-editor/tabs';
 import { getFullPath } from '../files/model-path';
 import {
   activeFilePathAtom,
@@ -8,6 +9,8 @@ import {
   closeFilesOutsideProjectAtom,
   codeEditorMaximizedAtom,
   codeEditorOpenAtom,
+  editorActivePaneIndexAtom,
+  editorIsSplitActiveAtom,
   fileKey,
   markFileSavedAtom,
   openFileAtom,
@@ -207,9 +210,12 @@ describe('code-editor preview tabs', () => {
       intent: 'preview',
     });
 
+    // The tab takes the folder and its path inside it, so its breadcrumb matches a tree open's.
     const files = store.get(openFilesAtom);
     expect(files).toHaveLength(1);
-    expect(files[0]?.path).toBe('/repo/worktree/src/a.ts');
+    expect(files[0]?.path).toBe('src/a.ts');
+    expect(files[0]?.projectPath).toBe('/repo/worktree');
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/a.ts', '/repo/worktree'));
     expect(files[0]?.sourceChatId).toBe('chat-ai');
     expect(files[0]?.isWorktreeContext).toBe(true);
   });
@@ -685,5 +691,97 @@ describe('openFileAtom after the panel is closed in split view', () => {
       ['src/b.ts', 1],
     ]);
     expect(store.get(activeFilePathAtom)).toBe(fileKey('src/b.ts', '/repo'));
+  });
+});
+
+// An Edit card, the diff list or Settings opens a file from no pane; the filtered bar shows only
+// the active pane's tabs, so a file with no pane would open hidden.
+describe('openFileAtom in split view', () => {
+  const inSplitView = (activePane: number) => {
+    const store = createStore();
+    store.set(editorIsSplitActiveAtom, true);
+    store.set(editorActivePaneIndexAtom, activePane);
+    return store;
+  };
+  const panes = (store: ReturnType<typeof createStore>) =>
+    store.get(openFilesAtom).map((f) => [f.path, f.sourcePaneIndex]);
+
+  it('puts a file opened from no pane in the active pane', () => {
+    const store = inSplitView(1);
+
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+
+    expect(panes(store)).toEqual([['src/a.ts', 1]]);
+  });
+
+  it('keeps the pane a file is opened from', () => {
+    const store = inSplitView(1);
+
+    store.set(openFileAtom, {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/repo',
+      sourcePaneIndex: 0,
+    });
+
+    expect(panes(store)).toEqual([['src/a.ts', 0]]);
+  });
+
+  it('leaves a file opened from no pane in single view out of every pane', () => {
+    const store = createStore();
+    store.set(editorActivePaneIndexAtom, 1);
+
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+
+    expect(panes(store)).toEqual([['src/a.ts', undefined]]);
+  });
+});
+
+describe("openFileAtom keeps each project's tabs together", () => {
+  const pin = (store: ReturnType<typeof createStore>, path: string, projectPath: string) =>
+    store.set(openFileAtom, { path, name: path, projectPath, intent: 'pinned' });
+  const bar = (store: ReturnType<typeof createStore>) =>
+    arrangeTabsByProject(store.get(openFilesAtom)).order.map((f) => f.path);
+
+  // ros's app.ts was opened first, so ros's group led; closing it must not put qa's group first.
+  it('so closing a tab leaves the other tabs where they were', () => {
+    const store = createStore();
+    pin(store, 'app.ts', '/ros');
+    pin(store, 'CONTRIBUTING.md', '/qa');
+    pin(store, 'README.md', '/ros');
+
+    store.set(closeFileAtom, fileKey('app.ts', '/ros'));
+
+    expect(bar(store)).toEqual(['README.md', 'CONTRIBUTING.md']);
+  });
+
+  it("puts another project's file that replaces a preview tab with that project's tabs", () => {
+    const store = createStore();
+    store.set(openFileAtom, { path: 'a.ts', name: 'a.ts', projectPath: '/web' });
+    pin(store, 'b.ts', '/web');
+    pin(store, 'x.ts', '/api');
+
+    store.set(openFileAtom, { path: 'y.ts', name: 'y.ts', projectPath: '/api' });
+
+    expect(bar(store)).toEqual(['b.ts', 'x.ts', 'y.ts']);
+  });
+});
+
+// Quick open and the Search tab open a file by its full path; the tree names it from its folder.
+describe('openFileAtom names a file inside its folder from that folder', () => {
+  it.each([
+    ['a full path inside the folder', '/repo/src/a.ts', '/repo', 'src/a.ts'],
+    ['a Windows full path, keeping its case', 'C:\\Repo\\src\\A.ts', 'c:/repo/', 'src/A.ts'],
+    // A folder with a trailing slash joined to a path doubles the slash.
+    ['a full path with a doubled slash after the folder', '/repo//src/a.ts', '/repo/', 'src/a.ts'],
+    ['a path in a folder whose name starts the same', '/repo-2/a.ts', '/repo', '/repo-2/a.ts'],
+    ['a full path opened with no folder', '/repo/src/a.ts', undefined, '/repo/src/a.ts'],
+  ])('%s', (_case, path, projectPath, stored) => {
+    const store = createStore();
+
+    store.set(openFileAtom, { path, name: 'a.ts', projectPath });
+
+    expect(store.get(openFilesAtom).map((f) => f.path)).toEqual([stored]);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey(stored, projectPath));
   });
 });

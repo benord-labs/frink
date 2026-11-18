@@ -16,12 +16,13 @@ import {
   type LegacyCodeEditorLayout,
   normalizeCodeEditorLayout,
 } from './layout-cycle';
+import { pathInProject, withTabInProjectGroup } from './tab-placement';
 
 export { isPdfPath } from '../../../../shared/pdf-extensions';
 
 // Type for an open file tab
 export type OpenFile = {
-  /** Absolute file path */
+  /** Path relative to `projectPath` for a file inside it, else absolute */
   path: string;
   /** File name for display */
   name: string;
@@ -242,7 +243,15 @@ function findPreviewTabForGroup(
 }
 
 // Action atom: open a file (add to tabs if not already open, set as active)
-export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
+export const openFileAtom = atom(null, (get, set, input: OpenFileInput) => {
+  // In split view a file opened from no pane (an Edit card, the diff list, Settings) joins the
+  // active pane, so that pane's filtered tab bar shows it.
+  const activePane = get(editorIsSplitActiveAtom) ? get(editorActivePaneIndexAtom) : null;
+  const file = {
+    ...input,
+    path: pathInProject(input.path, input.projectPath),
+    sourcePaneIndex: input.sourcePaneIndex ?? activePane ?? undefined,
+  };
   const files = get(openFilesAtom);
   const openIntent: OpenFileIntent = file.intent ?? 'preview';
   const existing = findOpenFile(files, file.path, file.projectPath);
@@ -253,8 +262,9 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
     const existingKey = fileKey(existing.path, existing.projectPath);
     // The tab's path is relative to its own folder, so the two stay together: the same file opened
     // through a nested project's folder must not pair that folder with the tab's path. Only a
-    // legacy tab with no folder takes the incoming one.
+    // legacy tab with no folder takes the incoming one, and its path inside it.
     const mergedProjectPath = existing.projectPath ?? file.projectPath;
+    const mergedPath = pathInProject(existing.path, mergedProjectPath);
     const mergedIsWorktree = existing.isWorktreeContext || file.isWorktreeContext;
     // A tab moving into another pane's group stays a preview only if that group has none.
     const keepsPreview =
@@ -266,6 +276,7 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
         return {
           ...f,
           ...(file.language !== undefined ? { language: file.language } : {}),
+          path: mergedPath,
           projectPath: mergedProjectPath,
           sourcePaneIndex:
             file.sourcePaneIndex !== undefined ? file.sourcePaneIndex : f.sourcePaneIndex,
@@ -278,7 +289,7 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
         };
       }),
     );
-    set(activeFilePathAtom, fileKey(existing.path, mergedProjectPath));
+    set(activeFilePathAtom, fileKey(mergedPath, mergedProjectPath));
     set(codeEditorOpenAtom, true);
     return;
   } else if (openIntent === 'preview' && groupPreview) {
@@ -286,27 +297,30 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
     const previewKey = fileKey(groupPreview.path, groupPreview.projectPath);
     const language = file.language ?? detectLanguage(file.path, EXTENSION_TO_LANGUAGE);
     revokePdfBlobIfPresent(groupPreview);
+    const replacement: OpenFile = {
+      path: file.path,
+      name: file.name,
+      content: file.content,
+      isDirty: false,
+      language,
+      loadError: false,
+      loadErrorMessage: undefined,
+      projectPath: file.projectPath,
+      sourcePaneIndex: file.sourcePaneIndex,
+      sourceChatId: file.sourceChatId,
+      isWorktreeContext: file.isWorktreeContext,
+      isOtherProject: file.isOtherProject,
+      isPreview: true,
+    };
+    // In the preview's place while it stays in that folder's group; else with its own folder's tabs.
     set(
       openFilesAtom,
-      files.map((f) =>
-        fileKey(f.path, f.projectPath) === previewKey
-          ? {
-              path: file.path,
-              name: file.name,
-              content: file.content,
-              isDirty: false,
-              language,
-              loadError: false,
-              loadErrorMessage: undefined,
-              projectPath: file.projectPath,
-              sourcePaneIndex: file.sourcePaneIndex,
-              sourceChatId: file.sourceChatId,
-              isWorktreeContext: file.isWorktreeContext,
-              isOtherProject: file.isOtherProject,
-              isPreview: true,
-            }
-          : f,
-      ),
+      groupPreview.projectPath === file.projectPath
+        ? files.map((f) => (fileKey(f.path, f.projectPath) === previewKey ? replacement : f))
+        : withTabInProjectGroup(
+            files.filter((f) => f !== groupPreview),
+            replacement,
+          ),
     );
   } else {
     // Add a new tab with pane context.
@@ -321,9 +335,9 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
       ...rest
     } = file;
     const language = languageOverride ?? detectLanguage(file.path, EXTENSION_TO_LANGUAGE);
-    set(openFilesAtom, [
-      ...files,
-      {
+    set(
+      openFilesAtom,
+      withTabInProjectGroup(files, {
         ...rest,
         language,
         projectPath,
@@ -332,8 +346,8 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
         isWorktreeContext,
         isOtherProject,
         isPreview: openIntent === 'preview',
-      },
-    ]);
+      }),
+    );
   }
 
   // Set as active (use composite key for unique identity)

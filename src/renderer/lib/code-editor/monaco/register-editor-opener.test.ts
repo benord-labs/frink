@@ -72,7 +72,12 @@ describe('registerCodeNavigationOpener', () => {
 
   it('pins a source tab that was opened by absolute path', () => {
     const { store, navigate } = setup();
-    store.set(openFileAtom, { path: '/repo/src/a.ts', name: 'a.ts', projectPath: PROJECT });
+    // openFileAtom now stores a path inside the project relative to it, so a tab with an absolute
+    // path is one saved before that; the pin must use the tab's own key, not one from the model.
+    store.set(openFilesAtom, [
+      { path: '/repo/src/a.ts', name: 'a.ts', projectPath: PROJECT, isPreview: true },
+    ]);
+    store.set(activeFilePathAtom, fileKey('/repo/src/a.ts', PROJECT));
 
     navigate('/repo/src/a.ts', '/repo/src/b.ts');
 

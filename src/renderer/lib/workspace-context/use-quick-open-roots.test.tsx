@@ -114,11 +114,12 @@ describe('useQuickOpenRoots', () => {
     await waitFor(() => expect(quickOpen().roots).toEqual(roots));
     const picked = roots[pick]!;
 
-    act(() => quickOpen().open(`${picked.path}/a.ts`, picked));
+    act(() => quickOpen().open(`${picked.path}/src/a.ts`, picked));
 
+    // Named from its folder, as the tree names it, so the breadcrumb doesn't repeat the folder.
     expect(openFiles()).toEqual([
       expect.objectContaining({
-        path: `${picked.path}/a.ts`,
+        path: 'src/a.ts',
         projectPath: picked.path,
         sourcePaneIndex: undefined,
         isWorktreeContext: false,
