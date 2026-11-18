@@ -200,7 +200,7 @@ function isPastedFile(file: string, pastedDir: string): boolean {
 const MAX_SEARCHED_ENTRIES = 500;
 
 /** Each entry under `dir` is a one-name file or such a folder, none on the system deny list,
- * within the entry budget. Each child is re-read with lstat, so a swapped-in link never passes. */
+ * within the entry budget. Each child is lstat-ed, so a link present at check time fails. */
 function isLinkFreeTree(dir: string, budget: { left: number }): boolean {
   const handle = nodeFs.opendirSync(dir);
   try {

@@ -310,14 +310,19 @@ function exactMatchRules(rules: string[] | undefined): string[] {
   return out;
 }
 
-/** A prefix ask rule that the exact-only filter dropped, which still names this subcommand. */
-function prefixAskMatches(docs: ScopedDocs, input: { command: string }, sig: Signature) {
+/** Every scope's Bash rules for one subcommand signature, combined deny > ask > allow. */
+function evalBashScopes(docs: ScopedDocs, input: { command: string }, sig: Signature) {
   const ctx: MatchContext = { bashCommandSignature: sig };
-  const combined = combineScopes(
+  return combineScopes(
     evalScope(docs.policy, 'Bash', input, ctx),
     evalScope(docs.project, 'Bash', input, ctx),
     evalScope(docs.user, 'Bash', input, ctx),
   );
+}
+
+/** A prefix ask rule that the exact-only filter dropped, which still names this subcommand. */
+function prefixAskMatches(docs: ScopedDocs, input: { command: string }, sig: Signature) {
+  const combined = evalBashScopes(docs, input, sig);
   return combined.decision === 'ask' && Boolean(combined.rule);
 }
 
@@ -373,7 +378,6 @@ export function checkBash(
     // A metachar-hidden directory makes the denied list unevaluable, so a prefix
     // rule must not auto-allow it — same treatment `$VAR` gets.
     const sig = hasUnresolvableDirectory(sub) ? { ...base, isExactMatchOnly: true } : base;
-    const ctx: MatchContext = { bashCommandSignature: sig };
 
     // Build per-scope docs filtered to exact-match rules when sig demands it.
     // Tier-1c-deny rules still apply because filtering only removes prefix
@@ -399,10 +403,7 @@ export function checkBash(
         }
       : docs;
 
-    const policy = evalScope(docsToUse.policy, 'Bash', input, ctx);
-    const project = evalScope(docsToUse.project, 'Bash', input, ctx);
-    const user = evalScope(docsToUse.user, 'Bash', input, ctx);
-    const combined = combineScopes(policy, project, user);
+    const combined = evalBashScopes(docsToUse, input, sig);
 
     if (combined.decision === 'deny') {
       return denyResult({
