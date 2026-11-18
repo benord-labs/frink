@@ -445,4 +445,12 @@ describe('new-chat first sub-chat id', () => {
     writeDraft(key, { text: '', subChatId: sub });
     expect(readDraftSubChatId(key)).toBeNull();
   });
+
+  it('is ignored once the draft has expired, without pruning the slot during render', () => {
+    const key = newChatDraftKey(0);
+    seedRaw(key, { text: 'ancient', subChatId: sub, updatedAt: Date.now() - SEVEN_DAYS_MS - 1000 });
+
+    expect(readDraftSubChatId(key)).toBeNull();
+    expect(readRaw()[key]).toBeDefined();
+  });
 });

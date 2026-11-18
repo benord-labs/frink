@@ -21,6 +21,10 @@ const LEGACY_NEW_CHAT_KEY_PREFIX = 'draft-';
 /** A composer draft is working state, not an archive — past this it is noise, not context. */
 const STALE_DRAFT_MS = 7 * 24 * 60 * 60 * 1000;
 
+function isStaleDraft(updatedAt: number | null | undefined): boolean {
+  return updatedAt != null && Date.now() - updatedAt > STALE_DRAFT_MS;
+}
+
 const draftBlobUrls = new Map<string, string[]>();
 
 type DraftImage = {
@@ -190,9 +194,11 @@ export function clearDraft(key: string, revokeBlobUrls = true): void {
   saveGlobalDrafts(drafts);
 }
 
-/** The new-chat slot's stored first-sub-chat id, read without hydrating its attachments. */
+/** The new-chat slot's stored first-sub-chat id, read without hydrating its attachments. Runs in
+ *  render, so a stale slot is ignored here and pruned by `readNewChatDraft`. */
 export function readDraftSubChatId(key: string): string | null {
-  return loadGlobalDrafts()[key]?.subChatId ?? null;
+  const draft = loadGlobalDrafts()[key];
+  return draft && !isStaleDraft(draft.updatedAt) ? (draft.subChatId ?? null) : null;
 }
 
 /** The slot's current write stamp, or null when it holds nothing. Pairs with `clearDraftIfUnchanged`. */
@@ -356,8 +362,7 @@ export function readDraft(key: string, revokePriorBlobUrls = false): FullDraftDa
  * expire — that path has always kept a reply indefinitely, and a paused chat is a normal reason to.
  */
 export function readNewChatDraft(key: string): FullDraftData | null {
-  const stamp = readDraftStamp(key);
-  if (stamp !== null && Date.now() - stamp > STALE_DRAFT_MS) {
+  if (isStaleDraft(readDraftStamp(key))) {
     clearDraft(key);
     return null;
   }
@@ -391,8 +396,7 @@ export function clearSubChatDraft(chatId: string, subChatId: string): void {
  * sub-chat slots never expire, so their callers must not pass it. */
 export function replaceDraftText(key: string, text: string, expireStale = false): void {
   bumpDraftWriteCount(key);
-  const stamp = expireStale ? readDraftStamp(key) : null;
-  if (stamp !== null && Date.now() - stamp > STALE_DRAFT_MS) clearDraft(key);
+  if (expireStale && isStaleDraft(readDraftStamp(key))) clearDraft(key);
   commitDraft(key, { ...loadGlobalDrafts()[key], text, updatedAt: Date.now() });
 }
 
