@@ -2,17 +2,14 @@
 import { existsSync } from 'node:fs';
 import {
   access,
-  copyFile,
   cp,
   lstat,
   mkdir,
   readdir,
   readFile,
-  readlink,
   rename,
   rm,
   stat,
-  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -32,6 +29,7 @@ import { captureMainException } from '../../sentry/init';
 // reach any path the user could already open in a terminal. Operations that take a
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
+import { copyEntry, listAllFiles } from './copy-entry';
 import { direntKind, findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
 import { resolveNamesProcedure } from './resolve-file-names';
@@ -294,35 +292,6 @@ function sendProgress(
   }
 }
 
-type CopyEntry = { path: string; isLink: boolean };
-
-/** Recursively list every file and link inside a directory (for progress counting).
- *  Links are leaves, so data outside the project is never walked or copied. */
-async function listAllFiles(dir: string): Promise<CopyEntry[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files: CopyEntry[] = [];
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await listAllFiles(full)));
-    } else {
-      files.push({ path: full, isLink: entry.isSymbolicLink() });
-    }
-  }
-  return files;
-}
-
-/** Copy a file, or recreate a link as written. Windows folder links become junctions, which
- *  need no Developer Mode but must point at an absolute path. */
-async function copyEntry(source: string, dest: string, isLink: boolean): Promise<void> {
-  await mkdir(dirname(dest), { recursive: true });
-  if (!isLink) return copyFile(source, dest);
-  if (process.platform === 'win32' && (await stat(source).catch(() => null))?.isDirectory()) {
-    return symlink(resolve(dirname(source), await readlink(source)), dest, 'junction');
-  }
-  return cp(source, dest, { verbatimSymlinks: true });
-}
-
 /** Options for copyWithProgress */
 type CopyProgressOpts = {
   operationId: string;
@@ -583,12 +552,15 @@ async function listDirectoryContents(
 
   try {
     const dirEntries = await readdir(dirPath, { withFileTypes: true });
+    const kinds = await Promise.all(
+      dirEntries.map((entry) => direntKind(entry, join(dirPath, entry.name))),
+    );
 
-    for (const entry of dirEntries) {
+    for (const [index, entry] of dirEntries.entries()) {
       const fullPath = join(dirPath, entry.name);
       const relativePath = relative(rootPath, fullPath);
       const relativePathNorm = normalizePathForGit(relativePath);
-      const kind = await direntKind(entry, fullPath);
+      const kind = kinds[index];
 
       if (kind === 'folder') {
         // Skip ignored directories

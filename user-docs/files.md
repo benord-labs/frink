@@ -36,3 +36,11 @@ report (1).pdf    ← the one you just added
 The confirmation toast tells you when this happened — for example **"Added 3 item(s) (1 renamed to avoid overwriting)"** — so you always know a rename occurred rather than a replace.
 
 > Re-adding an updated version of a file? Because nothing is overwritten, you'll get a `(1)` copy next to the old one rather than an in-place update. Delete whichever you don't want — your original is always the one without the number.
+
+## Linked files and folders
+
+A **symbolic link** (a file or folder that points at another one, such as `CLAUDE.md` pointing at `AGENTS.md`) shows in the tree like the thing it points at. Open a linked folder to browse the real folder's contents. A link whose target is missing is hidden.
+
+- **Editing inside a linked folder changes the real folder.** If the link points outside the project, new, renamed and deleted files land there too.
+- **Copying, duplicating or moving a link keeps it a link.** The copy points at the same place; the files it points at are not copied. On Windows without Developer Mode, a linked file is copied as a normal file instead.
+- **No change markers inside linked folders.** Git sees the link itself, not the files behind it, so those files never show as changed or ignored. Edits made outside Frink inside a folder linked from outside the project show up after you close and reopen the folder.
