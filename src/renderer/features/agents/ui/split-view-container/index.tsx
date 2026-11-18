@@ -42,6 +42,7 @@ import { focusChatInput } from '../../../../lib/focus-chat-input';
 import { getPaneColor } from '../../../../lib/pane-colors';
 import { trpc } from '../../../../lib/trpc';
 import { overlayGlass } from '@/lib/overlay-styles';
+import { isPrimaryChord } from '../../../../lib/hotkeys';
 import { cn } from '../../../../lib/utils';
 import { runChatShortcutAction } from '../../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { getDefaultGridRatios, getDefaultRatios } from '../../atoms';
@@ -475,7 +476,7 @@ export function SplitViewContainer({
   useEffect(() => {
     if (panes.length < 2) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!e.metaKey || !e.shiftKey || e.altKey || e.ctrlKey) return;
+      if (!isPrimaryChord(e) || !e.shiftKey || e.altKey) return;
 
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -486,9 +487,7 @@ export function SplitViewContainer({
         if (hasContent) return;
       }
 
-      if (target.closest('[role="dialog"], [role="alertdialog"], dialog')) {
-        return;
-      }
+      if (target.closest('[role="dialog"], [role="alertdialog"], dialog')) return;
 
       // Vertical layout uses Up/Down, horizontal uses Left/Right
       const moveBack = isVertical ? e.code === 'ArrowUp' : e.code === 'ArrowLeft';

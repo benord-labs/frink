@@ -173,8 +173,8 @@ describe('shortcut-registry', () => {
   });
 
   describe('detectConflicts', () => {
-    it('returns no global conflicts for default config', () => {
-      const conflicts = detectConflicts(emptyConfig);
+    it.each([true, false])('returns no global conflicts for default config (isMac=%s)', (isMac) => {
+      const conflicts = detectConflicts(emptyConfig, isMac);
       const globalConflicts = [...conflicts.values()].filter((c) => {
         const action = getShortcutAction(c.actionId);
         return !action?.contextOnly;
@@ -187,9 +187,22 @@ describe('shortcut-registry', () => {
         version: 1,
         bindings: { 'file-search': 'cmd+n' },
       };
-      const conflicts = detectConflicts(config);
+      const conflicts = detectConflicts(config, true);
       expect(conflicts.has('file-search')).toBe(true);
       expect(conflicts.has('new-workspace')).toBe(true);
+    });
+
+    it('treats a Ctrl binding as the same key as a Cmd default off Mac only', () => {
+      const config: CustomHotkeysConfig = { version: 1, bindings: { 'file-search': 'ctrl+k' } };
+      expect(detectConflicts(config, false).get('file-search')?.conflictingActionIds).toEqual([
+        'search-workspaces',
+      ]);
+      expect(detectConflicts(config, true).has('file-search')).toBe(false);
+    });
+
+    it('treats a Cmd+Ctrl recording as plain Ctrl off Mac', () => {
+      const config: CustomHotkeysConfig = { version: 1, bindings: { 'file-search': 'cmd+ctrl+k' } };
+      expect(detectConflicts(config, false).has('search-workspaces')).toBe(true);
     });
   });
 

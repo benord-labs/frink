@@ -43,6 +43,15 @@ export function isAllowedMainWindowNavigation(targetUrl: string, entryUrl: strin
   return targetPath !== null && targetPath === decodedPath(entry);
 }
 
+/** Plain Cmd/Ctrl+R reloads by accident; Shift+R stays a deliberate reload, Alt+R is reset-pane-sizes. */
+export function isAccidentalReloadChord(
+  input: { key: string; meta: boolean; control: boolean; shift: boolean; alt: boolean },
+  isMac: boolean,
+): boolean {
+  const modifier = isMac ? input.meta : input.control;
+  return modifier && input.key.toLowerCase() === 'r' && !input.shift && !input.alt;
+}
+
 /** Scheme only — never log the path of a file the user dropped. */
 function describeForLog(url: string): string {
   return parseUrl(url)?.protocol ?? 'unparseable';
@@ -53,5 +62,9 @@ export function attachMainWindowNavigationGuard(wc: WebContents, entryUrl: strin
     if (isAllowedMainWindowNavigation(url, entryUrl)) return;
     event.preventDefault();
     log.warn('[Window] Blocked main-window navigation', { scheme: describeForLog(url) });
+  });
+  const isMac = process.platform === 'darwin';
+  wc.on('before-input-event', (event, input) => {
+    if (isAccidentalReloadChord(input, isMac)) event.preventDefault();
   });
 }

@@ -11,9 +11,12 @@ import { type CustomHotkeysConfig, openDestinationAtom } from '../../../lib/atom
 import {
   ALL_SHORTCUT_ACTIONS,
   getResolvedHotkey,
+  isFieldReservedChord,
   matchesHotkey,
   type ShortcutActionId,
+  toPlatformHotkey,
 } from '../../../lib/hotkeys';
+import { isMac } from '../../../lib/utils';
 import {
   AGENT_ACTIONS,
   type AgentActionContext,
@@ -258,7 +261,8 @@ export function useAgentsHotkeys(
   const getHotkeyForAction = useCallback(
     (shortcutId: ShortcutActionId): string | null => {
       const customConfig = config.customHotkeysConfig || { version: 1, bindings: {} };
-      return getResolvedHotkey(shortcutId, customConfig);
+      const hotkey = getResolvedHotkey(shortcutId, customConfig);
+      return hotkey && toPlatformHotkey(hotkey, isMac());
     },
     [config.customHotkeysConfig],
   );
@@ -275,6 +279,7 @@ export function useAgentsHotkeys(
       for (const { shortcutId, actionId } of EARLY_HOTKEY_BINDINGS) {
         const hotkey = getHotkeyForAction(shortcutId);
         if (!hotkey || !matchesHotkey(e, hotkey)) continue;
+        if (isFieldReservedChord(hotkey, e.target, isMac())) continue;
 
         // Don't trigger unmodified single-key shortcuts when focus is in an input (e.g. "?" for shortcuts)
         if (isInInput && hotkey && !hotkey.includes('+')) continue;
@@ -318,6 +323,7 @@ export function useAgentsHotkeys(
       isGlobal: boolean;
     }> = [];
     const customConfig = config.customHotkeysConfig ?? { version: 1, bindings: {} };
+    const mac = isMac();
 
     for (const action of actionsWithHotkeys) {
       const shortcutId = ACTION_TO_SHORTCUT_MAP[action.id];
@@ -334,7 +340,7 @@ export function useAgentsHotkeys(
       const isGlobal = GLOBAL_HOTKEYS.has(action.id);
       mappings.push({
         actionId: action.id,
-        hotkeys: hotkeys.filter(Boolean) as string[],
+        hotkeys: (hotkeys.filter(Boolean) as string[]).map((h) => toPlatformHotkey(h, mac)),
         isGlobal,
       });
     }
@@ -359,7 +365,7 @@ export function useAgentsHotkeys(
         if (isInInput && !mapping.isGlobal) continue;
 
         for (const hotkey of mapping.hotkeys) {
-          if (matchesHotkey(e, hotkey)) {
+          if (matchesHotkey(e, hotkey) && !isFieldReservedChord(hotkey, e.target, isMac())) {
             if (preventDefault) {
               e.preventDefault();
               e.stopPropagation();

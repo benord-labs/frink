@@ -1,4 +1,5 @@
 /* eslint-disable max-lines, max-lines-per-function */
+import { isPrimaryChord } from '@/lib/hotkeys';
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { useTheme } from 'next-themes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -485,7 +486,7 @@ export function useTerminalManager({
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.altKey || e.ctrlKey || e.code !== 'KeyJ') return;
+      if (!isPrimaryChord(e) || e.altKey || e.code !== 'KeyJ') return;
       if (!isActivePane()) return;
 
       // Cmd+Shift+J — toggle terminal position (sidebar ↔ bottom)
@@ -517,11 +518,8 @@ export function useTerminalManager({
       if (wasOpen) {
         requestAnimationFrame(() => {
           const sv = store.get(splitViewAtom);
-          const isSplit = sv.chatIds.length >= 2;
-          const container = isSplit
-            ? document.querySelector(`[data-pane-index="${sv.activePaneIndex}"]`)
-            : document;
-          focusChatInput(container);
+          const pane = document.querySelector(`[data-pane-index="${sv.activePaneIndex}"]`);
+          focusChatInput(sv.chatIds.length >= 2 ? pane : document);
         });
       }
     };

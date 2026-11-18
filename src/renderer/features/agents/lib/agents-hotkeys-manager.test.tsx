@@ -2,7 +2,7 @@
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { activeOverlayAtom } from '@/lib/atoms';
 import { getEditorTabCycleDirection } from '@/lib/code-editor/tabs';
 import type { CustomHotkeysConfig } from '@/lib/hotkeys';
@@ -12,6 +12,14 @@ function HotkeysHarness(props: Parameters<typeof useAgentsHotkeys>[0]) {
   useAgentsHotkeys(props);
   return <div data-testid="hotkeys-harness" />;
 }
+
+function setPlatform(platform: 'darwin' | 'win32' | undefined) {
+  Object.assign(window, { desktopApi: platform ? { platform } : undefined });
+}
+
+// Registry bindings are `cmd`, which means Cmd on macOS and Ctrl elsewhere; most suites here press Cmd.
+beforeEach(() => setPlatform('darwin'));
+afterEach(() => setPlatform(undefined));
 
 describe('useAgentsHotkeys', () => {
   afterEach(() => {
@@ -465,6 +473,7 @@ describe('editor tab cycling – global manager and panel fallback', () => {
    * the manager's window capture listener and only acts on events inside the panel.
    */
   function setup(config: CustomHotkeysConfig, isMac: boolean) {
+    setPlatform(isMac ? 'darwin' : 'win32');
     const cycles: number[] = [];
     const onCycle = (e: Event) => cycles.push((e as CustomEvent<number>).detail);
     window.addEventListener('editor:cycle-pane-group', onCycle);
@@ -509,7 +518,7 @@ describe('editor tab cycling – global manager and panel fallback', () => {
     teardown();
   });
 
-  it('fires exactly once for Ctrl+Shift+[ on Windows/Linux via the fallback', async () => {
+  it('fires exactly once for Ctrl+Shift+[ on Windows/Linux (manager and fallback never both)', async () => {
     const { cycles, press, teardown } = setup({ version: 1, bindings: {} }, false);
     press({ key: '{', code: 'BracketLeft', ctrlKey: true, shiftKey: true });
     await waitFor(() => expect(cycles).toEqual([-1]));
@@ -542,5 +551,108 @@ describe('editor tab cycling – global manager and panel fallback', () => {
     await settle();
     expect(cycles).toEqual([]);
     teardown();
+  });
+});
+
+describe('useAgentsHotkeys on Windows and Linux', () => {
+  beforeEach(() => setPlatform('win32'));
+  afterEach(() => {
+    cleanup();
+    document.body.innerHTML = '';
+  });
+
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const press = (target: EventTarget, init: KeyboardEventInit) =>
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
+
+  it('opens file search with Ctrl+Shift+P, and Meta+Shift+P does nothing', async () => {
+    const setFileSearchDialogOpen = vi.fn();
+    render(
+      <HotkeysHarness
+        canShowFilesSidebar={true}
+        onBeforeAction={() => true}
+        setFileSearchDialogOpen={setFileSearchDialogOpen}
+      />,
+    );
+
+    press(window, { key: 'P', code: 'KeyP', metaKey: true, shiftKey: true });
+    await flush();
+    expect(setFileSearchDialogOpen).not.toHaveBeenCalled();
+
+    press(window, { key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(setFileSearchDialogOpen).toHaveBeenCalledWith(true));
+  });
+
+  it('leaves plain Ctrl chords to the terminal but still takes Ctrl+Shift chords there', async () => {
+    const setActivePaneIndex = vi.fn();
+    const setFileSearchDialogOpen = vi.fn();
+    render(
+      <>
+        <div className="xterm">
+          <textarea data-testid="terminal-input" />
+        </div>
+        <HotkeysHarness
+          canShowFilesSidebar={true}
+          onBeforeAction={() => true}
+          isSplitActive={true}
+          paneCount={2}
+          activePaneIndex={1}
+          setActivePaneIndex={setActivePaneIndex}
+          setFileSearchDialogOpen={setFileSearchDialogOpen}
+        />
+      </>,
+    );
+    const terminal = screen.getByTestId('terminal-input');
+
+    // Ctrl+[ is Escape in a shell; outside the terminal it is "previous pane".
+    press(terminal, { key: '[', code: 'BracketLeft', ctrlKey: true });
+    await flush();
+    expect(setActivePaneIndex).not.toHaveBeenCalled();
+    press(document.body, { key: '[', code: 'BracketLeft', ctrlKey: true });
+    await waitFor(() => expect(setActivePaneIndex).toHaveBeenCalledWith(0));
+
+    press(terminal, { key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(setFileSearchDialogOpen).toHaveBeenCalledWith(true));
+  });
+
+  it('leaves Ctrl+Shift+V to paste in a text field and toggles the editor layout elsewhere', async () => {
+    const toggleEditorLayout = vi.fn();
+    render(
+      <>
+        <textarea data-testid="chat-input" />
+        <HotkeysHarness onBeforeAction={() => true} toggleEditorLayout={toggleEditorLayout} />
+      </>,
+    );
+
+    const defaultPrevented = !press(screen.getByTestId('chat-input'), {
+      key: 'V',
+      code: 'KeyV',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+    });
+    await flush();
+    expect(defaultPrevented).toBe(false);
+    expect(toggleEditorLayout).not.toHaveBeenCalled();
+
+    press(document.body, { key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(toggleEditorLayout).toHaveBeenCalledOnce());
+  });
+});
+
+describe('matchesHotkey – AltGr', () => {
+  const ctrlAlt0 = (altGraph: boolean) => ({
+    key: altGraph ? '}' : '0',
+    code: 'Digit0',
+    metaKey: false,
+    ctrlKey: true,
+    shiftKey: false,
+    altKey: true,
+    getModifierState: (k: string) => altGraph && k === 'AltGraph',
+  });
+
+  it('does not treat AltGr typing (reported as Ctrl+Alt) as a Ctrl+Alt binding', () => {
+    expect(matchesHotkey(ctrlAlt0(true), 'ctrl+alt+0')).toBe(false);
+    expect(matchesHotkey(ctrlAlt0(false), 'ctrl+alt+0')).toBe(true);
   });
 });

@@ -63,7 +63,7 @@ const openSettingsAction: AgentActionDefinition = {
   label: 'Settings',
   description: 'Open settings dialog',
   category: 'general',
-  hotkey: ['cmd+,', 'ctrl+,'],
+  hotkey: 'cmd+,',
   handler: async (context) => {
     context.setSettingsActiveTab?.('preferences');
     context.setSettingsDialogOpen?.(true);
@@ -76,7 +76,7 @@ const toggleSidebarAction: AgentActionDefinition = {
   label: 'Toggle sidebar',
   description: 'Show/hide left sidebar',
   category: 'view',
-  hotkey: ['cmd+b', 'ctrl+b'],
+  hotkey: 'cmd+b',
   isAvailable: (context) => context.canToggleUnifiedSidebar ?? false,
   handler: async (context) => {
     context.setSidebarOpen?.((prev) => !prev);
@@ -89,7 +89,7 @@ const toggleChatSearchAction: AgentActionDefinition = {
   label: 'Search messages',
   description: 'Search through chat history',
   category: 'view',
-  hotkey: ['cmd+f', 'ctrl+f'],
+  hotkey: 'cmd+f',
   handler: async (context) => {
     context.toggleChatSearch?.();
     return { success: true };
@@ -101,7 +101,7 @@ const toggleFilesAction: AgentActionDefinition = {
   label: 'Browse files',
   description: 'Toggle the Browse files sidebar (when a local project is selected)',
   category: 'view',
-  hotkey: ['cmd+shift+f', 'ctrl+shift+f'],
+  hotkey: 'cmd+shift+f',
   handler: async (context) => {
     // In split view, toggle the active pane's file tree
     if (context.isSplitActive && context.toggleActivePaneFileTree) {
@@ -129,7 +129,7 @@ const fileSearchAction: AgentActionDefinition = {
   label: 'Search files',
   description: 'Open file search dialog',
   category: 'view',
-  hotkey: ['cmd+shift+p', 'ctrl+shift+p'],
+  hotkey: 'cmd+shift+p',
   handler: async (context) => {
     if (!context.canShowFilesSidebar) return { success: true };
     context.setFileSearchDialogOpen?.(true);
@@ -142,7 +142,7 @@ const findInFilesAction: AgentActionDefinition = {
   label: 'Find in files (Search tab)',
   description: 'Search inside file contents',
   category: 'view',
-  hotkey: ['cmd+shift+g', 'ctrl+shift+g'],
+  hotkey: 'cmd+shift+g',
   handler: async (context) => {
     if (context.isSplitActive && context.activateActivePaneFileSearch) {
       context.activateActivePaneFileSearch();
@@ -170,31 +170,31 @@ const EVENT_ACTIONS: AgentActionDefinition[] = [
     id: 'open-file-in-editor',
     label: 'Open file in editor',
     description: 'Open the currently previewed file in external editor',
-    hotkey: ['cmd+shift+o', 'ctrl+shift+o'],
+    hotkey: 'cmd+shift+o',
   }),
   createEventAction('branches:open-picker', {
     id: 'open-branch-picker',
     label: 'Open branch picker',
     description: 'Open the current chat branch picker',
-    hotkey: ['cmd+shift+b', 'ctrl+shift+b'],
+    hotkey: 'cmd+shift+b',
   }),
   createEventAction('branches:open-delete-picker', {
     id: 'open-branch-delete-picker',
     label: 'Delete branch picker',
     description: 'Open the branch delete picker for the current chat',
-    hotkey: ['cmd+shift+backspace', 'ctrl+shift+backspace'],
+    hotkey: 'cmd+shift+backspace',
   }),
   createEventAction('sidebar:collapse-all', {
     id: 'collapse-all-sidebar',
     label: 'Collapse all sidebar folders',
     description: 'Collapse all expanded folders in the sidebar',
-    hotkey: ['cmd+shift+e', 'ctrl+shift+e'],
+    hotkey: 'cmd+shift+e',
   }),
   createEventAction('sidebar:toggle-archived', {
     id: 'toggle-archived',
     label: 'Toggle archived chats',
     description: 'Show or hide the sidebar archived chats list',
-    hotkey: ['cmd+shift+a', 'ctrl+shift+a'],
+    hotkey: 'cmd+shift+a',
   }),
 ];
 
@@ -203,7 +203,7 @@ const archiveAgentAction: AgentActionDefinition = {
   id: 'archive-agent',
   label: 'Archive current agent',
   category: 'chat',
-  hotkey: ['cmd+shift+d', 'ctrl+shift+d'],
+  hotkey: 'cmd+shift+d',
   isAvailable: (context) => context.archiveFocusedChat !== undefined,
   handler: (context) => {
     context.archiveFocusedChat?.();
@@ -216,7 +216,7 @@ const closeAllEditorFilesAction: AgentActionDefinition = {
   label: 'Close all editor files',
   description: 'Close all open text files in the code editor',
   category: 'view',
-  hotkey: ['cmd+shift+x', 'ctrl+shift+x'],
+  hotkey: 'cmd+shift+x',
   handler: async (context) => {
     context.closeAllEditorFiles?.();
     return { success: true };
@@ -228,7 +228,7 @@ const toggleEditorLayoutAction: AgentActionDefinition = {
   label: 'Cycle editor layout',
   description: 'Cycle code editor position: top, left, right (when editor is open)',
   category: 'view',
-  hotkey: ['cmd+shift+v', 'ctrl+shift+v'],
+  hotkey: 'cmd+shift+v',
   handler: async (context) => {
     context.toggleEditorLayout?.();
     return { success: true };
@@ -257,12 +257,10 @@ function createPaneGroupAction(
 
 const nextPaneGroupAction = createPaneGroupAction(1, 'next-pane-group', 'Next editor tab', [
   'cmd+shift+]',
-  'ctrl+shift+]',
 ]);
 
 const prevPaneGroupAction = createPaneGroupAction(-1, 'prev-pane-group', 'Previous editor tab', [
   'cmd+shift+[',
-  'ctrl+shift+[',
 ]);
 
 const newAgentSplitAction: AgentActionDefinition = {
@@ -270,7 +268,7 @@ const newAgentSplitAction: AgentActionDefinition = {
   label: 'Add split pane',
   description: 'Add an empty pane to split view alongside the current chat',
   category: 'chat',
-  hotkey: ['cmd+shift+t', 'ctrl+shift+t'],
+  hotkey: 'cmd+shift+t',
   handler: async (context) => {
     // addEmptyPane (from useSplitView) handles all cases:
     // - Single view → split: uses selectedChatId or NEW_CHAT_PANE as fallback
@@ -312,22 +310,16 @@ function createPaneFocusAction(
   };
 }
 
-const nextPaneAction = createPaneFocusAction(1, 'next-pane', 'Focus next pane', [
-  'cmd+]',
-  'ctrl+]',
-]);
+const nextPaneAction = createPaneFocusAction(1, 'next-pane', 'Focus next pane', ['cmd+]']);
 
-const prevPaneAction = createPaneFocusAction(-1, 'prev-pane', 'Focus previous pane', [
-  'cmd+[',
-  'ctrl+[',
-]);
+const prevPaneAction = createPaneFocusAction(-1, 'prev-pane', 'Focus previous pane', ['cmd+[']);
 
 const focusSidebarAction: AgentActionDefinition = {
   id: 'focus-sidebar',
   label: 'Focus sidebar',
   description: 'Focus the sidebar tree for keyboard navigation',
   category: 'view',
-  hotkey: ['cmd+;', 'ctrl+;'],
+  hotkey: 'cmd+;',
   isAvailable: (context) => context.canToggleUnifiedSidebar ?? false,
   handler: async (context) => {
     // Open sidebar if closed, then focus the tree container
@@ -345,7 +337,7 @@ const cyclePaneLayoutAction: AgentActionDefinition = {
   label: 'Cycle pane layout',
   description: 'Cycle through available pane layouts (side-by-side, stacked, grid)',
   category: 'view',
-  hotkey: ['cmd+shift+l', 'ctrl+shift+l'],
+  hotkey: 'cmd+shift+l',
   handler: async (context) => {
     context.cycleLayout?.();
     return { success: true };
@@ -357,7 +349,7 @@ const growPaneAction: AgentActionDefinition = {
   label: 'Grow active pane',
   description: 'Give more space to the active pane (take from neighbors)',
   category: 'view',
-  hotkey: ['cmd+alt+right', 'cmd+alt+down', 'ctrl+alt+right', 'ctrl+alt+down'],
+  hotkey: ['cmd+alt+right', 'cmd+alt+down'],
   isAvailable: (context) => (context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2,
   handler: async (context) => {
     context.growPane?.();
@@ -370,7 +362,7 @@ const shrinkPaneAction: AgentActionDefinition = {
   label: 'Shrink active pane',
   description: 'Give less space to the active pane (give to neighbors)',
   category: 'view',
-  hotkey: ['cmd+alt+left', 'cmd+alt+up', 'ctrl+alt+left', 'ctrl+alt+up'],
+  hotkey: ['cmd+alt+left', 'cmd+alt+up'],
   isAvailable: (context) => (context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2,
   handler: async (context) => {
     context.shrinkPane?.();
@@ -383,7 +375,7 @@ const resetPaneSizesAction: AgentActionDefinition = {
   label: 'Reset pane sizes',
   description: 'Reset all pane sizes to equal (snap to grid)',
   category: 'view',
-  hotkey: ['cmd+alt+r', 'ctrl+alt+r'],
+  hotkey: 'cmd+alt+r',
   isAvailable: (context) => (context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2,
   handler: async (context) => {
     context.resetPaneSizes?.();
@@ -396,7 +388,7 @@ const resetPaneZoomAction: AgentActionDefinition = {
   label: 'Reset pane zoom',
   description: 'Reset all pane zoom levels to 100%',
   category: 'view',
-  hotkey: ['cmd+alt+0', 'ctrl+alt+0'],
+  hotkey: 'cmd+alt+0',
   isAvailable: (context) => (context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2,
   handler: async (context) => {
     context.resetPaneZoom?.();
@@ -409,7 +401,7 @@ const zoomInGrowPaneAction: AgentActionDefinition = {
   label: 'Zoom in current pane and grow',
   description: 'In split: zoom active pane and grow it. Otherwise: window zoom in (Cmd+Shift+Plus)',
   category: 'view',
-  hotkey: ['cmd+shift+plus', 'ctrl+shift+plus'],
+  hotkey: 'cmd+shift+plus',
   handler: async (context) => {
     if ((context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2) {
       context.zoomPaneIn?.();
@@ -427,7 +419,7 @@ const zoomOutShrinkPaneAction: AgentActionDefinition = {
   description:
     'In split: zoom out active pane and shrink it. Otherwise: window zoom out (Cmd+Shift+Minus)',
   category: 'view',
-  hotkey: ['cmd+shift+minus', 'ctrl+shift+minus'],
+  hotkey: 'cmd+shift+minus',
   handler: async (context) => {
     if ((context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2) {
       context.zoomPaneOut?.();
@@ -444,7 +436,7 @@ const pageZoomInAction: AgentActionDefinition = {
   label: 'Page zoom in',
   description: 'Zoom the entire window in (Cmd+Plus without Shift)',
   category: 'view',
-  hotkey: ['cmd+plus', 'ctrl+plus'],
+  hotkey: 'cmd+plus',
   handler: async (context) => {
     await context.zoomIn?.();
     return { success: true };
@@ -456,7 +448,7 @@ const pageZoomOutAction: AgentActionDefinition = {
   label: 'Page zoom out',
   description: 'Zoom the entire window out (Cmd+Minus without Shift)',
   category: 'view',
-  hotkey: ['cmd+minus', 'ctrl+minus'],
+  hotkey: 'cmd+minus',
   handler: async (context) => {
     await context.zoomOut?.();
     return { success: true };
@@ -468,7 +460,7 @@ const zoomPaneInAction: AgentActionDefinition = {
   label: 'Zoom in current pane',
   description: 'Zoom in only the active pane content',
   category: 'view',
-  hotkey: ['cmd+alt+plus', 'ctrl+alt+plus'],
+  hotkey: 'cmd+alt+plus',
   isAvailable: (context) => (context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2,
   handler: async (context) => {
     context.zoomPaneIn?.();
@@ -481,7 +473,7 @@ const zoomPaneOutAction: AgentActionDefinition = {
   label: 'Zoom out current pane',
   description: 'Zoom out only the active pane content',
   category: 'view',
-  hotkey: ['cmd+alt+minus', 'ctrl+alt+minus'],
+  hotkey: 'cmd+alt+minus',
   isAvailable: (context) => (context.isSplitActive ?? false) && (context.paneCount ?? 0) >= 2,
   handler: async (context) => {
     context.zoomPaneOut?.();
@@ -494,7 +486,7 @@ const closeSplitAction: AgentActionDefinition = {
   label: 'Close active pane',
   description: 'Remove the active pane from split view (exits split when 2→1)',
   category: 'view',
-  hotkey: ['cmd+shift+w', 'ctrl+shift+w'],
+  hotkey: 'cmd+shift+w',
   handler: async (context) => {
     if (context.isSplitActive) {
       // Dispatch event so agents-content.tsx can handle cleanup (editor tabs, etc.)

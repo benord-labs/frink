@@ -10,7 +10,8 @@
 export type HotkeyEventLike = Pick<
   KeyboardEvent,
   'key' | 'code' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'
->;
+> &
+  Partial<Pick<KeyboardEvent, 'getModifierState'>>;
 
 export function matchesHotkey(e: HotkeyEventLike, hotkey: string): boolean {
   const parts = hotkey.toLowerCase().split('+');
@@ -30,6 +31,8 @@ export function matchesHotkey(e: HotkeyEventLike, hotkey: string): boolean {
   if (needsMeta !== e.metaKey) return false;
   if (needsAlt !== e.altKey) return false;
   if (needsCtrl !== e.ctrlKey) return false;
+  // Windows reports AltGr as Ctrl+Alt: AltGr+0 typing "}" must not fire a Ctrl+Alt+0 binding.
+  if (needsCtrl && needsAlt && e.getModifierState?.('AltGraph')) return false;
 
   const eventKey = e.key.toLowerCase();
   const eventCode = e.code.toLowerCase();

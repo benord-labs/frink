@@ -1,4 +1,5 @@
 /* eslint-disable max-lines, max-lines-per-function */
+import { isPrimaryChord } from '@/lib/hotkeys';
 import { type Chat, useChat } from '@ai-sdk/react';
 import type { UIMessage } from 'ai';
 import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
@@ -2175,7 +2176,7 @@ export const ChatView = memo(function ChatView({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Check for Cmd (Meta) + D (without Alt/Shift)
-      if (e.metaKey && !e.altKey && !e.shiftKey && !e.ctrlKey && e.code === 'KeyD') {
+      if (isPrimaryChord(e) && !e.altKey && !e.shiftKey && e.code === 'KeyD') {
         e.preventDefault();
         e.stopPropagation();
 
@@ -2201,7 +2202,7 @@ export const ChatView = memo(function ChatView({
 
       // Desktop: Cmd+P (without Alt)
       const isDesktopShortcut =
-        isDesktop && e.metaKey && e.code === 'KeyP' && !e.altKey && !e.shiftKey && !e.ctrlKey;
+        isDesktop && isPrimaryChord(e) && e.code === 'KeyP' && !e.altKey && !e.shiftKey;
       // Web: Opt+Cmd+P (with Alt)
       const isWebShortcut = e.altKey && e.metaKey && e.code === 'KeyP';
 

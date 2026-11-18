@@ -6,6 +6,7 @@ import type {
   ShortcutCategory,
   ShortcutConflict,
 } from './types';
+import { toPlatformHotkey } from './platform-hotkey';
 
 const TRAILING_PLUS_RE = /\w\+\+$/;
 
@@ -692,18 +693,19 @@ export function normalizeHotkey(hotkey: string): string {
  * Shortcuts marked `contextOnly` (e.g. Enter for rename, Cmd+D for duplicate)
  * only fire when their container is focused, so they can't conflict with global
  * shortcuts. They are scoped separately and only conflict with other contextOnly
- * shortcuts that share the same hotkey.
+ * shortcuts that share the same hotkey. Off Mac, `cmd` compares as Ctrl.
  */
 export function detectConflicts(
   config: CustomHotkeysConfig,
+  isMac: boolean,
 ): Map<ShortcutActionId, ShortcutConflict> {
   const conflicts = new Map<ShortcutActionId, ShortcutConflict>();
 
   // Separate scope: "global" vs "contextOnly"
   const scopedHotkeyToActions = new Map<string, ShortcutActionId[]>();
 
-  const addMapping = (scope: string, normalizedHotkey: string, actionId: ShortcutActionId) => {
-    const key = `${scope}::${normalizedHotkey}`;
+  const addMapping = (scope: string, hotkey: string, actionId: ShortcutActionId) => {
+    const key = `${scope}::${normalizeHotkey(toPlatformHotkey(hotkey, isMac))}`;
     const existing = scopedHotkeyToActions.get(key) || [];
     existing.push(actionId);
     scopedHotkeyToActions.set(key, existing);
@@ -714,11 +716,9 @@ export function detectConflicts(
     if (!hotkey) continue;
 
     const scope = action.contextOnly ? 'contextOnly' : 'global';
-    addMapping(scope, normalizeHotkey(hotkey), action.id);
-
+    addMapping(scope, hotkey, action.id);
     if (action.altKeys && !isCustomHotkey(action.id, config)) {
-      const altNormalized = normalizeHotkey(keysToHotkeyString(action.altKeys));
-      addMapping(scope, altNormalized, action.id);
+      addMapping(scope, keysToHotkeyString(action.altKeys), action.id);
     }
   }
 

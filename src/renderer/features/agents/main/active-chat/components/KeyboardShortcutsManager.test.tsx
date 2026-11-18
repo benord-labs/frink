@@ -1,12 +1,18 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KeyboardShortcutsManager } from './KeyboardShortcutsManager';
 
+const setPlatform = (platform: 'darwin' | 'win32' | undefined) => {
+  Object.assign(window, { desktopApi: platform ? { platform } : undefined });
+};
+
+beforeEach(() => setPlatform('darwin'));
 afterEach(() => {
   cleanup();
   document.body.replaceChildren();
+  setPlatform(undefined);
 });
 
 const STOP_KEYS = [
@@ -212,5 +218,29 @@ describe('KeyboardShortcutsManager', () => {
 
     expect(handleApprovePlan).toHaveBeenCalledOnce();
     expect(scrollToBottom).toHaveBeenCalledOnce();
+  });
+
+  it('approves a plan with Ctrl+Enter on Windows and Linux, not Meta+Enter', () => {
+    setPlatform('win32');
+    const handleApprovePlan = vi.fn();
+    render(
+      <KeyboardShortcutsManager
+        isActive={true}
+        isPaneActive={true}
+        isStreaming={false}
+        pendingQuestions={null}
+        hasUnapprovedPlan={true}
+        editorRef={createRef()}
+        stop={vi.fn(async () => undefined)}
+        handleQuestionsSkip={vi.fn(async () => undefined)}
+        handleApprovePlan={handleApprovePlan}
+        scrollToBottom={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    expect(handleApprovePlan).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+    expect(handleApprovePlan).toHaveBeenCalledOnce();
   });
 });

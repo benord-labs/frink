@@ -5,7 +5,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useState } from 're
 import { SettingsCard } from '@/components/settings/SettingsCard';
 import { SettingsSection } from '@/components/settings/SettingsSection';
 import { useIsNarrowScreen } from '@/hooks/use-is-narrow-screen';
-import { cn } from '@/lib/utils';
+import { cn, isMac } from '@/lib/utils';
 import { customHotkeysAtom } from '../../../lib/atoms';
 import {
   CATEGORY_LABELS,
@@ -228,8 +228,9 @@ export function AgentsKeyboardTab(): ReactElement {
     (actionId: ShortcutActionId, hotkey: string) => {
       setRecordingTarget(null);
       const candidate = { ...customHotkeys.bindings, [actionId]: hotkey };
-      const clash = detectConflicts({ ...customHotkeys, bindings: candidate }).get(actionId)
-        ?.conflictingActionIds[0];
+      const clash = detectConflicts({ ...customHotkeys, bindings: candidate }, isMac()).get(
+        actionId,
+      )?.conflictingActionIds[0];
       if (clash) {
         const label = getShortcutAction(clash)?.label ?? clash;
         setError({ id: actionId, message: `Already used by “${label}”` });
@@ -264,7 +265,7 @@ export function AgentsKeyboardTab(): ReactElement {
   }, [recordingId, cancelRecording]);
 
   const shortcutsByCategory = useMemo(() => getShortcutsByCategory(), []);
-  const conflicts = useMemo(() => detectConflicts(customHotkeys), [customHotkeys]);
+  const conflicts = useMemo(() => detectConflicts(customHotkeys, isMac()), [customHotkeys]);
   const filtered = useMemo(
     () => filterShortcuts(shortcutsByCategory, searchQuery, customHotkeys),
     [shortcutsByCategory, searchQuery, customHotkeys],

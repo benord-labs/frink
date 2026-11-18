@@ -1,3 +1,4 @@
+import { isPrimaryChord } from '@/lib/hotkeys';
 import { useEffect, useRef } from 'react';
 import { chatOwnsKeyboardShortcuts } from '../../../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
@@ -139,7 +140,13 @@ export function KeyboardShortcutsManager({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!chatOwnsKeyboardShortcuts(chatRef.current)) return;
-      if (e.key === 'Enter' && e.metaKey && !e.shiftKey && hasUnapprovedPlan && !isStreaming) {
+      if (
+        e.key === 'Enter' &&
+        isPrimaryChord(e) &&
+        !e.shiftKey &&
+        hasUnapprovedPlan &&
+        !isStreaming
+      ) {
         e.preventDefault();
         handleApprovePlan();
       }
