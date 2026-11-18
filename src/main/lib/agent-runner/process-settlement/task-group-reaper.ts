@@ -206,11 +206,13 @@ async function writerGroups(
     const writers = table ? await processReaders.readOutputWriters(cli.tasksDir, table) : null;
     // A read cut off under load is not "no writers": try again.
     if (!table || !writers) continue;
+    // Read again: a writer started after the first read is not in it.
+    const after = (await processReaders.readProcessTable()) ?? table;
     const pids = new Set(
       writers.filter((writer) => wanted(writer.path)).map((writer) => writer.pid),
     );
-    const pgids = new Set(table.filter((row) => pids.has(row.pid)).map((row) => row.pgid));
-    addMembers(groups, pgids, table, protectedPgids(table));
+    const pgids = new Set(after.filter((row) => pids.has(row.pid)).map((row) => row.pgid));
+    addMembers(groups, pgids, after, protectedPgids(after));
     return groups;
   }
   log.warn(`[Task groups] could not read what writes to ${cli.tasksDir}`);
@@ -232,7 +234,11 @@ async function noteOnce(teardown: boolean): Promise<void> {
 
 function indexTable(table: ProcessRow[]): TableIndex {
   const children = new Map<number, ProcessRow[]>();
-  for (const row of table) children.set(row.ppid, [...(children.get(row.ppid) ?? []), row]);
+  for (const row of table) {
+    const siblings = children.get(row.ppid);
+    if (siblings) siblings.push(row);
+    else children.set(row.ppid, [row]);
+  }
   return { table, byPid: new Map(table.map((row) => [row.pid, row])), children };
 }
 
@@ -263,7 +269,9 @@ function unclassifiedChildren({ byPid, children }: TableIndex): Map<number, Cand
 
 function classify({ cli, row }: Candidate, output: string): void {
   const [, tasksDir, taskId] = output.match(TASK_OUTPUT) ?? [];
-  if (!taskId || cli.stoppedTasks.has(taskId)) {
+  // Not cached when there is no task id: a shell read mid-spawn still shows the CLI's own stdout.
+  if (!taskId) return;
+  if (cli.stoppedTasks.has(taskId)) {
     cli.notLeaders.add(keyOf(row));
     return;
   }
@@ -339,16 +347,15 @@ function mergeInto(target: GroupMembers, source: GroupMembers): void {
 
 function mergeGroups(all: GroupMembers[]): GroupMembers {
   const merged: GroupMembers = new Map();
-  for (const groups of all) {
-    for (const [pgid, members] of groups) {
-      merged.set(pgid, new Set([...(merged.get(pgid) ?? []), ...members]));
-    }
-  }
+  for (const groups of all) mergeInto(merged, groups);
   return merged;
 }
 
 async function reapGroups(groups: GroupMembers, reason: string): Promise<void> {
-  if (groups.size === 0) return;
+  if (groups.size === 0) {
+    terminating.delete(groups);
+    return;
+  }
   // Registered before the first await, so an app quit meanwhile force-ends them.
   terminating.add(groups);
   const termed = await signalLive(groups, 'SIGTERM');

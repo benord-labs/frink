@@ -174,7 +174,7 @@ function createTaskStopHooks(taskGroups: TaskGroupControls): TaskStopHooks {
     after: async (input) => {
       const stop =
         input.hook_event_name === 'PostToolUse' && TaskStopInput.safeParse(input.tool_input);
-      const taskId = stop && stop.success ? (stop.data.task_id ?? stop.data.shell_id) : undefined;
+      const taskId = stop && stop.success ? stop.data.task_id || stop.data.shell_id : undefined;
       if (taskId) void taskGroups.reapStoppedTaskGroups(taskId);
       return {};
     },

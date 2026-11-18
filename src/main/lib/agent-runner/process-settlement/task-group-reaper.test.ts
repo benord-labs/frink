@@ -139,6 +139,19 @@ posixOnly('task group reaping', () => {
     await until(() => !alive(nested));
   });
 
+  it('checks again a task shell first read before its stdout pointed at its output', async () => {
+    const { cli, nested } = await startCli();
+    vi.spyOn(processReaders, 'readStdoutPaths').mockImplementationOnce(async (pids) => {
+      return new Map(pids.map((pid) => [pid, 'pipe:[1]']));
+    });
+    await noteTaskGroupsNow();
+    await noteTaskGroupsNow();
+
+    cli.kill('SIGKILL');
+
+    await until(() => !alive(nested));
+  });
+
   it('ends a stopped task’s groups by its task id while the CLI runs on', async () => {
     const { cli, nested } = await startCli();
     await noteTaskGroupsNow();

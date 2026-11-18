@@ -482,5 +482,10 @@ describe("the agent's own TaskStop", () => {
     expect(groups.noteTaskGroupsNow).toHaveBeenCalledWith({ teardown: true });
     await after?.hooks[0](stop, 'tool-1', { signal });
     expect(groups.reapStoppedTaskGroups).toHaveBeenCalledWith('b1');
+    // An empty task_id must not hide the legacy shell_id.
+    await after?.hooks[0]({ ...stop, tool_input: { task_id: '', shell_id: 'b2' } }, 'tool-1', {
+      signal,
+    });
+    expect(groups.reapStoppedTaskGroups).toHaveBeenCalledWith('b2');
   });
 });
