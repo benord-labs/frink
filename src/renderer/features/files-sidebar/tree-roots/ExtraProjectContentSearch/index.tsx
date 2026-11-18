@@ -22,6 +22,8 @@ type Props = {
   paneIndex?: number;
   /** The Search tab's query, already debounced */
   query: string;
+  /** The typed query has moved on from `query` and isn't searched yet */
+  isStale?: boolean;
 };
 
 /**
@@ -36,6 +38,7 @@ export function ExtraProjectContentSearch({
   chatId,
   paneIndex,
   query,
+  isStale,
 }: Props): ReactElement {
   const options = useAtomValue(contentSearchOptionsAtom);
   const utils = trpc.useUtils();
@@ -91,6 +94,7 @@ export function ExtraProjectContentSearch({
       heading={<RootHeading name={project.name} path={project.path} badge={LINKED_BADGE} />}
       className={SEARCH_SECTION_CLASS}
       isLoading={isLoading || (noMatches && folderType.isLoading)}
+      isStale={isStale}
       query={query}
       invalidRegex={invalidRegex}
       matches={matches}

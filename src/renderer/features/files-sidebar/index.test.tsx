@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { atom, getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,10 @@ const searchState = vi.hoisted(() => ({
 const contentState = vi.hoisted(() => ({
   query: '',
   matchesByPath: {} as Record<string, unknown[]>,
+  /** The chat's own search is loading */
+  loading: false,
+  /** The typed query is still to be searched */
+  stale: false,
 }));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
@@ -195,7 +199,8 @@ vi.mock('./use-content-search-tab', () => ({
     setContentSearchOptions: vi.fn(),
     contentMatches: contentState.matchesByPath[projectPath] ?? [],
     contentSearchInvalidRegex: false,
-    isLoadingContentSearch: false,
+    isLoadingContentSearch: contentState.loading,
+    isContentSearchStale: contentState.stale,
     highlightContentMatch: (line: string) => line,
   }),
   useContentSearch: ({ projectPath }: { projectPath: string }) => ({
@@ -260,6 +265,8 @@ afterEach(() => {
   searchState.debouncedQuery = '';
   contentState.query = '';
   contentState.matchesByPath = {};
+  contentState.loading = false;
+  contentState.stale = false;
   getDefaultStore().set(filesSidebarActiveTabAtom, 'files');
   getDefaultStore().set(openFilesAtom, []);
   directoryState.rootContents = [];
@@ -630,5 +637,25 @@ describe('FilesSidebar with another project in the tree', () => {
         sourcePaneIndex: undefined,
       },
     ]);
+  });
+
+  it("hides the chat's earlier matches behind a busy spinner while its own search loads", () => {
+    treeState.extras = [api];
+    contentState.loading = true;
+    contentState.query = 'useOrders';
+    contentState.matchesByPath = {
+      '/tmp/proj': [{ id: 'own', filePath: 'src/a.ts', lineNumber: 4, lineText: 'useOrders()' }],
+      '/w/api': [{ id: 'browsed', filePath: 'src/a.ts', lineNumber: 4, lineText: 'useOrders()' }],
+    };
+    render(<FilesSidebar chatId="chat-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const part = (name: string) =>
+      screen.getByRole('heading', { name }).parentElement as HTMLElement;
+    expect(part('proj Main')).toHaveAttribute('aria-busy', 'true');
+    expect(part('proj Main').querySelector('.animate-spin')).toBeInTheDocument();
+    expect(within(part('proj Main')).queryByRole('button', { name: /useOrders/ })).toBeNull();
+    expect(part('api Linked')).not.toHaveAttribute('aria-busy');
+    expect(within(part('api Linked')).getByRole('button', { name: /useOrders/ })).toBeVisible();
   });
 });

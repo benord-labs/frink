@@ -24,7 +24,8 @@ type Props = Omit<
  * the tree and a valid query typed, one scroll area holds the chat's matches under Main, then
  * each other project's under its name, in tree order; each project counts and pages its own
  * matches. Otherwise the chat's results show as they always have: a blank or invalid query reads
- * the same in every project, so its message shows once.
+ * the same in every project, so its message shows once. While the typed query is still to be
+ * searched (`isStale`), every section marks what it shows as out of date.
  */
 export function SearchRootsLayout({
   projects: { main, extras },
@@ -51,6 +52,7 @@ export function SearchRootsLayout({
           chatId={chatId}
           paneIndex={paneIndex}
           query={results.query}
+          isStale={results.isStale}
         />
       ))}
     </div>

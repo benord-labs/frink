@@ -166,6 +166,7 @@ export function FilesSidebar({
     contentMatches,
     contentSearchInvalidRegex,
     isLoadingContentSearch,
+    isContentSearchStale,
     highlightContentMatch,
   } = useContentSearchTab({
     projectPath: effectiveProjectPath || '',
@@ -817,6 +818,7 @@ export function FilesSidebar({
               chatId={chatId ?? ''}
               mainPath={effectiveProjectPath}
               isLoading={isLoading}
+              isStale={isContentSearchStale}
               query={contentDebouncedQuery}
               invalidRegex={contentSearchInvalidRegex}
               matches={contentMatches}

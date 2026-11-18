@@ -42,6 +42,10 @@ const contentState = vi.hoisted(() => ({
   query: '',
   invalidRegex: false,
   matchesByPath: {} as Record<string, unknown[]>,
+  /** The chat's own search is loading */
+  loading: false,
+  /** The typed query is still to be searched */
+  stale: false,
 }));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
@@ -189,7 +193,8 @@ vi.mock('./use-content-search-tab', () => ({
     setContentSearchOptions: vi.fn(),
     contentMatches: contentState.matchesByPath[projectPath] ?? [],
     contentSearchInvalidRegex: contentState.invalidRegex,
-    isLoadingContentSearch: false,
+    isLoadingContentSearch: contentState.loading,
+    isContentSearchStale: contentState.stale,
     highlightContentMatch: (line: string) => line,
   }),
   useContentSearch: ({ projectPath }: { projectPath: string }) => ({
@@ -241,6 +246,8 @@ afterEach(() => {
   contentState.query = '';
   contentState.invalidRegex = false;
   contentState.matchesByPath = {};
+  contentState.loading = false;
+  contentState.stale = false;
   directoryState.rootContents = [];
   duplicateMutateMock.mockReset();
   externalOnPasteMock.mockReset();
@@ -1051,6 +1058,40 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
       'title',
       '/tmp/proj-wt',
     );
+  });
+
+  // Per section, Main then Linked: [marked busy, spinner showing, matches showing].
+  it.each([
+    [
+      "the chat's own search loads",
+      { loading: true },
+      [
+        [true, true, 0],
+        [false, false, 1],
+      ],
+    ],
+    [
+      'the typed query is still to be searched',
+      { stale: true },
+      [
+        [true, false, 1],
+        [true, false, 1],
+      ],
+    ],
+  ])('marks the sections busy while %s', (_, state, expected) => {
+    treeState.extras = [api];
+    Object.assign(contentState, state);
+    searchFor('useOrders');
+
+    const shown = ['proj Main', 'api Linked'].map((name) => {
+      const part = screen.getByRole('heading', { name }).parentElement as HTMLElement;
+      return [
+        part.getAttribute('aria-busy') === 'true',
+        part.querySelector('.animate-spin') !== null,
+        within(part).queryAllByRole('button', { name: /useOrders/ }).length,
+      ];
+    });
+    expect(shown).toEqual(expected);
   });
 
   it('says once, with no heading, that an invalid pattern is invalid', () => {

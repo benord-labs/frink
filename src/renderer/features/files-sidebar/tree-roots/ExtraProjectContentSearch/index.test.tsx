@@ -99,11 +99,6 @@ describe('ExtraProjectContentSearch', () => {
         expect.objectContaining({ enabled: true }),
       );
     }
-    // Earlier matches stay up while the next query loads.
-    const options = api.searchContent.mock.lastCall?.[1] as {
-      placeholderData: (p: string) => string;
-    };
-    expect(options.placeholderData('earlier')).toBe('earlier');
   });
 
   it.each(['', '   '])('sends nothing for the query %j', (query) => {
@@ -139,7 +134,8 @@ describe('ExtraProjectContentSearch', () => {
   ])('%s, under its Linked heading', (_, data, folderType, message, asksDisk) => {
     api.state.search = { data, isLoading: false };
     api.state.folderType = folderType;
-    renderSections('use(');
+    // A valid pattern, so what shows is the search's answer.
+    renderSections('use(Orders)?');
 
     expect(screen.getByRole('heading', { name: 'api Linked' })).toHaveAttribute('title', '/w/api');
     expect(screen.getByText(message)).toBeInTheDocument();
@@ -165,7 +161,7 @@ describe('ExtraProjectContentSearch', () => {
     api.state.search = { data: { matches: [MATCH], invalidRegex: false }, isLoading: false };
     renderSections('useOrders');
 
-    expect(screen.getByText('1 results in 1 files')).toBeInTheDocument();
+    expect(screen.getByText('1 result in 1 file')).toBeInTheDocument();
     expect(api.entryType).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
   });
 

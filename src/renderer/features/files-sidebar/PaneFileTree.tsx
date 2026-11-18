@@ -186,6 +186,7 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
     contentMatches,
     contentSearchInvalidRegex,
     isLoadingContentSearch,
+    isContentSearchStale,
     highlightContentMatch,
   } = useContentSearchTab({
     projectPath,
@@ -904,6 +905,7 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
             mainPath={projectPath}
             paneIndex={paneIndex}
             isLoading={isLoading}
+            isStale={isContentSearchStale}
             query={contentDebouncedQuery}
             invalidRegex={contentSearchInvalidRegex}
             matches={contentMatches}

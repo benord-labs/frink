@@ -1,6 +1,7 @@
 import { captureException } from '@sentry/electron/renderer';
 import { toast } from 'sonner';
 import { trpcClient } from '@/lib/trpc';
+import { countOf } from '@/lib/utils/count-of';
 
 /**
  * Result shape from batch file operations.
@@ -31,11 +32,6 @@ const ACTION_VERBS: Record<BatchAction, string> = {
 /** How long an undoable toast stays on screen before the chance to undo lapses. */
 export const UNDO_TOAST_DURATION_MS = 10_000;
 
-/** "1 item" / "3 items" — single-item batches are the common case here. */
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
 /**
  * Show appropriate toast feedback for a batch operation result.
  * Handles success, partial failure, and full failure cases.
@@ -55,13 +51,13 @@ export function showBatchResultToast(
 
   if (failures.length > 0 && successes.length > 0) {
     toast.warning(
-      `${action} ${plural(successes.length, 'item')}, ${failures.length} failed`,
+      `${action} ${countOf(successes.length, 'item')}, ${failures.length} failed`,
       undoable,
     );
   } else if (failures.length > 0 && successes.length === 0) {
-    toast.error(`Failed to ${ACTION_VERBS[action]} ${plural(failures.length, 'item')}`);
+    toast.error(`Failed to ${ACTION_VERBS[action]} ${countOf(failures.length, 'item')}`);
   } else if (successes.length > 0) {
-    toast.success(`${action} ${plural(successes.length, 'item')}`, undoable);
+    toast.success(`${action} ${countOf(successes.length, 'item')}`, undoable);
   }
 }
 
@@ -118,9 +114,9 @@ export function reportUndoOutcome(outcomes: PromiseSettledResult<unknown>[], tot
   }
 
   const undone = outcomes.filter((o) => o.status === 'fulfilled').length;
-  if (undone === total) toast.success(`Undid ${plural(undone, 'move')}`);
+  if (undone === total) toast.success(`Undid ${countOf(undone, 'move')}`);
   else if (undone === 0) toast.error('Undo failed');
-  else toast.warning(`Undid ${undone} of ${plural(total, 'move')}`);
+  else toast.warning(`Undid ${undone} of ${countOf(total, 'move')}`);
 }
 
 /** Feedback for a batch trash, which is never undoable in-app. */
