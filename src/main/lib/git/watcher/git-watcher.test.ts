@@ -1,3 +1,4 @@
+import type { AsyncSubscription } from '@parcel/watcher';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Capture the @parcel/watcher subscribe callback so tests can invoke it
@@ -157,6 +158,66 @@ describe('gitWatcherRegistry', () => {
 
     unsubscribe();
     await gitWatcherRegistry.dispose(worktreePath);
+  });
+
+  // Exiting while a native subscribe or unsubscribe is in flight aborts the app, so
+  // disposeAll must settle only once every native call has.
+  it('stops a watcher that is still starting only after its subscribe settles', async () => {
+    const parcel = await import('@parcel/watcher');
+    const unsubscribe = vi.fn(async () => {});
+    const subscribeStarted = vi.fn();
+    let finishSubscribe: (subscription: AsyncSubscription) => void = () => {};
+    vi.mocked(parcel.subscribe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          subscribeStarted();
+          finishSubscribe = resolve;
+        }),
+    );
+    const { gitWatcherRegistry } = await import('./git-watcher');
+    void gitWatcherRegistry.getOrCreate('/tmp/test-worktree-dispose-while-starting');
+    await vi.waitFor(() => expect(subscribeStarted).toHaveBeenCalled());
+
+    let settled = false;
+    const disposed = gitWatcherRegistry.disposeAll().finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    finishSubscribe({ unsubscribe });
+    await disposed;
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for every watcher to stop even when one fails to stop', async () => {
+    const parcel = await import('@parcel/watcher');
+    let finishSlowStop = () => {};
+    vi.mocked(parcel.subscribe)
+      .mockResolvedValueOnce({
+        unsubscribe: async () => {
+          throw new Error('unwatch failed');
+        },
+      })
+      .mockResolvedValueOnce({
+        unsubscribe: () =>
+          new Promise<void>((resolve) => {
+            finishSlowStop = resolve;
+          }),
+      });
+    const { gitWatcherRegistry } = await import('./git-watcher');
+    await gitWatcherRegistry.getOrCreate('/tmp/test-worktree-stop-fails');
+    await gitWatcherRegistry.getOrCreate('/tmp/test-worktree-stop-slow');
+
+    let settled = false;
+    const disposed = gitWatcherRegistry.disposeAll().finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    finishSlowStop();
+    await disposed;
   });
 });
 

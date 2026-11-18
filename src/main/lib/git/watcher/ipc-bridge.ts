@@ -1,4 +1,4 @@
-import { type BrowserWindow, ipcMain } from 'electron';
+import { app, type BrowserWindow, ipcMain } from 'electron';
 import { invalidateFileListCache, invalidateGitStatusCache } from '../../trpc/routers/files';
 import { gitCache } from '../cache';
 import { isGitPointerRelatedPath } from './git-head-path';
@@ -46,6 +46,8 @@ function hasGitPointerChange(changes: Array<{ path: string; type: string }>): bo
 // `ready` is recorded before the watcher starts, so overlapping subscribes share one watcher.
 type WatcherSubscription = { ready: Promise<() => void>; count: number };
 const activeSubscriptions: Map<string, WatcherSubscription> = new Map();
+/** Set at quit so no watcher starts that could still be starting when the app exits. */
+let watchersStopped: Promise<void> | null = null;
 
 /** Stops a subscription's watcher once it has started; one that failed to start has none. */
 async function stopWatcher(subscription: WatcherSubscription): Promise<void> {
@@ -93,7 +95,7 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
 
   // Handle subscription requests from renderer
   ipcMain.handle('git:subscribe-watcher', async (_event, worktreePath: string) => {
-    if (!worktreePath) return;
+    if (!worktreePath || watchersStopped) return;
 
     const existing = activeSubscriptions.get(worktreePath);
     if (existing) {
@@ -196,13 +198,21 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
       }
     }
   });
+
+  // Ahead of slower shutdown steps, so the stop finishes well before any forced exit
+  app.on('before-quit', () => void cleanupGitWatchers());
 }
 
 /**
- * Cleanup all watchers.
- * Call this when the app is shutting down.
+ * Stops every watcher and refuses new ones. Starts on before-quit; later calls wait on that run,
+ * because exiting while a watcher call is in flight aborts the process.
  */
-export async function cleanupGitWatchers(): Promise<void> {
+export function cleanupGitWatchers(): Promise<void> {
+  watchersStopped ??= stopAllWatchers();
+  return watchersStopped;
+}
+
+async function stopAllWatchers(): Promise<void> {
   // Unsubscribe all
   const subscriptions = Array.from(activeSubscriptions.values());
   activeSubscriptions.clear();

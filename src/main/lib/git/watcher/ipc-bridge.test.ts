@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  appOnMock,
   handleMock,
   handlers,
   subscribeMock,
@@ -14,6 +15,7 @@ const {
     handlersMap.set(channel, handler);
   });
   return {
+    appOnMock: vi.fn(),
     handleMock: handle,
     handlers: handlersMap,
     subscribeMock: vi.fn(),
@@ -28,6 +30,7 @@ const {
 });
 
 vi.mock('electron', () => ({
+  app: { on: appOnMock },
   ipcMain: {
     handle: handleMock,
   },
@@ -60,6 +63,7 @@ describe('registerGitWatcherIPC', () => {
     vi.useFakeTimers();
     vi.resetModules();
     handlers.clear();
+    appOnMock.mockClear();
     handleMock.mockClear();
     subscribeMock.mockReset();
     invalidateGitStatusCacheMock.mockReset();
@@ -564,47 +568,42 @@ describe('registerGitWatcherIPC', () => {
     expect(subscribeMock).toHaveBeenCalledTimes(2);
   });
 
-  it('clears throttle timestamps when cleanupGitWatchers is called', async () => {
-    vi.spyOn(Date, 'now').mockImplementation(() => 1000);
-
-    let watcherCallback: WatcherCallback = () => {};
+  it('stops every watcher once quitting starts and starts no new one', async () => {
     const underlyingUnsubscribe = vi.fn();
-    subscribeMock.mockImplementation(async (_worktreePath: string, callback: WatcherCallback) => {
-      watcherCallback = callback;
-      return underlyingUnsubscribe;
-    });
-
-    const sendMock = vi.fn();
-    const win = {
-      isDestroyed: () => false,
-      webContents: { send: sendMock },
-    } as const;
+    subscribeMock.mockResolvedValue(underlyingUnsubscribe);
 
     const { cleanupGitWatchers, registerGitWatcherIPC } = await import('./ipc-bridge');
-    registerGitWatcherIPC(() => win as never);
+    registerGitWatcherIPC(() => null);
 
     const subscribeHandler = handlers.get('git:subscribe-watcher');
     expect(subscribeHandler).toBeTypeOf('function');
-
     await subscribeHandler?.({}, '/repo/cleanup');
-    watcherCallback({
-      worktreePath: '/repo/cleanup',
-      changes: [{ path: '/repo/cleanup/src/one.ts', type: 'change' }],
-    });
-    expect(sendMock).toHaveBeenCalledTimes(1);
 
-    await cleanupGitWatchers();
+    let finishDispose = () => {};
+    disposeAllMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishDispose = resolve;
+      }),
+    );
+    const [event, onBeforeQuit] = appOnMock.mock.calls[0];
+    expect(event).toBe('before-quit');
+    onBeforeQuit();
+
+    // The shutdown handler's own call waits on that run instead of starting a second one.
+    let settled = false;
+    const stopped = cleanupGitWatchers().finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    finishDispose();
+    await stopped;
     expect(underlyingUnsubscribe).toHaveBeenCalledTimes(1);
     expect(disposeAllMock).toHaveBeenCalledTimes(1);
 
-    // Re-subscribe at the same timestamp and emit a non-pointer change.
-    // If lastEventTime was not cleared, this would be throttled and dropped.
-    await subscribeHandler?.({}, '/repo/cleanup');
-    watcherCallback({
-      worktreePath: '/repo/cleanup',
-      changes: [{ path: '/repo/cleanup/src/two.ts', type: 'change' }],
-    });
-    expect(sendMock).toHaveBeenCalledTimes(2);
+    // A pane mounting during quit must not start a watcher the exit could interrupt.
+    await expect(subscribeHandler?.({}, '/repo/late')).resolves.toBeUndefined();
+    expect(subscribeMock).toHaveBeenCalledTimes(1);
   });
 
   it('shares one watcher between subscribes that overlap before it starts', async () => {
