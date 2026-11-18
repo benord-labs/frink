@@ -63,7 +63,9 @@ describe('stepFieldChanges', () => {
   });
 
   it('skips a key whose stored value changed but reads the same, such as empty to removed', () => {
-    expect(stepFieldChanges(agent({ branch: '', instructions: null }), agent({}))).toEqual([]);
+    expect(
+      stepFieldChanges(agent({ branch: '', instructions: null, customKey: '' }), agent({})),
+    ).toEqual([]);
   });
 
   it('returns nothing when only canvas position changed', () => {

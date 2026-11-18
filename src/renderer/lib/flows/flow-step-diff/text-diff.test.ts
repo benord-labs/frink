@@ -51,6 +51,14 @@ describe('diffText', () => {
     expect(diffText('Ship it now', 'Merge that please').size).toBe('rewritten');
   });
 
+  it('clips a long preview without splitting an emoji', () => {
+    const after = `${'a'.repeat(158)}🚀 and more words after the cut`;
+
+    const [opening] = diffText('Completely different text here', after).preview;
+
+    expect(opening?.text).toBe(`${'a'.repeat(158)}🚀…`);
+  });
+
   it('reports a whitespace-only edit as formatting with no word counts or preview', () => {
     const diff = diffText(PROMPT, PROMPT.replaceAll('\n\n', '\n\n\n'));
 

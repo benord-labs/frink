@@ -9,36 +9,52 @@ import { cn } from '../../../../../lib/utils';
 const ADDED_CLASS =
   'rounded-[3px] bg-green-500/10 text-green-700 no-underline dark:bg-green-500/15 dark:text-green-300';
 const REMOVED_CLASS =
-  'rounded-[3px] bg-red-500/10 text-red-700 line-through decoration-red-500/60 dark:bg-red-500/15 dark:text-red-300';
+  'rounded-[3px] bg-red-500/10 text-red-700 line-through decoration-red-500 decoration-2 dark:bg-red-500/15 dark:text-red-300';
 const PROSE_CLASS = 'm-0 whitespace-pre-wrap text-sm leading-6 wrap-anywhere';
 const SMALL_BUTTON_CLASS =
   'cursor-pointer border-0 bg-transparent p-0 text-left text-xs text-muted-foreground hover:text-foreground focus-visible:underline';
 /** Longer new text starts clamped so one rewrite cannot take over the chat. */
 const CLAMP_CHARS = 480;
 
-/** Renders changed words inline; `swaps` puts an arrow between a removal and its replacement. */
-export function DiffSegments({
-  segments,
-  swaps,
-}: {
-  segments: DiffSegment[];
-  swaps?: boolean;
-}): ReactElement {
+type SegmentsProps = { segments: DiffSegment[]; swaps?: boolean };
+
+/** In a preview, an arrow joins a removal to its replacement and a comma separates swaps. */
+function previewSeparator(previous: DiffSegment | undefined): string | null {
+  if (!previous) return null;
+  return previous.kind === 'removed' ? ' → ' : ', ';
+}
+
+function ChangedSegment({ segments, swaps, index }: SegmentsProps & { index: number }) {
+  const segment = segments[index];
+  const previous = segments[index - 1];
+  const Tag = segment.kind === 'added' ? 'ins' : 'del';
+  return (
+    <span>
+      {swaps ? previewSeparator(previous) : null}
+      <Tag
+        className={cn(
+          segment.kind === 'added' ? ADDED_CLASS : REMOVED_CLASS,
+          // A replacement sits flush against what it replaced; the gap keeps the two words apart.
+          !swaps && previous?.kind === 'removed' && 'ml-1',
+        )}
+      >
+        {swaps ? segment.text.trim() : segment.text}
+      </Tag>
+    </span>
+  );
+}
+
+/** Renders changed words inline; `swaps` renders a one-line preview of each change. */
+export function DiffSegments({ segments, swaps }: SegmentsProps): ReactElement {
   return (
     <>
-      {segments.map((segment, index) => {
-        if (segment.kind === 'same') return <span key={index}>{segment.text}</span>;
-        const previous = swaps ? segments[index - 1] : undefined;
-        const Tag = segment.kind === 'added' ? 'ins' : 'del';
-        return (
-          <span key={index}>
-            {previous ? (previous.kind === 'removed' ? ' → ' : ', ') : null}
-            <Tag className={segment.kind === 'added' ? ADDED_CLASS : REMOVED_CLASS}>
-              {swaps ? segment.text.trim() : segment.text}
-            </Tag>
-          </span>
-        );
-      })}
+      {segments.map((segment, index) =>
+        segment.kind === 'same' ? (
+          <span key={index}>{segment.text}</span>
+        ) : (
+          <ChangedSegment index={index} key={index} segments={segments} swaps={swaps} />
+        ),
+      )}
     </>
   );
 }

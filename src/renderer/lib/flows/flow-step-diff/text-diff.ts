@@ -44,8 +44,11 @@ function classify(addedWords: number, removedWords: number, keptWords: number): 
 }
 
 function clip(text: string): string {
-  const flat = text.trim().replace(/\s+/g, ' ');
-  return flat.length > PREVIEW_CHARS ? `${flat.slice(0, PREVIEW_CHARS - 1)}…` : flat;
+  // Code points, not UTF-16 units, so the cut never splits an emoji.
+  const characters = Array.from(text.trim().replace(/\s+/g, ' '));
+  return characters.length > PREVIEW_CHARS
+    ? `${characters.slice(0, PREVIEW_CHARS - 1).join('')}…`
+    : characters.join('');
 }
 
 function toParagraphs(segments: DiffSegment[]): DiffParagraph[] {
