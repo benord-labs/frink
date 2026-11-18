@@ -204,11 +204,9 @@ describe('the questions each recorded Cursor hook call asks', () => {
     expect(await decide(pre('Read', { file_path: '.env' }))).toEqual(deny(DENIED.message));
     expect(await decide(pre('Read', { file_path: '/etc/hosts' }))).toEqual(deny(DENIED.message));
     expect(await decide(pre('Grep', { pattern: 'x', glob: '../*' }))).toEqual(deny(DENIED.message));
-    expect(asked).toEqual([
-      read(path.join(cwd, '.env')),
-      read('/etc/hosts'),
-      read(path.dirname(cwd)),
-    ]);
+    // One question for the folder above, carrying the filter, which can reach an env file there.
+    const above = { toolName: 'Read', input: { file_path: path.dirname(cwd), glob: '*' } };
+    expect(asked).toEqual([read(path.join(cwd, '.env')), read('/etc/hosts'), above]);
   });
 
   it('asks Read before a search whose glob can open an env file, but not before a file listing', async () => {

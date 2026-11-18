@@ -46,12 +46,14 @@ beforeAll(() => {
   linked = nodePath.join(tmp, 'linked');
   const files = ['main/a.ts', 'linked/src/a.ts', 'linked/secrets/x', 'linked/.env'];
   const others = ['linked2/a.ts', 'home/.aws/credentials', 'home/notes.txt', 'outside/b.txt'];
-  for (const file of [...files, ...others, 'linked/app/(group)/page.tsx']) {
+  const envs = ['linked/prod.env', 'linked/config.env.local'];
+  for (const file of [...files, ...others, ...envs, 'linked/app/(group)/page.tsx']) {
     nodeFs.mkdirSync(nodePath.dirname(nodePath.join(tmp, file)), { recursive: true });
     nodeFs.writeFileSync(nodePath.join(tmp, file), 'x');
   }
   nodeFs.mkdirSync(at('docs'));
   nodeFs.symlinkSync(at('.env'), at('notes.txt'));
+  nodeFs.symlinkSync(at('prod.env'), at('innocent.txt'));
   nodeFs.symlinkSync(nodePath.join(tmp, 'home/.aws/credentials'), at('creds'));
   nodeFs.symlinkSync(nodePath.join(tmp, 'outside'), at('out'));
   nodeFs.symlinkSync(at('secrets'), at('docs/s'));
@@ -156,6 +158,14 @@ describe("applyLinkedRead — the chat's own rules at another spelling of the pa
     const asked = { decision: 'ask', prompt: { reason: 'rule:ask', matchedTier: 'user' } };
     expect(r).toMatchObject(unlessMissing(file(), asked));
   });
+
+  // innocent.txt links to prod.env, an env file, which asks only where no rule decides.
+  it('a user deny rule still denies a Read of an env file through a link', async () => {
+    withDocs({ user: doc('deny', `Read(${at('prod.env')})`) });
+    const req = request('Read', { file_path: at('innocent.txt') }, [link(linked)]);
+    const denied = { decision: 'deny', reason: { kind: 'rule:deny', tier: 'user' } };
+    expect(await checkPermission(req)).toMatchObject(denied);
+  });
 });
 
 describe('applyLinkedRead — env files ask, as in the chat folder', () => {
@@ -169,18 +179,79 @@ describe('applyLinkedRead — env files ask, as in the chat folder', () => {
     expect(await read(rel)).toMatchObject(NO_RULE);
   });
 
-  it('asks before a Copilot or Cursor search with an env filter, and lets the search through', async () => {
-    const questions = readQuestions(linked, main, '**/.env*') ?? [];
-    expect(questions.map(({ input }) => input)).toEqual([
-      { file_path: linked },
-      { file_path: at('**/.env*') },
+  // Ripgrep searches a file it is given by name whole, even when the file is ignored.
+  it.each<[string, object]>([
+    ['prod.env', NO_RULE],
+    ['config.env.local', NO_RULE],
+    ['.env', SAFETY],
+    ['src/a.ts', { decision: 'allow' }],
+  ])('for a Grep given %s by name', async (rel, expected) => {
+    const req = request('Grep', { pattern: '.', path: at(rel) }, [link(linked)]);
+    expect(await checkPermission(req)).toMatchObject(expected);
+  });
+
+  it('asks once for a Copilot or Cursor search with an env filter, and lets other filters through', async () => {
+    const answers = (glob: string) =>
+      Promise.all(
+        (readQuestions(linked, main, glob) ?? []).map(({ toolName, input }) =>
+          checkPermission(request(toolName, input, [link(linked)])),
+        ),
+      );
+    expect(readQuestions(linked, main, '**/.env*')).toEqual([
+      { toolName: 'Read', input: { file_path: linked, glob: '**/.env*' } },
     ]);
-    const answers = await Promise.all(
-      questions.map(({ toolName, input }) =>
-        checkPermission(request(toolName, input, [link(linked)])),
-      ),
+    expect(await answers('**/.env*')).toMatchObject([NO_RULE]);
+    expect(await answers('*.ts')).toEqual([{ decision: 'allow' }]);
+  });
+});
+
+// The Read question for a Copilot or Cursor search outside the chat's folder carries its file
+// filter. The files the filter names are judged as a Read too, so the deny list and every rule
+// still see them, and the search raises one card.
+describe("checkPermission — the file filter a search's Read question carries", () => {
+  const PLACES: [string, () => string, () => LinkedRoot[] | undefined][] = [
+    ['outside the chat folder', () => nodePath.join(tmp, 'outside'), () => undefined],
+    ['in a linked folder', () => linked, () => [link(linked)]],
+  ];
+  const search = (folder: string, glob: string, roots?: LinkedRoot[]) => {
+    const questions = readQuestions(folder, main, glob) ?? [];
+    expect(questions).toEqual([{ toolName: 'Read', input: { file_path: folder, glob } }]);
+    return checkPermission(request('Read', questions[0]?.input ?? {}, roots));
+  };
+  const denied = (tier: string) => ({ decision: 'deny', reason: { kind: 'rule:deny', tier } });
+
+  describe.each(PLACES)('%s', (_, folder, roots) => {
+    it.each(['**/.env', '.env.*', '**/.env.*'])(
+      'refuses a search filtered to %j, which names files on the deny list',
+      async (glob) => {
+        expect(await search(folder(), glob, roots())).toMatchObject(SAFETY);
+      },
     );
-    expect(answers).toMatchObject([{ decision: 'allow' }, NO_RULE]);
+
+    it.each<[string, string, () => Partial<ScopedDocs>, object]>([
+      [
+        '*.env',
+        'a user deny rule',
+        () => ({ user: doc('deny', 'Read(**/*.env)') }),
+        denied('user'),
+      ],
+      [
+        '**/.env*',
+        'a policy deny rule',
+        () => ({ policy: doc('deny', 'Read(**/.env*)') }),
+        denied('policy'),
+      ],
+      ['**/.env*', 'no rule', () => ({}), NO_RULE],
+    ])('answers a search filtered to %j under %s', async (glob, _, docs, expected) => {
+      withDocs(docs());
+      expect(await search(folder(), glob, roots())).toMatchObject(expected);
+    });
+  });
+
+  it("keeps the chat's own deny rule at the real path of a linked folder", async () => {
+    withDocs({ user: doc('deny', `Read(${linked}/**)`) });
+    const alias = nodePath.join(tmp, 'alias');
+    expect(await search(alias, '**/.env*', [link(alias)])).toMatchObject(denied('user'));
   });
 });
 
@@ -319,6 +390,25 @@ describe("applyLinkedRead — the linked project's own rules", () => {
     expect(await checkPermission(req)).toMatchObject(LINKED_RULE[expected]);
   });
 
+  // An env file asks only where the rules let the read through, so a rule that decides still does.
+  it.each<[string, Partial<PermissionsDoc>, keyof typeof LINKED_RULE]>([
+    ['Grep', { deny: ['Grep'] }, 'deny'],
+    ['Grep', { ask: ['Grep'] }, 'ask'],
+    ['Read', { deny: ['Read(*.env)'] }, 'deny'],
+    ['Read', { ask: ['Read(*.env)'] }, 'ask'],
+  ])('a %s of prod.env with %j is %s', async (tool, rules, expected) => {
+    const input =
+      tool === 'Read' ? { file_path: at('prod.env') } : { pattern: '.', path: at('prod.env') };
+    const req = request(tool, input, [link(linked, { ...none, ...rules })]);
+    expect(await checkPermission(req)).toMatchObject(LINKED_RULE[expected]);
+  });
+
+  it('denies a Copilot or Cursor search with an env filter when the linked project denies reads', async () => {
+    const [question] = readQuestions(linked, main, '**/.env*') ?? [];
+    const req = request('Read', question?.input ?? {}, [link(linked, doc('deny', 'Read'))]);
+    expect(await checkPermission(req)).toMatchObject(LINKED_RULE.deny);
+  });
+
   // A search, or a Read of a folder, reads the files a path rule names inside it.
   it.each<[string, string, Partial<PermissionsDoc>, keyof typeof LINKED_RULE | 'none']>([
     ['Read', '', { deny: ['Read(**)'] }, 'none'],
@@ -381,6 +471,58 @@ describe("applyLinkedRead — the linked project's own rules", () => {
     expect(await checkPermission(req)).toMatchObject(denied);
     expect(await checkPermission(request('Read', { file_path }))).toEqual({ decision: 'allow' });
   });
+});
+
+// A search, or a Read of a folder, reads the files a rule names inside it. Before the link, it asked
+// as a search outside the chat's folder.
+describe("applyLinkedRead — the chat's own Read rules over a searched linked folder", () => {
+  const folder = () => `Read(${linked}/**)`;
+  const secrets = () => `Read(${at('secrets')}/**)`;
+  const anySecrets = () => 'Read(/**/secrets/**)';
+  const notSecrets = () => `Read(!${at('secrets')}/**)`;
+  const ours = () => SECRETS;
+  const rule = (scope: keyof ScopedDocs, kind: keyof PermissionsDoc, text: () => string) => () => ({
+    [scope]: doc(kind, text()),
+  });
+  const ALLOW = { decision: 'allow' };
+  it.each<[string, string, string, () => Partial<ScopedDocs>, object]>([
+    ['a user ask rule for the folder', 'Grep', '', rule('user', 'ask', folder), ONCE],
+    ['a policy deny rule for it', 'Grep', 'secrets', rule('policy', 'deny', secrets), ONCE],
+    ['a project deny rule inside it', 'Glob', '', rule('project', 'deny', secrets), ONCE],
+    ['a policy deny rule inside it', 'Read', '', rule('policy', 'deny', secrets), ONCE],
+    // docs/s links to secrets/, so the rule is matched at the real path too.
+    ['a user deny rule for its real path', 'Grep', 'docs/s', rule('user', 'deny', secrets), ONCE],
+    [
+      'an ask rule and an allow for Grep',
+      'Grep',
+      '',
+      () => ({ user: { ...doc('ask', secrets()), allow: ['Grep'] } }),
+      ONCE,
+    ],
+    ['a deny rule for another folder', 'Grep', 'src', rule('policy', 'deny', secrets), ALLOW],
+    // The rule starts with a wildcard right under /, so it names a secrets/ in any folder.
+    ['a deny rule for every secrets/', 'Grep', '', rule('policy', 'deny', anySecrets), ONCE],
+    // A negated rule names every file outside the folder it gives.
+    ['a negated deny rule', 'Grep', 'src', rule('policy', 'deny', notSecrets), ONCE],
+    // A rule relative to the chat's own folder names the chat's own secrets/.
+    ["a rule for the chat's own folder", 'Grep', '', rule('project', 'deny', ours), ALLOW],
+  ])('under %s, a %s of %j', async (_, tool, rel, docs, expected) => {
+    withDocs(docs());
+    const input = tool === 'Read' ? { file_path: at(rel) } : { pattern: 'x', path: at(rel) };
+    expect(await checkPermission(request(tool, input, [link(linked)]))).toMatchObject(expected);
+  });
+
+  // The folder both projects sit in, linked, holds the chat's folder too.
+  it.each([
+    ['Grep', { pattern: 'x' }],
+    ['Glob', { pattern: '*.ts' }],
+  ])(
+    "leaves a %s in the chat's own folder to its own rules under a link holding it",
+    async (tool, input) => {
+      withDocs({ project: doc('deny', 'Read(src/secret/**)') });
+      expect(await checkPermission(request(tool, input, [link(tmp)]))).toEqual(ALLOW);
+    },
+  );
 });
 
 // A search of the folder both projects sit in reads the linked project's files too.

@@ -82,6 +82,11 @@ export function readStarts(
   });
 }
 
+const readQuestion = (file: string, glob?: string): CodexApprovalRequest => ({
+  toolName: 'Read',
+  input: glob ? { file_path: file, glob } : { file_path: file },
+});
+
 /** Reads ask outside the chat's folder, and before opening or searching an env file anywhere. */
 export function readQuestions(
   paths: JsonValue | undefined,
@@ -90,20 +95,19 @@ export function readQuestions(
   namesOnly = false,
 ): CodexApprovalRequest[] | undefined {
   const glob = namesOnly ? undefined : pathSchema.safeParse(judgedGlob(pattern)).data;
-  return readStarts(paths, cwd, pattern)
-    ?.flatMap(({ root, file, opened }) => {
-      // A link can make the text and the real folder differ: a search opens one, a view the other.
-      const places = opened && opened !== resolveToRealPath(file) ? [file, opened] : [file];
-      const outside = places.filter((place) => !isPathWithinProject(place, cwd));
-      const filter = glob === undefined ? undefined : path.resolve(root, glob);
-      // Judged from the root, so folder names before it are not read as glob syntax. Asked
-      // outside the folder too, as a folder that reads without asking (a linked project's) must
-      // not let a search filter for env files through with it.
-      const envFilter = filter && envGlobAsks(path.relative(root, filter)) ? [filter] : [];
-      // A filter with no wildcard names the same file as the place it starts from.
-      if (outside.length > 0) return [...new Set([...outside, ...envFilter])];
-      if (envFileAsks(path.relative(cwd, root))) return [root];
-      return envFilter;
-    })
-    .map((file) => ({ toolName: 'Read', input: { file_path: file } }));
+  return readStarts(paths, cwd, pattern)?.flatMap(({ root, file, opened }) => {
+    // A link can make the text and the real folder differ: a search opens one, a view the other.
+    const places = opened && opened !== resolveToRealPath(file) ? [file, opened] : [file];
+    const outside = places.filter((place) => !isPathWithinProject(place, cwd));
+    const filter = glob === undefined ? undefined : path.resolve(root, glob);
+    // Judged from the root, so folder names before it are not read as glob syntax.
+    const envFilter = filter && envGlobAsks(path.relative(root, filter)) ? filter : undefined;
+    // Outside, one question per place carries the filter, which the check also judges as a Read of
+    // the files it names, so a folder that asks raises one card and one that reads without asking
+    // (a linked project's) still asks for it. A filter with no wildcard names the place itself.
+    const carried = envFilter && path.relative(file, envFilter);
+    if (outside.length > 0) return outside.map((place) => readQuestion(place, carried));
+    if (envFileAsks(path.relative(cwd, root))) return [readQuestion(root)];
+    return envFilter ? [readQuestion(envFilter)] : [];
+  });
 }

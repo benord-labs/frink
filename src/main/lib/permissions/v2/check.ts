@@ -9,11 +9,12 @@
  * Ticket 05 of the permissions overhaul.
  */
 
+import * as nodePath from 'node:path';
 import log from 'electron-log';
 import { isFrinkMutatingFlowTool, isFrinkOwnedMcpTool } from '../../../../shared/lib/mcp-tool-name';
 import { PATH_TOOLS } from '../../../../shared/types/permissions';
 import { checkBash } from './check-bash';
-import { checkEdit, type FileOpInput, type PathToolName } from './check-edit';
+import { checkEdit, expandTilde, type FileOpInput, type PathToolName } from './check-edit';
 import { checkMcp } from './check-mcp';
 import {
   combineScopes,
@@ -42,6 +43,39 @@ export function resetDocsLoader(): void {
   activeLoader = DEFAULT_LOADER;
 }
 
+/** A file-op checker's answer, then a linked project's for a Read. */
+function checkPathTool(req: PermissionRequest, docs: ScopedDocs): PermissionResult {
+  const result = checkEdit(
+    req.input as FileOpInput,
+    docs,
+    req.projectPath,
+    req.tool as PathToolName,
+    req.sessionDirRoot,
+    req.planDirRoot,
+  );
+  // Linked projects grant reads only, after every rule above has had its say.
+  return req.tool === 'Read' && req.linkedRoots?.length
+    ? applyLinkedRead(result, req, docs)
+    : result;
+}
+
+/** The Read of the files a search filter names, for the Read question of a Copilot or Cursor
+ * search outside the chat's folder, which carries the filter as `glob` beside the folder. */
+function filterRead(req: PermissionRequest): PermissionRequest | undefined {
+  if (req.tool !== 'Read') return undefined;
+  const { file_path: folder, glob } = (req.input ?? {}) as { file_path?: unknown; glob?: unknown };
+  if (typeof folder !== 'string' || !folder || typeof glob !== 'string') return undefined;
+  const file_path = nodePath.resolve(req.projectPath, expandTilde(folder), glob);
+  return { ...req, input: { file_path } };
+}
+
+/** How strict an answer is: a deny, then an ask that names its rule, then any ask, then allow. */
+function strictness(result: PermissionResult): number {
+  if (result.decision === 'allow') return 0;
+  if (result.decision === 'deny') return 3;
+  return result.prompt.reason === 'no-matching-rule' ? 1 : 2;
+}
+
 export async function checkPermission(req: PermissionRequest): Promise<PermissionResult> {
   // Rules that cannot be read cannot be honoured, so an unreadable store denies
   // instead of falling through to the no-rules prompt default.
@@ -58,18 +92,13 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
   }
 
   if (PATH_TOOLS.has(req.tool)) {
-    const result = checkEdit(
-      req.input as FileOpInput,
-      docs,
-      req.projectPath,
-      req.tool as PathToolName,
-      req.sessionDirRoot,
-      req.planDirRoot,
-    );
-    // Linked projects grant reads only, after every rule above has had its say.
-    return req.tool === 'Read' && req.linkedRoots?.length
-      ? applyLinkedRead(result, req, docs)
-      : result;
+    const result = checkPathTool(req, docs);
+    // A search filter is judged as a Read of the files it names, as the deny list and the rules
+    // match paths, never a folder's filter. The stricter answer raises the search's one card.
+    const filter = filterRead(req);
+    if (!filter) return result;
+    const filtered = checkPathTool(filter, docs);
+    return strictness(filtered) > strictness(result) ? filtered : result;
   }
 
   if (req.tool.startsWith('mcp__')) {

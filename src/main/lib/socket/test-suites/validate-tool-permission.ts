@@ -275,6 +275,23 @@ function registerPromptContextTests({ clientPermissionBridge }: PermissionBridge
     expect(r).toEqual({ allowed: false, message: 'User denied permission' });
   });
 
+  // The Read question for a Copilot or Cursor search carries the search's file filter.
+  it("shows the files a search question's filter names on the card", async () => {
+    const { checkPermission } = await import('../../permissions/v2/check');
+    const ask = { decision: 'ask', prompt: { reason: 'no-matching-rule' } };
+    vi.mocked(checkPermission).mockResolvedValueOnce(
+      ask as Awaited<ReturnType<typeof checkPermission>>,
+    );
+    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
+      clientPermissionBridge.lastResponseHandler?.({ ...payload, approved: false });
+    });
+    const input = { file_path: '/lib', glob: '**/.env*' };
+    await validateToolPermission('Read', input, '/proj', 'c1', 's1', undefined, '/lib');
+    expect(socketClient.sendPermissionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/lib/**/.env*' }),
+    );
+  });
+
   function respondTimedOut(): void {
     vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
       clientPermissionBridge.lastResponseHandler?.({
