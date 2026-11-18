@@ -10,12 +10,14 @@ import {
   nodeRuns,
   projects,
 } from '../schema';
+import type { GraphWithSettings } from '../../flows/apply-current-batch-id';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import { createFlowVersion } from './flow-versions';
 import { TriggerProjectRequiredError, update as updateBinding } from './flow-trigger-bindings';
 import {
   copyFlow,
   createFlow,
+  createFlowWithFirstVersion,
   FlowCopyNoSavedVersionError,
   FlowCopyNotFoundError,
   listFlows,
@@ -342,5 +344,30 @@ describe('copyFlow', () => {
     };
     expect(copiedInstruction(firstCopy.id)).toBe('v1');
     expect(copiedInstruction(afterSave.id)).toBe('v2');
+  });
+});
+
+describe('createFlowWithFirstVersion', () => {
+  let db: TestDb;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('saves the flow with the graph as version 1 and a fresh batch id for its briefing', async () => {
+    const id = await createFlowWithFirstVersion(db, { name: 'Imported' }, graph('v1', 'Spec'));
+
+    const versions = db.select().from(flowVersions).where(eq(flowVersions.flowId, id)).all();
+    expect(versions.map((version) => version.versionNumber)).toEqual([1]);
+    expect(versions[0].graph).toMatchObject({
+      settings: { briefing: 'Spec', currentBatchId: expect.any(String) },
+    });
+  });
+
+  it('leaves no flow behind when its first version cannot be saved', async () => {
+    const unsavable: GraphWithSettings & { self?: GraphWithSettings } = graph('v1');
+    unsavable.self = unsavable;
+
+    await expect(createFlowWithFirstVersion(db, { name: 'Broken' }, unsavable)).rejects.toThrow();
+    expect(await listFlows(db)).toEqual([]);
   });
 });

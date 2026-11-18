@@ -133,7 +133,6 @@ export type ConditionPredicate = {
 
 // --- Flow-level settings (persisted in flow_versions.graph.settings) ---
 export type { FlowSettings } from './flow-settings-schema';
-export { flowSettingsSchema } from './flow-settings-schema';
 
 // --- Block config shapes (editor + runtime dispatch contract) ---
 

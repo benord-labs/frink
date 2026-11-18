@@ -292,11 +292,11 @@ export function trackPRCreated(data: { workspaceId: string; prNumber: number }) 
 
 export type FlowTriggerKind = 'manual' | 'schedule' | 'webhook' | 'post_task' | 'none';
 
-/** Track a Flow's first saved version, or a copy of a Flow */
+/** Track a Flow's first saved version, or a copy or import of a Flow */
 export function trackFlowCreated(flow: {
   id: string;
   triggerType: FlowTriggerKind;
-  createdBy: 'ui' | 'agent' | 'copy';
+  createdBy: 'ui' | 'agent' | 'copy' | 'import';
 }) {
   capture('flow_created', {
     flow_id: flow.id,

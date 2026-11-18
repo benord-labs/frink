@@ -22,6 +22,7 @@ import { UNIFIED_GLASS_INNER_CLASS } from '../../sidebar/inset-glass-sidebar-she
 import { CreateFlowDialog } from '../CreateFlowDialog';
 import { FlowEditor } from '../FlowEditor';
 import { FlowsList } from '../FlowsList';
+import { ImportFlowButton } from './ImportFlowButton';
 
 type FlowsPageProps = {
   onClose: () => void;
@@ -33,7 +34,7 @@ type FlowsPageProps = {
 export function FlowsPage({ onClose, onOpenChat, sidebarTrigger }: FlowsPageProps): ReactElement {
   const [selectedFlowId, setSelectedFlowId] = useAtom(flowsSelectedFlowIdAtom);
   const [createOpen, setCreateOpen] = useState(false);
-  const { data: flows } = trpc.flows.list.useQuery(undefined);
+  const { data: flows, refetch: refetchFlows } = trpc.flows.list.useQuery(undefined);
   const isEmpty = flows !== undefined && flows.length === 0;
 
   // Exit never prompts: unsaved edits are autosaved as a local draft and restored on reopen.
@@ -51,6 +52,15 @@ export function FlowsPage({ onClose, onOpenChat, sidebarTrigger }: FlowsPageProp
       setSelectedFlowId(id);
     },
     [setSelectedFlowId],
+  );
+
+  // The list sits behind the editor, so refresh it now to show the new flow on return
+  const handleImported = useCallback(
+    (id: string) => {
+      void refetchFlows();
+      setSelectedFlowId(id);
+    },
+    [refetchFlows, setSelectedFlowId],
   );
 
   useEffect(() => {
@@ -116,6 +126,7 @@ export function FlowsPage({ onClose, onOpenChat, sidebarTrigger }: FlowsPageProp
         </div>
         {/* The header is a window drag region, so its controls must opt back out to stay clickable. */}
         <div className="no-drag flex shrink-0 items-center gap-1.5">
+          <ImportFlowButton onImported={handleImported} />
           {!isEmpty && (
             <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
               New flow
