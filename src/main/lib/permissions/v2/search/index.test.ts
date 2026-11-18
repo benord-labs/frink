@@ -121,6 +121,79 @@ describe('checkSearch', () => {
   });
 });
 
+describe("checkSearch — the chat's own attachments folder", () => {
+  let tmp: string;
+  let session: string;
+  beforeAll(() => {
+    tmp = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'search-s-')));
+    session = nodePath.join(tmp, 'chat-1');
+    nodeFs.mkdirSync(nodePath.join(session, 'pasted'), { recursive: true });
+    nodeFs.mkdirSync(nodePath.join(tmp, 'chat-2', 'pasted'), { recursive: true });
+  });
+  afterAll(() => nodeFs.rmSync(tmp, { recursive: true, force: true }));
+
+  it('allows Grep and Glob rooted in pasted/ without a prompt', () => {
+    const pasted = nodePath.join(session, 'pasted');
+    expect(
+      checkSearch('Grep', { pattern: 'x', path: pasted }, EMPTY_DOCS, project, session),
+    ).toEqual({ decision: 'allow' });
+    expect(
+      checkSearch('Glob', { pattern: '**/*.pdf', path: pasted }, EMPTY_DOCS, project, session),
+    ).toEqual({ decision: 'allow' });
+  });
+
+  it("asks for another chat's folder, the session folder itself, or an escaping pattern", () => {
+    const pasted = nodePath.join(session, 'pasted');
+    const ask = (tool: 'Glob' | 'Grep', input: { pattern: string; path: string }) =>
+      checkSearch(tool, input, EMPTY_DOCS, project, session).decision;
+    expect(ask('Grep', { pattern: 'x', path: nodePath.join(tmp, 'chat-2', 'pasted') })).toBe('ask');
+    expect(ask('Grep', { pattern: 'x', path: session })).toBe('ask');
+    expect(ask('Glob', { pattern: '../**', path: pasted })).toBe('ask');
+    expect(checkSearch('Grep', { pattern: 'x', path: pasted }, EMPTY_DOCS, project).decision).toBe(
+      'ask',
+    );
+  });
+
+  it('judges the path as written: .. after a link, or a rooted Glob brace, asks', () => {
+    const chat = nodePath.join(tmp, 'chat-3');
+    const pasted = nodePath.join(chat, 'pasted');
+    nodeFs.mkdirSync(nodePath.join(pasted, 'c'), { recursive: true });
+    nodeFs.mkdirSync(nodePath.join(tmp, 'o', 'sub'), { recursive: true });
+    nodeFs.mkdirSync(nodePath.join(tmp, 'o', 'c'));
+    nodeFs.symlinkSync(nodePath.join(tmp, 'o', 'sub'), nodePath.join(pasted, 'dl'));
+    const decide = (tool: 'Glob' | 'Grep', chatDir: string, pattern: string, path: string) =>
+      checkSearch(tool, { pattern, path }, EMPTY_DOCS, project, chatDir).decision;
+    expect(decide('Grep', chat, 'x', `${pasted}/dl/../c`)).toBe('ask');
+    const own = nodePath.join(session, 'pasted');
+    expect(decide('Glob', session, '{/etc/*,x}', own)).toBe('ask');
+    expect(decide('Glob', session, '*.{pdf,txt}', own)).toBe('allow');
+  });
+
+  it("keeps a user's own Grep ask rule for pasted/", () => {
+    const input = { pattern: 'x', path: nodePath.join(session, 'pasted') };
+    const r = checkSearch('Grep', input, userDocs({ ask: ['Grep'] }), project, session);
+    expect(r).toMatchObject({ decision: 'ask', prompt: { reason: 'rule:ask' } });
+  });
+
+  it('asks when a file under the searched folder has a second name or is a link', () => {
+    const linked = nodePath.join(tmp, 'chat-1', 'pasted-linked');
+    nodeFs.mkdirSync(nodePath.join(linked, 'pasted', 'sub'), { recursive: true });
+    const outside = nodePath.join(tmp, 'outside.txt');
+    nodeFs.writeFileSync(outside, 'secret');
+    nodeFs.linkSync(outside, nodePath.join(linked, 'pasted', 'sub', 'hard'));
+    const pasted = nodePath.join(linked, 'pasted');
+    const grep = (path: string) =>
+      checkSearch('Grep', { pattern: 'x', path }, EMPTY_DOCS, project, linked).decision;
+    expect(grep(pasted)).toBe('ask');
+    expect(grep(nodePath.join(pasted, 'sub', 'hard'))).toBe('ask');
+    nodeFs.rmSync(nodePath.join(pasted, 'sub', 'hard'));
+    nodeFs.symlinkSync(outside, nodePath.join(pasted, 'sub', 'link'));
+    expect(grep(pasted)).toBe('ask');
+    nodeFs.symlinkSync(tmp, nodePath.join(pasted, 'dl'));
+    expect(grep(nodePath.join(pasted, 'dl', '..'))).toBe('ask');
+  });
+});
+
 describe('checkSearch — case variants of protected roots', () => {
   const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
   const withPlatform = (value: NodeJS.Platform): void => {

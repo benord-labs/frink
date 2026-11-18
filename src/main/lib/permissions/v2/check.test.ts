@@ -2,6 +2,7 @@ import * as nodeFs from 'node:fs';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { mapFrinkHostPermissionRequests } from '../../agent-runner/codex/codex-host-permissions';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import { checkPermission, resetDocsLoader, setDocsLoader } from './check';
 import { resolveScopes } from './scope-resolver';
@@ -326,6 +327,37 @@ describe('checkPermission — sessionDirRoot threading (ticket 15, widened)', ()
       }),
     );
     expect(r).toMatchObject({ decision: 'ask' });
+  });
+
+  it('a Codex shell read of an attachment → auto-allow only with sessionDirRoot', async () => {
+    const { session, project } = setup();
+    const file = nodePath.join(session, 'pasted', 'ab12cd34-notes.txt');
+    nodeFs.writeFileSync(file, 'x');
+    const [mapped] = mapFrinkHostPermissionRequests({
+      protocolVersion: 1,
+      threadId: 't',
+      turnId: 'u',
+      itemId: 'i',
+      kind: 'command',
+      toolName: 'Bash',
+      input: { command: `cat '${file}' | head -n 40` },
+      cwd: project,
+    });
+    const req = baseReq({ tool: mapped.toolName, input: mapped.input, projectPath: project });
+    expect(await checkPermission({ ...req, sessionDirRoot: session })).toEqual({
+      decision: 'allow',
+    });
+    expect(await checkPermission(req)).toMatchObject({ decision: 'ask' });
+  });
+
+  it('Grep of pasted/ → auto-allow only with sessionDirRoot', async () => {
+    const { session, project } = setup();
+    const input = { pattern: 'x', path: nodePath.join(session, 'pasted') };
+    const req = baseReq({ tool: 'Grep', input, projectPath: project });
+    expect(await checkPermission({ ...req, sessionDirRoot: session })).toEqual({
+      decision: 'allow',
+    });
+    expect(await checkPermission(req)).toMatchObject({ decision: 'ask' });
   });
 
   it('Read outside the session dir → not auto-allowed even with sessionDirRoot set', async () => {

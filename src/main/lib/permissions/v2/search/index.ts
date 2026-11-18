@@ -2,10 +2,12 @@
  * prompt-free; anything else goes to rules, then the prompt or Auto. */
 
 import * as nodePath from 'node:path';
+import { z } from 'zod';
 import { braceSpellings } from '../../../agent-runner/env-file-reads';
 import { isPathWithinProject } from '../../path-check';
 import { expandTilde } from '../check-edit';
 import { combineScopes, evalScope, resultFromCombined, type ScopedDocs } from '../eval-rules';
+import { hasUnsafePathText, isPastedSearchRoot } from '../session-read';
 import { isSystemDeniedPath, SYSTEM_DENIED_EXACT } from '../system-denied-patterns';
 import type { PermissionResult } from '../types';
 
@@ -24,6 +26,16 @@ function globEscapes(pattern: string): boolean {
   if (ESCAPING_GROUP.test(pattern)) return true;
   const spellings = braceSpellings(pattern);
   return !spellings || spellings.some((spelling) => ESCAPING_GLOB.test(spelling));
+}
+
+const TEXT = z.string();
+
+/** A search of this chat's pasted/ folder, judged on the path as written as well as resolved. */
+function readsOwnAttachments(input: SearchInput, root: string, sessionDirRoot?: string): boolean {
+  if (!sessionDirRoot) return false;
+  const written = TEXT.safeParse(input.path);
+  if (!written.success || hasUnsafePathText(written.data)) return false;
+  return isPastedSearchRoot(root, nodePath.join(sessionDirRoot, 'pasted'));
 }
 
 /** The folder the search reads: its `path`, else the project root. */
@@ -46,6 +58,7 @@ export function checkSearch(
   input: SearchInput,
   docs: ScopedDocs,
   projectRoot: string,
+  sessionDirRoot?: string,
 ): PermissionResult {
   const root = searchRoot(input, projectRoot);
   if (isSystemDeniedPath(root, projectRoot)) {
@@ -58,8 +71,14 @@ export function checkSearch(
   const result = resultFromCombined(combineScopes(policy, project, user), tool, input);
   if (result.decision !== 'ask') return result;
 
-  // Same rule for every chat (general-chat-permission-parity).
-  if (searchStaysInRoot(tool, input, root) && isPathWithinProject(root, projectRoot)) {
+  // Same rule for every chat (general-chat-permission-parity). The chat's own attachments folder
+  // reads like the project, unless the user's own ask rule matched.
+  const ownAttachments =
+    result.prompt.reason === 'no-matching-rule' && readsOwnAttachments(input, root, sessionDirRoot);
+  if (
+    searchStaysInRoot(tool, input, root) &&
+    (ownAttachments || isPathWithinProject(root, projectRoot))
+  ) {
     return { decision: 'allow' };
   }
   result.prompt.suggestedRules = [tool];

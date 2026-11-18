@@ -6,12 +6,14 @@
  * Pure function. Ticket 05 of the permissions overhaul.
  */
 
+import * as nodePath from 'node:path';
 import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
 import { type CommandSignature, generatePatternChoices } from '../command-parser';
 import { extractSignature, type SubCommand, splitCommand } from './bash-parser';
 import { expandTilde } from './check-edit';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
+import { isSessionPastedRead } from './session-read';
 import { isSystemDeniedPath } from './system-denied-patterns';
 import type { DenyReason, MatchContext, PermissionResult, PromptData } from './types';
 
@@ -312,6 +314,7 @@ export function checkBash(
   input: { command: string },
   docs: ScopedDocs,
   projectRoot: string,
+  sessionDirRoot?: string,
 ): PermissionResult {
   const subs = splitCommand(input.command);
 
@@ -345,6 +348,8 @@ export function checkBash(
   // An exact-only sub that got no exact rule cannot be expressed by any rule.
   let unmintableExact = false;
   let askPrompt: PromptData | undefined;
+  // A user's own ask rule keeps prompting even for an attachment read.
+  let matchedAsk = false;
 
   for (const sub of subs) {
     // Tier-1c: bash-Read parity. Read-ish/write-ish commands + redirections
@@ -398,6 +403,7 @@ export function checkBash(
       });
     }
     if (combined.decision === 'ask') {
+      matchedAsk ||= Boolean(combined.rule);
       if (!sig.isExactMatchOnly) askSignatures.push(sig);
       // The matcher compares an exact rule against `fullSignature`, so a truncated
       // one (`grep foo` for `grep foo src/*/x.ts`) could never match the rule.
@@ -417,6 +423,14 @@ export function checkBash(
     // allow → nothing to collect; sub is already permitted
   }
 
+  if (
+    askPrompt &&
+    sessionDirRoot &&
+    !matchedAsk &&
+    isSessionPastedRead(subs, nodePath.join(sessionDirRoot, 'pasted'))
+  ) {
+    return { decision: 'allow' };
+  }
   if (askPrompt) {
     const rules = [...buildSuggestedRules(askSignatures), ...exactRules];
     // Empty = no rule can express the command. A lone withheld wrapper (`sudo npm i`)

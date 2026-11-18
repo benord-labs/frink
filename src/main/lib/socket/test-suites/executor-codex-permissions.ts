@@ -2,7 +2,7 @@ import os from 'node:os';
 import { expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
 import { hasPendingPermissionRequest } from '../streaming/pending-permission/validate-tool-permission';
-import { registerCodexHookTests } from './codex';
+import { registerCodexAttachmentReadTests, registerCodexHookTests } from './codex';
 import { registerCustomNodePermissionTests } from './executor-custom-node-permissions';
 
 /** Registers Codex permission cases against the parent executor test harness. */
@@ -49,6 +49,7 @@ export type ExecutorPermissionHarness = {
 export function registerExecutorPermissionTests(harness: ExecutorPermissionHarness): void {
   registerCustomNodePermissionTests(harness);
   registerCodexHookTests(harness);
+  registerCodexAttachmentReadTests(harness);
   registerCodexBasicPermissionTests(harness);
   registerCodexBoundaryPermissionTests(harness);
   registerCodexPathAndLifecycleTests(harness);

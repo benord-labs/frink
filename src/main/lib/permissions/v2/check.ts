@@ -54,7 +54,8 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
   }
 
   if (req.tool === 'Bash') {
-    return checkBash(req.input as { command: string }, docs, req.projectPath);
+    // SAFETY: every provider bridge puts the shell text in `command`, the only key checkBash reads.
+    return checkBash(req.input as { command: string }, docs, req.projectPath, req.sessionDirRoot);
   }
 
   if (PATH_TOOLS.has(req.tool)) {
@@ -93,7 +94,14 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
   }
 
   if (req.tool === 'Glob' || req.tool === 'Grep') {
-    const result = checkSearch(req.tool, req.input as SearchInput, docs, req.projectPath);
+    const result = checkSearch(
+      req.tool,
+      // SAFETY: SearchInput's fields are `unknown`, and checkSearch narrows each before use.
+      req.input as SearchInput,
+      docs,
+      req.projectPath,
+      req.sessionDirRoot,
+    );
     return req.linkedRoots?.length ? applyLinkedRead(result, req, docs) : result;
   }
 
