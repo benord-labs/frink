@@ -1,32 +1,28 @@
 import { useMonaco } from '@monaco-editor/react';
+import * as Sentry from '@sentry/electron/renderer';
 import { useAtomValue } from 'jotai';
 import { useEffect } from 'react';
 import type { ActivePalette } from '@/lib/themes/palette/apply';
 import type { Appearance, Palette } from '@/lib/themes/palette/roles';
 import { activePaletteAtom } from '@/lib/themes/palette/theme-atoms';
+import { getShikiTheme } from '@/lib/themes/shiki-theme-loader';
+import { type MonacoTokenRule, shikiThemeToMonacoRules } from './shiki-theme-to-monaco';
 
-/** VS Code Dark+ token colours for the dark base; light inherits 'vs'. */
-const DARK_TOKEN_RULES: Array<{ token: string; foreground?: string; fontStyle?: string }> = [
-  { token: 'keyword', foreground: '#C586C0' },
-  { token: 'keyword.control', foreground: '#C586C0' },
-  { token: 'keyword.operator', foreground: '#C586C0' },
-  { token: 'type', foreground: '#4EC9B0' },
-  { token: 'type.identifier', foreground: '#4EC9B0' },
-  { token: 'class', foreground: '#4EC9B0' },
-  { token: 'function', foreground: '#DCDCAA' },
-  { token: 'support.function', foreground: '#DCDCAA' },
-  { token: 'variable', foreground: '#9CDCFE' },
-  { token: 'variable.parameter', foreground: '#9CDCFE' },
-  { token: 'constant', foreground: '#4FC1FF' },
-  { token: 'string', foreground: '#CE9178' },
-  { token: 'string.escape', foreground: '#D7BA7D' },
-  { token: 'comment', foreground: '#6A9955', fontStyle: 'italic' },
-  { token: 'number', foreground: '#B5CEA8' },
-  { token: 'regexp', foreground: '#D16969' },
-  { token: 'tag', foreground: '#569CD6' },
-  { token: 'attribute.name', foreground: '#9CDCFE' },
-  { token: 'attribute.value', foreground: '#CE9178' },
-];
+/** The vs/vs-dark chrome Monaco filled in while the theme inherited its base, pinned unchanged. */
+const MONACO_BASE_COLORS = {
+  dark: {
+    'editor.inactiveSelectionBackground': '#3A3D41',
+    'editorIndentGuide.background1': '#404040',
+    'editorIndentGuide.activeBackground1': '#707070',
+    'editor.selectionHighlightBackground': '#ADD6FF26',
+  },
+  light: {
+    'editor.inactiveSelectionBackground': '#E5EBF1',
+    'editorIndentGuide.background1': '#D3D3D3',
+    'editorIndentGuide.activeBackground1': '#939393',
+    'editor.selectionHighlightBackground': '#ADD6FF4D',
+  },
+} satisfies Record<Appearance, Record<string, string>>;
 
 /** Stock Frink's editor chrome, kept as it was before themes were palette-driven. */
 const FRINK_EDITOR_COLORS = {
@@ -86,32 +82,64 @@ function editorColors(colors: Palette) {
   };
 }
 
-/** Monaco theme data: stock Frink at contrast 100 keeps its own chrome, anything else the palette. */
-export function monacoThemeData(palette: ActivePalette) {
-  const dark = palette.appearance === 'dark';
+/** Monaco theme data: the code theme's token rules over the editor chrome (stock Frink's own at contrast 100). */
+export function monacoThemeData(palette: ActivePalette, rules: MonacoTokenRule[]) {
   return {
-    base: dark ? ('vs-dark' as const) : ('vs' as const),
-    inherit: true,
-    rules: dark ? DARK_TOKEN_RULES : [],
-    colors: palette.inline ? editorColors(palette.colors) : FRINK_EDITOR_COLORS[palette.appearance],
+    base: palette.appearance === 'dark' ? ('vs-dark' as const) : ('vs' as const),
+    // Not inherited: the base's stock token colours would out-rank the code theme's.
+    inherit: false,
+    rules,
+    colors: {
+      ...MONACO_BASE_COLORS[palette.appearance],
+      ...(palette.inline ? editorColors(palette.colors) : FRINK_EDITOR_COLORS[palette.appearance]),
+    },
   };
 }
+
+const rulesBySyntax = new Map<string, MonacoTokenRule[]>();
+
+type ThemeLoading = {
+  loadTheme?: typeof getShikiTheme;
+  report?: typeof Sentry.captureException;
+};
 
 /**
  * Monaco theme name for the committed palette. 'frink-light'/'frink-dark' are redefined on each
  * commit (never per preview frame), which refreshes every editor already using them.
  */
-export function useMonacoTheme(): string {
+export function useMonacoTheme({
+  loadTheme = getShikiTheme,
+  report = Sentry.captureException,
+}: ThemeLoading = {}): string {
   const monaco = useMonaco();
   const palette = useAtomValue(activePaletteAtom);
   const name = palette?.appearance === 'light' ? 'frink-light' : 'frink-dark';
 
   useEffect(() => {
     if (!monaco || !palette) return;
-    monaco.editor.defineTheme(name, monacoThemeData(palette));
-    // An editor that mounted before this theme existed fell back to 'vs'.
-    monaco.editor.setTheme(name);
-  }, [monaco, palette, name]);
+    let cancelled = false;
+    const apply = (rules: MonacoTokenRule[]) => {
+      monaco.editor.defineTheme(name, monacoThemeData(palette, rules));
+      // An editor that mounted before this theme existed fell back to 'vs'.
+      monaco.editor.setTheme(name);
+    };
+    const loadRules = async () => {
+      try {
+        const rules = shikiThemeToMonacoRules(await loadTheme(palette.syntax));
+        rulesBySyntax.set(palette.syntax, rules);
+        if (!cancelled) apply(rules);
+      } catch (error) {
+        report(error, { tags: { surface: 'monaco-theme' } });
+      }
+    };
+    const cached = rulesBySyntax.get(palette.syntax);
+    // Chrome first, so no editor waits on the code theme's first load in plain 'vs'.
+    apply(cached ?? []);
+    if (!cached) void loadRules();
+    return () => {
+      cancelled = true;
+    };
+  }, [monaco, palette, name, loadTheme, report]);
 
   return name;
 }
