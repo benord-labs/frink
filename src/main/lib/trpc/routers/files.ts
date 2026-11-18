@@ -4,12 +4,15 @@ import {
   access,
   copyFile,
   cp,
+  lstat,
   mkdir,
   readdir,
   readFile,
+  readlink,
   rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -29,7 +32,7 @@ import { captureMainException } from '../../sentry/init';
 // reach any path the user could already open in a terminal. Operations that take a
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
-import { findEntryType } from './entry-type';
+import { direntKind, findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
 import { resolveNamesProcedure } from './resolve-file-names';
 import { findSymlinkEscape } from './symlink-escape';
@@ -291,22 +294,33 @@ function sendProgress(
   }
 }
 
-/** Recursively list all files inside a directory (for progress counting).
- *  Skips symbolic links to prevent symlink-escape attacks. */
-async function listAllFiles(dir: string): Promise<string[]> {
+type CopyEntry = { path: string; isLink: boolean };
+
+/** Recursively list every file and link inside a directory (for progress counting).
+ *  Links are leaves, so data outside the project is never walked or copied. */
+async function listAllFiles(dir: string): Promise<CopyEntry[]> {
   const entries = await readdir(dir, { withFileTypes: true });
-  const files: string[] = [];
+  const files: CopyEntry[] = [];
   for (const entry of entries) {
-    // Security: skip symlinks to prevent copying data from outside the project
-    if (entry.isSymbolicLink()) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...(await listAllFiles(full)));
     } else {
-      files.push(full);
+      files.push({ path: full, isLink: entry.isSymbolicLink() });
     }
   }
   return files;
+}
+
+/** Copy a file, or recreate a link as written. Windows folder links become junctions, which
+ *  need no Developer Mode but must point at an absolute path. */
+async function copyEntry(source: string, dest: string, isLink: boolean): Promise<void> {
+  await mkdir(dirname(dest), { recursive: true });
+  if (!isLink) return copyFile(source, dest);
+  if (process.platform === 'win32' && (await stat(source).catch(() => null))?.isDirectory()) {
+    return symlink(resolve(dirname(source), await readlink(source)), dest, 'junction');
+  }
+  return cp(source, dest, { verbatimSymlinks: true });
 }
 
 /** Options for copyWithProgress */
@@ -332,7 +346,7 @@ async function copyWithProgress(
   opts: CopyProgressOpts,
 ): Promise<void> {
   const { operationId, targetWebContentsId, signal } = opts;
-  const srcStat = await stat(source);
+  const srcStat = await lstat(source);
 
   // Set up timeout
   const timeoutController = new AbortController();
@@ -342,9 +356,7 @@ async function copyWithProgress(
 
   try {
     if (!srcStat.isDirectory()) {
-      // Single file — no progress needed
-      await mkdir(dirname(dest), { recursive: true });
-      await copyFile(source, dest);
+      await copyEntry(source, dest, srcStat.isSymbolicLink());
       sendProgress(
         { operationId, current: 1, total: 1, currentFile: basename(source), done: true },
         targetWebContentsId,
@@ -367,7 +379,7 @@ async function copyWithProgress(
     }
 
     let current = 0;
-    for (const filePath of allFiles) {
+    for (const { path: filePath, isLink } of allFiles) {
       // Throttle abort check to every 10 files for performance
       if (current % 10 === 0 && isAborted()) {
         throw new Error(
@@ -376,9 +388,7 @@ async function copyWithProgress(
       }
 
       const relativePath = relative(source, filePath);
-      const destFile = join(dest, relativePath);
-      await mkdir(dirname(destFile), { recursive: true });
-      await copyFile(filePath, destFile);
+      await copyEntry(filePath, join(dest, relativePath), isLink);
       current++;
 
       // Emit progress every 10 files (throttled for performance)
@@ -398,7 +408,7 @@ async function copyWithProgress(
           current: total,
           total,
           currentFile:
-            allFiles.length > 0 ? relative(source, allFiles[allFiles.length - 1] ?? '') : '',
+            allFiles.length > 0 ? relative(source, allFiles[allFiles.length - 1]?.path ?? '') : '',
           done: true,
         },
         targetWebContentsId,
@@ -578,12 +588,14 @@ async function listDirectoryContents(
       const fullPath = join(dirPath, entry.name);
       const relativePath = relative(rootPath, fullPath);
       const relativePathNorm = normalizePathForGit(relativePath);
+      const kind = await direntKind(entry, fullPath);
 
-      if (entry.isDirectory()) {
+      if (kind === 'folder') {
         // Skip ignored directories
         if (isIgnoredDirectory(entry.name)) continue;
 
-        // Check if folder contains any modified files (use normalized paths - git uses / on all platforms)
+        // Roll up changed children (git paths use /). A linked folder is one blob to git, so its
+        // children carry no git status or ignored state, and the root watcher misses outside edits.
         let folderGitStatus: FileStatus | undefined = gitStatusMap?.get(relativePathNorm);
         if (!folderGitStatus && gitStatusMap) {
           const folderPrefix = relativePathNorm ? `${relativePathNorm}/` : '';
@@ -602,7 +614,7 @@ async function listDirectoryContents(
           gitStatus: folderGitStatus,
           isGitIgnored,
         });
-      } else if (entry.isFile()) {
+      } else if (kind === 'file') {
         // Skip ignored files
         if (isIgnoredFileByName(entry.name)) continue;
 
@@ -1944,7 +1956,7 @@ export const filesRouter = router({
 
       // Copy the file or folder
       try {
-        await cp(absoluteSource, absoluteDest, { recursive: true });
+        await cp(absoluteSource, absoluteDest, { recursive: true, verbatimSymlinks: true });
       } catch (_error) {
         throw new Error('Failed to duplicate file. Please check permissions and try again.');
       }
@@ -2144,7 +2156,7 @@ export const filesRouter = router({
           activeOperations.delete(input.operationId);
         }
       } else {
-        await cp(absoluteSource, absoluteDest, { recursive: true });
+        await cp(absoluteSource, absoluteDest, { recursive: true, verbatimSymlinks: true });
       }
 
       // Invalidate caches for destination project
@@ -2196,7 +2208,7 @@ export const filesRouter = router({
             activeOperations.delete(input.operationId);
           }
         } else {
-          await cp(absoluteSource, absoluteDest, { recursive: true });
+          await cp(absoluteSource, absoluteDest, { recursive: true, verbatimSymlinks: true });
         }
         await rm(absoluteSource, { recursive: true, force: true });
       }
@@ -2302,7 +2314,10 @@ export const filesRouter = router({
                 signal: controller.signal,
               });
             } else {
-              await cp(resolved.absoluteSource, resolved.absoluteDest, { recursive: true });
+              await cp(resolved.absoluteSource, resolved.absoluteDest, {
+                recursive: true,
+                verbatimSymlinks: true,
+              });
             }
 
             completed.push(sourcePath);
@@ -2432,7 +2447,10 @@ export const filesRouter = router({
                   signal: controller.signal,
                 });
               } else {
-                await cp(resolved.absoluteSource, resolved.absoluteDest, { recursive: true });
+                await cp(resolved.absoluteSource, resolved.absoluteDest, {
+                  recursive: true,
+                  verbatimSymlinks: true,
+                });
               }
               await rm(resolved.absoluteSource, { recursive: true, force: true });
             }
@@ -2551,7 +2569,7 @@ export const filesRouter = router({
       try {
         await rename(absoluteCurrent, absoluteOriginal);
       } catch {
-        await cp(absoluteCurrent, absoluteOriginal, { recursive: true });
+        await cp(absoluteCurrent, absoluteOriginal, { recursive: true, verbatimSymlinks: true });
         await rm(absoluteCurrent, { recursive: true, force: true });
       }
 
