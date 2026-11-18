@@ -30,6 +30,8 @@ export type StartFlowRunInput = {
   batchStageRunId?: string | null;
   /** The stage that member was read from; admission leaves a member moved since for its new stage. */
   batchStageId?: string | null;
+  /** Set only by the webhook, schedule and post-task loops: Ask before running holds these runs. */
+  automatic?: boolean;
 };
 
 async function loadStartDefinition(db: Db, input: StartFlowRunInput) {
@@ -64,7 +66,7 @@ async function loadStartDefinition(db: Db, input: StartFlowRunInput) {
       message: 'Flow graph has no trigger node',
     });
   }
-  return { flow, version, trigger };
+  return { flow, version, trigger, settings: graph.settings };
 }
 
 export async function startFlowRun(input: StartFlowRunInput): Promise<{
@@ -73,7 +75,8 @@ export async function startFlowRun(input: StartFlowRunInput): Promise<{
   isReplay: boolean;
 }> {
   const db = getDatabase();
-  const { version } = await loadStartDefinition(db, input);
+  const { version, settings } = await loadStartDefinition(db, input);
+  const held = input.automatic === true && settings?.askBeforeRunning === true;
   const result = await requestFlowStart({
     flowVersionId: version.id,
     triggerContext: input.triggerContext ?? null,
@@ -81,6 +84,7 @@ export async function startFlowRun(input: StartFlowRunInput): Promise<{
     batchId: input.batchId ?? null,
     batchStageRunId: input.batchStageRunId ?? null,
     batchStageId: input.batchStageId ?? null,
+    heldAt: held ? new Date() : null,
   });
   const admittedVersion = result.isReplay
     ? ((await getVersion(db, result.run.flowVersionId)) ?? version)

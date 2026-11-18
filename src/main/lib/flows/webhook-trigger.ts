@@ -136,6 +136,7 @@ export async function handleVerifiedWebhookEvent(
           fullContent,
         }),
         idempotencyKey,
+        automatic: true,
       });
       // Distinguish a real fan-out from a redelivery (same deliveryId) so the
       // counts don't read a redelivery storm as new runs.

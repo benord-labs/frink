@@ -1,16 +1,19 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import type { FlowRunAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
+import { isHeldFlowRun } from '../../db/repos/flow-runs';
+import { countHeldFlowRuns } from '../../db/repos/task-queries/work-queue-overview-counts';
 import { listHumanWaitFlowRunIds } from '../../db/repos/node-runs';
 import { flowRunAdmissions, flowRuns, flows, flowVersions, projects } from '../../db/schema';
 import { flowAdmissionResumeKey } from '../../db/schema/flow-run-admissions';
 import type { FlowAdmissionController } from './controller';
 import { FLOW_ADMISSION_QUEUE_ORDER_BY, FLOW_ADMISSION_QUEUE_ORDER_SQL } from './queue-order';
+import { heldRunStartVersion } from './start-store';
 
 type Db = ReturnType<typeof getDatabase>;
 
 export type FlowAdmissionVisibility = {
-  admissionState: FlowAdmissionState;
+  admissionState: FlowRunAdmissionState;
   queuePosition: number | null;
   requestedAt: Date;
 };
@@ -42,6 +45,12 @@ export type QueuedFlowAdmission = {
 
 const LIVE_ADMISSION_SQL = sql`${flowRunAdmissions.state} IN ('queued', 'claimed', 'active', 'releasing')`;
 
+/** A pending run held for Start has no ticket, so it reads as admission state 'held'. */
+function heldAdmission(row: { runStatus: string; heldAt: Date | null }) {
+  if (row.runStatus !== 'pending' || !row.heldAt) return null;
+  return { admissionState: 'held' as const, queuePosition: null, requestedAt: row.heldAt };
+}
+
 export function flowRunAdmissionSnapshotsForRuns(
   db: Db,
   flowRunIds: string[],
@@ -63,6 +72,7 @@ export function flowRunAdmissionSnapshotsForRuns(
       runStatus: flowRuns.status,
       startedAt: flowRuns.startedAt,
       completedAt: flowRuns.completedAt,
+      heldAt: flowRuns.heldAt,
       admissionState: flowRunAdmissions.state,
       requestedAt: flowRunAdmissions.requestedAt,
       queuePosition: rankedQueue.position,
@@ -89,7 +99,7 @@ export function flowRunAdmissionSnapshotsForRuns(
                 queuePosition: row.queuePosition === null ? null : Number(row.queuePosition),
                 requestedAt: row.requestedAt,
               }
-            : null,
+            : heldAdmission(row),
       },
     ]),
   );
@@ -164,6 +174,42 @@ export function queuedFlowAdmissions(db: Db): QueuedFlowAdmission[] {
     .where(eq(flowRunAdmissions.state, 'queued'))
     .orderBy(...FLOW_ADMISSION_QUEUE_ORDER_BY)
     .all();
+}
+
+/** The Work Queue Inbox: the newest `limit` runs held for Start, and how many are held. Unlike the
+ *  slots counted below as held by waiting runs, a held run has no slot. */
+export async function workQueueHeldRuns(db: Db, limit: number) {
+  const rows = db
+    .select({
+      flowRunId: flowRuns.id,
+      flowVersionId: flowRuns.flowVersionId,
+      flowName: flows.name,
+      projectName: projects.name,
+      triggerContext: flowRuns.triggerContext,
+      heldAt: flowRuns.heldAt,
+    })
+    .from(flows)
+    .innerJoin(flowVersions, eq(flowVersions.flowId, flows.id))
+    .innerJoin(flowRuns, eq(flowRuns.flowVersionId, flowVersions.id))
+    .leftJoin(projects, eq(projects.id, flows.projectId))
+    .where(isHeldFlowRun)
+    .orderBy(desc(flowRuns.heldAt), desc(flowRuns.id))
+    .limit(limit)
+    .all();
+  const startsOnLatest = new Map<string, boolean>();
+  for (const { flowVersionId } of rows) {
+    if (startsOnLatest.has(flowVersionId)) continue;
+    startsOnLatest.set(flowVersionId, heldRunStartVersion(db, flowVersionId).latest);
+  }
+  const runs = rows.map((row) => ({
+    flow_name: row.flowName,
+    flow_run_id: row.flowRunId,
+    held_at: row.heldAt,
+    project_name: row.projectName,
+    starts_on_latest_version: startsOnLatest.get(row.flowVersionId) === true,
+    trigger_context: row.triggerContext,
+  }));
+  return { runs, total: await countHeldFlowRuns(db) };
 }
 
 /**

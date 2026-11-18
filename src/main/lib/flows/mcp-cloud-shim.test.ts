@@ -16,8 +16,9 @@ vi.mock('./batch-runs-list', () => ({ listBatchRunsForBatch: vi.fn() }));
 vi.mock('./batch-stage-detail', () => ({ listBatchStageDetail: vi.fn() }));
 
 import { createFlow } from '../db/repos/flows';
+import { seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb } from '../db/test-utils/fresh-db';
-import { createFlowVersion, startFlowRun } from './mcp-cloud-shim';
+import { createFlowVersion, getFlowRun, startFlowRun } from './mcp-cloud-shim';
 import { type FlowVersionCommittedEvent, subscribeFlowVersionCommitted } from './version-events';
 
 const RUN = {
@@ -96,6 +97,18 @@ describe('MCP local flow start admission response', () => {
       });
     },
   );
+});
+
+describe('MCP flow run read', () => {
+  it('carries the run admission, so frink_flows_get_run sees a run held for Start', async () => {
+    const db = freshDb();
+    Object.assign(mocks, { db });
+    const { flowRunId } = await seedFlowRun(db, { nodes: [], edges: [] });
+    const admission = { admissionState: 'held', queuePosition: null, requestedAt: new Date() };
+    mocks.flowRunAdmissionSnapshotsForRuns.mockReturnValue(new Map([[flowRunId, { admission }]]));
+
+    await expect(getFlowRun(flowRunId)).resolves.toMatchObject({ admission_state: 'held' });
+  });
 });
 
 // The agent's save path (frink_flows_patch -> this shim) told no open editor anything.

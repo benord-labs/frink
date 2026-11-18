@@ -3,7 +3,6 @@ import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import log from 'electron-log';
 import { z } from 'zod';
-import { WORK_QUEUE_SOURCE } from '../../../../../shared/lib/message-markers/person-authored';
 import { trackMessageSent, trackWorkspaceCreated } from '../../../analytics';
 import { rehomePastedMentions } from '../../../claude/pasted-files';
 import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
@@ -79,16 +78,11 @@ async function rehomeParts<T extends TextPart>(parts: T[], to: string): Promise<
 }
 
 /** The first message as the sub-chat's transcript: the composer's parts, else its plain text. */
-function toInitialMessages(
-  parts: unknown[] | undefined,
-  text: string | undefined,
-  source: typeof WORK_QUEUE_SOURCE | undefined,
-): unknown[] {
+function toInitialMessages(parts: unknown[] | undefined, text: string | undefined): unknown[] {
   let body: unknown[] | null = null;
   if (parts && parts.length > 0) body = parts;
   else if (text) body = [{ type: 'text', text }];
-  const metadata = source ? { metadata: { source } } : {};
-  return body ? [{ id: `msg-${Date.now()}`, role: 'user', parts: body, ...metadata }] : [];
+  return body ? [{ id: `msg-${Date.now()}`, role: 'user', parts: body }] : [];
 }
 
 type FirstSubChat = Parameters<typeof createSubChatLocal>[1];
@@ -144,8 +138,6 @@ export const createRouter = router({
         taskId: z.string().optional(),
         taskTitle: z.string().optional(),
         initialMessage: z.string().optional(),
-        /** Stamped on the initial message: a Work Queue task's text came from outside. */
-        initialMessageSource: z.literal(WORK_QUEUE_SOURCE).optional(),
         initialMessageParts: z
           .array(
             z.union([
@@ -248,11 +240,7 @@ export const createRouter = router({
           name: seededName,
           mode: input.mode,
           messages: JSON.stringify(
-            toInitialMessages(
-              input.initialMessageParts,
-              input.initialMessage,
-              input.initialMessageSource,
-            ),
+            toInitialMessages(input.initialMessageParts, input.initialMessage),
           ),
           ...(subChatId && { id: subChatId }),
         });
@@ -347,9 +335,7 @@ export const createRouter = router({
           });
         }
 
-        // A Work Queue task's opening text came from outside, so the person sent nothing yet
-        const sentMessage = Boolean(input.initialMessageParts?.length || input.initialMessage);
-        if (sentMessage && !input.initialMessageSource) {
+        if (input.initialMessageParts?.length || input.initialMessage) {
           trackMessageSent({
             workspaceId: subChat.id,
             messageLength:

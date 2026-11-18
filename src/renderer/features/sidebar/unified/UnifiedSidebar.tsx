@@ -379,10 +379,10 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       [pendingQuestions],
     );
 
-    // Keep state counts separate so the footer represents urgency clearly: inbox = new/pending work,
+    // Keep state counts separate so the footer represents urgency clearly: inbox = runs awaiting Start,
     // pendingReview = tasks needing review, running = low-salience activity. needsAttention folds
     // interrupted (restart-recovered) runs so they light the same attention dot as awaiting-input.
-    const inboxTaskCount = taskCounts?.pending ?? 0;
+    const inboxTaskCount = taskCounts?.inbox ?? 0;
     const pendingReviewCount = (taskCounts?.planReady ?? 0) + (taskCounts?.done ?? 0);
     const runningTaskCount = taskCounts?.running ?? 0;
     const needsAttentionTaskCount =

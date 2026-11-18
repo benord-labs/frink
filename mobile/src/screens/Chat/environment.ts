@@ -22,7 +22,7 @@ export function useKeyboardShown() {
 /** Only whether the Mac can run chats is needed here, so the overview's lists stay one row long. */
 export function useExecutionReady() {
   const overview = useResource(
-    { type: 'overview', limits: { attention: 1, running: 1, inbox: 1 } },
+    { type: 'overview', limits: { attention: 1, running: 1 } },
     { interval: 10_000 },
   );
   return overview.data?.executionReady ?? true;

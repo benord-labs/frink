@@ -12,6 +12,7 @@ import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import type { FlowSettings } from '../../../../shared/types/flow';
 import { StageRunMovedError } from './batch-promotion';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
+import { cancelHeldFlowRun, releaseHeldFlowRun } from './start-store';
 
 const GRAPH = { nodes: [], edges: [], settings: {} };
 
@@ -594,5 +595,101 @@ describe('atomic Flow start admission', () => {
     expect(
       db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, claimed.ticket)).get(),
     ).toMatchObject({ state: 'claimed', startedAt: null, error: null });
+  });
+});
+
+describe('held Flow starts', () => {
+  beforeEach(() => {
+    _resetFlowAdmissionControllerMutexForTests();
+  });
+
+  const triggered = (blockType: string, settings: FlowSettings = {}) => ({
+    nodes: [{ id: 'trigger', blockType }],
+    edges: [],
+    settings,
+  });
+
+  function seedHeldStart(controller: FlowAdmissionController, key: string) {
+    return controller.enqueueStart({ ...startInput('version-start', key), heldAt: new Date() });
+  }
+
+  function seedTriggeredVersion(db: TestDb, id: string, graph: ReturnType<typeof triggered>) {
+    const versionNumber = db.select().from(flowVersions).all().length + 1;
+    db.insert(flowVersions).values({ id, flowId: 'flow-start', versionNumber, graph }).run();
+  }
+
+  function seedFlow(db: TestDb): void {
+    db.insert(flows).values({ id: 'flow-start', name: 'Start admission' }).run();
+    seedTriggeredVersion(db, 'version-start', triggered('webhook_trigger'));
+  }
+
+  it('keeps a held start, and every replay of its trigger, without a ticket', async () => {
+    const db = freshDb();
+    seedFlow(db);
+    const controller = new FlowAdmissionController(db);
+
+    const held = await seedHeldStart(controller, 'held');
+    const replay = await controller.enqueueStart(startInput('version-start', 'held'));
+
+    expect(held).toMatchObject({ admission: null, run: { status: 'pending', startedAt: null } });
+    expect(held.run.heldAt).toBeInstanceOf(Date);
+    expect(replay).toMatchObject({ isReplay: true, admission: null, run: { id: held.run.id } });
+    expect(db.select().from(flowRunAdmissions).all()).toEqual([]);
+  });
+
+  it('starts a held run on the latest version, judging run-first from it, exactly once', async () => {
+    const db = freshDb();
+    seedFlow(db);
+    const controller = new FlowAdmissionController(db);
+    const { run } = await seedHeldStart(controller, 'held');
+    seedTriggeredVersion(db, 'version-latest', triggered('webhook_trigger', { runFirst: true }));
+
+    const started = await controller.transition(() => releaseHeldFlowRun(db, run.id));
+    const again = await controller.transition(() => releaseHeldFlowRun(db, run.id));
+
+    expect([started, again]).toEqual([true, false]);
+    expect(db.select().from(flowRuns).get()).toMatchObject({
+      flowVersionId: 'version-latest',
+      heldAt: null,
+    });
+    expect(db.select().from(flowRunAdmissions).all()).toEqual([
+      expect.objectContaining({ state: 'queued', priorityClass: 'start', runFirst: true }),
+    ]);
+  });
+
+  it('keeps the pinned version when the trigger type changed since the run was held', async () => {
+    const db = freshDb();
+    seedFlow(db);
+    const controller = new FlowAdmissionController(db);
+    const { run } = await seedHeldStart(controller, 'held');
+    seedTriggeredVersion(db, 'version-schedule', triggered('schedule_trigger', { runFirst: true }));
+
+    await controller.transition(() => releaseHeldFlowRun(db, run.id));
+
+    expect(db.select().from(flowRuns).get()?.flowVersionId).toBe('version-start');
+    expect(db.select().from(flowRunAdmissions).get()?.runFirst).toBe(false);
+  });
+
+  it('lets only the first of Start and Dismiss act on a held run', async () => {
+    const db = freshDb();
+    seedFlow(db);
+    const controller = new FlowAdmissionController(db);
+    const startedFirst = (await seedHeldStart(controller, 'start-first')).run.id;
+    const dismissedFirst = (await seedHeldStart(controller, 'dismiss-first')).run.id;
+
+    const outcomes = await Promise.all([
+      controller.transition(() => releaseHeldFlowRun(db, startedFirst)),
+      controller.transition(() => cancelHeldFlowRun(db, startedFirst)),
+      controller.transition(() => cancelHeldFlowRun(db, dismissedFirst)),
+      controller.transition(() => releaseHeldFlowRun(db, dismissedFirst)),
+    ]);
+
+    expect(outcomes).toEqual([true, false, true, false]);
+    const status = (id: string) =>
+      db.select().from(flowRuns).where(eq(flowRuns.id, id)).get()?.status;
+    expect([status(startedFirst), status(dismissedFirst)]).toEqual(['pending', 'cancelled']);
+    expect(db.select().from(flowRunAdmissions).all()).toEqual([
+      expect.objectContaining({ flowRunId: startedFirst, state: 'queued' }),
+    ]);
   });
 });

@@ -169,6 +169,7 @@ export async function runPostTaskTriggerTick(
         flowId: pair.flowId,
         triggerContext: buildPostTaskTriggerContext(pair),
         idempotencyKey,
+        automatic: true,
       });
       fired += 1;
     } catch (err) {

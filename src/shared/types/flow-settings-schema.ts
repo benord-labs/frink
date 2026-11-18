@@ -76,6 +76,12 @@ export const flowSettingsShapeSchema = z.object({
     .describe(
       "When true, a successfully completed run finalizes its tasks straight to 'completed' (no review gate). Default off: finished work lands at 'done' (Ready for review) until the user accepts it.",
     ),
+  askBeforeRunning: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, each run a webhook, schedule or post-task trigger starts is held in the Work Queue Inbox, before any step runs, until the user presses Start. Runs started with Run in the app or frink_flows_run start straight away.',
+    ),
   autoReviewTools: z
     .boolean()
     .optional()

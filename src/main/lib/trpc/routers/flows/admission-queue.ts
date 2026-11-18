@@ -1,12 +1,19 @@
 import { z } from 'zod';
+import { MAX_HELD_RUNS_LISTED } from '../../../../../shared/lib/flow-admission/constants';
 import { getDatabase } from '../../../db';
 import {
   kickStalledFlowAdmissionDrain,
   moveQueuedFlowAdmission,
 } from '../../../flows/admission/runtime';
-import { queuedAdmissionRun, queuedFlowAdmissions } from '../../../flows/admission/visibility';
-import { cancelFlowRun } from '../../../flows/engine';
+import {
+  queuedAdmissionRun,
+  queuedFlowAdmissions,
+  workQueueHeldRuns,
+} from '../../../flows/admission/visibility';
+import { cancelFlowRun, dismissHeldFlowRun, startHeldFlowRun } from '../../../flows/engine';
 import { publicProcedureRaw } from '../../index';
+
+const heldRunInput = z.object({ run_id: z.string().min(1) });
 
 export function flowAdmissionQueueProcedures() {
   return {
@@ -45,5 +52,19 @@ export function flowAdmissionQueueProcedures() {
         });
         return { status: cancelled ? ('removed' as const) : ('stale' as const) };
       }),
+    workQueueHeldRuns: publicProcedureRaw
+      .input(z.object({ limit: z.number().int().positive().max(MAX_HELD_RUNS_LISTED) }))
+      .query(({ input }) => workQueueHeldRuns(getDatabase(), input.limit)),
+    // Both answer 'stale' when the run was started, dismissed or stopped somewhere else first.
+    startHeldRun: publicProcedureRaw
+      .input(heldRunInput)
+      .mutation(async ({ input }): Promise<{ status: 'started' | 'stale' }> => ({
+        status: (await startHeldFlowRun(input.run_id)) ? 'started' : 'stale',
+      })),
+    dismissHeldRun: publicProcedureRaw
+      .input(heldRunInput)
+      .mutation(async ({ input }): Promise<{ status: 'dismissed' | 'stale' }> => ({
+        status: (await dismissHeldFlowRun(input.run_id)) ? 'dismissed' : 'stale',
+      })),
   };
 }

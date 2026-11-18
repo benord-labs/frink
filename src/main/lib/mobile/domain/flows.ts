@@ -13,7 +13,10 @@ import {
   hasCurrentUnapprovedPlan,
   type PlanMessageLike,
 } from '../../../../shared/types/plan';
-import { flowRunDisplayStatus } from '../../../../shared/lib/flows/run-display-status';
+import {
+  flowRunDisplayStatus,
+  runStatusWithHold,
+} from '../../../../shared/lib/flows/run-display-status';
 import { getDatabase } from '../../db';
 import { getVersion } from '../../db/repos/flow-versions';
 import { readTranscripts } from '../../db/repos/sub-chat-messages';
@@ -105,7 +108,7 @@ export async function readMobileFlow({
     runs: {
       items: runs.slice(0, runLimit).map((run) => ({
         id: run.id,
-        status: run.status,
+        status: runStatusWithHold(run),
         createdAt: run.created_at,
         startedAt: run.started_at,
         completedAt: run.completed_at,
@@ -283,7 +286,7 @@ export async function readMobileRun(id: string): Promise<MobileRun> {
   });
   return {
     id: run.id,
-    status: run.status,
+    status: runStatusWithHold(run),
     createdAt: run.created_at,
     startedAt: run.started_at,
     completedAt: run.completed_at,

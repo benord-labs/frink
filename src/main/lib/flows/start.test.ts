@@ -147,9 +147,28 @@ describe('startFlowRun — trigger selection is position-independent', () => {
       batchId: 'batch-1',
       batchStageRunId: 'bsr-1',
       batchStageId: null,
+      heldAt: null,
     });
     expect(mocks.emitRunStarted).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [true, true, true],
+    [true, undefined, false],
+    [undefined, true, false],
+  ])(
+    'holds a start made automatically (%s) with Ask before running %s: %s',
+    async (automatic, askBeforeRunning, held) => {
+      mocks.getLatestVersion.mockResolvedValue({
+        id: 'v1',
+        graph: { ...graph([WEBHOOK, STEP]), settings: { askBeforeRunning } },
+      });
+
+      await startFlowRun({ flowId: 'flow-1', automatic });
+
+      expect(mocks.requestFlowStart.mock.lastCall?.[0].heldAt instanceof Date).toBe(held);
+    },
+  );
 
   it('returns the canonical pinned version for an admitted replay', async () => {
     mocks.getLatestVersion.mockResolvedValue({ id: 'v2', graph: graph([WEBHOOK, STEP]) });

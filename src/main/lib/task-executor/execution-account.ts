@@ -1,5 +1,6 @@
 import { aiProvider, unsupportedModeMessage } from '../../../shared/lib/ai-providers';
-import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
+import { toChatMode } from '../../../shared/lib/trigger-rule-config';
+import type { TriggerStartMode } from '../../../shared/types/trigger-context';
 import {
   getClaudeCodeTokenById,
   getDefaultClaudeCodeToken,
@@ -17,7 +18,7 @@ type TaskAccount = { id: string; label: string | null } | null;
  * in a mode the provider has. */
 export function toTaskAccountType(
   credType: string,
-  startMode: ResolvedTaskStartMode,
+  startMode: TriggerStartMode,
 ): TaskExecutionAccountType {
   const provider = aiProvider(credType);
   if (provider?.id === 'claude-code' || provider?.id === 'codex') {
@@ -45,7 +46,7 @@ export async function resolveTaskAccount(
  */
 export async function resolveTaskAccountType(
   account: TaskAccount,
-  { startMode }: { startMode: ResolvedTaskStartMode },
+  { startMode }: { startMode: TriggerStartMode },
 ): Promise<TaskExecutionAccountType> {
   if (!account) return toTaskAccountType((await getDefaultClaudeCodeToken()).type, startMode);
   const cred = await getClaudeCodeTokenById(account.id);

@@ -1,4 +1,4 @@
-import type { FlowAdmissionState } from '../../lib/flow-admission';
+import type { FlowRunAdmissionState } from '../../lib/flow-admission';
 import type { FlowGraph } from '../../lib/validate-flow-graph';
 import type { NodeOutput } from '../flow';
 import type { RunRecovery } from './resume';
@@ -9,7 +9,7 @@ export type DbFlowRun = {
   status: string;
   /** Active Flow-driving task status used to render paused runs truthfully. */
   active_task_status?: string | null;
-  admission_state?: FlowAdmissionState | null;
+  admission_state?: FlowRunAdmissionState | null;
   queue_position?: number | null;
   admission_requested_at?: string | null;
   trigger_context: Record<string, unknown> | null;

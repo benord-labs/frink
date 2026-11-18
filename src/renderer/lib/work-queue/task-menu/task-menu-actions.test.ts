@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canCancelTask, canDeleteTask, canStartTask, taskMenuRecovery } from './task-menu-actions';
+import { canCancelTask, canDeleteTask, taskMenuRecovery } from './task-menu-actions';
 
 describe('taskMenuRecovery', () => {
   it.each([
@@ -42,18 +42,14 @@ describe('task menu exits', () => {
   const withoutChat = { result: null };
 
   it.each([
-    ['running', withoutChat, true, false, false],
-    ['interrupted', withoutChat, true, false, false],
-    ['failed', withoutChat, false, true, false],
-    ['pending', withChat, true, false, false],
-    ['pending', { result: { chatId: 'chat-1' } }, true, false, false],
-    ['pending', withoutChat, false, true, true],
-  ] as const)(
-    '%s row %# offers its start and exit items',
-    (status, task, cancels, deletes, starts) => {
-      expect(canCancelTask(task, status)).toBe(cancels);
-      expect(canDeleteTask(task, status)).toBe(deletes);
-      expect(canStartTask(task, status)).toBe(starts);
-    },
-  );
+    ['running', withoutChat, true, false],
+    ['interrupted', withoutChat, true, false],
+    ['failed', withoutChat, false, true],
+    ['pending', withChat, true, false],
+    ['pending', { result: { chatId: 'chat-1' } }, true, false],
+    ['pending', withoutChat, false, true],
+  ] as const)('%s row %# offers its one exit', (status, task, cancels, deletes) => {
+    expect(canCancelTask(task, status)).toBe(cancels);
+    expect(canDeleteTask(task, status)).toBe(deletes);
+  });
 });

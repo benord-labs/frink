@@ -5,6 +5,7 @@
  * (where this data will be served as an MCP resource instead of a tool).
  */
 
+import { runStatusWithHold } from '../../../../shared/lib/flows/run-display-status';
 import { type FlowNode, formatFlowNodeLabel } from '../../../../shared/lib/validate-flow-graph';
 import { SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
 import type { DbFlowRunWithNodeRuns, DbNodeRun } from '../../../../shared/types/flow-run';
@@ -145,7 +146,7 @@ export function mapFlowRunToSummary(run: DbFlowRunWithNodeRuns): FlowRunSummary 
   return {
     run: {
       id: run.id,
-      status: run.status,
+      status: runStatusWithHold(run),
       startedAt: run.started_at,
       completedAt: run.completed_at,
       durationMs: computeDurationMs(run.started_at, run.completed_at),

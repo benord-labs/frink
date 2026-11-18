@@ -314,8 +314,8 @@ export const flowRuns = sqliteTable(
     flowVersionId: text('flow_version_id')
       .notNull()
       .references(() => flowVersions.id, { onDelete: 'cascade' }),
-    // 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
-    status: text('status').notNull().default('pending'),
+    status: text('status').notNull().default('pending'), // pending|running|paused|completed|failed|cancelled
+    heldAt: integer('held_at', { mode: 'timestamp' }), // set while a pending run waits for Start
     triggerContext: text('trigger_context', { mode: 'json' }).$type<Record<string, unknown>>(),
     idempotencyKey: text('idempotency_key'),
     batchId: text('batch_id'),

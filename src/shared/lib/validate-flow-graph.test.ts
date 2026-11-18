@@ -920,6 +920,44 @@ describe('validateGraph — loop-back rules', () => {
     expect(validateGraph(g)).toEqual({ valid: true });
   });
 
+  const startTaskGraph = (config: FlowNode['config']) => ({
+    nodes: [
+      { id: 't', blockType: 'schedule_trigger' },
+      {
+        id: 'st',
+        label: 'Babysit CI',
+        blockType: 'start_task',
+        config: { projectId: TEST_PROJECT_UUID, ...config },
+      },
+    ],
+    edges: [{ id: 'e1', source: 't', target: 'st' }],
+  });
+
+  it.each([[{ startMode: 'later' }], [{ start_mode: 'later' }]])(
+    'refuses to save Start Task config %o, yet a stored copy still runs',
+    (config) => {
+      expect(validateGraph(startTaskGraph(config), { mode: 'save' })).toEqual({
+        valid: false,
+        errors: [
+          'Start Task node "Babysit CI" start mode "later" is not valid; choose one of: execute, plan, debug',
+        ],
+      });
+      expect(validateGraph(startTaskGraph(config), { mode: 'run' })).toEqual({ valid: true });
+    },
+  );
+
+  it.each([
+    [{ startInWorktree: 'yes' }, 'startInWorktree must be a boolean when present'],
+    [{ startInWorktree: true, branch: 5 }, 'branch must be a string when present'],
+  ])('refuses Start Task config %o only in run mode', (config, problem) => {
+    const g = startTaskGraph(config);
+    expect(validateGraph(g, { mode: 'save' })).toEqual({ valid: true });
+    expect(validateGraph(g, { mode: 'run' })).toEqual({
+      valid: false,
+      errors: [`Start Task node "Babysit CI" ${problem}`],
+    });
+  });
+
   it('fan_out: rejects maxParallel out of range in parallel mode', () => {
     const g = {
       nodes: [

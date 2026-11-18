@@ -12,7 +12,7 @@ import {
   type AttentionTaskActions,
   getAttentionCopy,
 } from '../AttentionCarousel';
-import { InboxTaskList } from '../InboxTaskList';
+import { Inbox } from '../Inbox';
 import { InterruptedRunsBanner } from '../InterruptedRunsBanner';
 import { QueuedAdmissions } from '../QueuedAdmissions';
 import { QueuePausedBanner } from '../QueuePausedBanner';
@@ -23,18 +23,19 @@ import { OtherAttentionTasks } from './OtherAttentionTasks';
 type Props = {
   attentionTasks: Task[];
   /** Per-lane paging, plus `refresh` to reload every lane (e.g. after Continue all). */
-  pagination?: Record<'attention' | 'inbox' | 'running', LanePagination> & {
+  pagination?: Record<'attention' | 'running', LanePagination> & {
     refresh?: () => Promise<void>;
   };
   /** The interrupted-runs banner; replaced in tests that do not exercise it. */
   interruptedRuns?: ReactElement | null;
+  /** Runs waiting for Start; replaced in tests that do not exercise it. */
+  inbox?: ReactElement | null;
   queuedAdmissions?: ReactElement;
   queuedCount: number;
   reviewCount: number;
   runningTasks: Task[];
   runningCount: number;
   taskActions: AttentionTaskActions;
-  waitingTasks: Task[];
 };
 
 type LanePagination = {
@@ -68,13 +69,13 @@ export const QueueOverview = memo(function QueueOverview({
   attentionTasks,
   pagination,
   interruptedRuns = <InterruptedRunsBanner onRecovered={() => void pagination?.refresh?.()} />,
+  inbox = <Inbox />,
   queuedAdmissions = <QueuedAdmissions />,
   queuedCount,
   reviewCount,
   runningTasks,
   runningCount,
   taskActions,
-  waitingTasks,
 }: Props): ReactElement {
   const approvals = useAwaitingApprovals();
   const approvalActions = useApprovalActions();
@@ -161,18 +162,7 @@ export const QueueOverview = memo(function QueueOverview({
       {/* Always mounted: this subtree owns the removal announcement + focus target, which must
           outlive the last queued row leaving. It renders nothing of its own when the queue is empty. */}
       <div className="shrink-0">{queuedAdmissions}</div>
-      {waitingTasks.length > 0 && (
-        <div className="mb-4 shrink-0">
-          <InboxTaskList
-            tasks={waitingTasks}
-            isLoading={taskActions.isLoading}
-            taskActions={taskActions}
-            onOpenTask={handleOpenTask}
-            onStartTask={taskActions.onStartTask}
-          />
-          <LoadOlderTasks label="Inbox" pagination={pagination?.inbox} />
-        </div>
-      )}
+      {inbox}
     </>
   );
 });

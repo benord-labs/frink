@@ -294,6 +294,7 @@ describe('post-task-trigger tick', () => {
     expect(calls.find((c) => c.flowId === flowA.flowId)).toEqual({
       flowId: flowA.flowId,
       idempotencyKey: postTaskIdempotencyKey(bindingA.id, task.id),
+      automatic: true,
       triggerContext: {
         _frinkTrigger: 'post_task_trigger',
         bindingId: bindingA.id,

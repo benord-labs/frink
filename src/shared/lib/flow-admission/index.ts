@@ -12,6 +12,8 @@ export const FLOW_ADMISSION_STATES = [
 ] as const;
 
 export type FlowAdmissionState = (typeof FLOW_ADMISSION_STATES)[number];
+/** A run's admission as surfaces read it; 'held' is a pending run waiting for Start, with no ticket. */
+export type FlowRunAdmissionState = FlowAdmissionState | 'held';
 
 export const FLOW_ADMISSION_LIVE_STATES = [
   'queued',

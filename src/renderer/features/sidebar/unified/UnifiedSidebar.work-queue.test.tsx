@@ -7,7 +7,7 @@ import { activeOverlayAtom } from '../../../lib/atoms';
 import { exitDestinationForSidebarNavigationAtom } from '../../../lib/atoms/agent-navigation-atoms';
 import { selectedAgentChatIdAtom } from '../../agents/atoms';
 import { filesSidebarOpenAtom } from '../../files-sidebar/atoms';
-import { resetHarness, setupHarness, trpcMock } from './sidebar-test-harness';
+import { hoisted, resetHarness, setupHarness, trpcMock } from './sidebar-test-harness';
 import { UnifiedSidebar, type UnifiedSidebarHandle } from './UnifiedSidebar';
 
 const local = vi.hoisted(() => ({
@@ -237,5 +237,16 @@ describe('UnifiedSidebar Work Queue destination', () => {
 
     expect(local.sidebarNavProps?.needsAttentionTaskCount).toBe(1);
     approvals.mockRestore();
+  });
+
+  it('counts runs waiting for Start as the Inbox, not pending tasks', () => {
+    const withHeldRuns = { ...hoisted.state.taskCountsData, pending: 5, inbox: 2 };
+    const counts = vi
+      .spyOn(trpcMock.trpc.tasks.listCounts, 'useQuery')
+      .mockReturnValue({ data: withHeldRuns });
+    render(<UnifiedSidebar />);
+
+    expect(local.sidebarNavProps?.inboxTaskCount).toBe(2);
+    counts.mockRestore();
   });
 });

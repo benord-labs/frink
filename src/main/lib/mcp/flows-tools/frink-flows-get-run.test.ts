@@ -574,6 +574,17 @@ describe('wait: true blocking await', () => {
     }
   });
 
+  it('answers at once for a run held for Start, reading it as held', async () => {
+    state.getFlowRun.mockResolvedValue(
+      makeFlowRunResponse({ status: 'pending', admission_state: 'held', completed_at: null }),
+    );
+
+    const body = parseResult(await callGetRun({ runId: VALID_RUN_ID, wait: true }));
+
+    expect(body.run.status).toBe('held');
+    expect(state.getFlowRun).toHaveBeenCalledTimes(1);
+  });
+
   it('returns with waitTimedOut when timeout expires', async () => {
     vi.useFakeTimers();
     try {

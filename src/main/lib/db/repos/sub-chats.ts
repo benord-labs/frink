@@ -141,34 +141,6 @@ export async function appendHtmlArtifactMessage(
   });
 }
 
-export type SeedUserMessageResult = {
-  seeded: boolean;
-  subChat: SubChatHydrated | null;
-};
-
-/** Seed an empty sub-chat once without replacing history written by a concurrent actor. */
-export async function seedUserMessageIfEmpty(
-  db: Db,
-  subChatId: string,
-  message: Message,
-): Promise<SeedUserMessageResult> {
-  return withSubChatLock(subChatId, async () =>
-    db.transaction(() => {
-      const row = readRow(db, subChatId);
-      if (!row) return { seeded: false, subChat: null };
-      // Rows, not parsed messages: an unparseable message is still history this must not replace.
-      const { rows, messages } = readTranscript(db, subChatId);
-      if (rows.length > 0) return { seeded: false, subChat: { ...row, messages } };
-      const next = [message];
-      writeTranscript(db, subChatId, rows, next);
-      return {
-        seeded: true,
-        subChat: { ...row, messages: next },
-      };
-    }),
-  );
-}
-
 /**
  * Place an assistant message into a message list by id — appending when absent, replacing when
  * present — and report which it was so callers can apply their own rules to an insert.

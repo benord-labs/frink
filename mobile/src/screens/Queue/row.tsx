@@ -14,7 +14,6 @@ type ActionItem = Pick<SwipeActionItem, 'label' | 'icon' | 'fill'>;
 
 /** The desktop Work Queue's labels, so a task reads the same on both. */
 const ACTION_ITEMS = {
-  startTask: { label: 'Start task', icon: Play, fill: 'primary' },
   completeTask: { label: 'Mark complete', icon: Check, fill: 'confirm' },
 } satisfies Record<Exclude<MobileTaskAction, 'continueTask'>, ActionItem>;
 /** A stopped task's one recovery, as desktop's RecoveryMenuItem labels it. */

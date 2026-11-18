@@ -8,6 +8,8 @@
  * @see Phase 4.11: todos/phase-4-triggers/11-trigger-context-schema.md
  */
 
+import { z } from 'zod';
+
 /**
  * Supported integration providers. Every id in `PROVIDERS` must appear here — the provider
  * catalog's own test proves it, so a new row cannot ship a source this union rejects.
@@ -36,8 +38,9 @@ export type TriggerSource = (typeof TRIGGER_SOURCES)[number];
 // 'debug' = run the agent in hypothesis-driven debug mode (Frink ChatMode parity). Appended last so
 // TRIGGER_START_MODES[0] stays 'execute' (the auto-start default). Debug is local-execution-only —
 // flow/cloud dispatch hard-errors it on non-local targets (no NDJSON ingest server off-machine).
-export const TRIGGER_START_MODES = ['execute', 'plan', 'wait', 'debug'] as const;
+export const TRIGGER_START_MODES = ['execute', 'plan', 'debug'] as const;
 export type TriggerStartMode = (typeof TRIGGER_START_MODES)[number];
+export const triggerStartModeSchema = z.enum(TRIGGER_START_MODES);
 export const TRIGGER_COMPLETION_SIGNALS = ['agent_finish', 'manual'] as const;
 export type TriggerCompletionSignal = (typeof TRIGGER_COMPLETION_SIGNALS)[number];
 

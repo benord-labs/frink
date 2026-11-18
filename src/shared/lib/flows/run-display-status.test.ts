@@ -24,4 +24,8 @@ describe('flowRunDisplayStatus', () => {
     expect(flowRunDisplayStatus('paused', 'running', 'queued')).toBe('queued');
     expect(flowRunDisplayStatus('paused', 'running')).toBe('running');
   });
+
+  it('reads a pending run held for Start as held', () => {
+    expect(flowRunDisplayStatus('pending', null, 'held')).toBe('held');
+  });
 });

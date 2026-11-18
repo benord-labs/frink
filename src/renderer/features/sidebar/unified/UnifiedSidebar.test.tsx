@@ -187,7 +187,7 @@ describe('UnifiedSidebar task count freshness', () => {
 
     const { rerender } = render(<UnifiedSidebar />);
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('1:2:3:0:0');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:2:3:0:0');
 
     hoisted.state.taskCountsData = {
       pending: 4,
@@ -204,7 +204,7 @@ describe('UnifiedSidebar task count freshness', () => {
     rerender(<UnifiedSidebar onChatSelect={() => {}} />);
 
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('4:0:1:2:0');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:1:2:0');
     expect(hoisted.listCountsUseQueryMock).toHaveBeenCalled();
     expect(hoisted.listActiveChatsUseQueryMock).toHaveBeenCalled();
   });

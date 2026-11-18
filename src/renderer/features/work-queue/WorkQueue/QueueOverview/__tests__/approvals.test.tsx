@@ -50,12 +50,12 @@ function overview(
     attentionTasks,
     interruptedRuns: null,
     queuedAdmissions: <section aria-label="Queued to run" />,
+    inbox: null,
     queuedCount: 0,
     reviewCount: approvals.length + attentionTasks.length,
     runningCount: runningTasks.length,
     runningTasks,
     taskActions: makeTaskActions(),
-    waitingTasks: [],
   };
   return <QueueOverview {...props} />;
 }

@@ -14,7 +14,7 @@ export const FLOW_LIST_SECTION_LABELS = {
  * Precedence is awaiting input > disabled > failed > the rest, so every flow lands in one section.
  */
 function sectionFor(displayStatus: string | null, enabled: boolean): FlowListSectionId {
-  if (displayStatus === 'awaiting_input') return 'needs_you';
+  if (displayStatus === 'awaiting_input' || displayStatus === 'held') return 'needs_you';
   if (!enabled) return 'disabled';
   return displayStatus === 'failed' ? 'needs_you' : 'flows';
 }

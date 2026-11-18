@@ -1539,9 +1539,8 @@ describe('getPendingTaskIds + claimTask — what the task poller may claim', () 
     return t;
   }
 
-  it('returns pending tasks oldest first, skipping wait-mode and non-pending rows', async () => {
+  it('returns pending tasks oldest first, skipping non-pending rows', async () => {
     const newer = await addPendingTask('newer', 2_000);
-    await addPendingTask('waiting', 500, { _config: { startMode: 'wait' } });
     const running = await addPendingTask('running', 100);
     await updateTaskStatus(db, running.id, 'running');
     const older = await addPendingTask('older', 1_000, { _config: { startMode: 'execute' } });
