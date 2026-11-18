@@ -71,6 +71,8 @@ The project you pick is linked and appears below the chat's main project. Each p
 - A linked project is labelled **Linked** and shows the branch its folder has checked out. If its folder is gone, the tree says it can't find it.
 - The **×** on a linked project's row unlinks it, as does the **×** on its chip under the message box. Its files stay where they are.
 
+In a narrow tree, the **Linked** label shrinks to its link icon, and a long branch name is cut short before the project's name is. Hover over a row, or move to it with **Tab**, to see the project's name, label, branch and folder in full.
+
 The footer counts the projects, for example **2 projects in this tree**. On the **Files** tab, the search field at the top filters the files of every project in the tree. On the **Search** tab, it looks inside the files of every project in the tree and lists the matches under each project's name, in the tree's order, each project with its own count. Click a match to open the file at that line. A linked project's files are read again when you show them and when you come back to Frink.
 
 Linked projects are read-only in the tree: you can't create, rename, move, paste, drop or delete files there. You can still open a file and edit it in the editor.

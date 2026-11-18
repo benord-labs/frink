@@ -208,6 +208,38 @@ describe('useFocusInputOnEnter', () => {
     });
   });
 
+  describe('focused controls', () => {
+    it.each([
+      ['a button', '<button>Link project</button>', 'button'],
+      ['a link', '<a href="#docs">Docs</a>', 'a'],
+      ['a disclosure summary', '<details><summary>More</summary></details>', 'summary'],
+      ['a custom button', '<div role="button" tabindex="0">Run</div>', '[role="button"]'],
+      ['a custom link', '<span role="link" tabindex="0">Docs</span>', '[role="link"]'],
+      ['a tab', '<div role="tab" tabindex="0">Terminal</div>', '[role="tab"]'],
+    ])('leaves Enter to %s, which it activates', (_, html, selector) => {
+      const { ref, focus } = makeFocusSpy();
+      document.body.innerHTML = html;
+      const control = document.body.querySelector(selector) as HTMLElement;
+      control.focus();
+      renderHook(() => useFocusInputOnEnter(ref), { wrapper: storeWrapper(createStore()) });
+
+      expect(fireEnter(control).defaultPrevented).toBe(false);
+      expect(focus).not.toHaveBeenCalled();
+    });
+
+    it('still takes Enter to the editor from a focusable area or an anchor without a link', () => {
+      const { ref, focus } = makeFocusSpy();
+      document.body.innerHTML = '<div tabindex="0">Messages</div><a>No link</a>';
+      const [area, anchor] = Array.from(document.body.children) as HTMLElement[];
+      area.focus();
+      renderHook(() => useFocusInputOnEnter(ref), { wrapper: storeWrapper(createStore()) });
+
+      expect(fireEnter(area).defaultPrevented).toBe(true);
+      expect(fireEnter(anchor).defaultPrevented).toBe(true);
+      expect(focus).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('destination ownership', () => {
     it('does not prevent Enter or focus retained chat while Work Queue is visible', () => {
       const store = createStore();
@@ -220,7 +252,8 @@ describe('useFocusInputOnEnter', () => {
         wrapper: storeWrapper(store),
       });
 
-      const event = fireEnter(workQueueButton);
+      // From outside the button, which as a control would keep its Enter anyway
+      const event = fireEnter();
 
       expect(event.defaultPrevented).toBe(false);
       expect(focus).not.toHaveBeenCalled();

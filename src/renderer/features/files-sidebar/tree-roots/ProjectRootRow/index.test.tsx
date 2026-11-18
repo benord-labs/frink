@@ -1,14 +1,24 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link } from 'lucide-react';
-import { useState } from 'react';
+import { type ComponentProps, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ProjectRootRow } from './index';
 
-function Harness({ initial, onRemove }: { initial: boolean; onRemove?: () => void }) {
+type RowProps = ComponentProps<typeof ProjectRootRow>;
+
+function Harness({
+  initial,
+  onRemove,
+  missing,
+  badge = { label: 'Linked', icon: Link, tone: 'linked' },
+}: {
+  initial: boolean;
+  onRemove?: () => void;
+} & Partial<Pick<RowProps, 'missing' | 'badge'>>) {
   const [expanded, setExpanded] = useState(initial);
   return (
     <TooltipProvider>
@@ -16,7 +26,8 @@ function Harness({ initial, onRemove }: { initial: boolean; onRemove?: () => voi
         name="api"
         path="/w/api"
         branch="feat"
-        badge={{ label: 'Linked', icon: Link, tone: 'linked' }}
+        missing={missing}
+        badge={badge}
         expanded={expanded}
         onExpandedChange={setExpanded}
         controlsId="api-files"
@@ -81,5 +92,38 @@ describe('ProjectRootRow', () => {
     expect(disclosure()).toContainElement(screen.getByText('Linked'));
     expect(disclosure()).toContainElement(screen.getByText('feat'));
     expect(disclosure()).toHaveAccessibleName('api Linked on branch feat');
+  });
+
+  // happy-dom has no layout, so these pin the classes that order what gives way.
+  it('lets the branch give way first, down to its icon, so the name keeps its room', () => {
+    render(<Harness initial={false} />);
+
+    expect(screen.getByText('feat').parentElement).toHaveClass('shrink-1000', 'min-w-3');
+    expect(disclosure().parentElement).toHaveClass('@container/root-row');
+  });
+
+  it.each([
+    ['Linked, with an icon, shrinks to it', undefined, true],
+    ['Main, with no icon, keeps its label', { label: 'Main' }, false],
+  ])('in a narrow row the badge %s', (_, badge, iconOnly) => {
+    render(<Harness initial={false} badge={badge} />);
+
+    const label = screen.getByText(badge?.label ?? 'Linked');
+    expect(label.classList.contains('@max-[15rem]/root-row:sr-only')).toBe(iconOnly);
+  });
+
+  it.each([
+    ['its name, badge and branch first', false, /^api · LinkedOn branch feat\/w\/api$/],
+    [
+      'its name and badge, and no branch for a missing folder',
+      true,
+      /^api · LinkedCan't find api's folder\.\/w\/api$/,
+    ],
+  ])('says %s in its tooltip', (_, missing, text) => {
+    render(<Harness initial={false} missing={missing} />);
+
+    fireEvent.focus(disclosure());
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent(text);
   });
 });

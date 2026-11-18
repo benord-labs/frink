@@ -121,7 +121,7 @@ describe('TreeRootsLayout', () => {
     expect(rootRow('api').parentElement).toContainElement(screen.getByLabelText('Unlink api'));
     fireEvent.focus(mainRow());
     expect(screen.getByRole('tooltip')).toHaveTextContent(
-      /^The working folder, branch, worktree and CLAUDE\.md come from here\.\/w\/app$/,
+      /^app · MainOn branch featThe working folder, branch, worktree and CLAUDE\.md come from here\.\/w\/app$/,
     );
   });
 
