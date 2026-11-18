@@ -327,7 +327,10 @@ class GitWatcherRegistry {
    */
   async disposeAll(): Promise<void> {
     const disposals = Array.from(this.watchers.values()).map((watcher) => watcher.dispose());
-    await Promise.all(disposals);
+    // Wait for every watcher: one failing must not end the wait while others are still stopping.
+    for (const result of await Promise.allSettled(disposals)) {
+      if (result.status === 'rejected') log.warn('[GitWatcher] dispose failed:', result.reason);
+    }
     this.watchers.clear();
     this.listeners.clear();
   }

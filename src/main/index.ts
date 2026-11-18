@@ -624,7 +624,6 @@ if (gotTheLock) {
       await (await import('./lib/agent-runner/cursor')).disposeAllCursorHosts();
 
       // ── Phase 3: Close DB and flush analytics ──
-      await cleanupGitWatchers();
       // Drain any background rollback-stash promises kicked off by the socket
       // executor's fire-and-forget post-stream path. Without this, an in-flight
       // `git add -A` killed mid-walk can orphan `.git/index.lock`.
@@ -640,6 +639,7 @@ if (gotTheLock) {
     } catch (err) {
       log.error('[Shutdown] Error during cleanup:', err);
     } finally {
+      await cleanupGitWatchers();
       // Await the terminal marker before app.exit: an atomic write without ordering can still be
       // overwritten by an older sample that completes later. Keep the hard deadline armed while
       // this write is pending so diagnostics can never hang app shutdown.
