@@ -67,9 +67,9 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
       >
         <span className="text-foreground">{projectName}</span>
         {isLinked
-          ? ' is linked to this chat. The agent can read files here without asking.'
+          ? ' is linked to this chat. The agent can read most files here without asking, except on Codex.'
           : linkable
-            ? " isn't linked to this chat. Link it to let the agent read files here without asking."
+            ? " isn't linked to this chat. Link it to let the agent read most files here without asking, except on Codex."
             : " isn't linked to this chat."}
       </p>
       {linkable && (

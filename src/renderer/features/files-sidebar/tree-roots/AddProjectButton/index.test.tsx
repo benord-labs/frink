@@ -108,7 +108,7 @@ describe('AddProjectButton', () => {
     // The other 'app' shows its folder, to tell it from the chat's own project
     expect(within(rows[1]).getByText('forks')).toBeInTheDocument();
     expect(screen.getByRole('note').textContent).toBe(
-      "Linked projects are saved on this chat. The agent can read them without asking; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on app.",
+      "Linked projects are saved on this chat. The agent can read most files in them without asking, except on Codex; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on app.",
     );
     await user.click(screen.getByRole('menuitem', { name: 'api' }));
 

@@ -1,7 +1,7 @@
-export const PERMISSIONS_SUBTITLE = 'File and command rules for sandboxed tasks';
+export const PERMISSIONS_SUBTITLE = 'Rules for the files and commands the agent can use';
 
 export const SYSTEM_DENIED_DESCRIPTION =
-  'These paths are never accessible via file tools, even when a project has an allow rule.';
+  "No rule can open these paths, not even a project's allow rule. It's a fixed list, not a sandbox: a search can still show lines from these files, and some file reads aren't checked against it.";
 
 export const SYSTEM_DENIED_WHAT_THIS_MEANS =
-  'remains readable/writable as a public template, while sensitive files stay blocked.';
+  'remains readable and writable as a public template; the other paths are refused wherever Frink checks them.';

@@ -60,7 +60,7 @@ A badge that can't open still shows the file's path when you hover over it. In a
 
 ## Link another project
 
-A chat works in one project, its main project, but you can link your other projects to it. A linked project shows in the chat's file tree, and most agents can read it without asking; see [Linked projects](./projects.md#linked-projects) for each provider.
+A chat works in one project, its main project, but you can link your other projects to it. A linked project shows in the chat's file tree, and the agent can read most files in it without asking, except on Codex. [Permissions](./permissions.md#linked-projects) lists what each provider can read and search there, and what still asks.
 
 1. Click **Link project** (the folder with a plus) beside the search field at the top of the file tree, or **Link project** (a plus) under the message box.
 2. Type to search your projects by name or folder, then pick one with the mouse, or with the arrow keys and **Enter**.

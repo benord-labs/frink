@@ -53,9 +53,11 @@ function renderNotice(ui: ReactElement, answer: (op: Operation) => Promise<unkno
   return { linkCalls: () => asked.mock.calls.filter(([op]) => op.path === 'chats.linkProject') };
 }
 
-const LINK_IT = 'Link it to let the agent read files here without asking.';
+// Codex reads through commands, which linking doesn't change, so the copy says so.
+const LINK_IT = 'Link it to let the agent read most files here without asking, except on Codex.';
 const NOT_LINKED = "ROS service isn't linked to this chat.";
-const LINKED = 'ROS service is linked to this chat. The agent can read files here without asking.';
+const LINKED =
+  'ROS service is linked to this chat. The agent can read most files here without asking, except on Codex.';
 
 describe('OtherProjectNotice', () => {
   it.each([

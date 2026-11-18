@@ -88,6 +88,13 @@ describe('AgentsPermissionsTab', () => {
     expect(screen.getByText('Project — Other')).toBeTruthy();
   });
 
+  it("states the Always blocked list's limits instead of promising the paths are never read", () => {
+    render(<AgentsPermissionsTab />);
+    expect(screen.queryByText(/never accessible|stay blocked|sandboxed/)).toBeNull();
+    expect(screen.getByText(/a search can still show lines from these files/)).toBeTruthy();
+    expect(screen.getByText(/the other paths are refused wherever Frink checks them/)).toBeTruthy();
+  });
+
   it('Policy section is read-only (no AddRuleInput, no delete buttons)', () => {
     getPolicyDocMock.mockReturnValue(loadedQuery({ allow: ['Bash(npm:*)'], deny: [], ask: [] }));
     render(<AgentsPermissionsTab />);

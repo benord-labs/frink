@@ -59,7 +59,7 @@ export function LinkProjectPicker({
         setMention(open && getMentionTexts ? { chatId, texts: getMentionTexts() } : null)
       }
       status={projectsStatus}
-      footer={`Linked projects are saved on this chat. The agent can read them without asking; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on ${main.name}.`}
+      footer={`Linked projects are saved on this chat. The agent can read most files in them without asking, except on Codex; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on ${main.name}.`}
       onPick={add}
     />
   );
