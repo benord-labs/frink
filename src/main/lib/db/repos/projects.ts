@@ -1,4 +1,4 @@
-import { and, desc, eq, notLike, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, notLike, or, sql } from 'drizzle-orm';
 import type { getDatabase } from '../index';
 import { chats, type NewProject, type Project, projects, subChats } from '../schema';
 import {
@@ -100,6 +100,21 @@ export async function listProjectsByRecentActivity(
     .groupBy(projects.id)
     .orderBy(desc(sql`coalesce(max(${subChats.updatedAt}), ${projects.createdAt})`));
   return rows.map((row) => ({ ...row.project, lastActiveAt: row.lastActiveAt }));
+}
+
+/** Which of `paths` an unarchived chat works in or a project is registered at. */
+export function listClaimedPaths(db: Db, paths: string[]): Set<string> {
+  const byChat = db
+    .select({ path: chats.worktreePath })
+    .from(chats)
+    .where(and(inArray(chats.worktreePath, paths), isNull(chats.archivedAt)))
+    .all();
+  const byProject = db
+    .select({ path: projects.path })
+    .from(projects)
+    .where(inArray(projects.path, paths))
+    .all();
+  return new Set([...byChat, ...byProject].flatMap((row) => (row.path ? [row.path] : [])));
 }
 
 export async function updateProject(

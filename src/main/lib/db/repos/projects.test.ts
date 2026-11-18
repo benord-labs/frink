@@ -4,6 +4,7 @@ import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
   createOrGetProjectByPath,
   createProject,
+  listClaimedPaths,
   listProjectsByRecentActivity,
   listRealProjects,
 } from './projects';
@@ -136,5 +137,22 @@ describe('createOrGetProjectByPath', () => {
     await expect(createProject(db, { name: 'b', path: '/repos/taken' })).rejects.toThrow(
       /UNIQUE constraint failed: projects\.path/,
     );
+  });
+});
+
+describe('listClaimedPaths', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('returns the paths an unarchived chat works in or a project is registered at', async () => {
+    await db.insert(schema.projects).values({ id: 'p', name: 'p', path: '/wt/project' });
+    await db.insert(schema.chats).values([
+      { id: 'live', worktreePath: '/wt/live' },
+      { id: 'gone', worktreePath: '/wt/gone', archivedAt: new Date() },
+    ]);
+
+    const claimed = listClaimedPaths(db, ['/wt/live', '/wt/gone', '/wt/project', '/wt/free']);
+    expect(claimed).toEqual(new Set(['/wt/live', '/wt/project']));
   });
 });

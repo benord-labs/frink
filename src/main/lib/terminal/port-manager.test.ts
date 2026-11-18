@@ -24,6 +24,24 @@ let portManager = new PortManager(scanner, APP_ROOT);
 let root: string;
 let repo: string;
 let worktree: string;
+let linked: string;
+let sibling: string;
+let viaLink: string;
+
+/** Lays out a linked worktree of `repo` at `dir` as `git worktree add` does, its pointer reaching
+ * the repository through `repoPath`. */
+function addLinkedWorktree(dir: string, repoPath: string): void {
+  const name = path.basename(dir);
+  const admin = path.join(repo, '.git', 'worktrees', name);
+  fs.mkdirSync(admin, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'apps', 'web'), { recursive: true });
+  fs.writeFileSync(path.join(admin, 'commondir'), '../..\n');
+  fs.writeFileSync(path.join(admin, 'gitdir'), `${path.join(dir, '.git')}\n`);
+  fs.writeFileSync(
+    path.join(dir, '.git'),
+    `gitdir: ${path.join(repoPath, '.git', 'worktrees', name)}\n`,
+  );
+}
 
 beforeAll(() => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'port-manager-')));
@@ -33,6 +51,14 @@ beforeAll(() => {
   fs.mkdirSync(path.join(repo, 'apps', 'web'), { recursive: true });
   fs.mkdirSync(worktree, { recursive: true });
   fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: elsewhere');
+  linked = path.join(root, 'worktrees', 'linked');
+  sibling = path.join(root, 'worktrees', 'sibling');
+  viaLink = path.join(root, 'worktrees', 'via-link');
+  addLinkedWorktree(linked, repo);
+  addLinkedWorktree(sibling, repo);
+  const repoLink = path.join(root, 'repo-link');
+  fs.symlinkSync(repo, repoLink);
+  addLinkedWorktree(viaLink, repoLink);
 });
 
 afterAll(() => {
@@ -128,6 +154,7 @@ describe('portManager', () => {
           url: 'http://localhost:5173',
           cwd: worktree,
           gitRoot: worktree,
+          mainCheckout: null,
         },
       ],
     ]);
@@ -254,13 +281,18 @@ describe('portManager', () => {
 });
 
 describe('devServersForPath', () => {
-  const server = (cwd: string, gitRoot: string | null): DevServer => ({
+  const server = (
+    cwd: string,
+    gitRoot: string | null,
+    mainCheckout: string | null = null,
+  ): DevServer => ({
     pid: 1,
     port: 5173,
     label: 'vite',
     url: 'http://localhost:5173',
     cwd,
     gitRoot,
+    mainCheckout,
   });
 
   it('keeps sibling worktrees apart', () => {
@@ -285,6 +317,38 @@ describe('devServersForPath', () => {
   it('matches by folder alone outside any repository', () => {
     const loose = server('/scratch/site', null);
     expect(devServersForPath([loose], '/scratch')).toEqual([loose]);
+  });
+
+  it("adds an unowned linked worktree of the chat's repository, named in its label", () => {
+    const agent = server('/wt/x', '/wt/x', '/repo');
+    const repo = { root: '/repo', claimed: new Set<string>() };
+    expect(devServersForPath([agent], '/repo', repo)).toEqual([{ ...agent, label: 'vite · x' }]);
+    expect(devServersForPath([agent], '/repo')).toEqual([]);
+    expect(devServersForPath([agent], '/other', { root: '/other', claimed: new Set() })).toEqual(
+      [],
+    );
+  });
+
+  it('leaves out a linked worktree another chat or project owns', () => {
+    const owned = server('/wt/x', '/wt/x', '/repo');
+    expect(
+      devServersForPath([owned], '/repo', { root: '/repo', claimed: new Set(['/wt/x']) }),
+    ).toEqual([]);
+  });
+
+  it("lists a linked worktree nested in the main checkout's folder under its own name", () => {
+    const nested = server('/repo/.claude/worktrees/x', '/repo/.claude/worktrees/x', '/repo');
+    const repo = { root: '/repo', claimed: new Set<string>() };
+    expect(devServersForPath([nested], '/repo', repo)).toEqual([{ ...nested, label: 'vite · x' }]);
+  });
+
+  it("matches a linked worktree at the chat's sub-folder of the repository", () => {
+    const web = server('/wt/x/apps/web', '/wt/x', '/repo');
+    const top = server('/wt/x', '/wt/x', '/repo');
+    const repo = { root: '/repo', claimed: new Set<string>() };
+    expect(devServersForPath([web, top], '/repo/apps/web', repo)).toEqual([
+      { ...web, label: 'vite · x' },
+    ]);
   });
 });
 
@@ -331,6 +395,103 @@ describe('watchDevServers', () => {
     await vi.waitFor(() =>
       expect(received.at(-1)).toEqual([
         { port: 5173, label: 'vite', url: 'http://localhost:5173' },
+      ]),
+    );
+    stop();
+  });
+
+  it("lists an agent's server in an unowned linked worktree for the main checkout's chat", async () => {
+    serve([linksFor(repo, 5174), linksFor(linked, 5175), linksFor(worktree, 5176)]);
+    const received: unknown[] = [];
+    const claimed = vi.fn(() => new Set<string>());
+    const stop = watchDevServers(repo, (links) => received.push(links), portManager, claimed);
+
+    await vi.waitFor(() =>
+      expect(received.at(-1)).toEqual([
+        { port: 5174, label: 'vite', url: 'http://localhost:5174' },
+        { port: 5175, label: 'vite · linked', url: 'http://localhost:5175' },
+      ]),
+    );
+    expect(claimed).toHaveBeenLastCalledWith([linked]);
+    stop();
+  });
+
+  it('drops a link once another chat claims its worktree, and restores it once released', async () => {
+    serve([linksFor(linked, 5175)]);
+    const owned = new Set<string>();
+    const main: unknown[] = [];
+    const owner: unknown[] = [];
+    const stopMain = watchDevServers(
+      repo,
+      (links) => main.push(links),
+      portManager,
+      (gitRoots) => new Set(gitRoots.filter((gitRoot) => owned.has(gitRoot))),
+    );
+    const stopOwner = watchDevServers(linked, (links) => owner.push(links), portManager);
+    const listed = [{ port: 5175, label: 'vite · linked', url: 'http://localhost:5175' }];
+    await vi.waitFor(() => expect(main.at(-1)).toEqual(listed));
+
+    owned.add(linked);
+    await vi.waitFor(async () => {
+      await portManager.scan();
+      expect(main.at(-1)).toEqual([]);
+    });
+    expect(owner.at(-1)).toEqual([{ port: 5175, label: 'vite', url: 'http://localhost:5175' }]);
+
+    owned.delete(linked);
+    await vi.waitFor(async () => {
+      await portManager.scan();
+      expect(main.at(-1)).toEqual(listed);
+    });
+    const sent = main.length;
+    await portManager.scan();
+    expect(main).toHaveLength(sent);
+    stopMain();
+    stopOwner();
+  });
+
+  it("matches the linked worktree's copy of a sub-folder chat's folder", async () => {
+    serve([linksFor(linked, 5175), linksFor(path.join(linked, 'apps', 'web'), 5176)]);
+    const received: unknown[] = [];
+    const stop = watchDevServers(
+      path.join(repo, 'apps', 'web'),
+      (links) => received.push(links),
+      portManager,
+    );
+
+    await vi.waitFor(() =>
+      expect(received.at(-1)).toEqual([
+        { port: 5176, label: 'vite · linked', url: 'http://localhost:5176' },
+      ]),
+    );
+    stop();
+  });
+
+  it("keeps one worktree chat's servers out of a sibling worktree chat of the same repository", async () => {
+    serve([linksFor(linked, 5175), linksFor(sibling, 5176)]);
+    const received: unknown[] = [];
+    const claimed = vi.fn(() => new Set<string>());
+    const stop = watchDevServers(sibling, (links) => received.push(links), portManager, claimed);
+
+    await vi.waitFor(() =>
+      expect(received.at(-1)).toEqual([
+        { port: 5176, label: 'vite', url: 'http://localhost:5176' },
+      ]),
+    );
+    await portManager.scan();
+    expect(received.at(-1)).toEqual([{ port: 5176, label: 'vite', url: 'http://localhost:5176' }]);
+    expect(claimed).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('matches a worktree whose pointer reaches the main checkout through a symlink', async () => {
+    serve([linksFor(viaLink, 5177)]);
+    const received: unknown[] = [];
+    const stop = watchDevServers(repo, (links) => received.push(links), portManager);
+
+    await vi.waitFor(() =>
+      expect(received.at(-1)).toEqual([
+        { port: 5177, label: 'vite · via-link', url: 'http://localhost:5177' },
       ]),
     );
     stop();
