@@ -76,7 +76,9 @@ export async function resolveCommandShell(): Promise<string | undefined> {
   if (process.platform !== 'win32') return undefined;
   if (cachedWindowsShell) return cachedWindowsShell;
 
-  cachedWindowsShell = await findGitBash();
+  // Only a hit is stored: a concurrent probe that misses late must not erase one that found bash.
+  const found = await findGitBash();
+  if (found) cachedWindowsShell = found;
   if (!cachedWindowsShell && !warnedMissing) {
     warnedMissing = true;
     reportMissingGitBash();

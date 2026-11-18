@@ -5,13 +5,18 @@
 
 import { getDatabase } from '../../db';
 import { resolveUpstreamStartTaskContext } from '../../db/repos/node-runs';
+import { resolveCommandShell } from '../../platform/command-shell';
 import { captureMainMessage } from '../../sentry/init';
 import { buildVariables } from '../block-context';
 import { findUpstreamNodeIds } from '../graph';
-import { findAbsentShellPlaceholder, renderTemplateForShell } from '../template-utils';
+import {
+  findAbsentShellPlaceholder,
+  renderTemplateForShell,
+  SHELL_RENDER_LIMIT_COMMAND,
+} from '../template-utils';
 import { resolveDispatchProjectId } from './project-id';
 import { executeShellStep } from './shell-step';
-import type { Dispatcher } from './types';
+import type { DispatchContext, DispatchResult } from './types';
 
 type RunCommandConfig = {
   command?: string;
@@ -20,7 +25,12 @@ type RunCommandConfig = {
   customPath?: string;
 };
 
-export const dispatchRunCommand: Dispatcher = async (ctx) => {
+type RunCommandDeps = { resolveCommandShell: typeof resolveCommandShell };
+
+export async function dispatchRunCommand(
+  ctx: DispatchContext,
+  deps: RunCommandDeps = { resolveCommandShell },
+): Promise<DispatchResult> {
   const config = (ctx.node.config ?? {}) as RunCommandConfig;
   const variables = buildVariables({
     triggerContext: ctx.triggerContext,
@@ -50,6 +60,23 @@ export const dispatchRunCommand: Dispatcher = async (ctx) => {
     return {
       type: 'error',
       message: `run_command "${ctx.node.label ?? ctx.node.id}": the command is empty, so nothing was run`,
+    };
+  }
+  // Values are escaped for POSIX shells only, so on Windows without Git Bash cmd.exe would read them
+  // as syntax. A command the render left unchanged, or swapped for its limit stub, holds no value.
+  if (
+    command !== (config.command ?? '') &&
+    command !== SHELL_RENDER_LIMIT_COMMAND &&
+    process.platform === 'win32' &&
+    !(await deps.resolveCommandShell())
+  ) {
+    captureMainMessage('Flow run_command refused Flow values without a POSIX shell', 'warning', {
+      surface: 'flow-run-command',
+      reason: 'no-posix-shell',
+    });
+    return {
+      type: 'error',
+      message: `run_command "${ctx.node.label ?? ctx.node.id}": This command uses Flow values, which need Git Bash on Windows. Install Git for Windows, then run it again.`,
     };
   }
 
@@ -83,4 +110,4 @@ export const dispatchRunCommand: Dispatcher = async (ctx) => {
     startedAt,
   );
   return { type: 'completed', output };
-};
+}
