@@ -41,7 +41,8 @@ async function deliverOne(
   subChatId: string,
   dirs: DeliveryDirs,
 ): Promise<Delivery> {
-  const shown = entry.label ?? entry.url;
+  // Sanitised like a stored name: a file name must not add lines or quotes to the prompt.
+  const shown = safeAttachmentName(entry.label ?? entry.url);
   // Only a file stored on this run may be copied: a trigger context can carry any URL.
   const source = attachmentFilePath(entry.url, dirs.attachmentsRoot);
   if (!source) {
