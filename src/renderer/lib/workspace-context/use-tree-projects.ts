@@ -87,13 +87,13 @@ function useLinkMutations() {
 }
 
 /**
- * The chat's tree projects. `extras` are the chat's linked projects in the order they were
+ * The chat's tree projects. `linked` are the chat's linked projects in the order they were
  * linked, each `missing` when its folder is gone, and `readable` those whose folder is there.
  * With `withCandidates`, `candidates` are the projects the server would link now, and
  * `projectsStatus` tells a list still loading or failed apart from an empty one; the server checks
  * each project's folder on disk to answer, so only a surface that offers links asks. Only a chat
- * with a project folder of its own can link any (`canAdd`). `add` and `remove` link and unlink,
- * and a refusal shows as a toast; `remove` also tells its caller through `onError`.
+ * with a project folder of its own (`main`) can link any. `link` and `unlink` do so, and a refusal
+ * shows as a toast; `unlink` also tells its caller through `onError`.
  * `isPending` is true while either is on its way.
  */
 export function useTreeProjects(
@@ -101,7 +101,7 @@ export function useTreeProjects(
   { withCandidates = false }: { withCandidates?: boolean } = {},
 ) {
   const key = chatId ?? '';
-  const { link, unlink } = useLinkMutations();
+  const mutations = useLinkMutations();
   const chatQuery = trpc.chats.get.useQuery(
     { id: key },
     { enabled: Boolean(chatId), select: treeChat },
@@ -125,7 +125,7 @@ export function useTreeProjects(
     { enabled: withCandidates && Boolean(main), staleTime: 300_000 },
   );
   const projects = projectsQuery.data ?? [];
-  const extras = chatQuery.data?.linked ?? [];
+  const linked = chatQuery.data?.linked ?? [];
   const linkable = main ? (linkableQuery.data ?? []) : [];
   // A link shows here before the server's list is read again, and the chat's own project never
   // shows, even in a list read before the chat moved into it.
@@ -133,24 +133,23 @@ export function useTreeProjects(
     (project) =>
       project.id !== main?.id &&
       linkable.includes(project.id) &&
-      !extras.some((extra) => extra.id === project.id),
+      !linked.some((each) => each.id === project.id),
   );
 
   return {
     main,
-    extras,
-    readable: extras.filter((project) => !project.missing),
+    linked,
+    readable: linked.filter((project) => !project.missing),
     candidates,
     projectsStatus: bothStatus(projectsQuery.status, linkableQuery.status),
-    /** Whether `main` and `extras` are final: there is no chat, or it has loaded. */
+    /** Whether `main` and `linked` are final: there is no chat, or it has loaded. */
     isLoaded: !chatId || chatQuery.status !== 'pending',
-    canAdd: Boolean(main),
-    isPending: link.isPending || unlink.isPending,
-    add: (projectId: string) => {
-      if (main) link.mutate({ chatId: key, projectId });
+    isPending: mutations.link.isPending || mutations.unlink.isPending,
+    link: (projectId: string) => {
+      if (main) mutations.link.mutate({ chatId: key, projectId });
     },
-    remove: (projectId: string, options?: { onError?: () => void }) =>
-      unlink.mutate({ chatId: key, projectId }, options),
+    unlink: (projectId: string, options?: { onError?: () => void }) =>
+      mutations.unlink.mutate({ chatId: key, projectId }, options),
   };
 }
 

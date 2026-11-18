@@ -34,7 +34,7 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
   const statusRef = useRef<HTMLParagraphElement>(null);
   const linkStarted = useRef(false);
   // The agent reads anything inside a linked folder, so a project nested in one counts as linked.
-  const holder = projectPath ? findProjectForPath(projectPath, chat.extras) : null;
+  const holder = projectPath ? findProjectForPath(projectPath, chat.linked) : null;
   const isLinked = holder !== null;
   const through =
     holder && !isSameFolder(holder.path, projectPath) ? ` is inside ${holder.name}, which` : '';
@@ -49,7 +49,8 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
 
   // While the list or the chat loads, show nothing rather than a name or state that may change:
   // that includes what the chat can link, while a Link project button may join the notice.
-  const offerLoading = mayOffer && !isLinked && chat.canAdd && chat.projectsStatus === 'pending';
+  const offerLoading =
+    mayOffer && !isLinked && Boolean(chat.main) && chat.projectsStatus === 'pending';
   if (!projectPath || !chat.isLoaded || (!Array.isArray(data) && !isError) || offerLoading) {
     return null;
   }
@@ -88,7 +89,7 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
           loading={chat.isPending}
           onClick={() => {
             linkStarted.current = true;
-            chat.add(linkable.id);
+            chat.link(linkable.id);
           }}
         >
           Link project

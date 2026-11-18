@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentsFileMention, MENTION_LISTBOX_ID } from './agents-file-mention';
 
 const state = vi.hoisted(() => ({
-  tree: { main: null as { name: string } | null, extras: [] as unknown[] },
+  tree: { main: null as { name: string } | null, linked: [] as unknown[] },
   skills: [] as unknown[],
   mainFiles: [] as unknown[],
 }));
@@ -39,7 +39,7 @@ vi.mock('../../../lib/mock-api', () => ({
 vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
   useTreeProjects: () => ({
     ...state.tree,
-    readable: state.tree.extras.filter((project) => !(project as { missing?: boolean }).missing),
+    readable: state.tree.linked.filter((project) => !(project as { missing?: boolean }).missing),
   }),
 }));
 vi.mock('@/lib/workspace-context/use-root-searches', () => ({ useRootSearches }));
@@ -51,7 +51,7 @@ const linkedSearch = (
 
 beforeEach(() => {
   Object.assign(state, {
-    tree: { main: { name: 'owners-web' }, extras: [ROS] },
+    tree: { main: { name: 'owners-web' }, linked: [ROS] },
     skills: [],
     mainFiles: [file('app.ts')],
   });
@@ -89,7 +89,7 @@ const lastSearch = () => useRootSearches.mock.lastCall;
 
 describe('AgentsFileMention with linked projects', () => {
   it('lists each linked project under its name after the chat’s own and picks its full path', () => {
-    state.tree.extras = [ROS, { id: 'p3', name: 'gone', path: '/w/gone', missing: true }];
+    state.tree.linked = [ROS, { id: 'p3', name: 'gone', path: '/w/gone', missing: true }];
     const onSelect = vi.fn();
     renderPicker({ onSelect });
 
@@ -103,7 +103,7 @@ describe('AgentsFileMention with linked projects', () => {
   });
 
   it('keeps the usual header and searches nothing more when the chat links nothing', () => {
-    state.tree.extras = [];
+    state.tree.linked = [];
     linkedSearch([]);
     renderPicker();
 

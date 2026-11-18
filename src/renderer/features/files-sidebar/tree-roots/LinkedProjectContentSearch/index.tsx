@@ -17,7 +17,7 @@ import { RootHeading } from '../ProjectRootRow';
 
 type Props = {
   /** The linked project, searched in its registered folder; `missing` when that folder is gone */
-  project: { id: string; name: string; path: string; missing?: boolean };
+  project: { id: string; name: string; path: string; missing: boolean };
   /** The chat whose tree this is; a match opens as that chat's tab */
   chatId: string;
   /** The split-view pane the tree sits in */
@@ -30,12 +30,13 @@ type Props = {
 
 /**
  * A linked project's matches for the Search tab's query, under that project's name, with the same
- * search options as the chat's own results. A match opens the file at its line as a browsed tab.
+ * search options as the chat's own results. A match opens the file at its line as a preview tab of
+ * the chat.
  * A folder known to be missing says so, as the tree does, and is not searched.
  * No git watcher runs for the project, so the matches are read again after one of its files is
  * saved, and on window focus at most every 30 seconds.
  */
-export function ExtraProjectContentSearch({
+export function LinkedProjectContentSearch({
   project,
   chatId,
   paneIndex,

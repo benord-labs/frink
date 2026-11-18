@@ -45,7 +45,7 @@ const FITS = [
 /** A chip's name keeps at least this much, about six letters, or all of a shorter name. */
 const NAME_FLOOR_PX = 40;
 
-type LinkedProject = TreeProjects['extras'][number];
+type LinkedProject = TreeProjects['linked'][number];
 
 /** What a link's tooltip says, line by line, ending with its folder. */
 function statusLines({ name, path, missing }: LinkedProject, running: boolean): string[] {
@@ -274,30 +274,30 @@ type Props = {
   hiddenCount?: number;
 };
 
-type GroupProps = Required<Props> & Pick<TreeProjects, 'extras' | 'remove'>;
+type GroupProps = Required<Props> & Pick<TreeProjects, 'linked' | 'unlink'>;
 
 const NEVER_CROWDED = () => false;
 
 /** At most 40% of the row, and less while the git controls need its room. */
-function ChipsGroup({ chatId, running, crowded, crowdKey, extras, remove }: GroupProps) {
+function ChipsGroup({ chatId, running, crowded, crowdKey, linked, unlink }: GroupProps) {
   const groupRef = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLButtonElement>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   // An unlink from the open list leaves the chips as they are, so the list stays open for the next.
-  const fit = useFit(groupRef, `${JSON.stringify(extras)}|${crowdKey}`, crowded, moreOpen);
+  const fit = useFit(groupRef, `${JSON.stringify(linked)}|${crowdKey}`, crowded, moreOpen);
   // Opening and closing the list changes nothing else on show: the count stays under the pointer,
   // and closing hands focus back to it.
   const changeMoreOpen = (open: boolean) => {
     fit.settle();
     setMoreOpen(open);
   };
-  const hasMore = extras.length > fit.inline;
+  const hasMore = linked.length > fit.inline;
   // A list left with no rows, such as after its last unlink, closes, so it never reopens by itself.
   if (moreOpen && !hasMore) setMoreOpen(false);
   // Set by an x, so focus moves on once its chip has gone and taken focus with it: to Link project,
   // or to the count while Link project is hidden.
   const refocus = useRef(false);
-  const linkedIds = extras.map((project) => project.id).join('\n');
+  const linkedIds = linked.map((project) => project.id).join('\n');
   useEffect(() => {
     if (!refocus.current) return;
     refocus.current = false;
@@ -310,9 +310,9 @@ function ChipsGroup({ chatId, running, crowded, crowdKey, extras, remove }: Grou
     });
   }, [linkedIds]);
 
-  const unlink = (projectId: string, onError?: () => void) => {
+  const unlinkAndRefocus = (projectId: string, onError?: () => void) => {
     refocus.current = true;
-    remove(projectId, {
+    unlink(projectId, {
       onError: () => {
         refocus.current = false;
         onError?.();
@@ -327,22 +327,22 @@ function ChipsGroup({ chatId, running, crowded, crowdKey, extras, remove }: Grou
       aria-label="Linked projects"
       className="flex min-w-0 max-w-[40%] items-center gap-x-1.5"
     >
-      {extras.slice(0, fit.inline).map((project) => (
+      {linked.slice(0, fit.inline).map((project) => (
         <LinkedChip
           key={project.id}
           project={project}
           running={running}
-          onUnlink={() => unlink(project.id)}
+          onUnlink={() => unlinkAndRefocus(project.id)}
         />
       ))}
       {hasMore && (
         <MoreLinked
-          projects={extras.slice(fit.inline)}
+          projects={linked.slice(fit.inline)}
           running={running}
           labelClass={labelClass}
           open={moreOpen}
           onOpenChange={changeMoreOpen}
-          onUnlink={unlink}
+          onUnlink={unlinkAndRefocus}
         />
       )}
       <LinkProjectPicker
@@ -386,8 +386,8 @@ export function LinkedProjectChips({
   crowdKey = '',
   hiddenCount = 0,
 }: Props): ReactElement | null {
-  const { extras, canAdd, remove } = useTreeProjects(chatId);
-  if (!canAdd) return null;
+  const { main, linked, unlink } = useTreeProjects(chatId);
+  if (!main) return null;
   return (
     <ChipsGroup
       chatId={chatId}
@@ -395,8 +395,8 @@ export function LinkedProjectChips({
       crowded={crowded}
       crowdKey={crowdKey}
       hiddenCount={hiddenCount}
-      extras={extras}
-      remove={remove}
+      linked={linked}
+      unlink={unlink}
     />
   );
 }

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openFilesAtom } from '@/lib/code-editor/state';
 import { contentSearchOptionsAtom } from '../../atoms';
 import { triggerFileTreeRefresh } from '../../refresh-trigger';
-import { ExtraProjectContentSearch } from './index';
+import { LinkedProjectContentSearch } from './index';
 
 type Query = { data?: unknown; isSuccess?: boolean; isLoading?: boolean };
 
@@ -52,8 +52,8 @@ const MISSING_FOLDER = "Can't find api's folder.";
 
 function renderSections(
   query: string,
-  projects: ComponentProps<typeof ExtraProjectContentSearch>['project'][] = [
-    { id: 'api', name: 'api', path: '/w/api' },
+  projects: ComponentProps<typeof LinkedProjectContentSearch>['project'][] = [
+    { id: 'api', name: 'api', path: '/w/api', missing: false },
   ],
 ) {
   const store = createStore();
@@ -61,7 +61,7 @@ function renderSections(
   render(
     <Provider store={store}>
       {projects.map((project) => (
-        <ExtraProjectContentSearch
+        <LinkedProjectContentSearch
           key={project.id}
           project={project}
           chatId="chat-1"
@@ -88,11 +88,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('ExtraProjectContentSearch', () => {
+describe('LinkedProjectContentSearch', () => {
   it("searches each project's folder with the Search tab's trimmed query and options", () => {
     renderSections(' useOrders ', [
-      { id: 'api', name: 'api', path: '/w/api' },
-      { id: 'web', name: 'web', path: '/w/web' },
+      { id: 'api', name: 'api', path: '/w/api', missing: false },
+      { id: 'web', name: 'web', path: '/w/web', missing: false },
     ]);
 
     for (const projectPath of ['/w/api', '/w/web']) {
@@ -187,7 +187,7 @@ describe('ExtraProjectContentSearch', () => {
     expect(screen.queryByText(/No matches|Can't open/)).not.toBeInTheDocument();
   });
 
-  it("opens a match as the chat's browsed tab and shows its line", () => {
+  it("opens a match as the chat's preview tab and shows its line", () => {
     api.state.search = { data: { matches: [MATCH], invalidRegex: false }, isLoading: false };
     const reveals: unknown[] = [];
     const onReveal = (event: Event) => reveals.push((event as CustomEvent).detail);
@@ -216,8 +216,8 @@ describe('ExtraProjectContentSearch', () => {
 
   it('searches again after a file in its own folder is saved, and not after a save elsewhere', () => {
     renderSections('useOrders', [
-      { id: 'api', name: 'api', path: '/w/api' },
-      { id: 'web', name: 'web', path: '/w/web' },
+      { id: 'api', name: 'api', path: '/w/api', missing: false },
+      { id: 'web', name: 'web', path: '/w/web', missing: false },
     ]);
 
     act(() => triggerFileTreeRefresh('/tmp/proj'));

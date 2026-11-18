@@ -127,7 +127,7 @@ describe('SplitPaneFileTreeSidebar', () => {
     ]);
   });
 
-  it("gives PaneFileTree this pane's chat messages, for Add project", () => {
+  it("gives PaneFileTree this pane's chat messages, for Link project", () => {
     render(
       <SplitPaneFileTreeSidebar
         projectPath="/tmp/proj"

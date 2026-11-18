@@ -149,9 +149,9 @@ describe('useTreeProjects', () => {
     const { tree, asked } = renderTrees([chatId, 'worktree']);
     await waitFor(() => expect(tree('worktree').candidates).not.toHaveLength(0));
 
-    act(() => tree().add('web'));
+    act(() => tree().link('web'));
 
-    expect(tree()).toMatchObject({ main: null, canAdd: false, extras: [], candidates: [] });
+    expect(tree()).toMatchObject({ main: null, linked: [], candidates: [] });
     expect(tree().isLoaded).toBe(isLoaded);
     expect(asked('chats.linkProject')).toEqual([]);
   });
@@ -162,13 +162,17 @@ describe('useTreeProjects', () => {
     const { tree } = renderTrees(['worktree']);
 
     await waitFor(() => expect(idsOf(tree().candidates)).toEqual(['docs']));
-    expect(tree().extras).toEqual([
+    expect(tree().linked).toEqual([
       { id: 'web', name: 'web', path: '/w/web', missing: false },
       { id: 'api', name: 'api', path: '/w/api', missing: true },
     ]);
     // Every surface that reads or searches the links skips a missing folder alike.
     expect(idsOf(tree().readable)).toEqual(['web']);
-    expect(tree()).toMatchObject({ canAdd: true, projectsStatus: 'success', isLoaded: true });
+    expect(tree()).toMatchObject({
+      main: expect.anything(),
+      projectsStatus: 'success',
+      isLoaded: true,
+    });
   });
 
   // The server alone decides, by real path and what is on disk, so none it refuses is offered.
@@ -186,7 +190,7 @@ describe('useTreeProjects', () => {
     links = { plain: ['api'] };
     const { tree, asked } = renderTrees(['plain'], { withCandidates: false });
 
-    await waitFor(() => expect(idsOf(tree().extras)).toEqual(['api']));
+    await waitFor(() => expect(idsOf(tree().linked)).toEqual(['api']));
     // Read in the same render as what the chat can link would be.
     await waitFor(() => expect(asked('projects.list')).toHaveLength(1));
     expect(tree().candidates).toEqual([]);
@@ -243,9 +247,9 @@ describe('useTreeProjects', () => {
     await waitFor(() => expect(idsOf(tree().candidates)).toEqual(['api', 'docs']));
     holdChats = true;
 
-    act(() => tree().add('docs'));
+    act(() => tree().link('docs'));
 
-    await waitFor(() => expect(idsOf(tree().extras)).toEqual(['web', 'docs']));
+    await waitFor(() => expect(idsOf(tree().linked)).toEqual(['web', 'docs']));
     expect(asked('chats.linkProject')).toEqual([{ chatId: 'worktree', projectId: 'docs' }]);
     expect(idsOf(tree().candidates)).toEqual(['api']);
     // What it can link is read again too, whatever else its list was keyed by.
@@ -257,12 +261,12 @@ describe('useTreeProjects', () => {
   it('unlinks a project, dropping it before the chat is read again', async () => {
     links = { worktree: ['web', 'docs'] };
     const { tree, asked } = renderTrees(['worktree']);
-    await waitFor(() => expect(tree().extras).toHaveLength(2));
+    await waitFor(() => expect(tree().linked).toHaveLength(2));
     holdChats = true;
 
-    act(() => tree().remove('web'));
+    act(() => tree().unlink('web'));
 
-    await waitFor(() => expect(idsOf(tree().extras)).toEqual(['docs']));
+    await waitFor(() => expect(idsOf(tree().linked)).toEqual(['docs']));
     expect(asked('chats.unlinkProject')).toEqual([{ chatId: 'worktree', projectId: 'web' }]);
     // Still pending: it waits for the chat to be read again.
     expect(tree().isPending).toBe(true);
@@ -273,14 +277,14 @@ describe('useTreeProjects', () => {
     const toasts = toast.getHistory().length;
     const onError = vi.fn();
     const { tree } = renderTrees(['worktree']);
-    await waitFor(() => expect(tree().extras).toHaveLength(2));
+    await waitFor(() => expect(tree().linked).toHaveLength(2));
 
-    act(() => tree().remove('api', { onError }));
+    act(() => tree().unlink('api', { onError }));
 
     await waitFor(() => expect(onError).toHaveBeenCalledOnce());
     expect(toast.getHistory().at(-1)).toMatchObject({ type: 'error', title: 'database closed' });
     expect(toast.getHistory()).toHaveLength(toasts + 1);
-    expect(idsOf(tree().extras)).toEqual(['web', 'api']);
+    expect(idsOf(tree().linked)).toEqual(['web', 'api']);
   });
 
   it('says why a link was refused and leaves the links as they were', async () => {
@@ -289,14 +293,14 @@ describe('useTreeProjects', () => {
     const { tree } = renderTrees(['worktree']);
     await waitFor(() => expect(tree().candidates).toHaveLength(2));
 
-    act(() => tree().add('api'));
+    act(() => tree().link('api'));
 
     await waitFor(() => expect(toast.getHistory()).toHaveLength(toasts + 1));
     expect(toast.getHistory().at(-1)).toMatchObject({
       type: 'error',
       title: "api's folder can't be found.",
     });
-    expect(idsOf(tree().extras)).toEqual(['web']);
+    expect(idsOf(tree().linked)).toEqual(['web']);
   });
 
   it.each([
@@ -309,9 +313,9 @@ describe('useTreeProjects', () => {
       links = { plain: ['api'] };
       const { tree } = renderTrees(['plain']);
 
-      await waitFor(() => expect(idsOf(tree().extras)).toEqual(['api']));
+      await waitFor(() => expect(idsOf(tree().linked)).toEqual(['api']));
       await waitFor(() => expect(tree().projectsStatus).toBe(state));
-      expect(tree()).toMatchObject({ candidates: [], canAdd: true, isLoaded: true });
+      expect(tree()).toMatchObject({ candidates: [], main: expect.anything(), isLoaded: true });
     },
   );
 });

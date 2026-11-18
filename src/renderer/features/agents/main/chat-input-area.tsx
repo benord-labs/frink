@@ -285,7 +285,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [mentionPosition, setMentionPosition] = useState({ top: 0, left: 0 });
   const [mentionActiveDescendantId, setMentionActiveDescendantId] = useState<string | undefined>();
   // A chip drawn again from a draft, or a selection's chip, names the linked project its file is in
-  const { extras: linkedProjects } = useTreeProjects(parentChatId);
+  const { linked: linkedProjects } = useTreeProjects(parentChatId);
 
   // Mention dropdown subpage navigation state
   const [showingFilesList, setShowingFilesList] = useState(false);

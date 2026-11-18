@@ -8,7 +8,7 @@ import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
 import { contentSearchOptionsAtom } from '../../atoms';
 import { triggerFileTreeRefresh } from '../../refresh-trigger';
 import { DEFAULT_CONTENT_SEARCH_OPTIONS } from '../../types/content-search-options';
-import { ExtraProjectContentSearch } from './index';
+import { LinkedProjectContentSearch } from './index';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
 vi.hoisted(() => {
@@ -38,8 +38,8 @@ function answer(op: Operation) {
 
 const section = (query: string) => (
   <Provider store={store}>
-    <ExtraProjectContentSearch
-      project={{ id: 'api', name: 'api', path: '/w/api' }}
+    <LinkedProjectContentSearch
+      project={{ id: 'api', name: 'api', path: '/w/api', missing: false }}
       chatId="chat-1"
       query={query}
     />
@@ -61,7 +61,7 @@ afterEach(() => {
   store = createStore();
 });
 
-describe('ExtraProjectContentSearch while a search loads', () => {
+describe('LinkedProjectContentSearch while a search loads', () => {
   it("shows a busy spinner for a new query, not the earlier query's matches", async () => {
     const view = renderWithTrpc(section('alpha'), answer);
     await answerSearch('alpha');
@@ -98,7 +98,7 @@ describe('ExtraProjectContentSearch while a search loads', () => {
   });
 });
 
-describe('ExtraProjectContentSearch with a pattern that is not a valid regular expression', () => {
+describe('LinkedProjectContentSearch with a pattern that is not a valid regular expression', () => {
   it.each([
     ['foo(', false],
     ['foo(', true],

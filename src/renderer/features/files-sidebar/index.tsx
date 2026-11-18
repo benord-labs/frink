@@ -40,7 +40,7 @@ import {
   triggerFileTreeReveal,
   useFileTreeRefreshListeners,
 } from './refresh-trigger';
-import { AddProjectButton } from './tree-roots/AddProjectButton';
+import { LinkProjectButton } from './tree-roots/LinkProjectButton';
 import { SearchRootsLayout } from './tree-roots/SearchRootsLayout';
 import { focusChatTree, TreeRootsLayout } from './tree-roots/TreeRootsLayout';
 import { useChatContextFile } from './use-chat-context-file';
@@ -110,8 +110,8 @@ export function FilesSidebar({
   // Single derived gate for all queries, effects, and rendering that need a local project path.
   const canAccessFiles = isOpen && !!effectiveProjectPath;
   const treeProjects = useTreeProjects(chatId);
-  const hasExtraRoots = treeProjects.extras.length > 0;
-  const mainRoot = useMainRootOpen(chatId, hasExtraRoots);
+  const hasLinkedRoots = treeProjects.linked.length > 0;
+  const mainRoot = useMainRootOpen(chatId, hasLinkedRoots);
 
   // Files tree name search
   const {
@@ -694,8 +694,8 @@ export function FilesSidebar({
             closeShortcutId="toggle-files"
             showClearInInput
             searchAccessory={
-              treeProjects.canAdd ? (
-                <AddProjectButton chatId={chatId} getMentionTexts={getMentionTexts} />
+              treeProjects.main ? (
+                <LinkProjectButton chatId={chatId} getMentionTexts={getMentionTexts} />
               ) : undefined
             }
             searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
@@ -744,8 +744,8 @@ export function FilesSidebar({
                   tabIndex={0}
                   data-drop-target="root"
                   className={cn(
-                    // With other projects in the tree, the layout around it scrolls them all together.
-                    hasExtraRoots
+                    // With linked projects in the tree, the layout around it scrolls them all together.
+                    hasLinkedRoots
                       ? 'px-2 py-1.5 outline-hidden transition-colors'
                       : 'flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5 scrollbar-thin outline-hidden transition-colors',
                     'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40',
@@ -832,7 +832,7 @@ export function FilesSidebar({
             projectPath={effectiveProjectPath}
             worktreePath={activeWorktreePath}
             selectedCount={multiSelect.count}
-            projectCount={treeProjects.extras.length + 1}
+            projectCount={treeProjects.linked.length + 1}
           />
         </div>
       </div>

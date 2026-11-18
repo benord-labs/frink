@@ -79,7 +79,7 @@ type Props = {
   onExpandedChange: (expanded: boolean) => void;
   /** The id of the element the row shows and hides */
   controlsId: string;
-  /** Adds an x beside the row that takes the project out of the tree, e.g. by unlinking it */
+  /** Adds an x beside the row that unlinks the project from the chat */
   remove?: { label: string; onRemove: () => void };
 };
 

@@ -19,9 +19,9 @@ type Project = { id: string; path: string };
 
 /** The candidates the texts name. The projects already linked are matched too, so a path in
  *  one nested inside a candidate marks only that deeper project, not the candidate around it. */
-function mentionedCandidateIds(texts: string[], extras: Project[], candidates: Project[]) {
+function mentionedCandidateIds(texts: string[], linked: Project[], candidates: Project[]) {
   const candidateIds = new Set(candidates.map((project) => project.id));
-  return findMentionedProjectIds(texts, [...extras, ...candidates]).filter((id) =>
+  return findMentionedProjectIds(texts, [...linked, ...candidates]).filter((id) =>
     candidateIds.has(id),
   );
 }
@@ -39,7 +39,7 @@ export function LinkProjectPicker({
   // What the chat can link is read only while the picker is open: the server checks each
   // project's folder on disk to answer.
   const [open, setOpen] = useState(false);
-  const { main, extras, candidates, projectsStatus, canAdd, add } = useTreeProjects(chatId, {
+  const { main, linked, candidates, projectsStatus, link } = useTreeProjects(chatId, {
     withCandidates: open,
   });
   const utils = trpc.useUtils();
@@ -49,17 +49,17 @@ export function LinkProjectPicker({
   const [mention, setMention] = useState<{ chatId: string | undefined; texts: string[] } | null>(
     null,
   );
-  if (!canAdd || !main) return null;
+  if (!main) return null;
 
   return (
     <ProjectPicker
       trigger={trigger}
       tooltip={tooltip}
       candidates={candidates}
-      takenNames={[main.name, ...extras.map((project) => project.name)]}
+      takenNames={[main.name, ...linked.map((project) => project.name)]}
       mentionedIds={
         mention && mention.chatId === chatId
-          ? mentionedCandidateIds(mention.texts, extras, candidates)
+          ? mentionedCandidateIds(mention.texts, linked, candidates)
           : []
       }
       onOpenChange={(next) => {
@@ -70,7 +70,7 @@ export function LinkProjectPicker({
       }}
       status={projectsStatus}
       footer={`Linked projects are saved on this chat. The agent can read most files in them without asking, except on Codex; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on ${main.name}.`}
-      onPick={add}
+      onPick={link}
     />
   );
 }

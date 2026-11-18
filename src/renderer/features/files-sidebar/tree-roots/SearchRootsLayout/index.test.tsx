@@ -53,7 +53,7 @@ function SearchTab() {
         onChange={(event) => tab.setContentSearchQuery(event.target.value)}
       />
       <SearchRootsLayout
-        projects={{ main, extras: [linked] }}
+        projects={{ main, linked: [linked] }}
         chatId="chat-1"
         mainPath={main.path}
         isLoading={tab.isLoadingContentSearch}

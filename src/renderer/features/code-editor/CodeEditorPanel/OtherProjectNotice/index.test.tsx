@@ -18,7 +18,7 @@ vi.hoisted(() => {
 const frink = { id: 'p1', name: 'frink', path: '/Users/me/code/frink' };
 const ros = { id: 'p2', name: 'ROS service', path: '/Users/me/code/ros-service' };
 const ui = { id: 'p3', name: 'ui', path: '/Users/me/code/ros-service/packages/ui' };
-const browsedTab = { projectPath: '/Users/me/code/ros-service/', isOtherProject: true };
+const otherProjectTab = { projectPath: '/Users/me/code/ros-service/', isOtherProject: true };
 const linkedRos = { ...ros, missing: false };
 /** What each chat links. frink-chat and pane-b work in frink; a general chat links nothing. */
 let linked: Record<string, object[]> = {};
@@ -90,7 +90,7 @@ describe('OtherProjectNotice', () => {
     async (_, sourceChatId, chatId, links, text) => {
       linked = links;
       const { linkCalls } = renderNotice(
-        <OtherProjectNotice file={{ ...browsedTab, sourceChatId }} chatId={chatId} />,
+        <OtherProjectNotice file={{ ...otherProjectTab, sourceChatId }} chatId={chatId} />,
         answerProjects([frink, ros]),
       );
 
@@ -121,7 +121,7 @@ describe('OtherProjectNotice', () => {
   it("links the project to the tab's chat from its Link project button, then focuses the notice", async () => {
     const { linkCalls } = renderNotice(
       <OtherProjectNotice
-        file={{ ...browsedTab, sourceChatId: 'frink-chat' }}
+        file={{ ...otherProjectTab, sourceChatId: 'frink-chat' }}
         chatId="frink-chat"
       />,
       answerProjects([frink, ros]),
@@ -143,7 +143,7 @@ describe('OtherProjectNotice', () => {
       <>
         <ListProbe />
         <OtherProjectNotice
-          file={{ ...browsedTab, sourceChatId: 'frink-chat' }}
+          file={{ ...otherProjectTab, sourceChatId: 'frink-chat' }}
           chatId="frink-chat"
         />
       </>,
@@ -164,7 +164,7 @@ describe('OtherProjectNotice', () => {
       <>
         <ListProbe />
         <OtherProjectNotice
-          file={{ ...browsedTab, sourceChatId: 'frink-chat' }}
+          file={{ ...otherProjectTab, sourceChatId: 'frink-chat' }}
           chatId="frink-chat"
         />
       </>,
@@ -180,7 +180,7 @@ describe('OtherProjectNotice', () => {
   });
 
   it('falls back to the folder name for a folder no project is registered at', async () => {
-    renderNotice(<OtherProjectNotice file={browsedTab} chatId={null} />, answerProjects([]));
+    renderNotice(<OtherProjectNotice file={otherProjectTab} chatId={null} />, answerProjects([]));
 
     expect(await screen.findByRole('status')).toHaveTextContent(
       /^ros-service isn't linked to this chat\.$/,
@@ -200,7 +200,7 @@ describe('OtherProjectNotice', () => {
   });
 
   it('falls back to the folder name when the project list fails', async () => {
-    renderNotice(<OtherProjectNotice file={browsedTab} chatId={null} />, async () => {
+    renderNotice(<OtherProjectNotice file={otherProjectTab} chatId={null} />, async () => {
       throw new Error('database closed');
     });
 
@@ -209,7 +209,7 @@ describe('OtherProjectNotice', () => {
 
   it('shows nothing while the project list loads', async () => {
     const answer = vi.fn(() => new Promise<never>(() => undefined));
-    renderNotice(<OtherProjectNotice file={browsedTab} chatId={null} />, answer);
+    renderNotice(<OtherProjectNotice file={otherProjectTab} chatId={null} />, answer);
 
     await vi.waitFor(() => expect(answer).toHaveBeenCalled());
     expect(screen.queryByRole('status')).toBeNull();

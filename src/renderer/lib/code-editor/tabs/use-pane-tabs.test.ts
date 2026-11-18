@@ -16,7 +16,7 @@ import {
 import { usePaneTabs } from './use-pane-tabs';
 
 const keyOf = (file: OpenFile) => fileKey(file.path, file.projectPath);
-/** Pane 1's tabs: its own app.ts, then ros-service's settings.ts browsed from its chat */
+/** Pane 1's tabs: its own app.ts, then ros-service's settings.ts opened from its chat */
 const own: OpenFile = {
   path: 'src/app.ts',
   name: 'app.ts',
@@ -57,7 +57,7 @@ describe('usePaneTabs with "Show active pane tabs only" on', () => {
     expect(view.result.current).toEqual([paneTwo]);
   });
 
-  it('shows no tab for a pane with none, and the browsed tab the pane was on once it is back', () => {
+  it("shows no tab for a pane with none, and the other project's tab the pane was on once it is back", () => {
     const { focusPane, active } = renderPaneTabs([own, browsed], browsed);
 
     focusPane(1);

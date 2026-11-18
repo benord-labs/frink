@@ -10,7 +10,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { chatContextFileAtomFamily, openFilesAtom } from '@/lib/code-editor/state';
 import { FileTree } from '../../FileTree';
 import type { FileTreeNode } from '../../types';
-import { ExtraProjectRoot } from './index';
+import { LinkedProjectRoot } from './index';
 
 type Query = { data?: unknown; isError?: boolean; isSuccess?: boolean; isLoading?: boolean };
 
@@ -74,19 +74,19 @@ const CANT_OPEN = "Can't open api's folder. It may have moved or been deleted.";
 const MISSING_FOLDER = "Can't find api's folder.";
 
 function renderRoot(
-  props: Partial<ComponentProps<typeof ExtraProjectRoot>> = {},
+  props: Partial<ComponentProps<typeof LinkedProjectRoot>> = {},
   after?: ReactNode,
 ) {
   const store = createStore();
-  const onRemove = vi.fn();
+  const onUnlink = vi.fn();
   render(
     <Provider store={store}>
       <TooltipProvider>
-        <ExtraProjectRoot
-          project={{ id: 'api', name: 'api', path: '/w/api' }}
+        <LinkedProjectRoot
+          project={{ id: 'api', name: 'api', path: '/w/api', missing: false }}
           chatId="chat-1"
           paneIndex={1}
-          onRemove={onRemove}
+          onUnlink={onUnlink}
           {...props}
         />
         {after}
@@ -94,7 +94,7 @@ function renderRoot(
     </Provider>,
   );
   const tree = screen.getByRole('tree', { name: 'api file tree, linked', hidden: true });
-  return { store, onRemove, tree, row: screen.getByRole('button', { name: /^api/ }) };
+  return { store, onUnlink, tree, row: screen.getByRole('button', { name: /^api/ }) };
 }
 
 beforeEach(() => {
@@ -114,7 +114,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('ExtraProjectRoot', () => {
+describe('LinkedProjectRoot', () => {
   it('lists the project folder while open, without starting a git watcher', () => {
     const { tree, row } = renderRoot();
 
@@ -151,9 +151,9 @@ describe('ExtraProjectRoot', () => {
   });
 
   it('unlinks the project from its x', async () => {
-    const { onRemove } = renderRoot();
+    const { onUnlink } = renderRoot();
     await userEvent.click(screen.getByRole('button', { name: 'Unlink api' }));
-    expect(onRemove).toHaveBeenCalledOnce();
+    expect(onUnlink).toHaveBeenCalledOnce();
   });
 
   it('says a linked folder that is gone is missing, and reads neither it nor its branch', () => {
@@ -183,7 +183,7 @@ describe('ExtraProjectRoot', () => {
     expect(api.invalidateChat).toHaveBeenCalledExactlyOnceWith({ id: 'chat-1' });
   });
 
-  it("opens a file as the chat's browsed tab and never as its context file", async () => {
+  it("opens a file as the chat's preview tab and never as its context file", async () => {
     const { store, tree } = renderRoot();
     await userEvent.click(within(tree).getByRole('treeitem', { name: 'README.md' }));
 
@@ -348,8 +348,8 @@ describe('ExtraProjectRoot', () => {
       { id: 'src', name: 'src', path: 'src', type: 'folder' },
       { id: 'README.md', name: 'README.md', path: 'README.md', type: 'file' },
     ];
-    // Split view: pane 0 works in api, and pane 1 browses api after it, under one DndContext.
-    const panes = (browsing: boolean) => (
+    // Split view: pane 0 works in api, and pane 1's chat links api after it, under one DndContext.
+    const panes = (linked: boolean) => (
       <Provider store={store}>
         <TooltipProvider>
           <DndContext>
@@ -362,12 +362,12 @@ describe('ExtraProjectRoot', () => {
                 onFileClick={() => {}}
               />
             </div>
-            {browsing && (
-              <ExtraProjectRoot
-                project={{ id: 'api', name: 'api', path: '/w/api' }}
+            {linked && (
+              <LinkedProjectRoot
+                project={{ id: 'api', name: 'api', path: '/w/api', missing: false }}
                 chatId="chat-2"
                 paneIndex={1}
-                onRemove={() => {}}
+                onUnlink={() => {}}
               />
             )}
             <DndRegistry />

@@ -21,7 +21,7 @@ type UseQuickOpenRootsInput = {
 /**
  * The chat's own folder first, then each project linked to it, in link order; a linked folder
  * known to be gone is left out. A file from the chat's folder opens as its own tab; one from a
- * linked project opens as the chat's browsed tab.
+ * linked project opens as a preview tab of the chat.
  */
 export function useQuickOpenRoots({ pane, single }: UseQuickOpenRootsInput) {
   const chatId = pane ? pane.chatId : single.chatId;

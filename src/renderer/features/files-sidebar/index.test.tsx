@@ -47,11 +47,11 @@ const fileTreePropsState = vi.hoisted(() => ({
   nodes: [] as Array<{ path: string; gitStatus?: string }>,
   onMoveFile: undefined as unknown,
 }));
-// The other projects in the chat's tree (none unless a test adds some), and what the host hands on.
+// The projects linked to the chat (none unless a test adds some), and what the host hands on.
 const treeState = vi.hoisted(() => ({
-  extras: [] as Array<{ id: string; name: string; path: string }>,
+  linked: [] as Array<{ id: string; name: string; path: string }>,
   candidates: [] as Array<{ id: string; name: string; path: string }>,
-  add: vi.fn(),
+  link: vi.fn(),
   projectCount: undefined as number | undefined,
   isMainRootHidden: undefined as undefined | (() => boolean),
   searchAccessory: undefined as unknown,
@@ -153,18 +153,19 @@ vi.mock('./FilesSidebarFooter', () => ({
 
 vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
   useTreeProjects: (chatId?: string) => ({
-    main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: null },
-    extras: treeState.extras,
+    main: chatId
+      ? { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: null }
+      : null,
+    linked: treeState.linked,
     candidates: treeState.candidates,
     projectsStatus: 'success',
-    canAdd: Boolean(chatId),
-    add: treeState.add,
-    remove: vi.fn(),
+    link: treeState.link,
+    unlink: vi.fn(),
   }),
 }));
 
-vi.mock('./tree-roots/ExtraProjectRoot', () => ({
-  ExtraProjectRoot: (props: { project: { name: string }; manageDnd?: boolean }) => (
+vi.mock('./tree-roots/LinkedProjectRoot', () => ({
+  LinkedProjectRoot: (props: { project: { name: string }; manageDnd?: boolean }) => (
     <section data-read-only-root aria-label={props.project.name} data-dnd={props.manageDnd} />
   ),
 }));
@@ -279,9 +280,9 @@ afterEach(() => {
   fileTreePropsState.onPasteIntoFolder = null;
   fileTreePropsState.nodes = [];
   fileTreePropsState.onMoveFile = undefined;
-  treeState.extras = [];
+  treeState.linked = [];
   treeState.candidates = [];
-  treeState.add.mockReset();
+  treeState.link.mockReset();
   treeState.searchAccessory = undefined;
   cleanup();
 });
@@ -531,7 +532,7 @@ describe('FilesSidebar with another project in the tree', () => {
   const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
 
   it("mounts it below the chat's tree with its own drag and drop, and counts both projects", () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     render(<FilesSidebar chatId="chat-1" />);
     const section = screen.getByRole('region', { name: 'api' });
 
@@ -547,7 +548,7 @@ describe('FilesSidebar with another project in the tree', () => {
     expect(treeState.isMainRootHidden?.()).toBe(true);
   });
 
-  it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
+  it("links a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
     const user = userEvent.setup();
     treeState.candidates = [api];
     const { rerender } = render(
@@ -556,10 +557,10 @@ describe('FilesSidebar with another project in the tree', () => {
 
     await user.click(screen.getByRole('button', { name: 'Link project' }));
     await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
-    expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
+    expect(treeState.link).toHaveBeenCalledExactlyOnceWith('api');
 
     // What the real hook does once the project is in the chat's list.
-    treeState.extras = [api];
+    treeState.linked = [api];
     chatTree().focus();
     rerender(<FilesSidebar chatId="chat-1" />);
     expect(screen.getByRole('region', { name: 'api' })).toBeInTheDocument();
@@ -567,14 +568,14 @@ describe('FilesSidebar with another project in the tree', () => {
     expect(chatTree()).toHaveFocus();
   });
 
-  it('leaves the header without a slot for Add project when the chat has no project folder', () => {
+  it('leaves the header without a slot for Link project when the chat has no project folder', () => {
     render(<FilesSidebar />);
 
     expect(treeState.searchAccessory).toBeUndefined();
   });
 
   it('opens Main again on a switch to another chat', () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     const { rerender } = render(<FilesSidebar chatId="chat-1" />);
     fireEvent.click(mainRow());
 
@@ -586,7 +587,7 @@ describe('FilesSidebar with another project in the tree', () => {
   });
 
   it("focuses Main, not the hidden tree, when the files shortcut asks while it's closed", () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     render(<FilesSidebar chatId="chat-1" />);
     const askForFocus = () => act(() => void window.dispatchEvent(new Event('file-tree:focus')));
 
@@ -598,7 +599,7 @@ describe('FilesSidebar with another project in the tree', () => {
     expect(mainRow()).toHaveFocus();
   });
 
-  it("groups the Search tab's matches by project and opens a browsed match as a browsed tab", () => {
+  it("groups the Search tab's matches by project and opens a linked match as the chat's tab", () => {
     const match = (id: string) => ({
       id,
       filePath: 'src/a.ts',
@@ -607,17 +608,17 @@ describe('FilesSidebar with another project in the tree', () => {
       endColumn: 10,
       lineText: 'useOrders()',
     });
-    treeState.extras = [api];
+    treeState.linked = [api];
     contentState.query = 'useOrders';
-    contentState.matchesByPath = { '/tmp/proj': [match('own')], '/w/api': [match('browsed')] };
+    contentState.matchesByPath = { '/tmp/proj': [match('own')], '/w/api': [match('linked')] };
     render(<FilesSidebar chatId="chat-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
     const headings = screen.getAllByRole('heading');
     expect(headings.map((heading) => heading.textContent)).toEqual(['projMain', 'apiLinked']);
     expect(headings[0]).toHaveAttribute('title', '/tmp/proj');
-    const [, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
-    fireEvent.click(browsed);
+    const [, linked] = screen.getAllByRole('button', { name: /useOrders/ });
+    fireEvent.click(linked);
     expect(
       getDefaultStore()
         .get(openFilesAtom)
@@ -640,12 +641,12 @@ describe('FilesSidebar with another project in the tree', () => {
   });
 
   it("hides the chat's earlier matches behind a busy spinner while its own search loads", () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     contentState.loading = true;
     contentState.query = 'useOrders';
     contentState.matchesByPath = {
       '/tmp/proj': [{ id: 'own', filePath: 'src/a.ts', lineNumber: 4, lineText: 'useOrders()' }],
-      '/w/api': [{ id: 'browsed', filePath: 'src/a.ts', lineNumber: 4, lineText: 'useOrders()' }],
+      '/w/api': [{ id: 'linked', filePath: 'src/a.ts', lineNumber: 4, lineText: 'useOrders()' }],
     };
     render(<FilesSidebar chatId="chat-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));

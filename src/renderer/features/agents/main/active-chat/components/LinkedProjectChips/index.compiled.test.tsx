@@ -10,9 +10,9 @@ import { LinkedProjectChips } from '.';
 
 // One object for every render, as the tree's query gives a chat whose links have not changed.
 const tree = vi.hoisted(() => ({
-  extras: ['api', 'web'].map((id) => ({ id, name: id, path: `/w/${id}`, missing: false })),
-  canAdd: true,
-  remove: () => undefined,
+  main: { id: 'owners', name: 'owners', path: '/w/owners' },
+  linked: ['api', 'web'].map((id) => ({ id, name: id, path: `/w/${id}`, missing: false })),
+  unlink: () => undefined,
 }));
 vi.mock('@/lib/workspace-context/use-tree-projects', () => ({ useTreeProjects: () => tree }));
 vi.mock('@/components/ProjectPicker/LinkProjectPicker', () => ({

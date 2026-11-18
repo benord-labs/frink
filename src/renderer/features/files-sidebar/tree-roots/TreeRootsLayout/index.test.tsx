@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { focusChatTree, TreeRootsLayout } from './index';
 
-// Each added project is an empty folder, so its section shows no rows of its own.
+// Each linked project is an empty folder, so its section shows no rows of its own.
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     useUtils: () => ({}),
@@ -51,7 +51,7 @@ function Harness({
   const [expanded, setExpanded] = useState(true);
   const [, setUnlinking] = useState(false);
   // As the real hook does: it renders again as the unlink starts, before the row goes.
-  const remove = (id: string, options?: { onError?: () => void }) => {
+  const unlinkProject = (id: string, options?: { onError?: () => void }) => {
     setUnlinking(true);
     if (unlink === 'succeeds') {
       setTimeout(() => setNames((current) => current.filter((name) => name !== id)));
@@ -61,7 +61,7 @@ function Harness({
   return (
     <TooltipProvider>
       <TreeRootsLayout
-        projects={{ main, extras: names.map(project), remove }}
+        projects={{ main, linked: names.map(project), unlink: unlinkProject }}
         chatId={chatId}
         mainPath="/w/app"
         searchQuery=""
@@ -74,7 +74,7 @@ function Harness({
         </div>
       </TreeRootsLayout>
       <button type="button" onClick={() => setNames((current) => [...current, 'api'])}>
-        Add api
+        Link api
       </button>
       {/* Another window unlinks every project, or the chat's links change */}
       <button type="button" onClick={() => setNames([])}>
@@ -95,14 +95,14 @@ afterEach(() => {
 });
 
 describe('TreeRootsLayout', () => {
-  it("shows the chat's tree alone with no other project, and keeps its state once one is added", () => {
+  it("shows the chat's tree alone with no linked project, and keeps its state once one is linked", () => {
     render(<Harness initial={[]} />);
     fireEvent.change(screen.getByLabelText('open folder'), { target: { value: 'src' } });
 
     expect(screen.queryByRole('button', { name: /Main/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Linked/)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add api' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Link api' }));
 
     expect(screen.getByLabelText('open folder')).toHaveValue('src');
   });

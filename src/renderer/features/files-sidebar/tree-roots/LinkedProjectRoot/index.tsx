@@ -24,7 +24,7 @@ const doNothing = () => {};
 
 type Props = {
   /** The linked project, shown from its registered folder; `missing` when that folder is gone */
-  project: { id: string; name: string; path: string; missing?: boolean };
+  project: { id: string; name: string; path: string; missing: boolean };
   /** The chat whose tree this is; its files open as that chat's tabs */
   chatId: string;
   /** The split-view pane the tree sits in */
@@ -33,7 +33,7 @@ type Props = {
   searchQuery?: string;
   /** Gives the tree its own drag and drop context, for a host that has no shared one */
   manageDnd?: boolean;
-  onRemove: () => void;
+  onUnlink: () => void;
 };
 
 /**
@@ -41,13 +41,13 @@ type Props = {
  * created, renamed, moved, pasted or deleted, and no git watcher runs: the files are re-read when
  * the root opens, and on window focus at most every 30 seconds.
  */
-export function ExtraProjectRoot({
+export function LinkedProjectRoot({
   project,
   chatId,
   paneIndex,
   searchQuery = '',
   manageDnd = false,
-  onRemove,
+  onUnlink,
 }: Props): ReactElement {
   const [expanded, setExpanded] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -156,7 +156,7 @@ export function ExtraProjectRoot({
         expanded={expanded}
         onExpandedChange={handleExpandedChange}
         controlsId={treeId}
-        remove={{ label: `Unlink ${project.name}`, onRemove }}
+        remove={{ label: `Unlink ${project.name}`, onRemove: onUnlink }}
       />
       <div
         ref={containerRef}
