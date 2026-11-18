@@ -52,11 +52,12 @@ describe('diffText', () => {
   });
 
   it('clips a long preview without splitting an emoji', () => {
-    const after = `${'a'.repeat(158)}🚀 and more words after the cut`;
+    const family = '👨‍👩‍👧';
+    const after = `${'a'.repeat(158)}${family} and more words after the cut`;
 
     const [opening] = diffText('Completely different text here', after).preview;
 
-    expect(opening?.text).toBe(`${'a'.repeat(158)}🚀…`);
+    expect(opening?.text).toBe(`${'a'.repeat(158)}${family}…`);
   });
 
   it('reports a whitespace-only edit as formatting with no word counts or preview', () => {

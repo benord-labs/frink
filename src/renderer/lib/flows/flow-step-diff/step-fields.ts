@@ -51,9 +51,9 @@ const VALUE_KEYS = new Set([
 const KIND_ORDER: Record<StepFieldChange['kind'], number> = { text: 0, value: 1, label: 2 };
 const NOT_SET = 'Not set';
 
-/** A missing text field reads as empty, so adding instructions diffs against nothing. */
 /** An empty string and a missing key read the same, so switching between them is not a change. */
 const EMPTY_VALUE = z.union([z.literal(''), z.null(), z.undefined()]);
+/** A missing text field reads as empty, so adding instructions diffs against nothing. */
 const TEXT_VALUE = z
   .string()
   .nullish()

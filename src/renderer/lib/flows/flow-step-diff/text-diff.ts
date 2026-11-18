@@ -25,6 +25,7 @@ const EDITED_KEPT = 0.4;
 const PREVIEW_CHARS = 160;
 const PARAGRAPH_BREAK = /\n[ \t]*\n\s*/;
 const WORD = /\S+/g;
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 function countWords(text: string): number {
   return text.match(WORD)?.length ?? 0;
@@ -44,8 +45,9 @@ function classify(addedWords: number, removedWords: number, keptWords: number): 
 }
 
 function clip(text: string): string {
-  // Code points, not UTF-16 units, so the cut never splits an emoji.
-  const characters = Array.from(text.trim().replace(/\s+/g, ' '));
+  // Graphemes, not code units, so the cut never splits an emoji, a flag or a joined sequence.
+  const flat = text.trim().replace(/\s+/g, ' ');
+  const characters = Array.from(GRAPHEMES.segment(flat), (part) => part.segment);
   return characters.length > PREVIEW_CHARS
     ? `${characters.slice(0, PREVIEW_CHARS - 1).join('')}…`
     : characters.join('');
