@@ -131,9 +131,9 @@ export function ProjectRootRow({
               </span>
             ) : (
               branch && (
-                // Shrinks a thousand times faster than the name, down to its icon, so a long branch
-                // gives way first. The tooltip shows it whole.
-                <span className="flex min-w-3 shrink-1000 items-center gap-1 font-normal text-muted-foreground">
+                // No width of its own: it fills only the room the name leaves, down to its icon, so
+                // the name truncates only past that. The tooltip shows it whole.
+                <span className="flex min-w-3 grow basis-0 items-center gap-1 font-normal text-muted-foreground">
                   <GitBranch className="size-3 shrink-0" aria-hidden />
                   <span className="sr-only">on branch</span>
                   <span className="truncate">{branch}</span>

@@ -249,6 +249,10 @@ type Props = {
   crowded?: () => boolean;
   /** Changes with those controls, so the group starts again from the most */
   crowdKey?: string;
+  /** How many of those controls are hidden now. Read nowhere: a change only renders the group
+   *  again, so it asks `crowded` again without starting over. The controls measure only after the
+   *  group first lays out, and a memoized row re-renders nothing else here then. */
+  hiddenCount?: number;
 };
 
 type GroupProps = Required<Props> & Pick<TreeProjects, 'extras' | 'remove'>;
@@ -341,6 +345,7 @@ export function LinkedProjectChips({
   running = false,
   crowded = NEVER_CROWDED,
   crowdKey = '',
+  hiddenCount = 0,
 }: Props): ReactElement | null {
   const { extras, canAdd, remove } = useTreeProjects(chatId);
   if (!canAdd) return null;
@@ -350,6 +355,7 @@ export function LinkedProjectChips({
       running={running}
       crowded={crowded}
       crowdKey={crowdKey}
+      hiddenCount={hiddenCount}
       extras={extras}
       remove={remove}
     />

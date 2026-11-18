@@ -9,7 +9,12 @@ import type { LinkedRoot, PermissionRequest, PermissionsDoc } from '../types';
 import { applyLinkedRead } from './index';
 
 const none: PermissionsDoc = { allow: [], deny: [], ask: [] };
+const doc = (kind: keyof PermissionsDoc, rule: string) => ({ ...none, [kind]: [rule] });
+const SECRETS = 'Read(secrets/**)';
 const NO_RULE = { decision: 'ask', prompt: { reason: 'no-matching-rule' } };
+/** Asks because of the linked project, offering only "Allow once": a lasting rule saved from the
+ * card would be the chat's own, and the linked checks still run after it. */
+const ONCE = { decision: 'ask', prompt: { reason: 'no-matching-rule', suggestedRules: [] } };
 const OUTSIDE = {
   decision: 'ask',
   prompt: { reason: 'no-matching-rule', pathLocation: 'outside' },
@@ -51,6 +56,7 @@ beforeAll(() => {
   nodeFs.symlinkSync(nodePath.join(tmp, 'outside'), at('out'));
   nodeFs.symlinkSync(at('secrets'), at('docs/s'));
   nodeFs.symlinkSync(nodePath.join(tmp, 'home'), nodePath.join(tmp, 'homelink'));
+  nodeFs.symlinkSync(linked, nodePath.join(tmp, 'alias'));
 });
 afterAll(() => nodeFs.rmSync(tmp, { recursive: true, force: true }));
 afterEach(() => {
@@ -229,7 +235,7 @@ describe('applyLinkedRead — asks', () => {
   });
 
   it('when the linked project rules could not be loaded', async () => {
-    expect(await read('src/a.ts', [link(linked, null)])).toMatchObject(NO_RULE);
+    expect(await read('src/a.ts', [link(linked, null)])).toMatchObject(ONCE);
   });
 
   it.each([
@@ -237,7 +243,7 @@ describe('applyLinkedRead — asks', () => {
     ['Grep', { pattern: 'x' }],
   ])('for a %s when the linked project rules could not be loaded', async (tool, input) => {
     const req = request(tool, { ...input, path: linked }, [link(linked, null)]);
-    expect(await checkPermission(req)).toMatchObject(NO_RULE);
+    expect(await checkPermission(req)).toMatchObject(ONCE);
   });
 
   it('for a link whose folder is not an absolute path (never the app folder)', async () => {
@@ -323,11 +329,93 @@ describe("applyLinkedRead — the linked project's own rules", () => {
     const input = tool === 'Read' ? { file_path: at(rel) } : { pattern: 'x', path: at(rel) };
     const req = request(tool, input, [link(linked, { ...none, ...rules })]);
     const r = await checkPermission(req);
-    expect(r).toMatchObject(expected === 'none' ? NO_RULE : LINKED_RULE[expected]);
+    expect(r).toMatchObject(expected === 'none' ? ONCE : LINKED_RULE[expected]);
   });
 
   it('keeps an outer linked project deny rule for a folder linked inside it', async () => {
     const roots = [link(linked, { ...none, deny: ['Read(src/**)'] }), link(at('src'))];
     expect(await read('src/a.ts', roots)).toMatchObject(LINKED_RULE.deny);
+  });
+
+  // The linked project's own rules are checked after every rule of the chat's, whatever those
+  // decided, so none of the chat's own allows steps around them, including one saved from a card.
+  const userAllows = (tool: string) => ({ user: doc('allow', tool) });
+  const ask = (tool: string, rel: string, rules: PermissionsDoc | null) => {
+    const input = tool === 'Read' ? { file_path: at(rel) } : { pattern: 'x', path: at(rel) };
+    return checkPermission(request(tool, input, [link(linked, rules)]));
+  };
+  // docs/s links to secrets/; Grep is allowed at project scope, the others at user scope.
+  it.each<[string, string, Partial<ScopedDocs>, PermissionsDoc | null, object]>([
+    ['Read', 'secrets/x', userAllows('Read'), doc('deny', SECRETS), LINKED_RULE.deny],
+    ['Read', 'docs/s/x', userAllows('Read'), doc('deny', SECRETS), LINKED_RULE.deny],
+    ['Grep', 'secrets', { project: doc('allow', 'Grep') }, doc('deny', SECRETS), ONCE],
+    ['Glob', '', userAllows('Glob'), doc('ask', SECRETS), ONCE],
+    ['Read', '', userAllows('Read'), doc('deny', SECRETS), ONCE],
+    ['Grep', '', userAllows('Grep'), doc('ask', 'Grep'), LINKED_RULE.ask],
+    ['Read', 'src/a.ts', userAllows('Read'), null, ONCE],
+    ['Read', 'src/a.ts', userAllows('Read'), doc('deny', SECRETS), { decision: 'allow' }],
+  ])('a %s of %j the chat allows by %j meets %j', async (tool, rel, docs, rules, expected) => {
+    withDocs(docs);
+    expect(await ask(tool, rel, rules)).toMatchObject(expected);
+  });
+
+  // The chat's own rules at the path's real spelling, under one of its allows at the written one.
+  it.each<['deny' | 'ask', object]>([
+    ['deny', { decision: 'deny', reason: { kind: 'rule:deny', tier: 'user' } }],
+    [
+      'ask',
+      { decision: 'ask', prompt: { reason: 'rule:ask', matchedTier: 'user', suggestedRules: [] } },
+    ],
+  ])("keeps the chat's own %s rule at the real path under its allow", async (kind, expected) => {
+    withDocs({
+      user: { ...doc(kind, `Read(${at('secrets')}/**)`), allow: [`Read(${at('docs')}/**)`] },
+    });
+    expect(await ask('Read', 'docs/s/x', none)).toMatchObject(expected);
+  });
+
+  it("keeps the chat's own deny rule for a link registered at another spelling of the folder", async () => {
+    withDocs({ user: { ...none, allow: ['Read'], deny: [`Read(${at('secrets')}/**)`] } });
+    const file_path = nodePath.join(tmp, 'alias/secrets/x');
+    const req = request('Read', { file_path }, [link(nodePath.join(tmp, 'alias'))]);
+    const denied = { decision: 'deny', reason: { kind: 'rule:deny', tier: 'user' } };
+    expect(await checkPermission(req)).toMatchObject(denied);
+    expect(await checkPermission(request('Read', { file_path }))).toEqual({ decision: 'allow' });
+  });
+});
+
+// A search of the folder both projects sit in reads the linked project's files too.
+describe('applyLinkedRead — a search of a folder that holds a linked folder', () => {
+  const search = (tool: string, rules: PermissionsDoc | null) => {
+    const input = tool === 'Read' ? { file_path: tmp } : { pattern: 'x', path: tmp };
+    return checkPermission(request(tool, input, [link(linked, rules)]));
+  };
+
+  it.each<[string, PermissionsDoc | null]>([
+    ['Grep', doc('deny', SECRETS)],
+    ['Glob', doc('deny', SECRETS)],
+    ['Read', doc('deny', SECRETS)],
+    ['Grep', doc('ask', SECRETS)],
+    ['Grep', doc('deny', 'Grep')],
+    ['Grep', null],
+  ])('asks once for a %s the chat allows when the linked rules are %j', async (tool, rules) => {
+    withDocs({ user: doc('allow', tool) });
+    expect(await search(tool, rules)).toMatchObject(ONCE);
+  });
+
+  it.each<[string, PermissionsDoc | null]>([
+    ['Grep', doc('deny', SECRETS)],
+    ['Glob', doc('ask', SECRETS)],
+    ['Grep', null],
+  ])('offers no lasting rule on a %s card when the linked rules are %j', async (tool, rules) => {
+    expect(await search(tool, rules)).toMatchObject(ONCE);
+  });
+
+  it('changes nothing when the linked rules have no say over its files', async () => {
+    expect(await search('Grep', none)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'no-matching-rule', suggestedRules: ['Grep'] },
+    });
+    withDocs({ user: doc('allow', 'Grep') });
+    expect(await search('Grep', none)).toEqual({ decision: 'allow' });
   });
 });

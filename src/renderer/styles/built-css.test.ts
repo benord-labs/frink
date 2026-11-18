@@ -244,4 +244,20 @@ describe('production CSS', () => {
     expect(valueOf(hover, 'background-color')).toBe('var(--hover-overlay)');
     expect(hover?.parent?.type).toBe('root');
   });
+
+  // The package brightens the ring on hover, which turns it white on a light page. Its rule is
+  // unlayered, so the light override must stay unlayered too to win.
+  it('darkens the secondary ring on hover in a light theme and keeps the glow in dark', async () => {
+    const rules: Rule[] = [];
+    postcss.parse(await built).walkRules((rule) => {
+      if (/\.glow-rim:hover[^,]*::?before/.test(rule.selector) && declares(rule, 'filter'))
+        rules.push(rule);
+    });
+    const light = rules.filter((rule) => rule.selector.startsWith(':root:not(.dark) '));
+    expect(light.map((rule) => valueOf(rule, 'filter'))).toEqual([
+      expect.stringMatching(/^brightness\(0?\.85\)$/),
+    ]);
+    expect(light.map((rule) => rule.parent?.type)).toEqual(['root']);
+    expect(rules.map((rule) => valueOf(rule, 'filter'))).toContain('brightness(1.85)');
+  });
 });

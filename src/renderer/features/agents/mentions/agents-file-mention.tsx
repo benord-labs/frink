@@ -1060,7 +1060,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            <span style={{ direction: 'ltr' }}>{option.truncatedPath}</span>
+                            {/* Right to left only to cut the path's start; isolated, so the path
+                                itself still reads left to right, brackets and all */}
+                            <span style={{ direction: 'ltr', unicodeBidi: 'isolate' }}>
+                              {option.truncatedPath}
+                            </span>
                           </span>
                         )}
                     </span>

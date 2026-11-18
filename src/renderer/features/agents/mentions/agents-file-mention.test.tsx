@@ -141,6 +141,16 @@ describe('AgentsFileMention with linked projects', () => {
     expect(path).not.toHaveClass('truncate');
   });
 
+  // The hint runs right to left so its start is cut; unisolated, a bracketed name drew as "y [x]".
+  it('reads a bracketed folder hint left to right', () => {
+    state.mainFiles = [];
+    linkedSearch([[file('[x] y/plain.ts')]]);
+    renderPicker();
+
+    const hint = within(screen.getByRole('option')).getByText('[x] y');
+    expect(hint).toHaveStyle({ direction: 'ltr', unicodeBidi: 'isolate' });
+  });
+
   it.each(['odd dir/[x] copy.ts', '[x] y/plain.ts', 'a].ts'])(
     'refuses %s, whose path its mention could not read back, and says why',
     (path) => {

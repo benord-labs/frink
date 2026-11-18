@@ -74,11 +74,13 @@ export type PermissionRequest = {
    * Folders of the projects linked to the active chat, each with that project's own
    * rules (`doc` is null when they could not be loaded, and then nothing is granted).
    * Read, Glob and Grep inside one run without asking (`linked-read`). Runs AFTER
-   * tier-1c system-denied and every policy, project and user rule, and only when the
+   * tier-1c system-denied and every policy, project and user rule. It grants only when the
    * checker would ask with no rule to name (no rule matched, or the project's tool-wide
    * grant was set aside outside the project). The chat's own rules are matched again at
    * the path's real spelling, and the linked project's own deny and ask rules still
-   * apply. Env files, and search filters that can reach one, still ask. Edits, commands
+   * apply. Those checks also run on a read the chat's own rules allow inside a linked
+   * folder, and the linked rules on a search of a folder that holds one. Env
+   * files, and search filters that can reach one, still ask. Edits, commands
    * and every other tool are unchanged. Caller is responsible for chat-isolation (each
    * chat passes only its own links). Optional — when absent, no linked read runs.
    */

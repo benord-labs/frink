@@ -308,7 +308,7 @@ const FileSearchItem = memo(function FileSearchItem({
           <span className="shrink-0 whitespace-nowrap">{label}</span>
           {dirPath && (
             <span className="text-muted-foreground flex-1 min-w-0 ml-1 font-mono overflow-hidden text-xs [direction:rtl] text-left whitespace-nowrap">
-              <span className="[direction:ltr]">{dirPath}</span>
+              <span className="[direction:ltr] [unicode-bidi:isolate]">{dirPath}</span>
             </span>
           )}
         </span>

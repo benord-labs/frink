@@ -193,6 +193,9 @@ function ContextRow({
           crowded={isOverflowing}
           // The timer takes room from the git chips too
           crowdKey={`${gitKey}|${promptCacheExpiresAt !== null}`}
+          // `isOverflowing` keeps its identity when the git chips first measure, so a chat opened
+          // with links would otherwise keep them all inline and hide git chips that would fit
+          hiddenCount={visibleFrom}
         />
       ) : null}
       <PromptCacheTimer expiresAt={promptCacheExpiresAt} />

@@ -34,7 +34,13 @@ vi.mock('./WorktreeIndicator', () => ({
   },
 }));
 
-type ChipsProps = { chatId: string; running: boolean; crowded: () => boolean; crowdKey: string };
+type ChipsProps = {
+  chatId: string;
+  running: boolean;
+  crowded: () => boolean;
+  crowdKey: string;
+  hiddenCount: number;
+};
 /** What the bar last asked of the linked chips */
 let lastChipsProps: ChipsProps | undefined;
 
@@ -984,11 +990,14 @@ describe('ChatInputContextBar', () => {
       const { rerender } = renderBar(bar('feat', Date.now() + 5 * 60_000));
       expect(screen.getByRole('button', { name: 'More: Worktree' })).toBeInTheDocument();
       expect(lastChipsProps?.crowded()).toBe(true);
+      // The first measure reaches the links, which ask again: nothing else re-renders them then
+      expect(lastChipsProps?.hiddenCount).toBe(1);
 
       // The links step down, and the room they give up holds both chips
       layout.set(400, 150);
       expect(lastChipsProps?.crowded()).toBe(false);
       act(() => layout.fire());
+      expect(lastChipsProps?.hiddenCount).toBe(0);
       expect(screen.queryByRole('button', { name: /^More:/ })).toBeNull();
       expect(screen.getByTestId('worktree-picker')).toBeInTheDocument();
       expect(screen.getByTestId('branch-selector')).toBeInTheDocument();

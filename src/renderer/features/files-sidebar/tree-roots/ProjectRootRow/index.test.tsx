@@ -98,7 +98,8 @@ describe('ProjectRootRow', () => {
   it('lets the branch give way first, down to its icon, so the name keeps its room', () => {
     render(<Harness initial={false} />);
 
-    expect(screen.getByText('feat').parentElement).toHaveClass('shrink-1000', 'min-w-3');
+    // A shrink weighting alone still takes a fraction of a pixel from the name: enough for an ellipsis
+    expect(screen.getByText('feat').parentElement).toHaveClass('grow', 'basis-0', 'min-w-3');
     expect(disclosure().parentElement).toHaveClass('@container/root-row');
   });
 

@@ -1,6 +1,8 @@
 /** Linked-project reads: Read, Glob and Grep inside a folder linked to the chat run without
  * asking. Applied to a checker's result, so the deny list and every rule have already run; it
- * only ever turns an ask that names no rule into an allow, or into a deny or an ask that does. */
+ * only ever turns an ask that names no rule into an allow, or into a deny or an ask that does,
+ * and an allow from the chat's own rules into a deny or an ask the linked project's rules give.
+ * An ask the linked project's rules give offers no lasting rule. */
 
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
@@ -9,6 +11,7 @@ import { parseRule } from '../../../../../shared/lib/rule-parser';
 import { envFileAsks, envGlobAsks } from '../../../agent-runner/env-file-reads';
 import { isPathWithinProject, resolveToRealPath } from '../../path-check';
 import { combineFileRules, expandTilde, type FileOpInput, ruleMatchPath } from '../check-edit';
+import { classifyPath } from '../classify-path';
 import {
   type CombinedDecision,
   evalScope,
@@ -140,6 +143,12 @@ function reachesInside({ root, rels }: Holder): boolean {
   return !!doc && rels.some((rel) => ruleReachesInside(doc, rel));
 }
 
+/** The ask with no lasting rule to offer: one saved would be the chat's own, and these checks still
+ * run after the chat's own rules allow, so it would never take effect. */
+function once(ask: Ask): Ask {
+  return { decision: 'ask', prompt: { ...ask.prompt, suggestedRules: [] } };
+}
+
 /** The rules' answer for a read inside linked folders: a deny wins, then an ask that names its
  * rule, and a linked project whose rules could not be loaded grants nothing. */
 function judge(
@@ -168,10 +177,9 @@ function judge(
       prompt: { ...ask.prompt, reason: 'rule:ask', matchedRule, matchedTier },
     };
   }
-  if (holders.some(({ root }) => !root.doc)) return ask;
+  if (holders.some(({ root }) => !root.doc)) return once(ask);
   if (hit.kind === 'ask') {
-    // Only "Allow once": a lasting grant would be saved on the chat's own project, where it
-    // would answer before this rule for good.
+    // Only "Allow once", as in `once`, and naming the linked project the rule is saved on.
     return {
       decision: 'ask',
       prompt: {
@@ -185,8 +193,73 @@ function judge(
       },
     };
   }
-  if (readsFolder(req.tool, targets[1]) && holders.some(reachesInside)) return ask;
+  if (readsFolder(req.tool, targets[1]) && holders.some(reachesInside)) return once(ask);
   return { decision: 'allow' };
+}
+
+/** The links with a usable folder: one that is not an absolute path is never the app's own. */
+function linkedRoots(req: PermissionRequest): LinkedRoot[] {
+  return (req.linkedRoots ?? []).filter((root) => nodePath.isAbsolute(root.path));
+}
+
+/** True when file is folder or inside it, as resolved or as written. */
+function within(file: string, folder: string): boolean {
+  return isPathWithinProject(file, folder) || writtenWithin(file, folder);
+}
+
+/** The ask for a read the chat's own rules allow, for when the linked rules still ask. */
+function askFor(req: PermissionRequest, target: string): Ask {
+  return {
+    decision: 'ask',
+    prompt: {
+      tool: req.tool,
+      input: req.input,
+      reason: 'no-matching-rule',
+      suggestedRules: [],
+      pathLocation: classifyPath(target, req.projectPath),
+    },
+  };
+}
+
+/** A read the chat's own rules allow inside a linked folder, as written or resolved: the linked
+ * project's own rules still decide, as they do for a read the chat's rules ask about. They are
+ * another project's rules, checked after every rule of the chat's whatever those decided. It never
+ * allows anything the chat's rules did not. */
+function underLinkedRules(
+  allowed: PermissionResult,
+  req: PermissionRequest,
+  docs: ScopedDocs,
+): PermissionResult {
+  const target = readTarget(req.tool, (req.input ?? {}) as ReadInput, req.projectPath);
+  if (!target) return allowed;
+  const holding = linkedRoots(req).filter((root) => within(target, root.path));
+  if (holding.length === 0) return allowed;
+  const realTarget = resolveToRealPath(target);
+  const holders = holding.map((root) => ({ root, rels: relPaths(root.path, target, realTarget) }));
+  const judged = judge(askFor(req, target), req, docs, holders, [target, realTarget]);
+  return judged.decision === 'allow' ? allowed : judged;
+}
+
+/** True when a linked project's rules have a say over a search of its whole folder: they could not
+ * be loaded, a Read deny or ask rule names files in it, or a rule denies or asks for the tool. */
+function guardsFolder({ doc }: LinkedRoot, req: PermissionRequest): boolean {
+  if (!doc) return true;
+  const { kind } = evalScope(doc, req.tool, req.input, { resolvedPath: '' });
+  return SEVERITY[kind] > 0 || ruleReachesInside(doc, '');
+}
+
+/** A search, or a Read of a folder, of a folder holding a linked folder (such as the folder both
+ * projects sit in) reads that project's files too. When its rules have a say there, anything but a
+ * deny asks with only "Allow once": a lasting rule would be the chat's own and step around them. */
+function overLinkedFolders(decided: PermissionResult, req: PermissionRequest): PermissionResult {
+  if (decided.decision === 'deny') return decided;
+  const target = readTarget(req.tool, (req.input ?? {}) as ReadInput, req.projectPath);
+  if (!target || !readsFolder(req.tool, resolveToRealPath(target))) return decided;
+  const below = linkedRoots(req).filter(
+    (root) => within(root.path, target) && !within(target, root.path),
+  );
+  if (!below.some((root) => guardsFolder(root, req))) return decided;
+  return once(decided.decision === 'ask' ? decided : askFor(req, target));
 }
 
 /**
@@ -198,7 +271,9 @@ function judge(
  * Grep whose file filter names a file on it. Env files and search filters that can reach one still
  * ask, as in the chat's own folder, and so does a Grep filtered by file type. The chat's own rules,
  * matched again at the real path, and the linked project's own rules then decide, and a linked
- * project whose rules could not be loaded grants nothing.
+ * project whose rules could not be loaded grants nothing. Those last checks also run on a read the
+ * chat's own rules allow (`underLinkedRules`), so no allow of the chat's steps around them, and on
+ * a search of a folder that holds a linked folder (`overLinkedFolders`).
  */
 export function applyLinkedRead(
   result: PermissionResult,
@@ -206,11 +281,22 @@ export function applyLinkedRead(
   docs: ScopedDocs,
 ): PermissionResult {
   if (!LINKED_READ_TOOLS.has(req.tool)) return result;
+  const decided =
+    result.decision === 'allow' ? underLinkedRules(result, req, docs) : fromAsk(result, req, docs);
+  return overLinkedFolders(decided, req);
+}
+
+/** The linked-read answer for a read the chat's own rules ask or deny about. */
+function fromAsk(
+  result: PermissionResult,
+  req: PermissionRequest,
+  docs: ScopedDocs,
+): PermissionResult {
   if (result.decision !== 'ask' || result.prompt.reason !== 'no-matching-rule') return result;
   const input = (req.input ?? {}) as ReadInput;
   const target = readTarget(req.tool, input, req.projectPath);
   if (!target) return result;
-  const linked = (req.linkedRoots ?? []).filter((root) => nodePath.isAbsolute(root.path));
+  const linked = linkedRoots(req);
   const holding = linked.filter((root) => isPathWithinProject(target, root.path));
   if (holding.length === 0 && !linked.some((root) => writtenWithin(target, root.path))) {
     return result;

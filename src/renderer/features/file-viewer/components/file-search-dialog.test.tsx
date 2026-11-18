@@ -165,6 +165,27 @@ describe('FileSearchDialog', () => {
     expect(pdfRow?.querySelector('svg')).not.toBeNull();
   });
 
+  // The hint runs right to left so its start is cut; unisolated, a bracketed name drew as "y [x]".
+  it('reads a bracketed folder hint left to right', () => {
+    const store = createStore();
+    store.set(recentlyOpenedFilesAtom, []);
+    const plain = { id: '1', type: 'file', path: '[x] y/plain.ts', label: 'plain.ts' };
+    searchUseQueryMock.mockReturnValue({ data: [plain] });
+
+    render(
+      <Provider store={store}>
+        <FileSearchDialog
+          open={true}
+          onOpenChange={() => {}}
+          roots={[CHAT]}
+          onSelectFile={() => {}}
+        />
+      </Provider>,
+    );
+
+    expect(screen.getByText('[x] y')).toHaveClass('[direction:ltr]', '[unicode-bidi:isolate]');
+  });
+
   describe('across the projects in the tree', () => {
     function renderTree({ roots = [CHAT, OTHER], recents = [] as string[] } = {}) {
       const store = createStore();
