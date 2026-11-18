@@ -5,8 +5,8 @@ import {
   labelFromCommand,
   listElectronAncestors,
   parseElectronAncestors,
-  parseLsofCwds,
   parseLsofListeners,
+  parseLsofPaths,
   parsePsCommands,
   toUrl,
 } from './port-scanner';
@@ -38,10 +38,10 @@ describe('parseLsofListeners', () => {
   });
 });
 
-describe('parseLsofCwds', () => {
+describe('parseLsofPaths', () => {
   it('maps each pid to its working folder', () => {
     const stdout = 'p702\nfcwd\nn/Users/me/repo\np900\nfcwd\nn/Users/me/folder with space\n';
-    expect(parseLsofCwds(stdout)).toEqual(
+    expect(parseLsofPaths(stdout)).toEqual(
       new Map([
         [702, '/Users/me/repo'],
         [900, '/Users/me/folder with space'],

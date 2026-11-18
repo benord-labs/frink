@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { spawnCredentialFingerprint } from '../credential-fd-spawn';
 import { buildUsageProbeOptions } from './usage-probe';
 
 describe('buildUsageProbeOptions', () => {
@@ -43,7 +44,7 @@ describe('buildUsageProbeOptions', () => {
     }
   });
 
-  it('uses the SDK default spawn for a passthrough account', () => {
-    expect(options.spawnClaudeCodeProcess).toBeUndefined();
+  it('pipes no credential for a passthrough account', () => {
+    expect(spawnCredentialFingerprint(options.spawnClaudeCodeProcess)).toBeUndefined();
   });
 });

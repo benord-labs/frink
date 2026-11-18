@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import { trackClaudeCli } from '../agent-runner/process-settlement';
 import { lowerChildPriority } from '../platform/lower-child-priority';
 
 /** The fd the CLI reads its credential from. 0-2 are the SDK's stdio pipes. */
@@ -21,15 +22,15 @@ const CLAUDE_CREDENTIAL_ENV_KEYS = [
 
 type ClaudeCredential = { token: string | null; isApiKey: boolean };
 
-/** The SDK spawn hook, carrying a non-reversible identity of the credential it pipes. */
+/** The SDK spawn hook, carrying a non-reversible identity of the credential it pipes, if any. */
 type CredentialSpawn = ((options: SpawnOptions) => SpawnedProcess) & {
-  readonly credentialFingerprint: string;
+  readonly credentialFingerprint?: string;
 };
 
 export type ClaudeCredentialLaunch = {
   /** Merged into the CLI env: the fd pointer, or on Windows the raw credential var. */
   envPatch: Record<string, string>;
-  /** Set when the credential travels through a pipe; pass to the SDK's `query()` options. */
+  /** Frink's own spawn, off Windows; pass to the SDK's `query()` options. */
   spawnClaudeCodeProcess?: CredentialSpawn;
 };
 
@@ -37,28 +38,34 @@ export type ClaudeCredentialLaunch = {
  * inherit; Windows keeps env. Why: docs/decisions/child-process-env-secrets.md */
 export function buildClaudeCredentialLaunch(
   credential: ClaudeCredential,
-  options?: { platform?: NodeJS.Platform; onStderr?: (data: string) => void },
+  options: {
+    platform?: NodeJS.Platform;
+    onStderr?: (data: string) => void;
+    track?: typeof trackClaudeCli;
+  } = {},
 ): ClaudeCredentialLaunch {
+  const { platform = process.platform, onStderr, track = trackClaudeCli } = options;
   const token = credential.token?.trim();
-  if (!token) return { envPatch: {} };
-
-  if ((options?.platform ?? process.platform) === 'win32') {
-    return {
-      envPatch: credential.isApiKey
-        ? { ANTHROPIC_API_KEY: token }
-        : { CLAUDE_CODE_OAUTH_TOKEN: token },
-    };
-  }
-
+  if (platform === 'win32') return windowsLaunch(token, credential.isApiKey);
+  const spawnOptions = { onStderr, track };
+  // Without a token it is still Frink's spawn, so the CLI's leftover task processes end with it.
+  if (!token)
+    return { envPatch: {}, spawnClaudeCodeProcess: (o) => spawnClaudeCli(o, null, spawnOptions) };
   const fdVar = credential.isApiKey ? CLAUDE_API_KEY_FD_ENV : CLAUDE_OAUTH_TOKEN_FD_ENV;
-  const spawnClaudeCodeProcess = (spawnOptions: SpawnOptions) =>
-    spawnWithCredentialPipe(spawnOptions, token, options?.onStderr);
+  const spawnClaudeCodeProcess = (sdkOptions: SpawnOptions) =>
+    spawnClaudeCli(sdkOptions, token, spawnOptions);
   return {
     envPatch: { [fdVar]: String(CREDENTIAL_FD) },
     spawnClaudeCodeProcess: Object.assign(spawnClaudeCodeProcess, {
       credentialFingerprint: fingerprint(token),
     }),
   };
+}
+
+/** Windows has no /dev/fd: the credential rides the env, and the SDK spawns the CLI. */
+function windowsLaunch(token: string | undefined, isApiKey: boolean): ClaudeCredentialLaunch {
+  if (!token) return { envPatch: {} };
+  return { envPatch: isApiKey ? { ANTHROPIC_API_KEY: token } : { CLAUDE_CODE_OAUTH_TOKEN: token } };
 }
 
 /** The credential identity a spawn hook carries, so a warm CLI is never reused across accounts
@@ -86,24 +93,26 @@ export function relaunchWithCredential(
 
 /** Mirrors the SDK's own local spawn (stdio, windowsHide, stderr forwarding) plus the credential
  * pipe. A fresh pipe per call, so a respawn or 401 retry always delivers its own credential. */
-function spawnWithCredentialPipe(
+function spawnClaudeCli(
   { command, args, cwd, env, signal }: SpawnOptions,
-  token: string,
-  onStderr: ((data: string) => void) | undefined,
+  token: string | null,
+  { onStderr, track }: { onStderr?: (data: string) => void; track: typeof trackClaudeCli },
 ): SpawnedProcess {
+  const stderr = onStderr ? 'pipe' : 'ignore';
   const child = spawn(command, args, {
     cwd,
     env,
     signal,
     // An undrained stderr pipe fills and blocks the CLI, so pipe it only when someone reads it.
-    stdio: ['pipe', 'pipe', onStderr ? 'pipe' : 'ignore', 'pipe'],
+    stdio: token ? ['pipe', 'pipe', stderr, 'pipe'] : ['pipe', 'pipe', stderr],
     windowsHide: true,
   });
   lowerChildPriority(child.pid);
+  track(child);
   if (onStderr) child.stderr?.on('data', (chunk: Buffer) => onStderr(chunk.toString()));
 
-  const credentialPipe = child.stdio[CREDENTIAL_FD] as Writable | null;
-  if (credentialPipe) {
+  const credentialPipe = child.stdio[CREDENTIAL_FD] as Writable | null | undefined;
+  if (token && credentialPipe) {
     // A child that exits (or never starts) before reading raises EPIPE here. The spawn outcome
     // reaches the SDK through the child's own 'error'/'exit'; this must not crash the main process.
     credentialPipe.on('error', () => {});

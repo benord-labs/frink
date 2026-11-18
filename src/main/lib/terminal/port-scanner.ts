@@ -88,15 +88,20 @@ export function parseLsofListeners(stdout: string): Listener[] {
   return listeners;
 }
 
-/** Parses `lsof -a -d cwd -Fpn` output into pid → working folder. */
-export function parseLsofCwds(stdout: string): Map<number, string> {
-  const cwds = new Map<number, string>();
+/** Parses `lsof -Fpn` output into each (pid, path) it lists, in order. */
+export function parseLsofEntries(stdout: string): { pid: number; path: string }[] {
+  const entries: { pid: number; path: string }[] = [];
   let pid = 0;
   for (const line of stdout.split('\n')) {
     if (line.startsWith('p')) pid = Number.parseInt(line.slice(1), 10);
-    else if (line.startsWith('n') && pid > 0) cwds.set(pid, line.slice(1));
+    else if (line.startsWith('n') && pid > 0) entries.push({ pid, path: line.slice(1) });
   }
-  return cwds;
+  return entries;
+}
+
+/** Parses one-fd `lsof -Fpn` output (cwd, fd 1, ...) into pid → the path open there. */
+export function parseLsofPaths(stdout: string): Map<number, string> {
+  return new Map(parseLsofEntries(stdout).map(({ pid, path }) => [pid, path]));
 }
 
 /** Parses `ps -o pid=,command=` output into pid → full command line. */
@@ -167,7 +172,7 @@ export async function listListeners(): Promise<Listener[]> {
 
 export async function listCwds(pids: number[]): Promise<Map<number, string>> {
   if (pids.length === 0) return new Map();
-  return parseLsofCwds(await run('lsof', ['-a', '-d', 'cwd', '-p', pids.join(','), '-F', 'pn']));
+  return parseLsofPaths(await run('lsof', ['-a', '-d', 'cwd', '-p', pids.join(','), '-F', 'pn']));
 }
 
 export async function listCommands(pids: number[]): Promise<Map<number, string>> {

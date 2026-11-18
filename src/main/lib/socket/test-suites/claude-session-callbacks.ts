@@ -196,8 +196,9 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
 
       expect(seen).toHaveBeenCalledExactlyOnceWith({
         bound: undefined,
-        events: ['PreToolUse', 'Stop', 'UserPromptSubmit'],
-        gates: 2,
+        events: ['PreToolUse', 'PostToolUse', 'Stop', 'UserPromptSubmit'],
+        // Frink's gate, the sub-agent allowlist, and the note taken before the agent's own TaskStop.
+        gates: 3,
       });
     });
 

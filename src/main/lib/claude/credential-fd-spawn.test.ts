@@ -1,5 +1,6 @@
 import type { SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
+
 import {
   buildClaudeCredentialLaunch,
   CLAUDE_API_KEY_FD_ENV,
@@ -37,14 +38,38 @@ function spawnNode(launch: ReturnType<typeof buildClaudeCredentialLaunch>, scrip
 const READ_FD3 = "process.stdout.write(require('fs').readFileSync(3,'utf8'))";
 
 describe('buildClaudeCredentialLaunch', () => {
-  it('injects nothing for a passthrough (keychain) account', () => {
-    expect(buildClaudeCredentialLaunch({ token: null, isApiKey: false })).toEqual({ envPatch: {} });
+  it('injects nothing for a passthrough (keychain) account, but still spawns the CLI itself', async () => {
+    const track = vi.fn();
+    const launch = buildClaudeCredentialLaunch(
+      { token: null, isApiKey: false },
+      { platform: 'darwin', track },
+    );
+    expect(launch.envPatch).toEqual({});
+    // No fingerprint, so a warm session's key is the same as under the SDK's own spawn.
+    expect(spawnCredentialFingerprint(launch.spawnClaudeCodeProcess)).toBeUndefined();
+    if (process.platform !== 'win32') {
+      expect(await collect(spawnNode(launch, "process.stdout.write('ran')"))).toEqual({
+        stdout: 'ran',
+        code: 0,
+      });
+      // Tracked, so what its Bash tasks leave running is ended with it.
+      expect(track).toHaveBeenCalledWith(expect.objectContaining({ pid: expect.any(Number) }));
+    }
   });
 
   it('treats a blank token as no token instead of handing the CLI an empty credential', () => {
-    expect(buildClaudeCredentialLaunch({ token: '   \n', isApiKey: true })).toEqual({
-      envPatch: {},
-    });
+    const launch = buildClaudeCredentialLaunch(
+      { token: '   \n', isApiKey: true },
+      { platform: 'linux' },
+    );
+    expect(launch.envPatch).toEqual({});
+    expect(spawnCredentialFingerprint(launch.spawnClaudeCodeProcess)).toBeUndefined();
+  });
+
+  it('leaves a passthrough account on the SDK spawn on Windows', () => {
+    expect(
+      buildClaudeCredentialLaunch({ token: null, isApiKey: false }, { platform: 'win32' }),
+    ).toEqual({ envPatch: {} });
   });
 
   it('points an API key at the fd without putting the key in env', () => {

@@ -3,6 +3,10 @@
 
 import type { BackgroundTaskSummary } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
+import {
+  TASK_GROUP_CONTROLS,
+  type TaskGroupControls,
+} from '../../../agent-runner/process-settlement';
 import { withTimeout } from '../../../agent-runner/codex/app-server-client';
 import { forgetPendingTask, type StopPendingWork } from '../../../task-stop-hook';
 import type { ClaudeSession } from '../../claude-session-registry';
@@ -10,6 +14,8 @@ import { readWakeHolds, type WakeHold } from '../../claude-wake-hold';
 import { STOPPABLE_TASK_TYPES, summarizePendingWork } from '../wake-hold-signal';
 
 const STOP_TIMEOUT_MS = 10_000;
+/** The pre-stop note may not eat the stop's own timeout on a loaded machine. */
+const NOTE_BUDGET_MS = 2_000;
 
 export type StopBackgroundTaskResult =
   | { ok: true }
@@ -33,6 +39,7 @@ function liveHold(subChatId: string): WakeHold | null {
 export async function stopBackgroundTask(
   subChatId: string,
   taskId: string,
+  taskGroups: TaskGroupControls = TASK_GROUP_CONTROLS,
 ): Promise<StopBackgroundTaskResult> {
   const hold = liveHold(subChatId);
   const work = hold?.session.stopHook?.lastPendingWork;
@@ -43,7 +50,8 @@ export async function stopBackgroundTask(
   const stopping: StopsInFlight = stoppingBySession.get(hold.session) ?? new Map();
   stoppingBySession.set(hold.session, stopping);
   // A repeat click (or a second window) joins the stop already in flight rather than racing it.
-  const answered = stopping.get(taskId) ?? requestStop(subChatId, hold, task, stopping, work);
+  const answered =
+    stopping.get(taskId) ?? requestStop(subChatId, hold, task, stopping, work, taskGroups);
   if (!answered) return { ok: false, reason: 'last' };
   return withTimeout(answered, STOP_TIMEOUT_MS, 'stop_task timed out').catch(
     (): StopBackgroundTaskResult => ({ ok: false, reason: 'timeout' }),
@@ -58,14 +66,24 @@ function requestStop(
   task: BackgroundTaskSummary,
   stopping: StopsInFlight,
   work: StopPendingWork,
+  taskGroups: TaskGroupControls,
 ): Promise<StopBackgroundTaskResult> | null {
   const others = work.backgroundTasks.filter((t) => t.id !== task.id && !stopping.has(t.id));
   if (others.length + work.sessionCrons.length === 0) return null;
-  const answered = Promise.resolve()
+  // Noted first: once stopped, the task shell is gone and nothing links it to what it started.
+  const noted = new Promise<void>((resolve) => {
+    const budget = setTimeout(resolve, NOTE_BUDGET_MS);
+    void taskGroups.noteTaskGroupsNow({ teardown: true }).then(() => {
+      clearTimeout(budget);
+      resolve();
+    });
+  });
+  const answered = noted
     .then(() => hold.session.query.stopTask(task.id))
     .then(
       (): StopBackgroundTaskResult => {
         log.info(`[Socket] ${subChatId}: user stopped background ${task.type} task ${task.id}`);
+        void taskGroups.reapStoppedTaskGroups(task.id);
         forgetStoppedTask(subChatId, hold, task);
         return { ok: true };
       },

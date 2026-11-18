@@ -333,6 +333,7 @@ import { runCodexAgent } from '../agent-runner';
 import * as codexPermissions from '../agent-runner/codex/permissions';
 import { codexPlanUsage } from '../agent-runner/codex/usage';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
+import { spawnCredentialFingerprint } from '../claude/credential-fd-spawn';
 import type { UIMessageChunk } from '../claude/types';
 import { getClaudeCodeTokenById, getDefaultClaudeCodeToken } from '../credentials';
 import { getChatWithProjectAccount } from '../db/repos/chats';
@@ -3340,7 +3341,7 @@ describe('context isolation edge cases', () => {
       await handleRemoteExecute({ ...basePayload, message: 'passthrough spawn' });
 
       const { env, spawnClaudeCodeProcess } = claudeQueryMock.mock.calls[0]?.[0]?.options;
-      expect(spawnClaudeCodeProcess).toBeUndefined(); // SDK default spawn: no credential pipe
+      expect(spawnCredentialFingerprint(spawnClaudeCodeProcess)).toBeUndefined(); // no credential pipe
       // Strict equality: toBeFalsy() would also pass on `undefined`, which is the broken state —
       // the CLI branches on `!== undefined`, so an absent var re-enables the hashed service name.
       expect(env?.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('');
