@@ -7,7 +7,13 @@ import {
   PASTED_FILE_MAX_BYTES,
   PASTED_FILE_TOO_LARGE,
 } from '../../../../shared/pasted-file-limits';
-import { copyIntoPasted, rehomePastedMentions, safeAttachmentName, writePastedText } from '.';
+import {
+  attachedFileNote,
+  copyIntoPasted,
+  rehomePastedMentions,
+  safeAttachmentName,
+  writePastedText,
+} from '.';
 
 const subChatId = 'mq7zk90vzeoypywd';
 
@@ -103,6 +109,15 @@ describe('pasted files', () => {
     expect(safeAttachmentName(cjk).endsWith('.csv')).toBe(true);
     expect(Buffer.byteLength(safeAttachmentName(cjk))).toBeLessThanOrEqual(200);
     expect(safeAttachmentName(`a${'🙂'.repeat(150)}`)).not.toMatch(/\p{Cs}/u);
+  });
+
+  it('names a Windows path whole, spaces and backslashes included', () => {
+    expect(attachedFileNote('C:\\Users\\a b\\r.csv')).toContain('`C:\\Users\\a b\\r.csv`');
+  });
+
+  // safeAttachmentName keeps backticks, so a single-backtick span would end inside the name.
+  it('names a path holding a backtick whole', () => {
+    expect(attachedFileNote('/p/report`1.csv')).toContain('`` /p/report`1.csv ``');
   });
 
   it('keeps names safe on every OS and inside a mention token', () => {

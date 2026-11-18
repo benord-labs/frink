@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PASTED_FILE_TOO_LARGE } from '../../../../../../shared/pasted-file-limits';
 import type { RunAttachment } from '../../../../../../shared/types/run-attachment';
 import { decodedBytes } from '../../../../../../shared/utils/base64';
 
@@ -11,13 +12,16 @@ import { decodedBytes } from '../../../../../../shared/utils/base64';
 
 type RemoveInput = { flowId: string; runId: string; url: string };
 type RemoveCallbacks = { onError?: (err: Error) => void };
+type PreviewInput = { url: string };
+type PreviewOptions = { enabled?: boolean };
 
 const trpcMocks = vi.hoisted(() => ({
   uploadMutateAsync: vi.fn(),
+  attachFileMutateAsync: vi.fn(),
   removeMutate: vi.fn<(input: RemoveInput, callbacks?: RemoveCallbacks) => void>(),
   invalidateRunList: vi.fn(),
   /** Default: idle preview query (no image loaded). */
-  previewUseQuery: vi.fn(() => ({
+  previewUseQuery: vi.fn((_input?: PreviewInput, _opts?: PreviewOptions) => ({
     data: undefined as { dataUrl: string } | undefined,
     isLoading: false,
     isError: false,
@@ -35,6 +39,9 @@ vi.mock('../../../../../lib/trpc', () => ({
           mutateAsync: trpcMocks.uploadMutateAsync,
         }),
       },
+      attachFileToRun: {
+        useMutation: () => ({ mutateAsync: trpcMocks.attachFileMutateAsync }),
+      },
       removeStageRunAttachment: {
         useMutation: (_opts?: { onSuccess?: () => void }) => ({
           mutate: trpcMocks.removeMutate,
@@ -42,7 +49,8 @@ vi.mock('../../../../../lib/trpc', () => ({
         }),
       },
       fetchAttachmentDataUrl: {
-        useQuery: () => trpcMocks.previewUseQuery(),
+        useQuery: (input: PreviewInput, opts?: PreviewOptions) =>
+          trpcMocks.previewUseQuery(input, opts),
       },
     },
   },
@@ -72,7 +80,7 @@ function renderSection(attachments: RunAttachment[] = [], isPending = true) {
       onAttachmentsChange={onAttachmentsChange}
     />,
   );
-  const fileInput = screen.getByLabelText('Upload image attachment') as HTMLInputElement;
+  const fileInput = screen.getByLabelText('Upload file attachment') as HTMLInputElement;
   return { onAttachmentsChange, fileInput };
 }
 
@@ -86,6 +94,16 @@ describe('RunAttachmentsSection', () => {
       filename: 'upload.png',
       run: { id: RUN_ID, trigger_context: {} },
     });
+    trpcMocks.attachFileMutateAsync.mockReset();
+    trpcMocks.attachFileMutateAsync.mockResolvedValue({
+      attachment: {
+        url: 'frink-attachment://run/a1-report.csv',
+        type: 'file',
+        label: 'report.csv',
+      },
+      run: { id: RUN_ID, trigger_context: {} },
+    });
+    window.webUtils = { getPathForFile: (file) => `/Users/me/${file.name}` };
     trpcMocks.removeMutate.mockReset();
     trpcMocks.invalidateRunList.mockReset();
     trpcMocks.previewUseQuery.mockReset();
@@ -101,20 +119,22 @@ describe('RunAttachmentsSection', () => {
   });
 
   describe('client-side size guard', () => {
-    it('shows size error and skips upload when file exceeds 5 MB', async () => {
-      const { fileInput, onAttachmentsChange } = renderSection();
+    it('sends an image over 5 MB by its path instead of inline', async () => {
+      const { fileInput } = renderSection();
 
-      // Create a real File whose size exceeds MAX_FILE_SIZE (5 * 1024 * 1024).
-      const bigContent = new Uint8Array(6 * 1024 * 1024);
-      const bigFile = new File([bigContent], 'big.png', { type: 'image/png' });
-
+      const bigFile = new File([new Uint8Array(6 * 1024 * 1024)], 'big.png', {
+        type: 'image/png',
+      });
       fireEvent.change(fileInput, { target: { files: [bigFile] } });
 
       await waitFor(() => {
-        expect(screen.getByText(/5MB or smaller/i)).toBeInTheDocument();
+        expect(trpcMocks.attachFileMutateAsync).toHaveBeenCalledWith({
+          flowId: FLOW_ID,
+          runId: RUN_ID,
+          sourcePath: '/Users/me/big.png',
+        });
       });
       expect(trpcMocks.uploadMutateAsync).not.toHaveBeenCalled();
-      expect(onAttachmentsChange).not.toHaveBeenCalled();
     });
 
     // The server accepts exactly 5MB of decoded bytes, so the client must send it — as raw
@@ -143,18 +163,33 @@ describe('RunAttachmentsSection', () => {
       expect(screen.queryByText(/5MB or smaller/i)).not.toBeInTheDocument();
     });
 
-    it('reports file size in the error message', async () => {
+    it('names the 5MB limit for a large image that has no file behind it', async () => {
+      window.webUtils = { getPathForFile: () => '' };
       const { fileInput } = renderSection();
 
-      const bigContent = new Uint8Array(6.3 * 1024 * 1024);
-      const bigFile = new File([bigContent], 'big.png', { type: 'image/png' });
+      const shot = new File([new Uint8Array(6.3 * 1024 * 1024)], 'image.png', {
+        type: 'image/png',
+      });
+      fireEvent.change(fileInput, { target: { files: [shot] } });
 
+      await waitFor(() => {
+        expect(screen.getByText(/5MB or smaller \(this file is 6\.3MB\)/)).toBeInTheDocument();
+      });
+      expect(trpcMocks.attachFileMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('refuses a file over 20 MB without sending it', async () => {
+      const { fileInput, onAttachmentsChange } = renderSection();
+
+      const bigFile = new File(['x'], 'huge.csv', { type: 'text/csv' });
+      Object.defineProperty(bigFile, 'size', { value: 21 * 1024 * 1024 });
       fireEvent.change(fileInput, { target: { files: [bigFile] } });
 
       await waitFor(() => {
-        // Should mention "6.3MB" (toFixed(1) formatting).
-        expect(screen.getByText(/6\.3MB/)).toBeInTheDocument();
+        expect(screen.getByText(PASTED_FILE_TOO_LARGE)).toBeInTheDocument();
       });
+      expect(trpcMocks.attachFileMutateAsync).not.toHaveBeenCalled();
+      expect(onAttachmentsChange).not.toHaveBeenCalled();
     });
   });
 
@@ -174,17 +209,34 @@ describe('RunAttachmentsSection', () => {
       });
     });
 
-    it('rejects an unsupported MIME type without calling the upload mutation', async () => {
+    // Windows gives a .csv no type at all; it must still be attached, by path.
+    it('attaches a file with no type by its path and lists what the server stored', async () => {
+      const { fileInput, onAttachmentsChange } = renderSection();
+
+      fireEvent.change(fileInput, { target: { files: [new File(['a,b'], 'report.csv')] } });
+
+      await waitFor(() => {
+        expect(onAttachmentsChange).toHaveBeenCalledWith([
+          { url: 'frink-attachment://run/a1-report.csv', type: 'file', label: 'report.csv' },
+        ]);
+      });
+      expect(trpcMocks.attachFileMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ sourcePath: '/Users/me/report.csv' }),
+      );
+      expect(trpcMocks.uploadMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('explains a file with no place on disk instead of sending it', async () => {
+      window.webUtils = { getPathForFile: () => '' };
       const { fileInput, onAttachmentsChange } = renderSection();
 
       const pdfFile = new File(['%PDF'], 'doc.pdf', { type: 'application/pdf' });
-
       fireEvent.change(fileInput, { target: { files: [pdfFile] } });
 
       await waitFor(() => {
-        expect(screen.getByText(/Unsupported type/i)).toBeInTheDocument();
+        expect(screen.getByText(/Save it to your computer/)).toBeInTheDocument();
       });
-      expect(trpcMocks.uploadMutateAsync).not.toHaveBeenCalled();
+      expect(trpcMocks.attachFileMutateAsync).not.toHaveBeenCalled();
       expect(onAttachmentsChange).not.toHaveBeenCalled();
     });
   });
@@ -233,6 +285,18 @@ describe('RunAttachmentsSection', () => {
       };
       renderSection([attachment]);
       expect(screen.getByRole('button', { name: /Preview shot\.png/i })).toBeEnabled();
+    });
+
+    // A file row has no thumbnail; loading one would pull the whole file over IPC.
+    it('never loads a preview for a file the agent reads by path', () => {
+      renderSection([
+        { url: 'frink-attachment://run-1/a1-report.csv', type: 'file', label: 'report.csv' },
+      ]);
+
+      expect(trpcMocks.previewUseQuery).toHaveBeenCalledWith(
+        { url: 'frink-attachment://run-1/a1-report.csv' },
+        expect.objectContaining({ enabled: false }),
+      );
     });
 
     it('keeps preview disabled when fetchAttachmentDataUrl fails', () => {
@@ -390,7 +454,7 @@ describe('RunAttachmentsSection', () => {
 
       fireEvent.click(screen.getByLabelText('Remove 1.png'));
       const file = new File([pngMagicBytes()], '3.png', { type: 'image/png' });
-      fireEvent.change(screen.getByLabelText('Upload image attachment'), {
+      fireEvent.change(screen.getByLabelText('Upload file attachment'), {
         target: { files: [file] },
       });
       await screen.findByLabelText('Remove 3.png');

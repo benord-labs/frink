@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
@@ -12,13 +21,15 @@ import {
 } from '../db/repos/batch-stage-runs';
 import { batchStageRuns } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
+import { PASTED_FILE_MAX_BYTES } from '../../../shared/pasted-file-limits';
 import {
   MAX_IMAGE_BYTES,
+  copyAttachment,
   deleteAttachmentFile,
   readAttachmentImage,
   writeAttachment,
 } from './attachments-storage';
-import { uploadAttachmentToStageRun } from './attachments-upload';
+import { attachFileToStageRun, uploadAttachmentToStageRun } from './attachments-upload';
 import { seedBatchStage } from './batch-test-factories';
 
 // Real in-memory SQLite + real files under a temp root: the unit under test is
@@ -60,6 +71,7 @@ const upload = (runId: string, filename: string, mimeType = 'image/png', data = 
         afterWrite?.();
         return written;
       },
+      copyAttachment: (r, f, from) => copyAttachment(r, f, from, root),
       deleteAttachmentFile: (r, f) => deleteAttachmentFile(r, f, root),
     },
   );
@@ -288,5 +300,161 @@ describe('uploadAttachmentToStageRun — size limit', () => {
 
     expect(filesOnDisk(runId)).toHaveLength(0);
     expect(await storedAttachments(runId)).toHaveLength(0);
+  });
+});
+
+describe('attachFileToStageRun', () => {
+  let source: string;
+  beforeEach(() => {
+    source = mkdtempSync(join(tmpdir(), 'frink-attach-source-'));
+  });
+  afterEach(() => {
+    rmSync(source, { recursive: true, force: true });
+  });
+
+  const attach = (runId: string, sourcePath: string) =>
+    attachFileToStageRun(
+      { flowId: 'f', runId, sourcePath },
+      {
+        db,
+        writeAttachment: (r, f, data) => writeAttachment(r, f, data, root),
+        copyAttachment: (r, f, from) => copyAttachment(r, f, from, root),
+        deleteAttachmentFile: (r, f) => deleteAttachmentFile(r, f, root),
+      },
+    );
+
+  const sourceFile = (name: string, content: string | Uint8Array) => {
+    const path = join(source, name);
+    writeFileSync(path, content);
+    return path;
+  };
+
+  it('copies a CSV into the run and records it as a file the agent reads', async () => {
+    const runId = await seedRun();
+
+    const { attachment } = await attach(runId, sourceFile('report.csv', 'a,b\n1,2\n'));
+
+    expect(attachment).toMatchObject({ type: 'file', label: 'report.csv' });
+    expect(await storedAttachments(runId)).toEqual([attachment]);
+    const [stored] = filesOnDisk(runId);
+    expect(readFileSync(join(root, runId, stored), 'utf-8')).toBe('a,b\n1,2\n');
+  });
+
+  it('sends a real image inline whatever its name says', async () => {
+    const runId = await seedRun();
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    const { attachment } = await attach(runId, sourceFile('scan.dat', png));
+
+    expect(attachment).toMatchObject({ type: 'image/png', mimeType: 'image/png' });
+    // The run-panel preview reads the type from the bytes too, not the `.dat` name.
+    expect(await readAttachmentImage(attachment.url, root)).toMatchObject({ mime: 'image/png' });
+  });
+
+  // A signature is matched whole: a text file can begin with a few of an image's bytes.
+  it('reads a CSV that begins like a WebP header as a file, and a real WebP as an image', async () => {
+    const runId = await seedRun();
+    const webp = new TextEncoder().encode('RIFF\x24\x00\x00\x00WEBPVP8 ');
+
+    const csv = await attach(runId, sourceFile('rides.csv', 'RIDE_ID,WEBSITE\n1,a\n'));
+    const image = await attach(runId, sourceFile('photo.webp', webp));
+
+    expect(csv.attachment.type).toBe('file');
+    expect(image.attachment.type).toBe('image/webp');
+  });
+
+  it('refuses a file over 20MB before copying anything', async () => {
+    const runId = await seedRun();
+    const path = sourceFile('huge.csv', '');
+    truncateSync(path, PASTED_FILE_MAX_BYTES + 1);
+
+    await expect(attach(runId, path)).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+    expect(existsSync(join(root, runId))).toBe(false);
+  });
+
+  // Over 5MB an image cannot go inline (claim would drop it), so it must be read by path.
+  it('hands an image over 5MB to the agent as a file', async () => {
+    const runId = await seedRun();
+    const png = new Uint8Array(MAX_IMAGE_BYTES + 1);
+    png.set([0x89, 0x50, 0x4e, 0x47]);
+
+    const { attachment } = await attach(runId, sourceFile('retina.png', png));
+
+    expect(attachment).toMatchObject({ type: 'file', label: 'retina.png' });
+  });
+
+  it('accepts a file of exactly 20MB', async () => {
+    const runId = await seedRun();
+    const path = sourceFile('edge.csv', '');
+    truncateSync(path, PASTED_FILE_MAX_BYTES);
+
+    await expect(attach(runId, path)).resolves.toMatchObject({ attachment: { type: 'file' } });
+  });
+
+  it('refuses a folder or a missing file in plain words', async () => {
+    const runId = await seedRun();
+
+    await expect(attach(runId, source)).rejects.toThrow("Folders can't be attached.");
+    await expect(attach(runId, join(source, 'gone.csv'))).rejects.toThrow(
+      "couldn't open this file",
+    );
+  });
+
+  it('removes a copy that came out over 20MB because the file grew meanwhile', async () => {
+    const runId = await seedRun();
+    const deleted: string[] = [];
+
+    const growing = attachFileToStageRun(
+      { flowId: 'f', runId, sourcePath: sourceFile('log.txt', 'small at first') },
+      {
+        db,
+        writeAttachment,
+        copyAttachment: async (_r, filename) => ({
+          url: `frink-attachment://${runId}/${filename}`,
+          filename,
+          byteLength: PASTED_FILE_MAX_BYTES + 1,
+          path: join(root, runId, filename),
+        }),
+        deleteAttachmentFile: async (_r, f) => {
+          deleted.push(f);
+        },
+      },
+    );
+
+    await expect(growing).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+    expect(deleted).toHaveLength(1);
+    expect(await storedAttachments(runId)).toEqual([]);
+  });
+
+  it('removes a half-copied file and explains when the copy fails', async () => {
+    const runId = await seedRun();
+    const path = sourceFile('notes.txt', 'hi');
+    const deleted: string[] = [];
+
+    const failing = attachFileToStageRun(
+      { flowId: 'f', runId, sourcePath: path },
+      {
+        db,
+        writeAttachment,
+        copyAttachment: () => Promise.reject(new Error('ENOSPC: no space left on device')),
+        deleteAttachmentFile: async (_r, f) => {
+          deleted.push(f);
+        },
+      },
+    );
+
+    await expect(failing).rejects.toThrow("couldn't open this file");
+    expect(deleted).toHaveLength(1);
+    expect(await storedAttachments(runId)).toEqual([]);
+  });
+
+  it('refuses a run that has started before copying anything', async () => {
+    const runId = await seedRun();
+    db.update(batchStageRuns).set({ status: 'running' }).where(eq(batchStageRuns.id, runId)).run();
+
+    await expect(attach(runId, sourceFile('notes.txt', 'hi'))).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(existsSync(join(root, runId))).toBe(false);
   });
 });

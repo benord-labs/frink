@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
 import type { MobileAttachment } from '../../../../shared/types/remote/mobile';
 import { pastedDirFor, safeAttachmentName } from '../../claude/pasted-files';
+import { detectImage } from '../../claude/pasted-files/image-signature';
 import { isValidSubChatIdForSessionPaths } from '../../claude/session-plan-paths';
 import { MobileApiError, requireChat } from './context';
 
@@ -13,17 +14,6 @@ import { MobileApiError, requireChat } from './context';
 export const MOBILE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 /** An upload that is never sent is deleted after this long. */
 const UPLOAD_TTL_MS = 60 * 60 * 1000;
-
-const IMAGE_SIGNATURES: Array<{ mimeType: string; matches: (b: Uint8Array) => boolean }> = [
-  { mimeType: 'image/png', matches: (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e },
-  { mimeType: 'image/jpeg', matches: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  { mimeType: 'image/gif', matches: (b) => b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 },
-  {
-    mimeType: 'image/webp',
-    matches: (b) =>
-      b[0] === 0x52 && b[1] === 0x49 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42,
-  },
-];
 
 type StoredUpload = MobileAttachment & {
   chatId: string;
@@ -34,10 +24,6 @@ type StoredUpload = MobileAttachment & {
 };
 
 const uploads = new Map<string, StoredUpload>();
-
-function detectImage(bytes: Uint8Array): string | null {
-  return IMAGE_SIGNATURES.find((signature) => signature.matches(bytes))?.mimeType ?? null;
-}
 
 async function sweepExpired(now: number): Promise<void> {
   for (const [id, upload] of uploads) {

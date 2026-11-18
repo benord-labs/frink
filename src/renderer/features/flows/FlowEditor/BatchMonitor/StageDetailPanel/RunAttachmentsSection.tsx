@@ -1,8 +1,9 @@
 /* eslint-disable max-lines, max-lines-per-function */
 /**
- * Image attachments panel for a batch stage run.
+ * File attachments panel for a batch stage run.
  * Supports drag-and-drop, clipboard paste, and file picker.
  * Uploads images atomically (validate + upload blob + save in one request) via tRPC.
+ * Other files go by path: main copies them from disk and the agent reads the copy.
  * Removing an attachment names it by URL, so the server removes only that entry and never
  * drops one this pane has not seen yet (e.g. uploaded from another pane).
  * Only editable when run status === 'pending'.
@@ -10,17 +11,25 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { ImageIcon, Loader2, X } from 'lucide-react';
+import { FileText, ImageIcon, Loader2, X } from 'lucide-react';
 import { type ClipboardEvent, type DragEvent, type ReactElement, useRef, useState } from 'react';
-import type { RunAttachment } from '../../../../../../shared/types/run-attachment';
+import {
+  PASTED_FILE_MAX_BYTES,
+  PASTED_FILE_TOO_LARGE,
+} from '../../../../../../shared/pasted-file-limits';
+import {
+  RUN_ATTACHMENT_FILE_TYPE,
+  type RunAttachment,
+} from '../../../../../../shared/types/run-attachment';
 import { Dialog, DialogContent, DialogTitle } from '../../../../../components/ui/dialog';
 import { trpc } from '../../../../../lib/trpc';
 import { cn } from '../../../../../lib/utils';
 
-const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const INLINE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_ATTACHMENTS = 10;
 /** Mirror of server-side MAX_IMAGE_BYTES — 5MB decoded limit. */
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_INLINE_IMAGE_SIZE = 5 * 1024 * 1024;
+const NO_PATH_MESSAGE = 'Save it to your computer, then drag it in or click to add.';
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -69,6 +78,7 @@ export function RunAttachmentsSection({
   const uploadAndAttachImage = trpc.flows.uploadAndAttachImage.useMutation({
     onSuccess: refreshRunList,
   });
+  const attachFileToRun = trpc.flows.attachFileToRun.useMutation({ onSuccess: refreshRunList });
   const removeStageRunAttachment = trpc.flows.removeStageRunAttachment.useMutation({
     onSuccess: () => {
       setError(null);
@@ -127,19 +137,40 @@ export function RunAttachmentsSection({
     );
   }
 
+  async function sendInlineImage(file: File, mimeType: string): Promise<RunAttachment> {
+    const result = await uploadAndAttachImage.mutateAsync({
+      flowId,
+      runId,
+      data: await fileToBase64(file),
+      filename: file.name,
+      mimeType,
+    });
+    return { url: result.url, type: mimeType, label: file.name, mimeType };
+  }
+
+  async function sendFileByPath(sourcePath: string): Promise<RunAttachment> {
+    const result = await attachFileToRun.mutateAsync({ flowId, runId, sourcePath });
+    return result.attachment;
+  }
+
   /** Returns true only when the file was uploaded and attached successfully. */
   async function uploadFile(file: File): Promise<boolean> {
     // Normalize image/jpg (non-standard) to image/jpeg before any checks.
     const normalizedType = file.type === 'image/jpg' ? 'image/jpeg' : file.type;
+    const inline =
+      INLINE_IMAGE_TYPES.includes(normalizedType) && file.size <= MAX_INLINE_IMAGE_SIZE;
+    const sourcePath = inline ? '' : (window.webUtils?.getPathForFile(file) ?? '');
 
-    if (!ALLOWED_MIME_TYPES.includes(normalizedType)) {
-      setError(`Unsupported type: ${file.type}. Use PNG, JPEG, or WebP.`);
+    if (!inline && file.size > PASTED_FILE_MAX_BYTES) {
+      setError(PASTED_FILE_TOO_LARGE);
       return false;
     }
-    if (file.size > MAX_FILE_SIZE) {
-      setError(
-        `Image must be 5MB or smaller (this file is ${(file.size / 1024 / 1024).toFixed(1)}MB).`,
-      );
+    if (!inline && !sourcePath) {
+      // A pasted screenshot has no file behind it, so only the inline 5MB route exists for it.
+      const sizeLimit = INLINE_IMAGE_TYPES.includes(normalizedType)
+        ? `Image must be 5MB or smaller (this file is ${(file.size / 1024 / 1024).toFixed(1)}MB). `
+        : '';
+      setError(`${file.name}: ${sizeLimit}${NO_PATH_MESSAGE}`);
       return false;
     }
     if (attachmentsRef.current.length + uploadingItems.length >= MAX_ATTACHMENTS) {
@@ -152,20 +183,9 @@ export function RunAttachmentsSection({
     setError(null);
 
     try {
-      const base64Data = await fileToBase64(file);
-      const result = await uploadAndAttachImage.mutateAsync({
-        flowId,
-        runId,
-        data: base64Data,
-        filename: file.name,
-        mimeType: normalizedType,
-      });
-      addAttachment({
-        url: result.url,
-        type: normalizedType,
-        label: file.name,
-        mimeType: normalizedType,
-      });
+      addAttachment(
+        inline ? await sendInlineImage(file, normalizedType) : await sendFileByPath(sourcePath),
+      );
       setError(null);
       return true;
     } catch (err) {
@@ -206,7 +226,7 @@ export function RunAttachmentsSection({
     if (!canAdd) return;
     const fromClipboard: File[] = [];
     for (const item of Array.from(e.clipboardData.items)) {
-      if (item.type.startsWith('image/')) {
+      if (item.kind === 'file') {
         const file = item.getAsFile();
         if (file) fromClipboard.push(file);
       }
@@ -242,7 +262,7 @@ export function RunAttachmentsSection({
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wide">
-          Images
+          Files
         </span>
         {removeStageRunAttachment.isPending && (
           <span className="text-[10px] text-muted-foreground/40 italic">Saving…</span>
@@ -290,7 +310,7 @@ export function RunAttachmentsSection({
         <div
           role="button"
           tabIndex={0}
-          aria-label="Add image — drop, paste, or click"
+          aria-label="Add a file — drop, paste, or click"
           className={cn(
             'rounded border border-dashed border-border/50 px-3 py-3 text-center transition-colors cursor-pointer focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/40',
             isDragOver
@@ -307,25 +327,24 @@ export function RunAttachmentsSection({
             if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
           }}
         >
-          <ImageIcon className="h-3.5 w-3.5 text-muted-foreground/40 mx-auto mb-1" aria-hidden />
+          <FileText className="h-3.5 w-3.5 text-muted-foreground/40 mx-auto mb-1" aria-hidden />
           <span className="text-[10px] text-muted-foreground/50">
-            {canAdd ? 'Drop, paste, or click to add image' : `Max ${MAX_ATTACHMENTS} images`}
+            {canAdd ? 'Drop, paste, or click to add a file' : `Max ${MAX_ATTACHMENTS} files`}
           </span>
           <input
             ref={fileInputRef}
             type="file"
-            accept={ALLOWED_MIME_TYPES.join(',')}
             multiple
             className="hidden"
             onChange={handleFileInputChange}
-            aria-label="Upload image attachment"
+            aria-label="Upload file attachment"
           />
         </div>
       )}
 
       {/* Read-only empty state */}
       {!isPending && attachments.length === 0 && (
-        <span className="text-[11px] text-muted-foreground/40">No images attached</span>
+        <span className="text-[11px] text-muted-foreground/40">No files attached</span>
       )}
     </div>
   );
@@ -350,9 +369,10 @@ function AttachmentRow({ attachment, isPending, onRemove }: AttachmentRowProps):
       }
     })();
 
+  const isFile = attachment.type === RUN_ATTACHMENT_FILE_TYPE;
   const { data, isLoading, isError } = trpc.flows.fetchAttachmentDataUrl.useQuery(
     { url: attachment.url },
-    { staleTime: 5 * 60_000, retry: 1 },
+    { staleTime: 5 * 60_000, retry: 1, enabled: !isFile },
   );
 
   return (
@@ -373,6 +393,7 @@ function AttachmentRow({ attachment, isPending, onRemove }: AttachmentRowProps):
           {isLoading && (
             <Loader2 className="h-3 w-3 text-muted-foreground/40 animate-spin" aria-hidden />
           )}
+          {isFile && <FileText className="h-3 w-3 text-muted-foreground/50" aria-hidden />}
           {isError && <ImageIcon className="h-3 w-3 text-muted-foreground/30" aria-hidden />}
           {data?.dataUrl && (
             <img

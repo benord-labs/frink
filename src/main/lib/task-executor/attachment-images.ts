@@ -3,7 +3,10 @@
  * run's attachment store and converted to base64 for the provider send.
  */
 
-import { ALLOWED_ATTACHMENT_MIME_TYPES } from '../../../shared/types/run-attachment';
+import {
+  ALLOWED_ATTACHMENT_MIME_TYPES,
+  RUN_ATTACHMENT_FILE_TYPE,
+} from '../../../shared/types/run-attachment';
 import type { TaskChatImageAttachment } from '../../../shared/types/task-chat-ready';
 import { readAttachmentImage } from '../flows/attachments-storage';
 
@@ -63,7 +66,7 @@ export async function fetchAttachmentImages(
   const items = attachments.filter((item): item is Record<string, unknown> => {
     if (typeof item !== 'object' || item === null) return false;
     const a = item as Record<string, unknown>;
-    return typeof a.url === 'string';
+    return typeof a.url === 'string' && a.type !== RUN_ATTACHMENT_FILE_TYPE;
   });
 
   if (items.length === 0) return [];
