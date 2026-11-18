@@ -243,11 +243,15 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
   const openIntent: OpenFileIntent = file.intent ?? 'preview';
   const existing = findOpenFile(files, file.path, file.projectPath);
   const nextKey = fileKey(file.path, file.projectPath);
+  const groupPreview = findPreviewTabForGroup(files, file.sourcePaneIndex);
 
   if (existing) {
     const existingKey = fileKey(existing.path, existing.projectPath);
     const mergedProjectPath = file.projectPath ?? existing.projectPath;
     const mergedIsWorktree = existing.isWorktreeContext || file.isWorktreeContext;
+    // A tab moving into another pane's group stays a preview only if that group has none.
+    const keepsPreview =
+      file.sourcePaneIndex === undefined || !groupPreview || groupPreview === existing;
     set(
       openFilesAtom,
       files.map((f) => {
@@ -260,24 +264,18 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
             file.sourcePaneIndex !== undefined ? file.sourcePaneIndex : f.sourcePaneIndex,
           sourceChatId: file.sourceChatId ?? f.sourceChatId,
           isWorktreeContext: mergedIsWorktree,
-          isPreview: openIntent === 'preview' ? f.isPreview : false,
+          isPreview: openIntent === 'preview' ? f.isPreview && keepsPreview : false,
         };
       }),
     );
     set(activeFilePathAtom, fileKey(existing.path, mergedProjectPath));
     set(codeEditorOpenAtom, true);
     return;
-  } else if (
-    openIntent === 'preview' &&
-    findPreviewTabForGroup(files, file.sourcePaneIndex) !== undefined
-  ) {
+  } else if (openIntent === 'preview' && groupPreview) {
     // Replace the existing preview tab in this editor group (pane-aware).
-    const previewToReplace = findPreviewTabForGroup(files, file.sourcePaneIndex);
-    const previewKey = previewToReplace
-      ? fileKey(previewToReplace.path, previewToReplace.projectPath)
-      : null;
+    const previewKey = fileKey(groupPreview.path, groupPreview.projectPath);
     const language = file.language ?? detectLanguage(file.path, EXTENSION_TO_LANGUAGE);
-    if (previewToReplace) revokePdfBlobIfPresent(previewToReplace);
+    revokePdfBlobIfPresent(groupPreview);
     set(
       openFilesAtom,
       files.map((f) =>

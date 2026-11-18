@@ -17,7 +17,6 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import type * as Monaco from 'monaco-editor';
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -56,6 +55,7 @@ import {
   initializeATA,
   limitTsDiagnosticsToSyntax,
   loadProjectTypes,
+  registerCodeNavigationOpener,
   useMonacoTheme,
 } from '@/lib/code-editor/monaco';
 import {
@@ -86,7 +86,6 @@ import {
   markFileSavedAtom,
   normalizeRevealSelection,
   type OpenFile,
-  openFileAtom,
   openFilesAtom,
   pinFileAtom,
   type RevealLineDetail,
@@ -1976,46 +1975,9 @@ export function CodeEditorPanel() {
                       void initializeATA(monaco);
                       // Route cross-file navigation (Ctrl+Click) through our tab system
                       editorOpenerDisposableRef.current?.dispose();
-                      editorOpenerDisposableRef.current = monaco.editor.registerEditorOpener({
-                        openCodeEditor(
-                          source: Monaco.editor.ICodeEditor,
-                          resource: Monaco.Uri,
-                          selectionOrPosition?: Monaco.IRange | Monaco.IPosition,
-                        ) {
-                          const targetPath = decodeURIComponent(resource.path);
-                          const sourceUri = source?.getModel()?.uri?.toString() ?? 'none';
-                          if (!targetPath) return false;
-                          if (resource.toString() === sourceUri) return false;
-                          const currentProjectPath = projectPathRef.current;
-                          const relativePath =
-                            currentProjectPath && targetPath.startsWith(`${currentProjectPath}/`)
-                              ? targetPath.slice(currentProjectPath.length + 1)
-                              : targetPath;
-                          const fileName = relativePath.split('/').pop() ?? relativePath;
-                          appStore.set(openFileAtom, {
-                            path: relativePath,
-                            name: fileName,
-                            projectPath: currentProjectPath,
-                            intent: 'preview',
-                          });
-                          const lineNumber =
-                            selectionOrPosition && 'lineNumber' in selectionOrPosition
-                              ? selectionOrPosition.lineNumber
-                              : selectionOrPosition && 'startLineNumber' in selectionOrPosition
-                                ? (selectionOrPosition as { startLineNumber: number })
-                                    .startLineNumber
-                                : undefined;
-                          if (lineNumber !== undefined) {
-                            requestAnimationFrame(() => {
-                              window.dispatchEvent(
-                                new CustomEvent('editor:reveal-line', {
-                                  detail: { filePath: targetPath, lineNumber },
-                                }),
-                              );
-                            });
-                          }
-                          return true;
-                        },
+                      editorOpenerDisposableRef.current = registerCodeNavigationOpener(monaco, {
+                        store: appStore,
+                        getProjectPath: () => projectPathRef.current,
                       });
                     }}
                     onMount={(editor, _monaco) => {

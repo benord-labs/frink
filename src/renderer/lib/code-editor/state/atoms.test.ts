@@ -85,6 +85,20 @@ describe('code-editor preview tabs', () => {
     expect(files.every((f) => f.isPreview)).toBe(true);
   });
 
+  it('pins a preview reopened into a pane that already has its own preview', () => {
+    const store = createStore();
+    const open = (path: string, sourcePaneIndex: number) =>
+      store.set(openFileAtom, { path, name: path, projectPath: '/repo', sourcePaneIndex });
+
+    open('src/a.ts', 0);
+    open('src/b.ts', 1);
+    open('src/b.ts', 0);
+
+    const pane0 = store.get(openFilesAtom).filter((f) => f.sourcePaneIndex === 0);
+    expect(pane0.map((f) => f.path)).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(pane0.filter((f) => f.isPreview).map((f) => f.path)).toEqual(['src/a.ts']);
+  });
+
   it('pins when opening with explicit pinned intent', () => {
     const store = createStore();
 
