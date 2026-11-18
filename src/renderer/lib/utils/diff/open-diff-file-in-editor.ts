@@ -1,7 +1,7 @@
 import { getFullPath } from '@/lib/code-editor/files';
 import { dispatchEditorRevealLine } from '@/lib/code-editor/state';
-import { getFirstChangedLine, type RenderableDiffFile } from './diff-code-view-items';
 import { buildOpenWorktreeFileInput } from '@/lib/worktree/open-worktree-file-in-editor';
+import { getFirstChangedLine, type RenderableDiffFile } from './diff-code-view-items';
 
 type OpenWorktreeFileInput = NonNullable<ReturnType<typeof buildOpenWorktreeFileInput>>;
 
