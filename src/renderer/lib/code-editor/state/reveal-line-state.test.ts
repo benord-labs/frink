@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   consumePendingReveal,
   dispatchEditorRevealLine,
   normalizeRevealSelection,
+  revealPendingOnMount,
   shouldRevealNow,
 } from './reveal-line-state';
 
@@ -176,5 +177,21 @@ describe('reveal-line-state', () => {
         ),
       ).toBe(false);
     });
+  });
+});
+
+describe('revealPendingOnMount', () => {
+  const pending = { filePath: '/repo/src/foo.md', lineNumber: 40 };
+
+  it('keeps a reveal queued for another file instead of applying it to the file that mounted', () => {
+    const reveal = vi.fn(() => true);
+    expect(revealPendingOnMount(pending, '/repo/src/app.ts', reveal)).toBe(pending);
+    expect(reveal).not.toHaveBeenCalled();
+  });
+
+  it('applies a reveal queued for the mounted file and clears it', () => {
+    const reveal = vi.fn(() => true);
+    expect(revealPendingOnMount(pending, '/repo/src/foo.md', reveal)).toBeNull();
+    expect(reveal).toHaveBeenCalledWith(pending);
   });
 });
