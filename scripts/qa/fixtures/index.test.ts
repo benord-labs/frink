@@ -107,6 +107,7 @@ describe('qa seed fixtures', () => {
       'assistant',
       'user',
       'assistant',
+      'assistant',
     ]);
 
     const digest = messages.find(

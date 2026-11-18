@@ -2,7 +2,8 @@
  * Redaction-safe semantic receipt for a Flow graph patch.
  *
  * The MCP response echoes only this topology, so node config, instructions, paths,
- * and secret-like values never reach the receipt or become presentation copy.
+ * and secret-like values never reach the receipt. The chat card reads field content
+ * from the saved version rows instead, so it never enters the agent's context.
  */
 
 export type FlowChangeMode = 'create' | 'update';

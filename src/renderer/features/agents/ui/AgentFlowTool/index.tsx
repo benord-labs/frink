@@ -12,6 +12,7 @@ import { useFlowBaseSnapshot } from '../../../../hooks/useFlowBaseSnapshot';
 import { activeOverlayAtom, flowsSelectedFlowIdAtom } from '../../../../lib/atoms';
 import { toSafeFlowChangeGraph } from '../../../../lib/flows/flow-change-graph';
 import { buildFlowChangePresentation } from '../../../../lib/flows/flow-change-presentation';
+import { useFlowVersionPair } from '../../../../lib/flows/flow-step-diff/use-flow-version-pair';
 import { FlowChangeArtifact } from '../../../flows/FlowChangeArtifact';
 import type { MessagePart } from '../../stores/message-store';
 import { getToolStatus } from '../agent-tool-registry';
@@ -188,6 +189,7 @@ export function AgentFlowTool({ part, chatStatus, nested }: Props): ReactElement
       }),
     [baseFlow, inputRevision, outputRevision, part.errorText, part.state, status.isInterrupted],
   );
+  const versions = useFlowVersionPair(presentation);
   const setFlowId = useSetAtom(flowsSelectedFlowIdAtom);
   const setOverlay = useSetAtom(activeOverlayAtom);
 
@@ -198,7 +200,12 @@ export function AgentFlowTool({ part, chatStatus, nested }: Props): ReactElement
 
   return (
     <div className="min-w-0 py-0.5">
-      <FlowChangeArtifact presentation={presentation} onOpenFlow={handleOpenFlow} nested={nested} />
+      <FlowChangeArtifact
+        nested={nested}
+        onOpenFlow={handleOpenFlow}
+        presentation={presentation}
+        versions={versions}
+      />
     </div>
   );
 }

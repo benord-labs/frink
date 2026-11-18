@@ -43,6 +43,7 @@ import {
   FIXTURE_MESSAGES,
   FIXTURE_PARKED_SIGNAL,
 } from './messages';
+import { FIXTURE_FLOW_EDIT_MESSAGE, seedEditedFlowFixture } from './flow-edit';
 import { seedPluginNodeFlowFixture } from './plugin-node';
 import { seedBatchGroupFixture, seedQueuedAdmissionFixture } from './queue';
 
@@ -200,7 +201,7 @@ export function seedFixtures(db: SqliteDb, projectPath: string, claudeSourcePath
       },
     ])
     .run();
-  seedTranscript(db, FIXTURE_SUB_CHAT_ID, FIXTURE_MESSAGES);
+  seedTranscript(db, FIXTURE_SUB_CHAT_ID, [...FIXTURE_MESSAGES, FIXTURE_FLOW_EDIT_MESSAGE]);
   seedTranscript(
     db,
     FIXTURE_LONG_SUB_CHAT_ID,
@@ -269,6 +270,7 @@ export function seedFixtures(db: SqliteDb, projectPath: string, claudeSourcePath
   seedTranscript(db, FIXTURE_FLOW_SUB_CHAT_ID, FIXTURE_FLOW_MESSAGES);
 
   seedPausedFlowFixture(db);
+  seedEditedFlowFixture(db);
   seedRunningFlowFixture(db);
   seedInterruptedFlowFixture(db);
   seedPluginNodeFlowFixture(db);

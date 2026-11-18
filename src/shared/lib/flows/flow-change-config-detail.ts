@@ -33,17 +33,21 @@ const NODE_CONFIG_DETAIL_LABELS: Record<string, string> = {
   messageTemplate: 'Reply message',
 };
 
+/** User-facing name of a node config key, or undefined when the key has no reviewed label. */
+export function flowNodeConfigLabel(key: string): string | undefined {
+  // Own keys only: config keys are user data, and `constructor` must not resolve to a prototype member.
+  return Object.hasOwn(NODE_CONFIG_DETAIL_LABELS, key) ? NODE_CONFIG_DETAIL_LABELS[key] : undefined;
+}
+
 export function describeFlowNodeConfigChange(config: unknown): string {
   if (typeof config !== 'object' || config === null || Array.isArray(config)) return 'Step setup';
   const keys = Object.keys(config);
   const labels = [
     ...new Set(
-      keys
-        .map((key) => NODE_CONFIG_DETAIL_LABELS[key])
-        .filter((label): label is string => label !== undefined),
+      keys.map(flowNodeConfigLabel).filter((label): label is string => label !== undefined),
     ),
   ];
-  if (keys.some((key) => NODE_CONFIG_DETAIL_LABELS[key] === undefined)) {
+  if (keys.some((key) => flowNodeConfigLabel(key) === undefined)) {
     labels.push('Other step setup');
   }
   return labels.join(' · ') || 'Step setup';

@@ -31,6 +31,12 @@ describe('describeFlowNodeConfigChange', () => {
     ).toBe('Instructions · Other step setup');
   });
 
+  it('treats keys named like built-in object members as unknown, not as labels', () => {
+    expect(describeFlowNodeConfigChange({ constructor: 'x', toString: 'y' })).toBe(
+      'Other step setup',
+    );
+  });
+
   it('falls back safely for empty and malformed configuration', () => {
     expect(describeFlowNodeConfigChange({})).toBe('Step setup');
     expect(describeFlowNodeConfigChange('not-an-object')).toBe('Step setup');
