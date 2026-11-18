@@ -35,7 +35,10 @@ import {
 } from '@/lib/mentions/group-mention-options-by-project';
 import { useRootSearches } from '@/lib/workspace-context/use-root-searches';
 import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
-import { MENTION_PREFIXES } from '../../../../shared/lib/mentions/mention-grammar';
+import {
+  isWholeMentionId,
+  MENTION_PREFIXES,
+} from '../../../../shared/lib/mentions/mention-grammar';
 import {
   Tooltip,
   TooltipContent,
@@ -84,7 +87,17 @@ type AgentsFileMentionProps = {
   showingSkillsList?: boolean;
   showingAgentsList?: boolean;
   showingToolsList?: boolean;
+  /** Called when the selected option changes, so the composer can set aria-activedescendant */
+  onActiveDescendantChange?: (id: string | undefined) => void;
 };
+
+/** The @ list's id, for the composer's aria-controls */
+export const MENTION_LISTBOX_ID = 'mention-listbox';
+
+/** Stable DOM id for the option at `index` in keyboard order (used by aria-activedescendant) */
+function mentionOptionDomId(index: number): string {
+  return `${MENTION_LISTBOX_ID}-option-${index}`;
+}
 
 // Category navigation options (shown on root view)
 const CATEGORY_OPTIONS: FileMentionOption[] = [
@@ -271,11 +284,16 @@ function renderTooltipContent(option: FileMentionOption) {
     return <div className="text-xs text-muted-foreground font-mono">{option.path}</div>;
   }
 
-  // Files - just path
+  // Files: the whole path, a linked project's from its name rather than the disk
   return (
-    <div className="text-xs text-muted-foreground font-mono truncate w-full">{option.path}</div>
+    <div className="text-xs text-muted-foreground font-mono wrap-anywhere">
+      {option.treePath ?? option.path}
+    </div>
   );
 }
+
+/** Why a row whose path the mention grammar can't read back does nothing when picked */
+const UNMENTIONABLE_HINT = "Can't be mentioned: a mention would stop at a ] in its path.";
 
 // Memoized to prevent re-renders when parent re-renders
 export const AgentsFileMention = memo(function AgentsFileMention({
@@ -294,6 +312,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   showingSkillsList = false,
   showingAgentsList = false,
   showingToolsList = false,
+  onActiveDescendantChange,
 }: AgentsFileMentionProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -704,6 +723,12 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     }
   }, [isOpen]);
 
+  // Focus stays in the composer, so it points a screen reader at the selected row
+  const hasSelection = isOpen && selectedIndex < options.length;
+  useEffect(() => {
+    onActiveDescendantChange?.(hasSelection ? mentionOptionDomId(selectedIndex) : undefined);
+  }, [hasSelection, selectedIndex, onActiveDescendantChange]);
+
   // Keyboard navigation
   useEffect(() => {
     if (!isOpen) return;
@@ -727,7 +752,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
-          if (options[selectedIndex]) {
+          if (options[selectedIndex] && isWholeMentionId(options[selectedIndex].id)) {
             onSelect(options[selectedIndex]);
           }
           break;
@@ -887,6 +912,12 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     <TooltipProvider delayDuration={300}>
       <div
         ref={dropdownRef}
+        id={MENTION_LISTBOX_ID}
+        role="listbox"
+        tabIndex={-1}
+        aria-label="Mentions"
+        // A click keeps focus, and the typing after it, in the composer
+        onMouseDown={(e) => e.preventDefault()}
         className={`fixed z-99999 overflow-y-auto rounded-[10px] border py-1 text-xs text-popover-foreground shadow-lg [&::-webkit-scrollbar]:hidden ${overlayGlass}`}
         style={
           {
@@ -960,15 +991,20 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                 const OptionIcon = getOptionIcon(option);
                 const isCategory = option.type === 'category';
                 const showTooltip = !isCategory && option.path;
+                const mentionable = isWholeMentionId(option.id);
+                const pick = () => {
+                  if (mentionable) onSelect(option);
+                };
 
                 const itemContent = (
                   <div
+                    id={mentionOptionDomId(index)}
                     data-option-index={index}
-                    onClick={() => onSelect(option)}
+                    onClick={pick}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onSelect(option);
+                        pick();
                       }
                     }}
                     onMouseEnter={() => {
@@ -981,6 +1017,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                     role="option"
                     tabIndex={0}
                     aria-selected={isSelected}
+                    aria-disabled={mentionable ? undefined : true}
                     className={cn(
                       'group inline-flex w-[calc(100%-8px)] mx-1 items-center whitespace-nowrap outline-hidden',
                       'h-7 px-1.5 justify-start text-xs rounded-md',
@@ -989,6 +1026,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                       isSelected
                         ? 'dark:bg-neutral-800 bg-accent text-foreground'
                         : 'text-muted-foreground dark:hover:bg-neutral-800 hover:bg-accent hover:text-foreground',
+                      !mentionable && 'cursor-not-allowed opacity-60',
                     )}
                   >
                     <OptionIcon className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -1046,6 +1084,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                         className="overflow-hidden"
                       >
                         {renderTooltipContent(option)}
+                        {!mentionable && <p className="mt-1 text-xs">{UNMENTIONABLE_HINT}</p>}
                       </TooltipContent>
                     </Tooltip>
                   );

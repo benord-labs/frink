@@ -77,6 +77,7 @@ import {
   AgentsFileMention,
   type AgentsMentionsEditorHandle,
   type FileMentionOption,
+  MENTION_LISTBOX_ID,
 } from '../mentions';
 import { ActionsToolbar } from './ActionsToolbar';
 import { ChatInputContextBar } from './active-chat/components/ChatInputContextBar';
@@ -254,6 +255,7 @@ export function NewChatForm({
   const editorRef = useRef<AgentsMentionsEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [slashActiveDescendantId, setSlashActiveDescendantId] = useState<string | undefined>();
+  const [mentionActiveDescendantId, setMentionActiveDescendantId] = useState<string | undefined>();
 
   // Composer content and its persistence across destination changes (Flows/Settings unmount us).
   const {
@@ -762,6 +764,10 @@ export function NewChatForm({
                         slashCommandListboxId={
                           editorHandlers.showSlashDropdown ? SLASH_COMMAND_LISTBOX_ID : undefined
                         }
+                        mentionActiveDescendantId={mentionActiveDescendantId}
+                        mentionListboxId={
+                          editorHandlers.showMentionDropdown ? MENTION_LISTBOX_ID : undefined
+                        }
                         onMentionTrigger={(params) => {
                           if (validatedProject) {
                             editorHandlers.handleMentionTrigger(params);
@@ -864,6 +870,7 @@ export function NewChatForm({
                         showingSkillsList={editorHandlers.showingSkillsList}
                         showingAgentsList={editorHandlers.showingAgentsList}
                         showingToolsList={editorHandlers.showingToolsList}
+                        onActiveDescendantChange={setMentionActiveDescendantId}
                       />
 
                       <AgentsSlashCommand

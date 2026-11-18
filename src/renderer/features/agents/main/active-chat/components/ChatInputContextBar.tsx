@@ -1,7 +1,7 @@
 /**
  * Workspace context under the chat input: folder and linked projects first, then worktree and
- * branch. One line at every width: once the git controls no longer fit, both move behind one
- * ellipsis as the same pickers.
+ * branch. One line at every width: the linked projects step down first, then git controls that
+ * still don't fit move behind one ellipsis as the same pickers, the worktree before the branch.
  */
 
 import { useAtomValue } from 'jotai';
@@ -154,24 +154,27 @@ type ContextRowProps = {
   isLive: boolean;
   promptCacheExpiresAt: number | null;
   gitItems: OverflowRow[];
+  /** Changes whenever a git chip's width can: what they show, and which control each is */
+  gitKey: string;
   overflow: ReturnType<typeof usePriorityOverflow>;
   className?: string;
 };
 
-/** The row itself: folder, linked projects, cache timer, then the git chips inline or all behind
- *  the ellipsis. */
+/** The row itself: folder, linked projects, cache timer, then the git chips, those that don't fit
+ *  behind the ellipsis. The linked projects give up room before any git chip hides, and the branch
+ *  stays inline while it fits beside the ellipsis, so no room is left empty. */
 function ContextRow({
   folder,
   chatId,
   isLive,
   promptCacheExpiresAt,
   gitItems,
+  gitKey,
   overflow,
   className,
 }: ContextRowProps) {
-  const { containerRef, moreRef, setItemRef, visibleFrom } = overflow;
-  // All or nothing: a lone chip beside the ellipsis reads as a half-collapsed row.
-  const collapsed = visibleFrom > 0;
+  const { containerRef, moreRef, setItemRef, visibleFrom, isOverflowing } = overflow;
+  const hidden = gitItems.slice(0, visibleFrom);
   return (
     <section
       aria-label="Workspace context"
@@ -183,21 +186,30 @@ function ContextRow({
       )}
     >
       {folder ? <FolderChip folder={folder} /> : null}
-      {chatId ? <LinkedProjectChips chatId={chatId} running={isLive} /> : null}
+      {chatId ? (
+        <LinkedProjectChips
+          chatId={chatId}
+          running={isLive}
+          crowded={isOverflowing}
+          // The timer takes room from the git chips too
+          crowdKey={`${gitKey}|${promptCacheExpiresAt !== null}`}
+        />
+      ) : null}
       <PromptCacheTimer expiresAt={promptCacheExpiresAt} />
       <div
         ref={containerRef}
         className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-x-2"
       >
-        {collapsed ? (
-          <ContextOverflowMenu ref={moreRef} rows={gitItems} />
-        ) : (
-          gitItems.map((item, index) => (
-            <div key={item.key} ref={setItemRef(index)} className="min-w-0 max-w-[14rem] shrink-0">
-              {item.node}
-            </div>
-          ))
-        )}
+        {hidden.length > 0 && <ContextOverflowMenu ref={moreRef} rows={hidden} />}
+        {gitItems.slice(visibleFrom).map((item, offset) => (
+          <div
+            key={item.key}
+            ref={setItemRef(visibleFrom + offset)}
+            className="min-w-0 max-w-[14rem] shrink-0"
+          >
+            {item.node}
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -269,19 +281,16 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
 
   // The key names everything that changes a chip's width: labels, which control renders in each
   // slot, and the worktree query both worktree controls label from.
-  const overflow = usePriorityOverflow(
-    (worktree.node ? 1 : 0) + (branch ? 1 : 0),
-    GAP_PX,
-    JSON.stringify([
-      worktreePath ?? '',
-      branch,
-      folder,
-      locked,
-      worktree.interactive,
-      isWorktreesError,
-      worktrees.map((wt) => wt.path),
-    ]),
-  );
+  const gitKey = JSON.stringify([
+    worktreePath ?? '',
+    branch,
+    folder,
+    locked,
+    worktree.interactive,
+    isWorktreesError,
+    worktrees.map((wt) => wt.path),
+  ]);
+  const overflow = usePriorityOverflow((worktree.node ? 1 : 0) + (branch ? 1 : 0), GAP_PX, gitKey);
 
   return (
     <GitBranchCheckout
@@ -311,6 +320,7 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
               isLive={isLive}
               promptCacheExpiresAt={promptCacheExpiresAt}
               gitItems={gitItems}
+              gitKey={gitKey}
               overflow={overflow}
               className={className}
             />

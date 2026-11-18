@@ -4,6 +4,7 @@ import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { memo, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { attachedContextFile } from '@/lib/mentions/queued-message-text';
 import { handlePasteEvent } from '@/lib/utils/paste-text';
+import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import {
   PromptInput,
@@ -47,7 +48,12 @@ import {
   codeSelectionContextPropsEqual,
   type DiffTextContext,
 } from '../lib/queue-utils';
-import { AgentsFileMention, AgentsMentionsEditor, type FileMentionOption } from '../mentions';
+import {
+  AgentsFileMention,
+  AgentsMentionsEditor,
+  type FileMentionOption,
+  MENTION_LISTBOX_ID,
+} from '../mentions';
 import { AgentContextIndicator, messageTokenDataEqual } from '../ui/agent-context-indicator';
 import { AgentDiffTextContextItem } from '../ui/agent-diff-text-context-item';
 import { AgentImageItem } from '../ui/agent-image-item';
@@ -277,6 +283,9 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [showMentionDropdown, setShowMentionDropdown] = useState(false);
   const [mentionSearchText, setMentionSearchText] = useState('');
   const [mentionPosition, setMentionPosition] = useState({ top: 0, left: 0 });
+  const [mentionActiveDescendantId, setMentionActiveDescendantId] = useState<string | undefined>();
+  // A chip drawn again from a draft names the linked project its file is in
+  const { extras: linkedProjects } = useTreeProjects(parentChatId);
 
   // Mention dropdown subpage navigation state
   const [showingFilesList, setShowingFilesList] = useState(false);
@@ -744,6 +753,9 @@ export const ChatInputArea = memo(function ChatInputArea({
                 onBlur={handleEditorBlur}
                 slashActiveDescendantId={slashActiveDescendantId}
                 slashCommandListboxId={showSlashDropdown ? SLASH_COMMAND_LISTBOX_ID : undefined}
+                mentionActiveDescendantId={mentionActiveDescendantId}
+                mentionListboxId={showMentionDropdown ? MENTION_LISTBOX_ID : undefined}
+                linkedProjects={linkedProjects}
               />
               <PromptInputActions
                 className="mt-0.5 w-full gap-2 border-t border-border/35 pt-2.5"
@@ -887,6 +899,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         showingSkillsList={showingSkillsList}
         showingAgentsList={showingAgentsList}
         showingToolsList={showingToolsList}
+        onActiveDescendantChange={setMentionActiveDescendantId}
       />
 
       {/* Slash command dropdown */}

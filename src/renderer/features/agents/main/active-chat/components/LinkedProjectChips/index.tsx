@@ -30,8 +30,9 @@ const RUNNING_HINT =
 const LABEL_CLASS = 'hidden @min-[30rem]/workspace-row:inline';
 
 /** What the group shows, most first. The row's overflow menu holds only the git controls, so the
- *  chips keep a cap of their own and step down while they don't fit: the labels go first, then
- *  one chip at a time into the count, and last Link project, which the file tree also has. */
+ *  chips keep a cap of their own and step down while they don't fit, or while the git controls
+ *  don't: the labels go first, then one chip at a time into the count, and last Link project,
+ *  which the file tree also has. */
 const FITS = [
   { inline: 2, labels: true, link: true },
   { inline: 2, labels: false, link: true },
@@ -61,20 +62,25 @@ function isCramped(group: HTMLElement): boolean {
 }
 
 /**
- * The most the group can show. It starts from the most whenever the row resizes or the links
- * change, then steps down before paint while the chips are cramped. A neighbour that squeezes the
- * group, such as the cache timer showing up, steps it down too.
+ * The most the group can show. It starts from the most whenever the row resizes or `contentKey`
+ * changes, then steps down before paint while the chips are cramped or the row is `crowded`. A
+ * neighbour that squeezes the group, such as the cache timer showing up, steps it down too.
  */
-function useFit(groupRef: RefObject<HTMLDivElement | null>, linksKey: string) {
+function useFit(
+  groupRef: RefObject<HTMLDivElement | null>,
+  contentKey: string,
+  crowded: () => boolean,
+) {
   const [rowWidth, setRowWidth] = useState(0);
   const [fit, setFit] = useState({ key: '', step: 0 });
   const [, remeasure] = useReducer((count: number) => count + 1, 0);
-  const key = `${rowWidth}|${linksKey}`;
+  const key = `${rowWidth}|${contentKey}`;
   const step = fit.key === key ? fit.step : 0;
 
   useLayoutEffect(() => {
     const group = groupRef.current;
-    if (group && step < FITS.length - 1 && isCramped(group)) setFit({ key, step: step + 1 });
+    if (group && step < FITS.length - 1 && (isCramped(group) || crowded()))
+      setFit({ key, step: step + 1 });
   });
   useLayoutEffect(() => {
     const group = groupRef.current;
@@ -238,15 +244,22 @@ type Props = {
   chatId: string;
   /** The chat's agent is at work: the tooltips then say when a change reaches it */
   running?: boolean;
+  /** The controls after the group don't all fit, read from the layout as it is now: the group
+   *  steps down for them before any of them hides */
+  crowded?: () => boolean;
+  /** Changes with those controls, so the group starts again from the most */
+  crowdKey?: string;
 };
 
 type GroupProps = Required<Props> & Pick<TreeProjects, 'extras' | 'remove'>;
 
-/** At most 40% of the row, so the git controls keep room. */
-function ChipsGroup({ chatId, running, extras, remove }: GroupProps) {
+const NEVER_CROWDED = () => false;
+
+/** At most 40% of the row, and less while the git controls need its room. */
+function ChipsGroup({ chatId, running, crowded, crowdKey, extras, remove }: GroupProps) {
   const groupRef = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLButtonElement>(null);
-  const fit = useFit(groupRef, JSON.stringify(extras));
+  const fit = useFit(groupRef, `${JSON.stringify(extras)}|${crowdKey}`, crowded);
   // Set by an x, so focus moves on once its chip has gone and taken focus with it.
   const refocus = useRef(false);
   const linkedIds = extras.map((project) => project.id).join('\n');
@@ -323,8 +336,22 @@ function ChipsGroup({ chatId, running, extras, remove }: GroupProps) {
 }
 
 /** Nothing shows for a chat without a project folder of its own, which can't link projects. */
-export function LinkedProjectChips({ chatId, running = false }: Props): ReactElement | null {
+export function LinkedProjectChips({
+  chatId,
+  running = false,
+  crowded = NEVER_CROWDED,
+  crowdKey = '',
+}: Props): ReactElement | null {
   const { extras, canAdd, remove } = useTreeProjects(chatId);
   if (!canAdd) return null;
-  return <ChipsGroup chatId={chatId} running={running} extras={extras} remove={remove} />;
+  return (
+    <ChipsGroup
+      chatId={chatId}
+      running={running}
+      crowded={crowded}
+      crowdKey={crowdKey}
+      extras={extras}
+      remove={remove}
+    />
+  );
 }

@@ -34,11 +34,22 @@ vi.mock('./WorktreeIndicator', () => ({
   },
 }));
 
+type ChipsProps = { chatId: string; running: boolean; crowded: () => boolean; crowdKey: string };
+/** What the bar last asked of the linked chips */
+let lastChipsProps: ChipsProps | undefined;
+
 // The chips read the chat over tRPC; their own suite covers them.
 vi.mock('./LinkedProjectChips', () => ({
-  LinkedProjectChips: ({ chatId, running }: { chatId: string; running: boolean }) => (
-    <div data-testid="linked-chips" data-chat-id={chatId} data-running={String(running)} />
-  ),
+  LinkedProjectChips: (props: ChipsProps) => {
+    lastChipsProps = props;
+    return (
+      <div
+        data-testid="linked-chips"
+        data-chat-id={props.chatId}
+        data-running={String(props.running)}
+      />
+    );
+  },
 }));
 
 /** The folder chip carries a Radix tooltip, which needs the provider the app shell supplies. */
@@ -270,6 +281,7 @@ afterEach(() => {
   store.set(heldSubChatsAtom, new Map());
   deleteMutationMode = 'success';
   lastBranchSelectorProps = undefined;
+  lastChipsProps = undefined;
 });
 
 const LONG_BRANCH = 'feature/very-long-branch-name-that-will-truncate-in-narrow-split-panes-abc123';
@@ -931,9 +943,9 @@ describe('ChatInputContextBar', () => {
     let layout: ReturnType<typeof stubLayout>;
     afterEach(() => layout.restore());
 
-    it('moves worktree and branch behind one ellipsis together, keeping the cache timer inline', () => {
+    it('moves the worktree alone behind the ellipsis while the branch fits beside it', () => {
       mockWorktrees = LINKED;
-      // Room for the branch alone, so only the all-or-nothing rule hides it too.
+      // Room for the branch and the ellipsis, not for both chips
       layout = stubLayout(200, 150);
       renderBar(
         <ChatInputContextBar
@@ -947,13 +959,47 @@ describe('ChatInputContextBar', () => {
 
       expect(screen.getByLabelText('Folder: app')).toBeInTheDocument();
       expect(screen.getByRole('img', { name: /^Prompt cache stays warm/ })).toBeInTheDocument();
-      expect(screen.queryByTestId('branch-selector')).toBeNull();
+      expect(screen.getByTestId('branch-selector')).toBeInTheDocument();
       expect(screen.queryByTestId('worktree-picker')).toBeNull();
 
-      fireEvent.click(screen.getByRole('button', { name: 'More: Worktree, Branch' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More: Worktree' }));
 
       expect(screen.getByTestId('worktree-picker')).toBeInTheDocument();
+      expect(screen.getAllByTestId('branch-selector')).toHaveLength(1);
+    });
+
+    it('asks the linked projects for room before the worktree hides, with the cache timer showing', () => {
+      mockWorktrees = LINKED;
+      // The folder, links and timer leave room for the branch beside the ellipsis alone
+      layout = stubLayout(200, 150);
+      const bar = (branch: string, promptCacheExpiresAt: number | null) => (
+        <ChatInputContextBar
+          worktreePath="/tmp/worktrees/app/wt-1"
+          currentBranch={branch}
+          workspaceFolderName="app"
+          chatId="chat-1"
+          promptCacheExpiresAt={promptCacheExpiresAt}
+        />
+      );
+      const { rerender } = renderBar(bar('feat', Date.now() + 5 * 60_000));
+      expect(screen.getByRole('button', { name: 'More: Worktree' })).toBeInTheDocument();
+      expect(lastChipsProps?.crowded()).toBe(true);
+
+      // The links step down, and the room they give up holds both chips
+      layout.set(400, 150);
+      expect(lastChipsProps?.crowded()).toBe(false);
+      act(() => layout.fire());
+      expect(screen.queryByRole('button', { name: /^More:/ })).toBeNull();
+      expect(screen.getByTestId('worktree-picker')).toBeInTheDocument();
       expect(screen.getByTestId('branch-selector')).toBeInTheDocument();
+
+      // A new branch or the timer going changes the room the chips need, so the links start over
+      const crowdKey = lastChipsProps?.crowdKey;
+      rerender(bar('main', Date.now() + 5 * 60_000));
+      expect(lastChipsProps?.crowdKey).not.toBe(crowdKey);
+      const branchKey = lastChipsProps?.crowdKey;
+      rerender(bar('main', null));
+      expect(lastChipsProps?.crowdKey).not.toBe(branchKey);
     });
 
     it('re-measures a hidden control when content changes so it returns inline once it fits', () => {
@@ -995,10 +1041,10 @@ describe('ChatInputContextBar', () => {
       layout.set(200, 150);
       rerender(bar('feature/very-long-branch-name'));
 
-      expect(screen.getByRole('button', { name: 'More: Worktree, Branch' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'More: Worktree' })).toBeInTheDocument();
     });
 
-    it('brings the branch back inline when the worktree slot disappears', () => {
+    it('drops the ellipsis when the worktree slot it holds disappears', () => {
       mockWorktrees = LINKED;
       layout = stubLayout(200, 150);
       const { rerender } = renderBar(
@@ -1009,7 +1055,7 @@ describe('ChatInputContextBar', () => {
           chatId="chat-1"
         />,
       );
-      expect(screen.getByRole('button', { name: 'More: Worktree, Branch' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'More: Worktree' })).toBeInTheDocument();
 
       mockWorktrees = [{ path: '/tmp/main', branch: 'main', isMain: true, prunable: false }];
       rerender(

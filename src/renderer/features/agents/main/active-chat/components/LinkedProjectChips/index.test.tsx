@@ -382,5 +382,31 @@ describe('LinkedProjectChips', () => {
       layout.resize({ row: 800, group: 400, name: 50 });
       expect(buttonNames(group)).toEqual(['Unlink api', 'Unlink web', 'Link project']);
     });
+
+    it('steps down for the git controls after it before they hide, and starts again when they change', async () => {
+      links = ['api'];
+      stubLayout({ row: 700, group: 400, name: NAME_PX });
+      // The worktree and branch fit beside the group once it shows no chip, then beside a chip too
+      let gitShrank = false;
+      const crowded = () =>
+        !gitShrank && screen.queryByRole('button', { name: 'Unlink api' }) !== null;
+      const chips = (crowdKey: string) => (
+        <TooltipProvider>
+          <LinkedProjectChips chatId="app-chat" crowded={crowded} crowdKey={crowdKey} />
+        </TooltipProvider>
+      );
+      const { rerender } = renderWithTrpc(chips('long-branch'), answer);
+      const group = await chipsGroup();
+
+      await within(group).findByRole('button', { name: '+1 linked' });
+      expect(buttonNames(group)).toEqual(['+1 linked', 'Link project']);
+      expect(within(group).getByRole('button', { name: 'Link project' })).not.toHaveClass('hidden');
+      expect(within(group).getByText('Link project')).not.toHaveClass(LABEL_SHOWN);
+
+      gitShrank = true;
+      rerender(chips('short-branch'));
+      expect(buttonNames(group)).toEqual(['Unlink api', 'Link project']);
+      expect(within(group).getByText('Link project')).toHaveClass(LABEL_SHOWN);
+    });
   });
 });

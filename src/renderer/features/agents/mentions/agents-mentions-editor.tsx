@@ -12,6 +12,7 @@ import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/co
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
 import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
+import { findProjectForPath } from '@/lib/workspace-context/project-paths';
 import {
   MENTION_PREFIXES,
   MENTION_TOKEN_PATTERN_SRC,
@@ -62,6 +63,13 @@ type AgentsMentionsEditorProps = {
   slashActiveDescendantId?: string;
   /** ID of the slash command listbox element (for aria-controls). */
   slashCommandListboxId?: string;
+  /** ID of the active option in the open @ list (for aria-activedescendant). */
+  mentionActiveDescendantId?: string;
+  /** ID of the open @ list (for aria-controls). */
+  mentionListboxId?: string;
+  /** The projects linked to the chat: a chip drawn again from its text names the one it is in, as
+   *  a chip picked from the @ list does */
+  linkedProjects?: ReadonlyArray<{ path: string; name: string }>;
 };
 
 /** Advance `walker` past this element's whole subtree; null once the tree is exhausted. */
@@ -97,6 +105,13 @@ function createMentionNode(option: FileMentionOption): HTMLSpanElement {
   const label = document.createElement('span');
   label.textContent = option.label;
   span.append(createFileIconElement(option.label, option.type), label);
+  // A file from a linked project names it, as its badge in a reply does
+  if (option.project) {
+    const project = document.createElement('span');
+    project.className = "shrink-1000 font-normal before:mr-1 before:content-['·']";
+    project.textContent = option.project;
+    span.append(project);
+  }
   return span;
 }
 
@@ -528,10 +543,16 @@ export const AgentsMentionsEditor = memo(
       onBlur,
       slashActiveDescendantId,
       slashCommandListboxId,
+      mentionActiveDescendantId,
+      mentionListboxId,
+      linkedProjects,
     },
     ref,
   ) {
     const editorRef = useRef<HTMLDivElement>(null);
+    // Read as a chip is drawn, so resolveMention stays the same and never redraws initialValue
+    const linkedProjectsRef = useRef(linkedProjects);
+    linkedProjectsRef.current = linkedProjects;
     const triggerActive = useRef(false);
     const triggerStartIndex = useRef<number | null>(null);
     // Slash command trigger state
@@ -549,7 +570,8 @@ export const AgentsMentionsEditor = memo(
           const repo = parts[1];
           const path = parts.slice(2).join(':');
           const name = pathLabel(path);
-          return { id, label: name, path, repository: repo, type };
+          const project = findProjectForPath(path, linkedProjectsRef.current ?? [])?.name;
+          return { id, label: name, path, repository: repo, type, ...(project ? { project } : {}) };
         }
       }
       if (id.startsWith(MENTION_PREFIXES.SKILL)) {
@@ -1183,8 +1205,8 @@ export const AgentsMentionsEditor = memo(
           onBlur={onBlur}
           role="textbox"
           aria-multiline="true"
-          aria-activedescendant={slashActiveDescendantId}
-          aria-controls={slashCommandListboxId}
+          aria-activedescendant={slashActiveDescendantId ?? mentionActiveDescendantId}
+          aria-controls={slashCommandListboxId ?? mentionListboxId}
           tabIndex={disabled ? -1 : 0}
           data-chat-input="true"
           className={cn(

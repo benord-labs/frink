@@ -401,3 +401,30 @@ describe('AgentsMentionsEditor placeholder', () => {
     expect(placeholder?.className).toMatch(/(^|\s)text-muted-foreground(\s|$)/);
   });
 });
+
+describe('AgentsMentionsEditor and its open list', () => {
+  it('points a screen reader at the @ list’s selected option, and at the slash list’s instead while it is open', () => {
+    const editor = (slash: {
+      slashActiveDescendantId?: string;
+      slashCommandListboxId?: string;
+    }) => (
+      <AgentsMentionsEditor
+        onTrigger={vi.fn()}
+        onCloseTrigger={vi.fn()}
+        mentionActiveDescendantId="mention-listbox-option-2"
+        mentionListboxId="mention-listbox"
+        {...slash}
+      />
+    );
+    const { container, rerender } = render(editor({}));
+    const textbox = getEditorRoot(container);
+    expect(textbox).toHaveAttribute('aria-activedescendant', 'mention-listbox-option-2');
+    expect(textbox).toHaveAttribute('aria-controls', 'mention-listbox');
+
+    rerender(
+      editor({ slashActiveDescendantId: 'slash-cmd-plan', slashCommandListboxId: 'slash-list' }),
+    );
+    expect(textbox).toHaveAttribute('aria-activedescendant', 'slash-cmd-plan');
+    expect(textbox).toHaveAttribute('aria-controls', 'slash-list');
+  });
+});

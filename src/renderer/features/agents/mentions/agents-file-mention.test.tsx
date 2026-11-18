@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentsFileMention } from './agents-file-mention';
+import { AgentsFileMention, MENTION_LISTBOX_ID } from './agents-file-mention';
 
 const state = vi.hoisted(() => ({
   tree: { main: null as { name: string } | null, extras: [] as unknown[] },
@@ -109,7 +109,8 @@ describe('AgentsFileMention with linked projects', () => {
   it('names each project’s group for a screen reader, and sizes the list for its headings', () => {
     renderPicker();
 
-    const group = screen.getByRole('group', { name: 'ros-service, linked' });
+    const list = screen.getByRole('listbox', { name: 'Mentions' });
+    const group = within(list).getByRole('group', { name: 'ros-service, linked' });
     expect(within(group).getByRole('option')).toHaveTextContent('app.tssrc');
     expect(screen.getByRole('group', { name: 'owners-web' })).toBeInTheDocument();
     // Two options and two headings, 28px each, and 8px of padding
@@ -126,6 +127,56 @@ describe('AgentsFileMention with linked projects', () => {
     const tooltip = screen.getByRole('tooltip');
     expect(within(tooltip).getByText('ros-service')).toBeInTheDocument();
     expect(within(tooltip).queryByText('w')).toBeNull();
+  });
+
+  it('draws a linked file’s whole path in its tooltip from its project’s name, wrapping it', () => {
+    state.mainFiles = [];
+    linkedSearch([[file('src/routes/settings.ts')]]);
+    renderPicker();
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent(/^ros-service\/src\/routes\/settings\.ts$/);
+    const path = tooltip.querySelector('.font-mono');
+    expect(path).toHaveClass('wrap-anywhere');
+    expect(path).not.toHaveClass('truncate');
+  });
+
+  it.each(['odd dir/[x] copy.ts', '[x] y/plain.ts', 'a].ts'])(
+    'refuses %s, whose path its mention could not read back, and says why',
+    (path) => {
+      state.mainFiles = [];
+      linkedSearch([[file(path)]]);
+      const onSelect = vi.fn();
+      renderPicker({ onSelect });
+
+      const option = screen.getByRole('option');
+      expect(option).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByRole('tooltip')).toHaveTextContent(
+        /Can't be mentioned: a mention would stop at a \] in its path\.$/,
+      );
+      // Enter is still the list's, so the half-typed message is not sent
+      expect(fireEvent.keyDown(window, { key: 'Enter' })).toBe(false);
+      fireEvent.keyDown(option, { key: ' ' });
+      // The press keeps focus, and the typing after it, in the composer
+      expect(fireEvent.mouseDown(option)).toBe(false);
+      fireEvent.click(option);
+      expect(onSelect).not.toHaveBeenCalled();
+    },
+  );
+
+  it('tells the composer which option is selected, by its id inside the named list', () => {
+    const onActiveDescendantChange = vi.fn();
+    const { rerender } = renderPicker({ onActiveDescendantChange });
+    const list = screen.getByRole('listbox', { name: 'Mentions' });
+    expect(list).toHaveAttribute('id', MENTION_LISTBOX_ID);
+
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+    const selected = within(list).getAllByRole('option')[1];
+    expect(selected).toHaveTextContent('app.tssrc');
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith(selected?.id);
+
+    rerender({ isOpen: false });
+    expect(onActiveDescendantChange).toHaveBeenLastCalledWith(undefined);
   });
 
   it('brings a project’s heading into view with its first option', () => {

@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { findMentionTokens, isWholeMentionId } from './mention-grammar';
 
+describe('isWholeMentionId with spaces and bracket pairs', () => {
+  it.each([
+    ['file:local:src/app/[id]/page.tsx', true],
+    ['file:local:/w/My Sites/app/[id]/My Page.tsx', true],
+    ['file:local:odd dir/[x]copy.ts', true],
+    ['file:local:notes[draft.md', true],
+    ['file:local:/w/odd dir/[x] copy.ts', false],
+    ['folder:local:odd dir/[x] y', false],
+    ['file:local:a]b.ts', false],
+  ])('%s reads back whole: %s', (id, mentionable) => {
+    expect(isWholeMentionId(id)).toBe(mentionable);
+  });
+});
+
 describe('findMentionTokens', () => {
   it.each(['', 'plain text, user@example.com and [brackets]', '@[]'])(
     'finds no token in %j',
