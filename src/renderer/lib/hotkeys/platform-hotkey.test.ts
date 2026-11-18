@@ -47,6 +47,7 @@ describe('isPrimaryChord', () => {
     expect(press({ ctrlKey: true })).toBe(true);
     expect(press({ metaKey: true })).toBe(false);
     expect(press({ ctrlKey: true, metaKey: true })).toBe(false);
+    expect(press({ ctrlKey: true, altKey: true, modifierAltGraph: true })).toBe(false);
   });
 
   it('yields plain Ctrl chords typed in the terminal to the shell, but not Ctrl+Shift ones', () => {

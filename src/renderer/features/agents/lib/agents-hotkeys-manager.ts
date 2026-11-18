@@ -270,6 +270,7 @@ export function useAgentsHotkeys(
   // Unified hotkey listener that respects custom configurations (early-capture actions)
   React.useEffect(() => {
     if (!enabled) return;
+    const mac = isMac();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -279,7 +280,7 @@ export function useAgentsHotkeys(
       for (const { shortcutId, actionId } of EARLY_HOTKEY_BINDINGS) {
         const hotkey = getHotkeyForAction(shortcutId);
         if (!hotkey || !matchesHotkey(e, hotkey)) continue;
-        if (isFieldReservedChord(hotkey, e.target, isMac())) continue;
+        if (isFieldReservedChord(hotkey, e.target, mac)) continue;
 
         // Don't trigger unmodified single-key shortcuts when focus is in an input (e.g. "?" for shortcuts)
         if (isInInput && hotkey && !hotkey.includes('+')) continue;
@@ -350,6 +351,7 @@ export function useAgentsHotkeys(
 
   React.useEffect(() => {
     if (!enabled) return;
+    const mac = isMac();
 
     const runUnlessRepeat = (e: KeyboardEvent, actionId: string) => {
       if (e.repeat && NON_REPEATING_HOTKEYS.has(actionId)) return;
@@ -365,7 +367,7 @@ export function useAgentsHotkeys(
         if (isInInput && !mapping.isGlobal) continue;
 
         for (const hotkey of mapping.hotkeys) {
-          if (matchesHotkey(e, hotkey) && !isFieldReservedChord(hotkey, e.target, isMac())) {
+          if (matchesHotkey(e, hotkey) && !isFieldReservedChord(hotkey, e.target, mac)) {
             if (preventDefault) {
               e.preventDefault();
               e.stopPropagation();

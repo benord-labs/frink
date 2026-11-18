@@ -32,7 +32,7 @@ export function isFieldReservedChord(
  */
 export function isPrimaryChord(e: KeyboardEvent, isMac = isMacOS()): boolean {
   if (isMac) return e.metaKey && !e.ctrlKey;
-  if (!e.ctrlKey || e.metaKey) return false;
+  if (!e.ctrlKey || e.metaKey || e.getModifierState('AltGraph')) return false;
   const chord = `ctrl+${e.shiftKey ? 'shift+' : ''}${e.key.toLowerCase()}`;
   return !isFieldReservedChord(chord, e.target, false);
 }
