@@ -46,6 +46,9 @@ beforeAll(() => {
   // Bash expands `{..,x}/a` to `../a x/a`, while the literal folder passes a realpath check.
   nodeFs.mkdirSync(nodePath.join(p, '{..,x}'));
   nodeFs.copyFileSync(source, nodePath.join(p, '{..,x}', 'a'));
+  // Bash decodes `$'\x2e\x2e'` to `..`, while the parser keeps it as this literal folder name.
+  nodeFs.mkdirSync(nodePath.join(p, '$\\x2e\\x2e'));
+  nodeFs.copyFileSync(source, nodePath.join(p, '$\\x2e\\x2e', 'a'));
 });
 afterAll(() => nodeFs.rmSync(tmp, { recursive: true, force: true }));
 
@@ -101,6 +104,7 @@ describe('checkBash: read-only shell reads of the chat attachments folder', () =
     ['a quoted digit before a redirect', () => `cat ${p}/a && head -n "2">&1 /etc/hosts`],
     ['a brace expansion', () => `cat ${p}/{..,x}/a`],
     ['an unquoted bracket glob in the pattern', () => `grep [ab]x ${p}/a`],
+    ['ANSI-C quoting that bash decodes to ..', () => `cat ${p}/$'\\x2e\\x2e'/a`],
     ['a missing file', () => `cat ${p}/missing`],
     ['a non-read part first', () => `ln -sf /etc/hosts ${p}/k && cat ${p}/k`],
     ['a backgrounded part', () => `cat ${p}/a & rm x`],

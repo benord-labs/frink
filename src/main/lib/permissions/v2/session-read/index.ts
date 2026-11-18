@@ -104,8 +104,8 @@ const SPECS = new Map<string, Spec>([
 ]);
 
 const WORDS = z.array(z.string());
-/** Unquoted, bash expands these (bracket globs, braces, tilde, history) in any word. */
-const UNQUOTED_EXPANSION = /[[\]{}~!]/;
+/** Unquoted, bash expands these (bracket globs, braces, tilde, history, `$'…'`) in any word. */
+const UNQUOTED_EXPANSION = /[[\]{}~!$]/;
 
 /** `..` resolves after any link before it, and braces expand; a realpath check sees neither. */
 const UNSAFE_PATH_TEXT = /(?:^|[\\/])\.\.(?:[\\/]|$)|[{}]/;
