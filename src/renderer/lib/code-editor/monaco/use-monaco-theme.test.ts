@@ -156,8 +156,10 @@ describe('monacoThemeData', () => {
     );
     const resolve = editorTokens(monacoThemeData(customLight, rules));
 
-    expect(resolve('comment.block').fontStyle).toBe(1);
+    expect(resolve('comment.doc.ts').fontStyle).toBe(1);
     expect(resolve('comment.line').fontStyle).toBe(0);
+    // Monarch's `comment` token stands for `//` comments, which the reset un-italicises in chat.
+    expect(resolve('comment.ts').fontStyle).toBe(0);
   });
 
   it("keeps stock Frink's own editor chrome at contrast 100", () => {
@@ -186,6 +188,7 @@ describe('useMonacoTheme', () => {
     monaco.editor.defineTheme.mockClear();
     monaco.editor.setTheme.mockClear();
     getShikiTheme.mockReset().mockResolvedValue(codeTheme('#ff0000'));
+    captureException.mockClear();
   });
 
   // Runs first: the loader only resolves asynchronously until it has adopted an instance.
@@ -312,5 +315,20 @@ describe('useMonacoTheme', () => {
     await waitFor(() =>
       expect(lastRules()).toContainEqual({ token: 'keyword', foreground: '#ff0000' }),
     );
+  });
+
+  it('reports a code theme that keeps failing once, while still retrying it', async () => {
+    getShikiTheme.mockRejectedValue(new Error('chunk failed'));
+    const store = createStore();
+    renderTheme(store);
+    const minDark: ActivePalette = { ...stockDark, syntax: 'min-dark' };
+
+    act(() => store.set(activePaletteAtom, minDark));
+    await waitFor(() => expect(captureException).toHaveBeenCalledTimes(1));
+    act(() => store.set(activePaletteAtom, { ...minDark, inline: true }));
+    await waitFor(() => expect(getShikiTheme).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+
+    expect(captureException).toHaveBeenCalledTimes(1);
   });
 });

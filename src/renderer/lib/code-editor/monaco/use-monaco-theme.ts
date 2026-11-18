@@ -97,6 +97,8 @@ export function monacoThemeData(palette: ActivePalette, rules: MonacoTokenRule[]
 }
 
 const rulesBySyntax = new Map<string, MonacoTokenRule[]>();
+// Each commit retries a failed load; a code theme that keeps failing is reported once.
+const reportedFailures = new Set<string>();
 
 type ThemeLoading = {
   loadTheme?: typeof getShikiTheme;
@@ -129,6 +131,8 @@ export function useMonacoTheme({
         rulesBySyntax.set(palette.syntax, rules);
         if (!cancelled) apply(rules);
       } catch (error) {
+        if (reportedFailures.has(palette.syntax)) return;
+        reportedFailures.add(palette.syntax);
         report(error, { tags: { surface: 'monaco-theme' } });
       }
     };

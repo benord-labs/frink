@@ -8,6 +8,7 @@ export type MonacoTokenRule = { token: string; foreground?: string; fontStyle?: 
  */
 const MONARCH_ALIASES: Array<[token: string, scopes: string[]]> = [
   ['comment', ['comment.line.double-slash']],
+  ['comment.doc', ['comment.block.documentation']],
   ['string', ['string.quoted.double']],
   ['keyword', ['keyword.control']],
   ['number', ['constant.numeric']],
@@ -39,14 +40,20 @@ function selectorsOf(scope: string | string[] | undefined): string[] {
   return parts.filter((s) => s && !s.includes(' '));
 }
 
-/** The theme rule whose selector is the longest dotted prefix of `scope`, as TextMate matches. */
-function resolveScope(rules: MonacoTokenRule[], scope: string): MonacoTokenRule | undefined {
+/** The value of `property` from the longest selector prefixing `scope`; TextMate resolves each property alone. */
+function resolveScope(
+  rules: MonacoTokenRule[],
+  scope: string,
+  property: 'foreground' | 'fontStyle',
+): string | undefined {
   let best: MonacoTokenRule | undefined;
   for (const rule of rules) {
     const matches = scope === rule.token || scope.startsWith(`${rule.token}.`);
-    if (matches && rule.foreground && rule.token.length >= (best?.token.length ?? 0)) best = rule;
+    if (matches && rule[property] !== undefined && rule.token.length >= (best?.token.length ?? 0)) {
+      best = rule;
+    }
   }
-  return best;
+  return best?.[property];
 }
 
 /** Monaco token rules that paint Monarch tokens with a Shiki theme's colours. */
@@ -69,9 +76,9 @@ export function shikiThemeToMonacoRules(theme: ThemeRegistrationResolved): Monac
 
   const fg = normalizeColor(theme.fg, theme);
   const aliases = MONARCH_ALIASES.flatMap(([token, scopes]) => {
-    const match = scopes.map((s) => resolveScope(rules, s)).find(Boolean);
-    const foreground = match?.foreground ?? fg;
-    const fontStyle = match?.fontStyle;
+    const scope = scopes.find((s) => resolveScope(rules, s, 'foreground')) ?? scopes[0];
+    const foreground = resolveScope(rules, scope, 'foreground') ?? fg;
+    const fontStyle = resolveScope(rules, scope, 'fontStyle');
     return foreground ? [{ token, foreground, ...(fontStyle !== undefined && { fontStyle }) }] : [];
   });
 
