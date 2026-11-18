@@ -1,14 +1,15 @@
 import { isCompactCommand } from '../../../../../shared/commands/expand-slash-command';
-import {
-  findMentionTokens,
-  OPEN_EDITOR_FILE_SOURCE,
-} from '../../../../../shared/lib/mentions/mention-grammar';
+import { findMentionTokens } from '../../../../../shared/lib/mentions/mention-grammar';
 import type { CodexContextEntry } from '../../../../../shared/lib/message-markers/message-provenance';
 import {
   isMachineSource,
   isMachineText,
 } from '../../../../../shared/lib/message-markers/person-authored';
-import { type ParsedMention, parseMention } from '../../../../../shared/lib/mentions/parse-mention';
+import {
+  isOpenEditorFile,
+  type ParsedMention,
+  parseMention,
+} from '../../../../../shared/lib/mentions/parse-mention';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { MessageDelivery } from '../message-provenance/origin';
 
@@ -36,10 +37,6 @@ type Projection = { text: string; note?: ComposerNote };
 
 /** One token's rewrite, or null to leave it as written. */
 type TokenRewrite = (mention: ParsedMention, pickedPaths: string[]) => Projection | null;
-
-function isOpenEditorFile(mention: ParsedMention): boolean {
-  return mention.type === 'file' && mention.repository === OPEN_EDITOR_FILE_SOURCE;
-}
 
 /** A file or folder the user picked from the @ menu. */
 function isPicked(mention: ParsedMention): boolean {
