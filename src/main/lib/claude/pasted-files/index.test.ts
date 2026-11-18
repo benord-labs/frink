@@ -124,7 +124,7 @@ describe('pasted files', () => {
     const to = 'fresh-sub-chat-id-01';
     const text = `@[pasted:4:report.pdf|${pdf.filePath}] @[pasted:4:notes|${elsewhere}] @[pasted:1:gone.csv|${missing}] go`;
 
-    const out = await rehomePastedMentions(text, { from: subChatId, to }, userData);
+    const out = await rehomePastedMentions(text, to, userData);
 
     const copy = join(userData, 'claude-sessions', to, 'pasted', pdf.filename);
     expect(readFileSync(copy, 'utf-8')).toBe('%PDF');
@@ -133,14 +133,25 @@ describe('pasted files', () => {
     );
   });
 
-  it('leaves a message alone when the old id could never have held pastes', async () => {
-    const text = `@[pasted:1:x|${join(userData, 'claude-sessions', '__new_chat_0__', 'pasted', 'x.txt')}]`;
-    expect(
-      await rehomePastedMentions(
-        text,
-        { from: '__new_chat_0__', to: 'fresh-sub-chat-id-01' },
-        userData,
-      ),
-    ).toBe(text);
+  // The target folder is one Claude reads without asking, so a path that only LOOKS like it starts
+  // inside a pasted folder must never pull an outside file into it.
+  it('never copies a file a mention reaches by stepping out of a pasted folder', async () => {
+    const secret = join(userData, 'secret.txt');
+    writeFileSync(secret, 'key');
+    // Built by hand: join() would resolve the `..` segments away.
+    const pasted = join(userData, 'claude-sessions', subChatId, 'pasted');
+    const text = `@[pasted:1:s|${pasted}/../../../secret.txt]`;
+
+    expect(await rehomePastedMentions(text, 'fresh-sub-chat-id-01', userData)).toBe(text);
+    expect(existsSync(join(userData, 'claude-sessions', 'fresh-sub-chat-id-01'))).toBe(false);
+  });
+
+  it('leaves a paste alone when its folder could not belong to a sub-chat', async () => {
+    const folder = join(userData, 'claude-sessions', '__new_chat_0__', 'pasted');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'x.txt'), 'x');
+    const text = `@[pasted:1:x|${join(folder, 'x.txt')}]`;
+
+    expect(await rehomePastedMentions(text, subChatId, userData)).toBe(text);
   });
 });

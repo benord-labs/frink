@@ -195,7 +195,7 @@ function flushDraft(key: string, state: StateRef, ignoreSending = false): void {
   const { images: img, pastedTexts: pasted, attachedTask: task, editorRef, subChatId } = s.params;
   const text = editorRef.current?.getValue() ?? s.latest.text;
   s.latest = { text, images: img, pastedTexts: pasted, task };
-  writeDraft(key, { text, images: img, pastedTexts: pasted, task, subChatId });
+  writeDraft(key, { ...s.latest, subChatId: s.isSending ? undefined : subChatId });
   s.lastWriteStamp = readDraftStamp(key);
   s.lastSeenWriteCount = writes + 1; // writeDraft above bumped exactly once, synchronously
 }
@@ -215,7 +215,8 @@ function flushIfPending(key: string, state: StateRef): void {
  * which exists only to stop a same-session remount from restoring an about-to-be-sent text before
  * its outcome is known (see `pauseSend`) — cannot apply: there is no later remount within this
  * process to race with. Flushes on a pending timer OR a send still in flight, so a process kill
- * mid-send never silently loses the still-visible text.
+ * mid-send never silently loses the still-visible text. That mid-send copy omits the sub-chat id:
+ * the send may already have claimed it, so the composer after a restart must mint its own.
  */
 function flushBeforeUnload(key: string, state: StateRef): void {
   if (state.current.saveTimer !== null || state.current.isSending) flushDraft(key, state, true);

@@ -90,20 +90,29 @@ export async function writePastedText(
   return { filePath, filename, size: Buffer.byteLength(input.text) };
 }
 
-/** Copies the pastes `text` names from one sub-chat's `pasted/` folder into another's and points
+/** The sub-chat whose `pasted/` folder holds `path`, or null when it is not in one. */
+function pastedOwner(path: string, userData: string): string | null {
+  const dir = dirname(path);
+  const owner = basename(dirname(dir));
+  const inPasted =
+    basename(dir) === 'pasted' && dirname(dirname(dir)) === join(userData, 'claude-sessions');
+  return inPasted && isValidSubChatIdForSessionPaths(owner) ? owner : null;
+}
+
+/** Copies the pastes `text` names from any other sub-chat's `pasted/` folder into `to`'s and points
  *  their mentions at the copies; a file that cannot be copied keeps its old path. */
 export async function rehomePastedMentions(
   text: string,
-  ids: { from: string; to: string },
+  to: string,
   userData = app.getPath('userData'),
 ): Promise<string> {
-  if (!isValidSubChatIdForSessionPaths(ids.from)) return text;
-  const fromDir = join(userData, 'claude-sessions', ids.from, 'pasted');
   let out = text;
   for (const token of findMentionTokens(text)) {
     const mention = parseMention(token.id);
-    if (mention?.type !== 'pasted' || dirname(mention.path) !== fromDir) continue;
-    const copy = join(await pastedDirFor(ids.to, userData), basename(mention.path));
+    if (mention?.type !== 'pasted') continue;
+    const owner = pastedOwner(mention.path, userData);
+    if (!owner || owner === to) continue;
+    const copy = join(await pastedDirFor(to, userData), basename(mention.path));
     const copied = await copyFile(mention.path, copy).then(
       () => true,
       () => false,

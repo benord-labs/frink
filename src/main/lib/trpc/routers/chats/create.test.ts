@@ -21,6 +21,7 @@ const autoNameSubChatMock = vi.fn();
 const trackMessageSentMock = vi.spyOn(analytics, 'trackMessageSent');
 const getAiAccountTypeMock = vi.fn();
 const getSubChatByIdMock = vi.fn();
+const updateSubChatMessagesMock = vi.fn();
 
 vi.mock('../../../db', () => ({
   getDatabase: () => ({
@@ -44,7 +45,13 @@ vi.mock('../../../db/repos/project-ai-accounts', () => ({
 vi.mock('../../../db/repos/sub-chats', () => ({
   createSubChat: createSubChatLocalMock,
   getSubChatById: getSubChatByIdMock,
+  updateSubChatMessages: updateSubChatMessagesMock,
 }));
+
+/** The row the real insert would return: the id and transcript it was given. */
+async function insertedRow(_db: never, row: { id?: string; messages: string }) {
+  return { ...makeLocalSubChat({ id: row.id, chatId: 'c1' }), messages: JSON.parse(row.messages) };
+}
 vi.mock('../../../db/schema', () => ({
   projects: { id: 'projects.id' },
 }));
@@ -208,19 +215,15 @@ describe('createRouter (local-first)', () => {
     expect(result.id).toBe('c1');
   });
 
-  it('propagates a worktree CONFLICT instead of collapsing it to INTERNAL_SERVER_ERROR', async () => {
+  it('refuses a worktree another chat owns with CONFLICT, before saving anything', async () => {
     projectsSelectMock.mockResolvedValue([{ id: 'p1', path: '/repo', name: 'Repo' }]); // byId hit
-    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
-    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
-    // Existing worktree already owned by a DIFFERENT chat → router throws TRPCError CONFLICT
-    // mid-flow, inside the worktree try/catch (create.ts:196-202).
     findChatByWorktreeLocalMock.mockResolvedValue({ id: 'other', name: 'Other chat' });
 
     const { createRouter } = await import('./create');
     const caller = createRouter.createCaller({ getWindow: () => null });
 
-    // The typed error must survive BOTH the inner worktree catch and the outer catch,
-    // proving typed-code propagation is general — not special-cased to NOT_FOUND.
+    // Typed, not collapsed to INTERNAL_SERVER_ERROR by the outer catch. Nothing is inserted, so
+    // the composer's sub-chat id stays free for its retry.
     await expect(
       caller.create({
         ...baseInput,
@@ -230,6 +233,21 @@ describe('createRouter (local-first)', () => {
         mode: 'agent',
       }),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(createChatLocalMock).not.toHaveBeenCalled();
+    expect(createSubChatLocalMock).not.toHaveBeenCalled();
+  });
+
+  it('fails the create before saving anything when the worktree owner lookup fails', async () => {
+    projectsSelectMock.mockResolvedValue([{ id: 'p1', path: '/repo', name: 'Repo' }]);
+    findChatByWorktreeLocalMock.mockRejectedValue(new Error('database is locked'));
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+
+    await expect(
+      caller.create({ ...baseInput, projectId: 'p1', existingWorktreePath: '/repo/wt' }),
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(createChatLocalMock).not.toHaveBeenCalled();
   });
 
   it('maps an unexpected persistence failure to INTERNAL_SERVER_ERROR', async () => {
@@ -309,11 +327,15 @@ describe('createRouter (local-first)', () => {
 
   it("moves the first message's attachments under a replaced composer id", async () => {
     createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
-    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+    createSubChatLocalMock.mockImplementation(insertedRow);
+    updateSubChatMessagesMock.mockImplementation(async (_db, id, transform) => ({
+      ...makeLocalSubChat({ id, chatId: 'c1' }),
+      messages: transform(JSON.parse(createSubChatLocalMock.mock.calls[0]?.[1].messages)),
+    }));
     getSubChatByIdMock.mockResolvedValue(makeLocalSubChat({ id: 'taken' }));
     const rehome = vi
       .spyOn(pastedFiles, 'rehomePastedMentions')
-      .mockImplementation(async (text, ids) => text.replace(ids.from, ids.to));
+      .mockImplementation(async (text, to) => text.replace(subChatId, to));
     const subChatId = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
     const token = `@[pasted:4:report.pdf|/u/claude-sessions/${subChatId}/pasted/1a2b3c4d-report.pdf]`;
 
@@ -326,13 +348,60 @@ describe('createRouter (local-first)', () => {
     });
 
     const created = createSubChatLocalMock.mock.calls[0]?.[1];
-    expect(rehome).toHaveBeenCalledWith(`${token} summarise it`, {
-      from: subChatId,
-      to: created.id,
-    });
-    expect(JSON.parse(created.messages)[0].parts[0].text).toContain(
+    const stored = await updateSubChatMessagesMock.mock.results[0]?.value;
+    expect(rehome).toHaveBeenCalledWith(`${token} summarise it`, created.id);
+    expect(stored.messages[0].parts[0].text).toContain(
       `/u/claude-sessions/${created.id}/pasted/1a2b3c4d-report.pdf`,
     );
     rehome.mockRestore();
+  });
+
+  describe('a composer id taken by the time of the insert', () => {
+    const subChatId = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
+    const primaryKeyConflict = Object.assign(new Error('Failed query'), {
+      cause: Object.assign(new Error('UNIQUE constraint failed: sub_chats.id'), { errcode: 1555 }),
+    });
+
+    beforeEach(() => {
+      createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+      getSubChatByIdMock.mockResolvedValue(null);
+    });
+
+    // Copying before the insert would leave this create's pastes in the racing chat's folder.
+    it('retries once under a fresh id, copying pastes only into the id it got', async () => {
+      createSubChatLocalMock
+        .mockRejectedValueOnce(primaryKeyConflict)
+        .mockImplementationOnce(insertedRow);
+      const rehome = vi
+        .spyOn(pastedFiles, 'rehomePastedMentions')
+        .mockImplementation(async (text) => text);
+
+      const { createRouter } = await import('./create');
+      const caller = createRouter.createCaller({ getWindow: () => null });
+      await caller.create({
+        ...baseInput,
+        subChatId,
+        initialMessageParts: [{ type: 'text', text: 'see the report' }],
+      });
+
+      const retried = createSubChatLocalMock.mock.calls[1]?.[1]?.id;
+      expect(createSubChatLocalMock).toHaveBeenCalledTimes(2);
+      expect(retried).toMatch(/^[a-z0-9-]{10,64}$/i);
+      expect(retried).not.toBe(subChatId);
+      expect(rehome).toHaveBeenCalledExactlyOnceWith('see the report', retried);
+      rehome.mockRestore();
+    });
+
+    it('does not retry any other insert failure', async () => {
+      createSubChatLocalMock.mockRejectedValueOnce(new Error('disk I/O error'));
+
+      const { createRouter } = await import('./create');
+      const caller = createRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.create({ ...baseInput, subChatId })).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+      });
+      expect(createSubChatLocalMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

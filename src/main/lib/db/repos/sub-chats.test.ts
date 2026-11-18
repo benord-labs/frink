@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
+import { isPrimaryKeyConflict } from '../utils';
 import {
   _resetCorruptTranscriptReportsForTests,
   _setCorruptTranscriptCaptureForTests,
@@ -859,5 +860,23 @@ describe('clearStreamIdIfCurrent', () => {
     const id = await seedStreamingSubChat('stream-newer');
     await clearStreamIdIfCurrent(db, id, 'stream-failed');
     expect((await getSubChatById(db, id))?.streamId).toBe('stream-newer');
+  });
+});
+
+describe('createSubChat id conflicts', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('fails a duplicate id as a primary-key conflict, and other constraint failures not', async () => {
+    await db.insert(schema.chats).values({ id: 'chat-dup' });
+    await createSubChat(db, { id: 'sub-dup-0001', chatId: 'chat-dup' });
+
+    await expect(createSubChat(db, { id: 'sub-dup-0001', chatId: 'chat-dup' })).rejects.toSatisfy(
+      isPrimaryKeyConflict,
+    );
+    const orphan = createSubChat(db, { id: 'sub-dup-0002', chatId: 'no-chat' });
+    await expect(orphan).rejects.toBeInstanceOf(Error);
+    await expect(orphan).rejects.not.toSatisfy(isPrimaryKeyConflict);
   });
 });

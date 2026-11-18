@@ -2,7 +2,13 @@
 import { act, renderHook } from '@testing-library/react';
 import { createRef } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { newChatDraftKey, readDraft, readDraftStamp, writeDraft } from '../lib/drafts';
+import {
+  newChatDraftKey,
+  readDraft,
+  readDraftStamp,
+  readDraftSubChatId,
+  writeDraft,
+} from '../lib/drafts';
 import type { AgentsMentionsEditorHandle } from '../mentions';
 import { useDraftManagement } from './use-draft-management';
 
@@ -147,6 +153,7 @@ describe('useDraftManagement', () => {
     });
 
     expect(readDraft(KEY)?.text).toBe('quit before the timer');
+    expect(readDraft(KEY)?.subChatId).toBe(SUB);
     view.unmount();
   });
 
@@ -815,7 +822,8 @@ describe('useDraftManagement', () => {
     // text before its outcome is known — but beforeunload means the app itself is quitting, so
     // that race can't happen. Without this, a process kill mid-send would silently lose text that
     // was never confirmed sent, violating the composer-draft-persistence beforeunload guarantee.
-    it('persists the still-visible text on beforeunload even while a send is in flight', () => {
+    // The send may already have claimed the id, so the composer after a restart must mint its own.
+    it('persists the still-visible text on beforeunload mid-send, without the sub-chat id', () => {
       const editor = makeEditor();
       const { view } = mountComposer(editor.ref, KEY);
       editor.bind(view.result.current.handleContentChange);
@@ -835,6 +843,7 @@ describe('useDraftManagement', () => {
       });
 
       expect(readDraft(KEY)?.text).toBe('scaffolding is slow');
+      expect(readDraftSubChatId(KEY)).toBeNull();
       view.unmount();
     });
   });
