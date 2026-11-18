@@ -64,7 +64,7 @@ describe('EditorContextChip', () => {
     expect(onRemoveFile).toHaveBeenCalledOnce();
   });
 
-  it("shows only the file name of a selection from another project's file", () => {
+  it("shows only the file name of a selection from another project's file, and its linked project", () => {
     render(
       <TooltipProvider>
         <EditorContextChip
@@ -74,12 +74,22 @@ describe('EditorContextChip', () => {
             filePath: '/Users/me/ros-service/src/send.ts',
           }}
           fileName={null}
+          // The deepest link holding the file names it: not the one around it, nor one whose
+          // folder only starts the same way.
+          linkedProjects={[
+            { name: 'me', path: '/Users/me' },
+            { name: 'ros', path: '/Users/me/ros' },
+            { name: 'ros-service', path: '/Users/me/ros-service' },
+          ]}
           onRemoveSelection={vi.fn()}
           onRemoveFile={vi.fn()}
         />
       </TooltipProvider>,
     );
 
+    expect(screen.getByText('send.ts').parentElement).toHaveTextContent(
+      /^send\.tsros-serviceL279-282/,
+    );
     fireEvent.focus(screen.getByText('send.ts'));
     expect(screen.getByRole('tooltip')).toHaveTextContent('/Users/me/ros-service/src/send.ts');
     expect(

@@ -1,8 +1,10 @@
 import type { ReactElement } from 'react';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import { missingFolderMessage } from '../../../../../shared/lib/missing-folder-message';
 import { trpc } from '@/lib/trpc';
 import { asEntryOfParent } from '@/lib/workspace-context/project-paths';
 import { useOpenBrowsedFile } from '@/lib/workspace-context/use-open-browsed-file';
+import { useFoundFolderGone } from '@/lib/workspace-context/use-found-folder-gone';
 import { FILES_FETCH_LIMIT, READ_ONLY_FILE_TREE_KEY_SHORTCUTS } from '../../constants';
 import { FileTree } from '../../FileTree';
 import { ReadOnlyContext } from '../../FileTree/ReadOnlyContext';
@@ -73,9 +75,10 @@ export function ExtraProjectRoot({
   // the disk, and the tree waits for that answer before it calls the folder empty.
   const isEmpty = shown.data?.length === 0;
   const folderType = trpc.files.entryType.useQuery(folderEntry, { enabled: canRead && isEmpty });
-  const cantOpen =
-    shown.isError || (isEmpty && folderType.isSuccess && folderType.data !== 'folder');
+  const foundGone = isEmpty && folderType.isSuccess && folderType.data !== 'folder';
+  const missing = project.missing || foundGone;
   const isLoading = shown.isLoading || (isEmpty && folderType.isLoading);
+  useFoundFolderGone(chatId, foundGone && !project.missing);
   // A folder that isn't a git repository fails here and shows no branch.
   const branchInput = { worktreePath: project.path };
   const branch = trpc.changes.getBranches.useQuery(branchInput, {
@@ -148,7 +151,7 @@ export function ExtraProjectRoot({
         name={project.name}
         path={project.path}
         branch={branch}
-        missing={project.missing}
+        missing={missing}
         badge={LINKED_BADGE}
         expanded={expanded}
         onExpandedChange={handleExpandedChange}
@@ -166,11 +169,11 @@ export function ExtraProjectRoot({
         hidden={!expanded}
         className="px-2 py-1 outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
       >
-        {project.missing ? (
+        {missing ? (
           <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
-            {`Can't find ${project.name}'s folder.`}
+            {missingFolderMessage(project.name)}
           </p>
-        ) : cantOpen ? (
+        ) : shown.isError ? (
           <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
             {`Can't open ${project.name}'s folder. It may have moved or been deleted.`}
           </p>

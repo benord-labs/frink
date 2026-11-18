@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { trackProjectOpened, trackWorkspaceDeleted } from '../../analytics';
 import { getLaunchDirectory } from '../../cli';
 import { getDatabase } from '../../db';
+import { listChatsLinkingProject } from '../../db/repos/chat-linked-projects';
 import {
   createProject as createProjectLocal,
   beginProjectDeletion,
@@ -30,6 +31,7 @@ import {
 import { removeManagedBuildFolder, scaffoldBuild } from '../../project-scaffold';
 import { abortActiveExecutionsForSubChats, clearCodexSession } from '../../socket/executor';
 import { publicProcedure, router } from '../index';
+import { broadcastLinkedProjectsChanged } from './chats/helpers/linked-projects-changed';
 import { removeProjectWorktrees } from './chats/teardown-worktree';
 import { frinkUserHome } from '../../platform/frink-home';
 
@@ -73,6 +75,8 @@ async function deleteExistingProject(
     for (const c of projectChats) await cancelFlowRunsForChatOrThrow(c.id);
   }
 
+  // The cascade drops the project's links too; each chat that had one is told once it commits.
+  const linkingChatIds = listChatsLinkingProject(db, existing.id);
   const attempts: DeleteProjectResult[] = [];
   await settleChatOwnedFlowDeletion(async () => {
     const result = await deleteProjectLocal(db, existing.id);
@@ -83,6 +87,7 @@ async function deleteExistingProject(
   const final = attempts.at(-1);
   const deletedChats = final?.deleted && final.removed ? final.deletedChats : undefined;
   if (!deletedChats) return { project: null, deletedChatIds: await goneChatIds(db, chatIds) };
+  for (const chatId of linkingChatIds) broadcastLinkedProjectsChanged(chatId);
   // Clean up the chats the cascade really dropped, not the pre-delete snapshot: a chat moved to
   // another project in between survives, and keeps its session, cache and worktree.
   for (const c of deletedChats) {
@@ -255,7 +260,12 @@ export const projectsRouter = router({
     .input(z.object({ id: z.string(), name: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const db = getDatabase();
-      return updateProjectLocal(db, input.id, { name: input.name });
+      const renamed = await updateProjectLocal(db, input.id, { name: input.name });
+      // Chats that link it show its name beside their own project.
+      for (const chatId of listChatsLinkingProject(db, input.id)) {
+        broadcastLinkedProjectsChanged(chatId);
+      }
+      return renamed;
     }),
 
   /**

@@ -34,6 +34,7 @@ import {
   hasPendingMoveChatApproval,
   requestMoveChatApproval,
 } from '../socket/streaming/pending-permission/move-chat';
+import { broadcastLinkedProjectsChanged } from '../trpc/routers/chats/helpers/linked-projects-changed';
 import * as taskSignal from '../trpc/routers/frink-task-signal';
 import { handleRequestSecretToolCall as handleRequestSecret } from './secret-request';
 import * as toolCatalog from './dynamic-chat-tool-catalog';
@@ -686,7 +687,9 @@ async function handleToolsCall(
     try {
       if (isSameProject) {
         const updated = await updateChat(db, ctx.chatId, { worktreePath: requestedWorktreePath });
-        dropLinksOverlapping(db, ctx.chatId, [requestedWorktreePath]);
+        if (dropLinksOverlapping(db, ctx.chatId, [requestedWorktreePath])) {
+          broadcastLinkedProjectsChanged(ctx.chatId);
+        }
         moved = updated ? { branch: updated.branch, worktreePath: updated.worktreePath } : null;
       } else {
         // `resolvedTarget` is computed for every cross-project case above; this is an
@@ -696,7 +699,7 @@ async function handleToolsCall(
           throw new Error('[requestSwitchProject] resolvedTarget missing on cross-project move');
         }
         const target = resolvedTarget;
-        const { updated, previousWorktreePath } = await moveChatToProjectLocal(
+        const { updated, previousWorktreePath, linksChanged } = await moveChatToProjectLocal(
           getDatabase(),
           ctx.chatId,
           {
@@ -707,6 +710,7 @@ async function handleToolsCall(
             stalePrunedProjectId: target.stalePrunedProjectId,
           },
         );
+        if (linksChanged) broadcastLinkedProjectsChanged(ctx.chatId);
         // Invalidate BOTH the old and new worktree paths — auto-restore re-attaches to a
         // previous worktree whose gitCache may be stale from the prior visit.
         if (previousWorktreePath && previousWorktreePath !== target.worktreePath) {

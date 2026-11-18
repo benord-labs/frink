@@ -14,6 +14,9 @@ import {
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { mentionChipClass } from '../../../lib/mentions/mention-chip-class';
+import { trpc } from '../../../lib/trpc';
+import { findProjectForPath } from '../../../lib/workspace-context/project-paths';
+import { useCurrentChatId } from '../context/current-chat-worktree-context';
 import {
   Bot,
   Files,
@@ -43,14 +46,40 @@ function isTextMention(mention: ParsedMention): boolean {
   );
 }
 
-/** One mention as a badge; turn `focusable` off inside a control that takes focus itself. */
+type ChatLinks = { linkedProjects?: Array<{ name: string; path: string }> } | null;
+const linkedProjectsOf = (chat: ChatLinks) => chat?.linkedProjects ?? [];
+
+/** The project linked to the chat that a file lies in, after its name, as the message box shows. */
+function LinkedProjectName({ chatId, path }: { chatId: string; path: string }) {
+  // The chat view keeps the chat fresh.
+  const linked = trpc.chats.get.useQuery(
+    { id: chatId },
+    { staleTime: Infinity, select: linkedProjectsOf },
+  ).data;
+  const project = findProjectForPath(path, linked ?? []);
+  return (
+    project && (
+      <span className="shrink-1000 font-normal before:mr-1 before:content-['·']">
+        {project.name}
+      </span>
+    )
+  );
+}
+
+/** One mention as a badge; turn `focusable` off inside a control that takes focus itself.
+ *  `chatId` names the chat it belongs to outside the chat's transcript, such as in its queue. */
 export function MentionChip({
   mention,
   focusable = true,
+  chatId: ownChatId,
 }: {
   mention: ParsedMention;
   focusable?: boolean;
+  chatId?: string | null;
 }) {
+  // Set in a chat's transcript, where a file can come from a project linked to the chat.
+  const transcriptChatId = useCurrentChatId();
+  const chatId = ownChatId ?? transcriptChatId;
   if (isTextMention(mention)) return <TextMentionChip mention={mention} />;
 
   // biome-ignore lint/style/useNamingConvention: component type variable
@@ -80,6 +109,7 @@ export function MentionChip({
         <span className={MENTION_CHIP_CLASS} tabIndex={focusable ? 0 : undefined}>
           <Icon />
           <span>{mention.label}</span>
+          {chatId && isPath && <LinkedProjectName chatId={chatId} path={mention.path} />}
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className={isPath ? 'font-mono wrap-anywhere' : undefined}>
@@ -119,7 +149,11 @@ function renderTextWithUltrathink(text: string): React.ReactNode {
  * Hook to render text with file/folder mentions and ultrathink highlighting
  * Returns array of React nodes with mentions rendered as chips
  */
-function useRenderFileMentions(text: string, focusable: boolean): React.ReactNode[] {
+function useRenderFileMentions(
+  text: string,
+  focusable: boolean,
+  chatId: string | null | undefined,
+): React.ReactNode[] {
   return useMemo(() => {
     const nodes: React.ReactNode[] = [];
     let lastIndex = 0;
@@ -139,7 +173,12 @@ function useRenderFileMentions(text: string, focusable: boolean): React.ReactNod
 
       if (mention) {
         nodes.push(
-          <MentionChip key={`mention-${key++}`} mention={mention} focusable={focusable} />,
+          <MentionChip
+            key={`mention-${key++}`}
+            mention={mention}
+            focusable={focusable}
+            chatId={chatId}
+          />,
         );
       } else {
         // Fallback: show as plain text if not a valid mention
@@ -157,22 +196,25 @@ function useRenderFileMentions(text: string, focusable: boolean): React.ReactNod
     }
 
     return nodes;
-  }, [text, focusable]);
+  }, [text, focusable, chatId]);
 }
 
 /**
- * Component to render text with file mentions
+ * Component to render text with file mentions. `chatId` names the chat the text belongs to
+ * outside its transcript, so a file from a project linked to it names that project there too.
  */
 export function RenderFileMentions({
   text,
   className,
   focusable = true,
+  chatId,
 }: {
   text: string;
   className?: string;
   focusable?: boolean;
+  chatId?: string | null;
 }) {
-  const nodes = useRenderFileMentions(text, focusable);
+  const nodes = useRenderFileMentions(text, focusable, chatId);
   return <span className={className}>{nodes}</span>;
 }
 

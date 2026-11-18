@@ -522,15 +522,20 @@ describe('opening a file from its badge', () => {
     expect(asked).toEqual([['files.entryType', { projectPath: OTHER, relativePath: 'src/a.ts' }]]);
   });
 
-  it("says when another project's file is from a project linked to the chat", async () => {
-    renderReply(`See \`${OTHER}/src/a.ts\`.`, {
+  // The agent reads anything inside a linked folder, a project nested in it too.
+  it.each([
+    ['linked to the chat', `${OTHER}/src/a.ts`, 'In api · linked'],
+    ['inside a project linked to the chat', `${OTHER}/packages/ui/a.ts`, 'In ui · linked'],
+  ])("says when another project's file is from a project %s", async (_, file, where) => {
+    renderReply(`See \`${file}\`.`, {
       disk: [],
       linkedProjects: [{ path: `${OTHER}/` }],
+      registered: [...PROJECTS, { id: 'ui', name: 'ui', path: `${OTHER}/packages/ui` }],
     });
 
     fireEvent.focus(await screen.findByRole('button', { name: /a\.ts/ }));
 
-    expect(tooltipLines()[0]).toEqual(['In api · linked', false]);
+    expect(tooltipLines()[0]).toEqual([where, false]);
   });
 
   // During tRPC client hydration on dev start the list can briefly hold something else.

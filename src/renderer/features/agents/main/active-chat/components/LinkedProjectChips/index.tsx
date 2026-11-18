@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { missingFolderMessage } from '../../../../../../../shared/lib/missing-folder-message';
 import { LinkProjectPicker } from '@/components/ProjectPicker/LinkProjectPicker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -48,7 +49,7 @@ type LinkedProject = TreeProjects['extras'][number];
 
 /** What a link's tooltip says, line by line, ending with its folder. */
 function statusLines({ name, path, missing }: LinkedProject, running: boolean): string[] {
-  if (missing) return [`Can't find ${name}'s folder.`, path];
+  if (missing) return [missingFolderMessage(name), path];
   return [`${name} is linked to this chat.`, ...(running ? [RUNNING_HINT] : []), path];
 }
 
@@ -64,18 +65,26 @@ function isCramped(group: HTMLElement): boolean {
 /**
  * The most the group can show. It starts from the most whenever the row resizes or `contentKey`
  * changes, then steps down before paint while the chips are cramped or the row is `crowded`. A
- * neighbour that squeezes the group, such as the cache timer showing up, steps it down too.
+ * neighbour that squeezes the group, such as the cache timer showing up, steps it down too. While
+ * `hold` is set it only steps down, so nothing on show, such as an open list, unmounts. `settle`
+ * keeps what shows now as the fit for the layout as it is now. Run it as `hold` starts, so the
+ * hold keeps what is on screen rather than a fit from an older layout, and as it ends, so letting
+ * go changes nothing on screen either.
  */
 function useFit(
   groupRef: RefObject<HTMLDivElement | null>,
   contentKey: string,
   crowded: () => boolean,
+  hold: boolean,
 ) {
   const [rowWidth, setRowWidth] = useState(0);
   const [fit, setFit] = useState({ key: '', step: 0 });
   const [, remeasure] = useReducer((count: number) => count + 1, 0);
   const key = `${rowWidth}|${contentKey}`;
-  const step = fit.key === key ? fit.step : 0;
+  const step = fit.key === key || hold ? fit.step : 0;
+  const settle = () => {
+    if (fit.key !== key) setFit({ key, step });
+  };
 
   useLayoutEffect(() => {
     const group = groupRef.current;
@@ -96,7 +105,7 @@ function useFit(
     return () => observer.disconnect();
   }, [groupRef]);
 
-  return FITS[step];
+  return { ...FITS[step], settle };
 }
 
 type ChipProps = {
@@ -170,12 +179,21 @@ type MoreLinkedProps = {
   projects: LinkedProject[];
   running: boolean;
   labelClass: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   /** `onError` runs when the link can't be removed */
   onUnlink: (projectId: string, onError: () => void) => void;
 };
 
 /** A count of the links past the cap, which lists them, each with its own x. */
-function MoreLinked({ projects, running, labelClass, onUnlink }: MoreLinkedProps) {
+function MoreLinked({
+  projects,
+  running,
+  labelClass,
+  open,
+  onOpenChange,
+  onUnlink,
+}: MoreLinkedProps) {
   const listRef = useRef<HTMLUListElement>(null);
   // The row whose x was pressed: once it has gone, focus moves to the row now in its place, so the
   // list stays open for the next one.
@@ -192,9 +210,10 @@ function MoreLinked({ projects, running, labelClass, onUnlink }: MoreLinkedProps
   const count = `+${projects.length}`;
   const missing = projects.some((project) => project.missing);
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <Button
+          data-more-linked
           variant="ghost"
           size="xs"
           shape="pill"
@@ -263,14 +282,32 @@ const NEVER_CROWDED = () => false;
 function ChipsGroup({ chatId, running, crowded, crowdKey, extras, remove }: GroupProps) {
   const groupRef = useRef<HTMLDivElement>(null);
   const linkRef = useRef<HTMLButtonElement>(null);
-  const fit = useFit(groupRef, `${JSON.stringify(extras)}|${crowdKey}`, crowded);
-  // Set by an x, so focus moves on once its chip has gone and taken focus with it.
+  const [moreOpen, setMoreOpen] = useState(false);
+  // An unlink from the open list leaves the chips as they are, so the list stays open for the next.
+  const fit = useFit(groupRef, `${JSON.stringify(extras)}|${crowdKey}`, crowded, moreOpen);
+  // Opening and closing the list changes nothing else on show: the count stays under the pointer,
+  // and closing hands focus back to it.
+  const changeMoreOpen = (open: boolean) => {
+    fit.settle();
+    setMoreOpen(open);
+  };
+  const hasMore = extras.length > fit.inline;
+  // A list left with no rows, such as after its last unlink, closes, so it never reopens by itself.
+  if (moreOpen && !hasMore) setMoreOpen(false);
+  // Set by an x, so focus moves on once its chip has gone and taken focus with it: to Link project,
+  // or to the count while Link project is hidden.
   const refocus = useRef(false);
   const linkedIds = extras.map((project) => project.id).join('\n');
   useEffect(() => {
     if (!refocus.current) return;
     refocus.current = false;
-    if (document.activeElement === document.body) linkRef.current?.focus();
+    // Waits for the group to settle what it shows, which renders it again before this task ends.
+    queueMicrotask(() => {
+      const link = linkRef.current;
+      if (document.activeElement !== document.body) return;
+      const more = groupRef.current?.querySelector<HTMLElement>('[data-more-linked]');
+      (link && !link.classList.contains('hidden') ? link : more)?.focus();
+    });
   }, [linkedIds]);
 
   const unlink = (projectId: string, onError?: () => void) => {
@@ -298,11 +335,13 @@ function ChipsGroup({ chatId, running, crowded, crowdKey, extras, remove }: Grou
           onUnlink={() => unlink(project.id)}
         />
       ))}
-      {extras.length > fit.inline && (
+      {hasMore && (
         <MoreLinked
           projects={extras.slice(fit.inline)}
           running={running}
           labelClass={labelClass}
+          open={moreOpen}
+          onOpenChange={changeMoreOpen}
           onUnlink={unlink}
         />
       )}

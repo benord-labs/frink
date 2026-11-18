@@ -70,7 +70,8 @@ vi.mock('@/lib/hotkeys/shortcut-registry', () => ({
 }));
 
 const entry = (path: string, type: string) => ({ name: path.split('/').pop(), path, type });
-const MISSING_FOLDER = "Can't open api's folder. It may have moved or been deleted.";
+const CANT_OPEN = "Can't open api's folder. It may have moved or been deleted.";
+const MISSING_FOLDER = "Can't find api's folder.";
 
 function renderRoot(
   props: Partial<ComponentProps<typeof ExtraProjectRoot>> = {},
@@ -213,38 +214,51 @@ describe('ExtraProjectRoot', () => {
     }
   });
 
-  it.each<[string, Query, Query, 'missing' | 'empty' | 'loading']>([
-    ['says a folder that fails to list may have moved', { isError: true }, {}, 'missing'],
+  it.each<[string, Query, Query, string | null, 'empty' | 'loading' | null]>([
+    ['says a folder that fails to list may have moved', { isError: true }, {}, CANT_OPEN, null],
     [
-      'says a folder no longer on disk may have moved',
+      "says a folder no longer on disk can't be found, as the chat will",
       { data: [] },
       { data: null, isSuccess: true },
-      'missing',
+      MISSING_FOLDER,
+      null,
     ],
-    ['lists an empty folder as empty', { data: [] }, { data: 'folder', isSuccess: true }, 'empty'],
+    [
+      'lists an empty folder as empty',
+      { data: [] },
+      { data: 'folder', isSuccess: true },
+      null,
+      'empty',
+    ],
     [
       'waits for the disk before it calls a folder empty',
       { data: [] },
       { isLoading: true },
+      null,
       'loading',
     ],
-  ])('%s', (_, listing, folderType, shows) => {
+  ])('%s', (_, listing, folderType, status, shows) => {
     api.state.listing = listing;
     api.state.folderType = folderType;
     const { tree } = renderRoot();
 
-    expect(screen.queryByRole('status')?.textContent ?? null).toBe(
-      shows === 'missing' ? MISSING_FOLDER : null,
-    );
+    expect(screen.queryByRole('status')?.textContent ?? null).toBe(status);
     expect(Boolean(screen.queryByText('No files in project'))).toBe(shows === 'empty');
     expect(tree.getAttribute('aria-busy')).toBe(shows === 'loading' ? 'true' : null);
+    // Only the disk's answer reads the chat again, so its missing flag reaches every surface.
+    expect(api.invalidateChat.mock.calls).toEqual(
+      status === MISSING_FOLDER ? [[{ id: 'chat-1' }]] : [],
+    );
   });
 
-  it('says a folder no longer on disk may have moved while a name filter is set', () => {
+  it("says a folder no longer on disk can't be found while a name filter is set", () => {
     api.state.folderType = { data: null, isSuccess: true };
     renderRoot({ searchQuery: 'guide' });
 
     expect(screen.getByRole('status')).toHaveTextContent(MISSING_FOLDER);
+    expect(screen.getByRole('button', { name: /^api/ })).toHaveAccessibleName(
+      'api Linked folder missing',
+    );
     expect(screen.queryByText('No files found')).not.toBeInTheDocument();
   });
 

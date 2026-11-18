@@ -19,6 +19,7 @@ const api = vi.hoisted(() => {
     entryType: vi.fn((_input: unknown, _options: unknown) => state.folderType),
     invalidateSearch: vi.fn(),
     invalidateEntryType: vi.fn(),
+    invalidateChat: vi.fn(),
   };
 });
 
@@ -29,6 +30,7 @@ vi.mock('@/lib/trpc', () => ({
         searchContent: { invalidate: api.invalidateSearch },
         entryType: { invalidate: api.invalidateEntryType },
       },
+      chats: { get: { invalidate: api.invalidateChat } },
     }),
     files: {
       searchContent: { useQuery: api.searchContent },
@@ -46,7 +48,7 @@ const MATCH = {
   endColumn: 12,
   lineText: 'useOrders()',
 };
-const MISSING_FOLDER = "Can't open api's folder. It may have moved or been deleted.";
+const MISSING_FOLDER = "Can't find api's folder.";
 
 function renderSections(
   query: string,
@@ -125,7 +127,7 @@ describe('ExtraProjectContentSearch', () => {
       false,
     ],
     [
-      "says the folder can't be opened when it is gone",
+      "says the folder can't be found when it is gone, and reads the chat again",
       { matches: [], invalidRegex: false },
       { data: null, isSuccess: true },
       MISSING_FOLDER,
@@ -143,6 +145,9 @@ describe('ExtraProjectContentSearch', () => {
     expect(api.entryType).toHaveBeenLastCalledWith(
       { projectPath: '/w/', relativePath: 'api' },
       { enabled: asksDisk },
+    );
+    expect(api.invalidateChat.mock.calls).toEqual(
+      message === MISSING_FOLDER ? [[{ id: 'chat-1' }]] : [],
     );
   });
 

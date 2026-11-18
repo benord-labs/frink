@@ -234,19 +234,27 @@ describe('FileSearchDialog', () => {
       expect(pill('All in this tree')).toHaveAttribute('aria-pressed', 'true');
       expect(rows()).toEqual([
         'a.tssrcrecently opened',
-        'app.tslibros-servicerecently opened',
+        'app.tslibros-service, linkedrecently opened',
         'b.tssrc',
-        'index.tssrcros-service',
+        'index.tssrcros-service, linked',
       ]);
-      // The tag names the project in full, since a long name is cut off.
+      // The tag names the project in full, since a long name is cut off, and marks it linked as the
+      // file tree does, with more than its tint.
       expect(screen.getAllByTitle('ros-service')).toHaveLength(2);
+      for (const tag of screen.getAllByTitle('ros-service')) {
+        expect(tag).toHaveClass('bg-primary/10');
+        expect(tag.querySelector('svg')).toHaveClass('lucide-link');
+      }
 
       searchUseQueryMock.mockClear();
       fireEvent.click(pill('ros-service'));
 
       expect(pill('ros-service')).toHaveAttribute('aria-pressed', 'true');
       expect(searched()).toEqual(['/b']);
-      expect(rows()).toEqual(['app.tslibros-servicerecently opened', 'index.tssrcros-service']);
+      expect(rows()).toEqual([
+        'app.tslibros-service, linkedrecently opened',
+        'index.tssrcros-service, linked',
+      ]);
     });
 
     it('lists the same path in two projects twice and opens the one picked', () => {
@@ -256,7 +264,7 @@ describe('FileSearchDialog', () => {
       const { onSelectFile } = renderTree();
       const input = screen.getByPlaceholderText('Go to file...');
 
-      expect(rows()).toEqual(['index.tssrc', 'index.tssrcros-service']);
+      expect(rows()).toEqual(['index.tssrc', 'index.tssrcros-service, linked']);
       expect(consoleError).not.toHaveBeenCalled();
       fireEvent.keyDown(input, { key: 'ArrowDown' });
       fireEvent.keyDown(input, { key: 'Enter' });
@@ -270,7 +278,7 @@ describe('FileSearchDialog', () => {
       );
       renderTree();
 
-      expect(rows()).toEqual(['index.tssrcros-service', 'app.tslibros-service']);
+      expect(rows()).toEqual(['index.tssrcros-service, linked', 'app.tslibros-service, linked']);
     });
 
     it("keeps each project's last results on screen while its next search loads", () => {
@@ -291,7 +299,7 @@ describe('FileSearchDialog', () => {
       // ros-service is now the only folder searched, but its last results are still its own.
       fireEvent.click(pill('ros-service'));
 
-      expect(rows()).toEqual(['index.tssrcros-service', 'app.tslibros-service']);
+      expect(rows()).toEqual(['index.tssrcros-service, linked', 'app.tslibros-service, linked']);
     });
 
     it('leaves Enter on a pill to the pill, and searches every project again on reopen', () => {
@@ -326,14 +334,14 @@ describe('FileSearchDialog', () => {
       changeRoots([CHAT, WEB]);
 
       expect(pill('All in this tree')).toHaveAttribute('aria-pressed', 'true');
-      expect(rows()).toEqual(['a.tssrc', 'b.tssrc', 'a.tssrcweb', 'b.tssrcweb']);
+      expect(rows()).toEqual(['a.tssrc', 'b.tssrc', 'a.tssrcweb, linked', 'b.tssrcweb, linked']);
     });
 
     it('lists a recent file under the deepest project holding it', () => {
       const PKG: QuickOpenRoot = { path: '/b/pkg', name: 'pkg', isChat: false };
       renderTree({ roots: [CHAT, OTHER, PKG], recents: ['/b/pkg/x.ts'] });
 
-      expect(rows()[0]).toBe('x.tspkgrecently opened');
+      expect(rows()[0]).toBe('x.tspkg, linkedrecently opened');
     });
 
     it('drops an open it has nothing to search, so it never pops up later by itself', () => {

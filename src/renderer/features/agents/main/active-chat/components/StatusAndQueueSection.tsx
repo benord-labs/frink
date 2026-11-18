@@ -117,6 +117,7 @@ export function StatusAndQueueSection({
             inputHasContent={inputHasContent}
             isStreaming={isStreaming}
             steerSupported={steerSupported}
+            chatId={parentChatId}
           />
         )}
         {/* Status card - bottom card, only while changed files are still uncommitted */}

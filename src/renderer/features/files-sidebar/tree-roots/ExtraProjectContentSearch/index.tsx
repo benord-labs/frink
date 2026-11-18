@@ -1,9 +1,11 @@
 import { useAtomValue } from 'jotai';
 import type { ReactElement } from 'react';
 import { useEffect, useEffectEvent, useMemo, useRef } from 'react';
+import { missingFolderMessage } from '../../../../../shared/lib/missing-folder-message';
 import { trpc } from '@/lib/trpc';
 import { asEntryOfParent } from '@/lib/workspace-context/project-paths';
 import { useOpenBrowsedFile } from '@/lib/workspace-context/use-open-browsed-file';
+import { useFoundFolderGone } from '@/lib/workspace-context/use-found-folder-gone';
 import { contentSearchOptionsAtom } from '../../atoms';
 import { ContentSearchResults } from '../../ContentSearchResults';
 import { FILE_TREE_REFRESH_EVENT } from '../../refresh-trigger';
@@ -61,7 +63,8 @@ export function ExtraProjectContentSearch({
   const noMatches =
     !project.missing && query.trim() !== '' && !isLoading && !invalidRegex && matches.length === 0;
   const folderType = trpc.files.entryType.useQuery(folderEntry, { enabled: noMatches });
-  const cantOpen = noMatches && folderType.isSuccess && folderType.data !== 'folder';
+  const foundGone = noMatches && folderType.isSuccess && folderType.data !== 'folder';
+  useFoundFolderGone(chatId, foundGone);
 
   const refresh = () => {
     lastReadAt.current = Date.now();
@@ -99,11 +102,9 @@ export function ExtraProjectContentSearch({
       invalidRegex={invalidRegex}
       matches={matches}
       emptyMessage={
-        project.missing
-          ? `Can't find ${project.name}'s folder.`
-          : cantOpen
-            ? `Can't open ${project.name}'s folder. It may have moved or been deleted.`
-            : `No matches in ${project.name}.`
+        project.missing || foundGone
+          ? missingFolderMessage(project.name)
+          : `No matches in ${project.name}.`
       }
       onSelectMatch={(relativePath, lineNumber, startColumn, endColumn) =>
         openContentSearchMatchInEditor(

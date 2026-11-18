@@ -1,5 +1,6 @@
 import { Badge } from '@benord-labs/frink-primitives';
 import { useAtom } from 'jotai';
+import { Link } from 'lucide-react';
 import type React from 'react';
 import { memo, useCallback, useEffect, useMemo } from 'react';
 import { getPaneColor } from '@/lib/pane-colors';
@@ -246,7 +247,7 @@ export const FileSearchDialog = memo(function FileSearchDialog({
 type FileSearchItemProps = {
   label: string;
   dirPath: string;
-  /** The other project the file is in; nothing shows for the chat's own folder */
+  /** The linked project the file is in; nothing shows for the chat's own folder */
   project?: string;
   index: number;
   optionId: string;
@@ -312,13 +313,16 @@ const FileSearchItem = memo(function FileSearchItem({
             </span>
           )}
         </span>
+        {/* Marked as the file tree's Linked badge marks the project: its tint, its icon and the word */}
         {project && (
           <Badge
             shape="tag"
             title={project}
-            className="max-w-40 shrink-0 bg-foreground/5 text-muted-foreground"
+            className="max-w-40 shrink-0 gap-1 bg-primary/10 text-primary"
           >
+            <Link className="size-3 shrink-0" aria-hidden />
             <span className="truncate">{project}</span>
+            <span className="sr-only">, linked</span>
           </Badge>
         )}
         {recentLabel && (

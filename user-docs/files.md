@@ -79,12 +79,12 @@ Linked projects are read-only in the tree: you can't create, rename, move, paste
 
 Links are saved with the chat, so they stay after Frink restarts and every window shows the same ones. The file tree, **Search files**, the **Search** tab and the [**@** menu](./projects.md#linked-projects) in the message box all cover the chat's linked projects. The chat's folder, branch and worktree stay on its main project.
 
-The picker lists your other projects, except the ones already linked and any project inside the chat's folder or holding it. If the messages in the sub-chat you have open name a project's folder by its full path, that project is marked **Mentioned in this chat** and listed first. When you search, it comes first among the projects that match equally well. Only messages Frink has loaded are checked, so older messages you haven't scrolled back to don't count. **Link project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
+The picker lists the other projects the chat can link. It leaves out the ones already linked, any project inside the chat's folder or holding it, a project whose folder can't be found, and one that is or holds your home folder, a whole drive or a protected folder like `~/.ssh`. If the messages in the sub-chat you have open name a project's folder by its full path, that project is marked **Mentioned in this chat** and listed first. When you search, it comes first among the projects that match equally well. Only messages Frink has loaded are checked, so older messages you haven't scrolled back to don't count. **Link project** shows only in a chat that works in a project folder: not in a general chat or a new chat that hasn't started yet.
 
 ## Find a file
 
 Press **Cmd+Shift+P / Ctrl+Shift+P** (**Search files**) and type part of a file's name. Pick a result with the mouse, or with the arrow keys and **Enter**, to open it in the editor. Files you opened recently come first, then the chat's own project's files, then each linked project's.
 
-Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a linked project shows that project's name. Search files starts with **All in this tree** each time you open it.
+Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a linked project shows that project's name with the link icon, as the file tree marks it. Search files starts with **All in this tree** each time you open it.
 
 In split view, Search files looks in the projects of the pane you're working in. It doesn't open for a pane with no project, such as a new chat that hasn't started yet.

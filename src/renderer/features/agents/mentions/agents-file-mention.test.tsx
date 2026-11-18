@@ -36,7 +36,12 @@ vi.mock('../../../lib/mock-api', () => ({
     },
   },
 }));
-vi.mock('@/lib/workspace-context/use-tree-projects', () => ({ useTreeProjects: () => state.tree }));
+vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
+  useTreeProjects: () => ({
+    ...state.tree,
+    readable: state.tree.extras.filter((project) => !(project as { missing?: boolean }).missing),
+  }),
+}));
 vi.mock('@/lib/workspace-context/use-root-searches', () => ({ useRootSearches }));
 
 const linkedSearch = (
@@ -162,7 +167,7 @@ describe('AgentsFileMention with linked projects', () => {
       const option = screen.getByRole('option');
       expect(option).toHaveAttribute('aria-disabled', 'true');
       expect(screen.getByRole('tooltip')).toHaveTextContent(
-        /Can't be mentioned: a mention would stop at a \] in its path\.$/,
+        /Can't be added with @ because of the brackets in its path\. Type or paste its path into your message instead\.$/,
       );
       // Enter is still the list's, so the half-typed message is not sent
       expect(fireEvent.keyDown(window, { key: 'Enter' })).toBe(false);

@@ -1,6 +1,7 @@
 import { Badge, Button } from '@benord-labs/frink-primitives';
 import { AlertTriangle, ChevronRight, GitBranch, type LucideIcon, X } from 'lucide-react';
 import type { KeyboardEvent, ReactElement } from 'react';
+import { missingFolderMessage } from '../../../../../shared/lib/missing-folder-message';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +15,10 @@ const BADGE_TONES = {
 /** Under this width (container `root-row`) a badge with an icon shows only the icon, which leaves
  *  the project's name more room. Screen readers still hear the label. */
 const LABEL_HIDDEN_WHEN_NARROW = '@max-[15rem]/root-row:sr-only';
+
+/** Under this width (container `branch`, its icon included) the branch name would show only a
+ *  clipped letter, too little for an ellipsis, so only its icon shows. Screen readers still hear it. */
+const BRANCH_HIDDEN_WHEN_NARROW = '@max-[2rem]/branch:sr-only';
 
 /** What a project is to its tree, e.g. "Linked"; `tone` tints it, neutral by default. `hint`
  *  says what the role means, in the row's tooltip. */
@@ -133,10 +138,10 @@ export function ProjectRootRow({
               branch && (
                 // No width of its own: it fills only the room the name leaves, down to its icon, so
                 // the name truncates only past that. The tooltip shows it whole.
-                <span className="flex min-w-3 grow basis-0 items-center gap-1 font-normal text-muted-foreground">
+                <span className="@container/branch flex min-w-3 grow basis-0 items-center gap-1 font-normal text-muted-foreground">
                   <GitBranch className="size-3 shrink-0" aria-hidden />
                   <span className="sr-only">on branch</span>
-                  <span className="truncate">{branch}</span>
+                  <span className={cn('truncate', BRANCH_HIDDEN_WHEN_NARROW)}>{branch}</span>
                 </span>
               )
             )}
@@ -147,7 +152,7 @@ export function ProjectRootRow({
           <p className="font-medium">{badge ? `${name} · ${badge.label}` : name}</p>
           {!missing && branch && <p>{`On branch ${branch}`}</p>}
           {badge?.hint && <p>{badge.hint}</p>}
-          {missing && <p>{`Can't find ${name}'s folder.`}</p>}
+          {missing && <p>{missingFolderMessage(name)}</p>}
           <p className="font-mono">{path}</p>
         </TooltipContent>
       </Tooltip>

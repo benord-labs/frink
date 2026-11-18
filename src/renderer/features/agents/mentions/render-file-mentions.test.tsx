@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
 import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 import { type ParsedMention, parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import { renderWithTrpc } from '../../../lib/test-utils/render-with-trpc';
+import { CurrentChatWorktreeProvider } from '../context/current-chat-worktree-context';
 import {
   extractTextMentions,
   MentionChip,
@@ -68,6 +70,21 @@ describe('MentionChip', () => {
     expect(chip.querySelector('svg')).toHaveClass('lucide-folder-open');
     expect(openTooltip(chip)).toHaveTextContent('src/renderer');
     expect(tooltipPanel()).toHaveClass('font-mono');
+  });
+
+  // As the message box chip does before sending, and the reply's badge does after.
+  it("names the linked project a sent file is from, after the file's name", async () => {
+    renderWithTrpc(
+      <TooltipProvider>
+        <CurrentChatWorktreeProvider worktreePath={null} chatId="chat-1">
+          <MentionChip mention={mentionFor('file:local:/w/api/src/a.ts')} />
+        </CurrentChatWorktreeProvider>
+      </TooltipProvider>,
+      async () => ({ linkedProjects: [{ id: 'api', name: 'api', path: '/w/api' }] }),
+    );
+
+    const chip = screen.getByText('a.ts').parentElement;
+    await waitFor(() => expect(chip).toHaveTextContent(/^a\.tsapi$/));
   });
 
   it('names a skill in its tooltip instead of a path', () => {
@@ -142,6 +159,19 @@ describe('RenderFileMentions', () => {
 
     expect(screen.getByText('a.ts')).toBeInTheDocument();
     expect(container.querySelectorAll('[tabindex]')).toHaveLength(0);
+  });
+
+  // A queued message sits outside the transcript, so it is handed the chat it belongs to.
+  it("names the linked project of a file in a chat's text shown outside its transcript", async () => {
+    renderWithTrpc(
+      <TooltipProvider>
+        <RenderFileMentions text="see @[file:local:/w/api/src/a.ts]" chatId="chat-1" />
+      </TooltipProvider>,
+      async () => ({ linkedProjects: [{ id: 'api', name: 'api', path: '/w/api' }] }),
+    );
+
+    const chip = screen.getByText('a.ts').parentElement;
+    await waitFor(() => expect(chip).toHaveTextContent(/^a\.tsapi$/));
   });
 
   it('renders the same markup for the same text on a second mount', () => {

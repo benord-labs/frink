@@ -292,8 +292,10 @@ function renderTooltipContent(option: FileMentionOption) {
   );
 }
 
-/** Why a row whose path the mention grammar can't read back does nothing when picked */
-const UNMENTIONABLE_HINT = "Can't be mentioned: a mention would stop at a ] in its path.";
+/** Why a row whose path the mention grammar can't read back does nothing when picked, and the
+ *  way that still works: the agent reads a path written out in the message. */
+const UNMENTIONABLE_HINT =
+  "Can't be added with @ because of the brackets in its path. Type or paste its path into your message instead.";
 
 // Memoized to prevent re-renders when parent re-renders
 export const AgentsFileMention = memo(function AgentsFileMention({
@@ -391,7 +393,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
     },
   );
   const fileResults = Array.isArray(rawFileResults) ? rawFileResults : [];
-  const { main: chatProject, extras } = useTreeProjects(chatId);
+  const { main: chatProject, readable } = useTreeProjects(chatId);
   // Convert changed files to options (shown at top in separate group)
   const changedFileOptions: FileMentionOption[] = useMemo(() => {
     if (!changedFiles.length) return [];
@@ -580,7 +582,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
   // Wherever the chat's own files show, each project linked to it is searched too, unless its
   // folder is gone. Skills and agents still come from the chat's own project alone.
   const showsLinkedFiles = fileHeavyView || isGlobalSearchNonFileSubpage;
-  const linkedRoots = chatProject ? extras.filter((project) => !project.missing) : [];
+  const linkedRoots = chatProject ? readable : [];
   const linkedSearch = useRootSearches(linkedRoots, apiSearchQuery, isOpen && showsLinkedFiles);
   const filesFetching = mainFilesFetching || linkedSearch.isFetching;
 

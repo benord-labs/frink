@@ -1,5 +1,6 @@
 import { atom } from 'jotai';
 import { isSameFolder } from '../../../../shared/lib/path-normalization';
+import { findProjectForPath } from '../../workspace-context/project-paths';
 import {
   activeFilePathAtom,
   codeEditorOpenAtom,
@@ -14,14 +15,15 @@ type SettleBrowsedTabsInput = {
   chatId: string;
   /** The folder that chat works in (its worktree, else its project); null for a general chat */
   mainProjectPath: string | null;
-  /** Other projects in that chat's file tree, whose tabs it keeps */
+  /** Other projects in that chat's file tree, whose tabs it keeps, with those of projects inside */
   keepProjectPaths: string[];
 };
 
 /**
  * Which of another project's tabs stay when single view shows `chatId`. A tab from the chat's own
  * project becomes an ordinary tab of that chat; one opened from this chat, or from a project in its
- * tree, stays (moved to this chat); every other one closes. Ordinary tabs are never touched.
+ * tree or inside one, stays (moved to this chat); every other one closes. Ordinary tabs are never
+ * touched.
  */
 export function settleBrowsedTabs(
   files: OpenFile[],
@@ -29,6 +31,7 @@ export function settleBrowsedTabs(
 ): { files: OpenFile[]; closed: OpenFile[] } {
   const kept: OpenFile[] = [];
   const closed: OpenFile[] = [];
+  const keptFolders = keepProjectPaths.map((path) => ({ path }));
   for (const file of files) {
     if (!file.isOtherProject) {
       kept.push(file);
@@ -37,7 +40,7 @@ export function settleBrowsedTabs(
       kept.push({ ...ordinary, sourceChatId: chatId });
     } else if (
       file.sourceChatId === chatId ||
-      keepProjectPaths.some((folder) => isSameFolder(file.projectPath, folder))
+      findProjectForPath(file.projectPath ?? '', keptFolders) !== null
     ) {
       kept.push(file.sourceChatId === chatId ? file : { ...file, sourceChatId: chatId });
     } else {

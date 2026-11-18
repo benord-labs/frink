@@ -40,6 +40,7 @@ let projectsReady = Promise.resolve();
 let projects = PROJECTS;
 /** The projects linked to app-chat */
 let linked: object[] = [];
+const linkedIds = () => linked.map((project) => (project as { id: string }).id);
 
 async function answer(op: Operation): Promise<unknown> {
   if (op.path === 'chats.get') {
@@ -56,6 +57,14 @@ async function answer(op: Operation): Promise<unknown> {
   }
   if (op.path === 'changes.getBranches') return { current: 'main' };
   if (op.path === 'projects.list') return projectsReady.then(() => projects);
+  if (op.path === 'chats.linkableProjects') {
+    // The server's answer: every project but the chat's own, of those not linked already.
+    const own = (CHATS[(op.input as { chatId: string }).chatId] as { project: { id: string } })
+      .project.id;
+    return projectsReady.then(() =>
+      projects.map((project) => project.id).filter((id) => id !== own && !linkedIds().includes(id)),
+    );
+  }
   throw new Error(`Unexpected test operation: ${op.path}`);
 }
 

@@ -9,6 +9,8 @@ import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
   dropLinksOverlapping,
   linkProjectToChat,
+  listChatsLinkingProject,
+  listLinkableProjectIds,
   listLinkedProjectRoots,
   listLinkedProjects,
   unlinkProjectFromChat,
@@ -111,6 +113,25 @@ describe('chat linked projects repo', () => {
     }
   });
 
+  it('offers exactly the projects it would link, leaving out those linked already', () => {
+    linkProjectToChat(db, 'c1', 'a');
+
+    expect(listLinkableProjectIds(db, 'c1').sort()).toEqual(['b', 'inner', 'outer']);
+    expect(listLinkableProjectIds(db, 'general')).toEqual([]);
+  });
+
+  it('lists the chats that link a project', () => {
+    db.insert(schema.chats)
+      .values(makeLocalChat({ id: 'c2', projectId: 'b' }))
+      .run();
+    linkProjectToChat(db, 'c1', 'a');
+    linkProjectToChat(db, 'c2', 'a');
+    linkProjectToChat(db, 'c1', 'outer');
+
+    expect(listChatsLinkingProject(db, 'a').sort()).toEqual(['c1', 'c2']);
+    expect(listChatsLinkingProject(db, 'b')).toEqual([]);
+  });
+
   it('never lists a link to a virtual folder', () => {
     linkProjectToChat(db, 'c1', 'a');
     db.insert(schema.chatLinkedProjects).values({ chatId: 'c1', projectId: 'folder' }).run();
@@ -121,8 +142,10 @@ describe('chat linked projects repo', () => {
   it('drops links the chat switches its worktree into, or inside', () => {
     for (const projectId of ['a', 'b', 'outer']) linkProjectToChat(db, 'c1', projectId);
 
-    dropLinksOverlapping(db, 'c1', [dir('outer/inner')]);
-    dropLinksOverlapping(db, 'c1', [dir('b'), null]);
+    expect(dropLinksOverlapping(db, 'c1', [dir('outer/inner')])).toBe(true);
+    expect(dropLinksOverlapping(db, 'c1', [dir('b'), null])).toBe(true);
+    // Only a drop is news for the chat's windows.
+    expect(dropLinksOverlapping(db, 'c1', [dir('b')])).toBe(false);
 
     expect(ids('c1')).toEqual(['a']);
   });
@@ -154,11 +177,12 @@ describe('chat linked projects repo', () => {
     ['into a worktree holding a linked one', 'b', dir('outer'), ['a']],
     ['to a general chat', null, null, []],
     ['to a virtual folder', 'folder', null, []],
+    ['to a project apart from every link', 'b', null, ['a', 'inner']],
   ])('settles links on a move %s', async (_case, projectId, worktreePath, kept) => {
     linkProjectToChat(db, 'c1', 'a');
     linkProjectToChat(db, 'c1', 'inner');
 
-    await moveChatToProjectLocal(db, 'c1', {
+    const { linksChanged } = await moveChatToProjectLocal(db, 'c1', {
       projectId,
       worktreePath,
       branch: null,
@@ -167,5 +191,6 @@ describe('chat linked projects repo', () => {
     });
 
     expect(ids('c1')).toEqual(kept);
+    expect(linksChanged).toBe(kept.length < 2);
   });
 });

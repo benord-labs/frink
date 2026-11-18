@@ -3,8 +3,17 @@ import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { invalidateMock, mockUtils } = vi.hoisted(() => {
-  const invalidateMock = vi.fn(() => Promise.resolve());
-  return { invalidateMock, mockUtils: { chats: { get: { invalidate: invalidateMock } } } };
+  const invalidateMock = vi.fn((_input: object) => Promise.resolve());
+  const invalidate = (query: string) => (input: object) => invalidateMock({ [query]: input });
+  return {
+    invalidateMock,
+    mockUtils: {
+      chats: {
+        get: { invalidate: invalidate('get') },
+        linkableProjects: { invalidate: invalidate('linkableProjects') },
+      },
+    },
+  };
 });
 
 vi.mock('@/lib/trpc', () => ({ trpc: { useUtils: () => mockUtils } }));
@@ -36,7 +45,11 @@ afterEach(() => {
 
 describe('useLinkedProjectsSync', () => {
   it.each([
-    ['refetches only the changed chat', { chatId: 'c1' }, [[{ id: 'c1' }]]],
+    [
+      'refetches only the changed chat, and what it can link',
+      { chatId: 'c1' },
+      [[{ get: { id: 'c1' } }], [{ linkableProjects: { chatId: 'c1' } }]],
+    ],
     ['ignores a payload without a chat id', { id: 'c1' }, []],
     ['ignores a missing payload', undefined, []],
     ['ignores a null payload', null, []],

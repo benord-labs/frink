@@ -284,7 +284,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [mentionSearchText, setMentionSearchText] = useState('');
   const [mentionPosition, setMentionPosition] = useState({ top: 0, left: 0 });
   const [mentionActiveDescendantId, setMentionActiveDescendantId] = useState<string | undefined>();
-  // A chip drawn again from a draft names the linked project its file is in
+  // A chip drawn again from a draft, or a selection's chip, names the linked project its file is in
   const { extras: linkedProjects } = useTreeProjects(parentChatId);
 
   // Mention dropdown subpage navigation state
@@ -723,6 +723,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                           selection={codeSelectionContext}
                           fileName={attachedFileName}
                           filePath={attachedFileName ? activeFilePath : null}
+                          linkedProjects={linkedProjects}
                           onRemoveSelection={() => onClearCodeSelection?.()}
                           onRemoveFile={() => onDismissActiveFile?.()}
                         />

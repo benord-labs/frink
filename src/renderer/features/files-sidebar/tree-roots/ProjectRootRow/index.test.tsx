@@ -101,6 +101,9 @@ describe('ProjectRootRow', () => {
     // A shrink weighting alone still takes a fraction of a pixel from the name: enough for an ellipsis
     expect(screen.getByText('feat').parentElement).toHaveClass('grow', 'basis-0', 'min-w-3');
     expect(disclosure().parentElement).toHaveClass('@container/root-row');
+    // Too narrow for an ellipsis, the name would show as a clipped letter, so it goes unseen.
+    expect(screen.getByText('feat').parentElement).toHaveClass('@container/branch');
+    expect(screen.getByText('feat')).toHaveClass('truncate', '@max-[2rem]/branch:sr-only');
   });
 
   it.each([

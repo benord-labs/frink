@@ -8,15 +8,17 @@ function isPayload(data: unknown): data is LinkedProjectsChanged {
   return typeof (data as Partial<LinkedProjectsChanged> | undefined)?.chatId === 'string';
 }
 
-/** Refetches a chat's `chats.get` when any window links or unlinks a project on it, so every
- *  window shows the same linked projects without a reload. */
+/** Refetches a chat's `chats.get`, and what it can link, whenever its links change in any window,
+ *  so every window shows the same linked projects without a reload. */
 export function useLinkedProjectsSync(): void {
   const utils = trpc.useUtils();
 
   useEffect(() => {
     return window.desktopApi?.on('chats:linked-projects-changed', (data) => {
       // A payload without a chat id must not widen into refetching every chat.
-      if (isPayload(data)) void utils.chats.get.invalidate({ id: data.chatId });
+      if (!isPayload(data)) return;
+      void utils.chats.get.invalidate({ id: data.chatId });
+      void utils.chats.linkableProjects.invalidate({ chatId: data.chatId });
     });
   }, [utils]);
 }
