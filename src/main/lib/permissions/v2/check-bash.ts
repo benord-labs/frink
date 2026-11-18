@@ -10,7 +10,7 @@ import * as nodePath from 'node:path';
 import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
 import { type CommandSignature, generatePatternChoices } from '../command-parser';
-import { extractSignature, type SubCommand, splitCommand } from './bash-parser';
+import { extractSignature, type Signature, type SubCommand, splitCommand } from './bash-parser';
 import { expandTilde } from './check-edit';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
 import { isSessionPastedRead } from './session-read';
@@ -310,6 +310,17 @@ function exactMatchRules(rules: string[] | undefined): string[] {
   return out;
 }
 
+/** A prefix ask rule that the exact-only filter dropped, which still names this subcommand. */
+function prefixAskMatches(docs: ScopedDocs, input: { command: string }, sig: Signature) {
+  const ctx: MatchContext = { bashCommandSignature: sig };
+  const combined = combineScopes(
+    evalScope(docs.policy, 'Bash', input, ctx),
+    evalScope(docs.project, 'Bash', input, ctx),
+    evalScope(docs.user, 'Bash', input, ctx),
+  );
+  return combined.decision === 'ask' && Boolean(combined.rule);
+}
+
 export function checkBash(
   input: { command: string },
   docs: ScopedDocs,
@@ -403,7 +414,8 @@ export function checkBash(
       });
     }
     if (combined.decision === 'ask') {
-      matchedAsk ||= Boolean(combined.rule);
+      matchedAsk ||=
+        Boolean(combined.rule) || (sig.isExactMatchOnly && prefixAskMatches(docs, input, sig));
       if (!sig.isExactMatchOnly) askSignatures.push(sig);
       // The matcher compares an exact rule against `fullSignature`, so a truncated
       // one (`grep foo` for `grep foo src/*/x.ts`) could never match the rule.

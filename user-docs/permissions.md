@@ -181,7 +181,7 @@ This covers every agent, including ones with no file-reading tool of their own:
 
 Anything that writes, uses a redirect (even `2>/dev/null`), runs another command, or names a file outside the folder still prompts. A deny rule you set, or an ask rule you set for that command or tool, still wins over the shell and search auto-allow.
 
-The auto-allow is scoped to the current chat's folder and runs after the system deny list. Other chats' files don't bleed across.
+The auto-allow is scoped to the current chat's folder and runs after the system deny list. A read of a deny-listed file there is blocked, and a search of the folder prompts if any file inside it (a `.env`, say) is on that list. Other chats' files don't bleed across.
 
 ## Skills auto-allow
 

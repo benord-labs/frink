@@ -169,6 +169,18 @@ describe("checkSearch — the chat's own attachments folder", () => {
     expect(decide('Glob', session, '*.{pdf,txt}', own)).toBe('allow');
   });
 
+  it('asks when a file under the searched pasted/ folder is on the system deny list', () => {
+    const chat = nodePath.join(tmp, 'chat-4');
+    const pasted = nodePath.join(chat, 'pasted');
+    nodeFs.mkdirSync(nodePath.join(pasted, 'sub'), { recursive: true });
+    nodeFs.writeFileSync(nodePath.join(pasted, 'ab12-notes.txt'), 'x');
+    const grep = () =>
+      checkSearch('Grep', { pattern: 'x', path: pasted }, EMPTY_DOCS, project, chat).decision;
+    expect(grep()).toBe('allow');
+    nodeFs.writeFileSync(nodePath.join(pasted, 'sub', 'credentials.json'), '{}');
+    expect(grep()).toBe('ask');
+  });
+
   it("keeps a user's own Grep ask rule for pasted/", () => {
     const input = { pattern: 'x', path: nodePath.join(session, 'pasted') };
     const r = checkSearch('Grep', input, userDocs({ ask: ['Grep'] }), project, session);

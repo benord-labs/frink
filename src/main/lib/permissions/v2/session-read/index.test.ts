@@ -124,4 +124,8 @@ describe('checkBash: read-only shell reads of the chat attachments folder', () =
     expect(run(`cat ${p}/a`, userDocs({ ask: ['Bash(cat:*)'] }))).toBe('ask');
     expect(run(`cat ${p}/a`, userDocs({ deny: ['Bash(cat:*)'] }))).toBe('deny');
   });
+
+  it('keeps a prefix ask rule the exact-match filter drops for a metacharacter word', () => {
+    expect(run(`grep '[ab]/x' ${p}/a`, userDocs({ ask: ['Bash(grep:*)'] }))).toBe('ask');
+  });
 });

@@ -199,16 +199,17 @@ function isPastedFile(file: string, pastedDir: string): boolean {
 
 const MAX_SEARCHED_ENTRIES = 500;
 
-/** Each entry under `dir` is a one-name file or such a folder, within the entry budget. */
+/** Each entry under `dir` is a one-name file or such a folder, none on the system deny list,
+ * within the entry budget. Each child is re-read with lstat, so a swapped-in link never passes. */
 function isLinkFreeTree(dir: string, budget: { left: number }): boolean {
   const handle = nodeFs.opendirSync(dir);
   try {
     for (let entry = handle.readSync(); entry; entry = handle.readSync()) {
       if (--budget.left < 0) return false;
       const child = nodePath.join(dir, entry.name);
-      if (entry.isDirectory() ? !isLinkFreeTree(child, budget) : !isOneNameFile(child)) {
-        return false;
-      }
+      if (isSystemDeniedPath(child, dir)) return false;
+      const stat = nodeFs.lstatSync(child);
+      if (stat.isDirectory() ? !isLinkFreeTree(child, budget) : !isOneName(stat)) return false;
     }
     return true;
   } finally {
@@ -216,9 +217,12 @@ function isLinkFreeTree(dir: string, budget: { left: number }): boolean {
   }
 }
 
-function isOneNameFile(file: string): boolean {
-  const stat = nodeFs.lstatSync(file);
+function isOneName(stat: nodeFs.Stats): boolean {
   return stat.isFile() && stat.nlink === 1;
+}
+
+function isOneNameFile(file: string): boolean {
+  return isOneName(nodeFs.lstatSync(file));
 }
 
 /** A search root inside `pastedDir` whose every file has one name, so a search reads only there. */
