@@ -43,7 +43,7 @@ The picker under the message box decides where files live:
 Once you're chatting:
 
 - [Projects & general chat](./projects.md): folders versus general chat, and how the picker works.
-- [Files](./files.md): how the agent sees and edits your files.
+- [Files](./files.md): the file tree, adding files, opening files named in a reply, linking other projects, and finding a file.
 - [Changes](./changes.md): review what the agent changed, and ask it to commit or open a pull request.
 - [Task lifecycle](./task-lifecycle.md): what happens while an agent runs.
 - [Permissions](./permissions.md): what the agent can do, and how to change it.

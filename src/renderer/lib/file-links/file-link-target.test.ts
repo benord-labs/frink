@@ -329,6 +329,9 @@ describe('fileLinkOpenInputAcrossProjects', () => {
       { ...worktreeChat, root: '/Users/sam/.frink/worktrees/code/fix' },
       'code',
     ],
+    // A general chat works in the home folder, but only a path inside a project opens there.
+    ['written short in a general chat', 'code/app/src/a.ts', { ...chat, root: undefined }, null],
+    ['in the home folder of a general chat', '~/notes/a.ts', { ...chat, root: undefined }, null],
   ])('opens nothing for a path %s', (_, file, base, chatProjectId) => {
     expect(open(file, base, chatProjectId)).toBeNull();
   });
