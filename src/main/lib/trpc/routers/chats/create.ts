@@ -106,18 +106,24 @@ async function insertFirstSubChat(db: ReturnType<typeof getDatabase>, subChat: F
 }
 
 /** Copies the first message's pastes into the sub-chat's folder only once the insert has made its
- *  id ours, so a racing create never gets copies in its folder, then stores the repointed text. */
+ *  id ours, so a racing create never gets copies in its folder, then stores the repointed text.
+ *  Failing here keeps the old paths, like a single file that cannot be copied: the chat exists. */
 async function rehomeFirstMessage<T extends TextPart>(
   db: ReturnType<typeof getDatabase>,
   subChat: SubChatHydrated,
   parts: T[],
 ): Promise<SubChatHydrated> {
-  const rehomed = await rehomeParts(parts, subChat.id);
-  if (rehomed.every((part, i) => part.text === parts[i]?.text)) return subChat;
-  const updated = await updateSubChatMessages(db, subChat.id, ([first, ...rest]) =>
-    first ? [{ ...first, parts: rehomed }, ...rest] : null,
-  );
-  return updated ?? subChat;
+  try {
+    const rehomed = await rehomeParts(parts, subChat.id);
+    if (rehomed.every((part, i) => part.text === parts[i]?.text)) return subChat;
+    const updated = await updateSubChatMessages(db, subChat.id, ([first, ...rest]) =>
+      first ? [{ ...first, parts: rehomed }, ...rest] : null,
+    );
+    return updated ?? subChat;
+  } catch (err) {
+    log.warn('[chats.create] first message pastes not moved; they keep their old paths', err);
+    return subChat;
+  }
 }
 
 /**

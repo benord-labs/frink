@@ -356,6 +356,28 @@ describe('createRouter (local-first)', () => {
     rehome.mockRestore();
   });
 
+  // The rows are already saved when pastes move, so a failed move must not fail the create.
+  it('still creates the chat when moving its pastes fails, keeping their old paths', async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockImplementation(insertedRow);
+    getSubChatByIdMock.mockResolvedValue(null);
+    const rehome = vi
+      .spyOn(pastedFiles, 'rehomePastedMentions')
+      .mockRejectedValue(new Error('EACCES: permission denied, mkdir'));
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+    const result = await caller.create({
+      ...baseInput,
+      subChatId: '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e',
+      initialMessageParts: [{ type: 'text', text: 'see the report' }],
+    });
+
+    expect(result.id).toBe('c1');
+    expect(updateSubChatMessagesMock).not.toHaveBeenCalled();
+    rehome.mockRestore();
+  });
+
   describe('a composer id taken by the time of the insert', () => {
     const subChatId = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
     const primaryKeyConflict = Object.assign(new Error('Failed query'), {
