@@ -112,6 +112,24 @@ describe('computeClaudeSessionKey', () => {
     expect(diffKeyParts(before, after)).toEqual([]);
   });
 
+  it('keys the hooks plugin and its lock, so changed hooks retire a warm CLI', () => {
+    const locked = (digest: string) =>
+      options({
+        plugins: [{ type: 'local', path: `/home/.frink/hooks/plugins/${digest}` }],
+        managedSettings: { strictPluginOnlyCustomization: ['hooks'] },
+      });
+    const before = computeClaudeSessionKey(locked('aaaa'), servers());
+
+    expect(diffKeyParts(before, computeClaudeSessionKey(locked('aaaa'), servers()))).toEqual([]);
+    expect(diffKeyParts(before, computeClaudeSessionKey(locked('bbbb'), servers()))).toEqual([
+      'plugins',
+    ]);
+    expect(diffKeyParts(before, computeClaudeSessionKey(options(), servers())).sort()).toEqual([
+      'managedSettings',
+      'plugins',
+    ]);
+  });
+
   it('keys max effort, which has no live setting', () => {
     const high = computeClaudeSessionKey(options({ effort: 'high' }), servers());
     const max = computeClaudeSessionKey(options({ effort: 'max' }), servers());

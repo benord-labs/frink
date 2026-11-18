@@ -54,7 +54,7 @@ Frink also skips any file the new worktree itself doesn't ignore. That happens w
 
 ## Claude settings and hooks come from the main checkout
 
-A Claude chat in a worktree uses your main checkout's Claude setup, as Claude Code's own worktree sessions do. Project settings and hooks (including the uncommitted `.claude/settings.local.json`), skills, agents and commands are read from the main checkout, so there is no need to copy them with setup commands. A change to those files on the worktree's branch takes effect once it is in the main checkout. A hook that needs the folder Claude is working in should read `cwd` from its input: `$CLAUDE_PROJECT_DIR` points at the main checkout.
+A Claude chat in a worktree uses your main checkout's Claude setup, as Claude Code's own worktree sessions do. Project settings, skills, agents and commands are read from the main checkout, and so are the project's hooks (including the uncommitted `.claude/settings.local.json`), for Claude and Codex chats alike, so there is no need to copy them with setup commands. A change to those files on the worktree's branch takes effect once it is in the main checkout.
 
 ## Overriding where worktrees are created
 

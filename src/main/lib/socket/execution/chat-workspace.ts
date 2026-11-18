@@ -31,6 +31,15 @@ export function claudeProjectConfigRoot(
   return undefined;
 }
 
+/** The folder every provider reads a project chat's hooks from: a worktree's main checkout, else
+ * the chat's folder. A general chat has none. */
+export function chatHookRoot(
+  project: Pick<WorkspaceProject, 'id'> | null,
+  workspace: { projectConfigRoot?: string; projectPath: string },
+): string | null {
+  return project ? (workspace.projectConfigRoot ?? workspace.projectPath) : null;
+}
+
 /** Where a chat's agent runs and the Frink context it gets, shared by a send and a pre-warm so both
  * spawn the same CLI: the chat's worktree while on disk, else the project folder, else home. */
 export async function resolveChatWorkspace(

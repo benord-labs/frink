@@ -1,1 +1,7 @@
-export { hooksForLaunch, type LaunchHooks } from './launch';
+export {
+  checkClaudeHooksLock,
+  claudeHooksForLaunch,
+  hooksForLaunch,
+  type LaunchHooks,
+  takeHooksLockNotice,
+} from './launch';

@@ -19,7 +19,7 @@ import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
 import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
 import type { CredentialResult } from '../../../credentials';
-import { hooksForLaunch } from '../../../provider/hooks/store';
+import { checkClaudeHooksLock, claudeHooksForLaunch } from '../../../provider/hooks/store';
 import {
   registerDebugSession,
   startIngestServer,
@@ -36,6 +36,7 @@ import { getAllAgentsForSdk } from '../../../trpc/routers/agent-utils';
 import { type ClaudeSession, createSession } from '../../claude-session-registry';
 import { resolvePermissionMode } from '../../streaming/plan-auto-approve';
 import { renderFlowBriefingSection } from '../prompt-prefix/flow-briefing-section';
+import { chatHookRoot } from '../chat-workspace';
 import { deliverProviderConfig } from '../provider-delivery';
 import { buildClaudeSessionCallbacks, type ClaudeSessionScope } from './session-callbacks';
 import { MESSAGE_PROVENANCE_RULE } from '../../../../../shared/lib/message-markers/message-provenance';
@@ -232,9 +233,14 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   });
 
   const shouldResumeClaudeSession = Boolean(persistedSessionId);
+  const claudeHooks = await claudeHooksForLaunch(
+    chatHookRoot(inputs.project, inputs),
+    subChatId,
+    inputs.claudeBinaryPath,
+  );
   const flagSettings = {
-    // The user's hooks, which this chat's config dir hides; Claude loads the project's itself.
-    ...(await hooksForLaunch('claude-code', inputs.project ? inputs.permissionProjectPath : null)),
+    // Hooks ride the flag layer only when Claude must load its own hook files.
+    ...claudeHooks.settings,
     // Auto-memory belongs to the project, as outside Frink, not to this chat's config dir.
     ...resolveClaudeAutoMemorySettings(projectPath),
     // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
@@ -267,8 +273,8 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       // A changed append recreates the CLI with `resume`; a recorded prompt would ignore it there.
       snapshot: false,
     },
-    // Skills and hooks from every native settings file Claude Code reads; the user tier resolves to
-    // the isolated config dir, so ~/.claude hooks arrive through `settings` below.
+    // Every native settings file Claude Code reads; the user tier resolves to the isolated config
+    // dir. Hooks come from Frink's store (claudeHooksForLaunch).
     settingSources: ['project' as const, 'user' as const, 'local' as const],
     // Agents from ~/.claude/agents/ and .claude/agents/ (Claude can use proactively)
     ...(Object.keys(allAgents).length > 0 && { agents: allAgents }),
@@ -294,6 +300,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       if (!effort) return {};
       return { effort: effort as import('@anthropic-ai/claude-agent-sdk').Options['effort'] };
     })(),
+    ...claudeHooks.sdkOptions,
     settings: flagSettings,
     // SDK betas (e.g. 1M context window: 'context-1m-2025-08-07')
     ...(settings?.betas?.length && {
@@ -447,5 +454,7 @@ export function spawnClaudeSession(
   // to hold the rule; for any other the hook sends it once.
   session.provenanceRuleKnown =
     !options.resume && options.systemPrompt.append.includes(MESSAGE_PROVENANCE_RULE);
+  // Only the started CLI sees an org's server-managed policy, which may drop the hook lock.
+  if (options.managedSettings) void checkClaudeHooksLock(session.query, spec.scope.subChatId);
   return session;
 }

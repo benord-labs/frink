@@ -4,12 +4,15 @@ import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import log from 'electron-log';
 import stableStringify from 'fast-json-stable-stringify';
-import simpleGit from 'simple-git';
 import { z } from 'zod';
-import { findGitRoot } from '../../../git/repo-root';
 import { frinkUserHome } from '../../../platform/frink-home';
 import { captureMainException } from '../../../sentry/init';
-import { type HookSettings, hookEventsSchema, readHookSettings } from '../inventory';
+import {
+  type HookSettings,
+  hookEventsSchema,
+  loadedSettingsSchema,
+  readHookSettings,
+} from '../inventory';
 
 const StoredHookSource = z.object({
   scope: z.enum(['user', 'project']),
@@ -31,13 +34,7 @@ const HookStore = z.object({
 });
 export type HookStore = z.infer<typeof HookStore>;
 
-type NativeSource = {
-  file: string;
-  scope: StoredHookSource['scope'];
-  projectRoot?: string;
-  /** Git could not say whether the repo commits it: keep what is stored, unchanged. */
-  held?: true;
-};
+type NativeSource = { file: string; scope: StoredHookSource['scope']; projectRoot?: string };
 
 const storeMutex = new Mutex();
 
@@ -63,34 +60,14 @@ function fingerprint({ hooks, disableAllHooks }: HookSettings): string {
   return hash.digest('hex');
 }
 
-/** Whether the project's repo commits this file, or undefined when git cannot tell. A folder
- * outside any git repo commits nothing. */
-async function isCommitted(root: string, relative: string): Promise<boolean | undefined> {
-  try {
-    return (await simpleGit(root).raw(['ls-files', '--', relative])).trim() !== '';
-  } catch {
-    return findGitRoot(root) ? undefined : false;
-  }
-}
-
-/** The user's settings file, and a project's settings files that its repo does not commit:
- * committed project hooks stay in the repo and load natively. */
-async function nativeSources(projectRoot: string | null): Promise<NativeSource[]> {
+/** The user's settings file, then a project's `settings.json` and `settings.local.json`. */
+function nativeSources(projectRoot: string | null): NativeSource[] {
   const userFile = path.join(frinkUserHome(), '.claude', 'settings.json');
   const sources: NativeSource[] = [{ file: userFile, scope: 'user' }];
   if (!projectRoot) return sources;
   for (const name of ['settings.json', 'settings.local.json']) {
-    const relative = path.join('.claude', name);
-    const file = path.join(projectRoot, relative);
-    if (file === userFile) continue;
-    const committed = await isCommitted(projectRoot, relative);
-    if (committed === true) continue;
-    sources.push({
-      file,
-      scope: 'project',
-      projectRoot,
-      ...(committed === undefined && { held: true }),
-    });
+    const file = path.join(projectRoot, '.claude', name);
+    if (file !== userFile) sources.push({ file, scope: 'project', projectRoot });
   }
   return sources;
 }
@@ -98,7 +75,7 @@ async function nativeSources(projectRoot: string | null): Promise<NativeSource[]
 /** Brings one source up to date; true when the store changed. A file that cannot be read keeps
  * its last imported hooks, and an edit Frink made stands until the native file changes. */
 async function syncSource(store: HookStore, source: NativeSource): Promise<boolean> {
-  const read = await readHookSettings(source.file);
+  const read = await readHookSettings(source.file, loadedSettingsSchema);
   if (read.status === 'invalid') {
     log.warn(`[hooks] Keeping the stored hooks of an unreadable file: ${source.file}`);
     return false;
@@ -121,16 +98,6 @@ async function syncSource(store: HookStore, source: NativeSource): Promise<boole
   return true;
 }
 
-/** Drops a project's entries for files it no longer leaves uncommitted; true when any went. */
-function pruneProject(store: HookStore, projectRoot: string, kept: NativeSource[]): boolean {
-  const keptFiles = new Set(kept.map((source) => source.file));
-  const stale = Object.entries(store.sources).filter(
-    ([file, source]) => source.projectRoot === projectRoot && !keptFiles.has(file),
-  );
-  for (const [file] of stale) delete store.sources[file];
-  return stale.length > 0;
-}
-
 /** Saves the store whole or not at all. A failed save is logged: this launch still gets the hooks
  * it just read, and the next launch tries again. */
 async function writeHookStore(store: HookStore): Promise<void> {
@@ -146,15 +113,14 @@ async function writeHookStore(store: HookStore): Promise<void> {
   }
 }
 
-/** Imports the user's hooks and a project's uncommitted ones into `~/.frink/hooks`, pulling back
- * native edits, and returns the store. */
+/** Imports the user's hooks and a project's into `~/.frink/hooks`, pulling back native edits, and
+ * returns the store. */
 export async function syncHookStore(projectRoot: string | null): Promise<HookStore> {
   return storeMutex.runExclusive(async () => {
     const store = await readHookStore();
-    const sources = await nativeSources(projectRoot);
-    let changed = projectRoot ? pruneProject(store, projectRoot, sources) : false;
-    for (const source of sources) {
-      if (!source.held) changed = (await syncSource(store, source)) || changed;
+    let changed = false;
+    for (const source of nativeSources(projectRoot)) {
+      changed = (await syncSource(store, source)) || changed;
     }
     if (changed) await writeHookStore(store);
     return store;

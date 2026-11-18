@@ -103,7 +103,7 @@ import {
   sendWakeHoldChanged,
 } from './client';
 import { FlowExecutorResourceScope } from './execution';
-import { resolveChatWorkspace } from './execution/chat-workspace';
+import { chatHookRoot, resolveChatWorkspace } from './execution/chat-workspace';
 import {
   _resetClaudeDebugSessionsForTests,
   attachTurn,
@@ -919,7 +919,7 @@ export async function handleRemoteExecute(
             dynamicChatMcpUrl: codexDynamicChatMcpUrl,
           });
           // Claude-format hooks locate their scripts through CLAUDE_PROJECT_DIR, the main checkout.
-          const hookRoot = project ? permissionProjectPath : null;
+          const hookRoot = chatHookRoot(project, workspace);
           const codexHooks = await hooksForLaunch('codex', hookRoot);
           // After the reads: a cancel during any read must not start the turn.
           flowResources.assertLive(abortController.signal, 'Codex');

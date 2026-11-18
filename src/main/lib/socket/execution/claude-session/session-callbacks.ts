@@ -10,6 +10,7 @@ import {
   preToolUseOutput,
   runPreToolUseHooks,
 } from '../../../provider/hooks/pre-tool-use';
+import { takeHooksLockNotice } from '../../../provider/hooks/store';
 import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
 import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal';
 import {
@@ -37,6 +38,7 @@ import {
   planAutoDenyFloor,
   submitPlanForReview,
 } from '../../streaming/plan-auto-approve';
+import { buildNoticeChunks } from '../../streaming/plan-fallback';
 import { holdOrParkQuestion } from '../../streaming/question-hold-park';
 import { ignoreBackgroundTasks } from '../../streaming/subagent-task-status';
 
@@ -81,6 +83,7 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
     // Only a prompt Frink sent: a wake firing first must not take the turn's notice.
     const fromSdk = input.source === undefined || input.source === 'sdk';
     if (fromSdk) turn?.onPromptAccepted?.();
+    if (fromSdk && turn) postHooksLockNotice(scope, turn);
     const ended = fromSdk ? turn?.pendingFlowRunEnded : undefined;
     if (ended && turn) {
       turn.pendingFlowRunEnded = undefined;
@@ -116,6 +119,20 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
       UserPromptSubmit: [{ hooks: [userPromptSubmitReminderHook as any] }],
     },
   };
+}
+
+/** Tells the chat, in one line on its first turn, when its Claude runs its own hook files. */
+function postHooksLockNotice(scope: ClaudeSessionScope, turn: ClaudeTurnContext): void {
+  const notice = takeHooksLockNotice(scope.subChatId);
+  if (!notice) return;
+  const emitChunk = createTurnChunkEmitter({
+    turn,
+    liveParts: buildPartsFromChunks(turn.lastCollectedChunks),
+    chatId: scope.chatId,
+    subChatId: scope.subChatId,
+    sendChunk: turn.execution.sendChunk,
+  });
+  for (const chunk of buildNoticeChunks(notice)) emitChunk(chunk);
 }
 
 /** Frink's permission gate for gated built-in tools and every MCP call. */

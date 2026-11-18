@@ -20,12 +20,34 @@ const GROUP_FIELDS = {
 } satisfies Record<keyof SdkGroup, z.ZodType>;
 
 // Groups stay loose and handlers unparsed: an unknown key must reach the classifier to be named.
-export const hookEventsSchema = z.record(z.string(), z.array(z.looseObject(GROUP_FIELDS)));
+const hookGroupSchema = z.looseObject(GROUP_FIELDS);
+export const hookEventsSchema = z.record(z.string(), z.array(hookGroupSchema));
 const settingsSchema = z.object({
   disableAllHooks: z.boolean().optional(),
   hooks: hookEventsSchema.optional(),
 });
 export type HookSettings = z.infer<typeof settingsSchema>;
+
+/** Events whose malformed group makes Claude refuse the whole file, not skip the group. */
+const GUARD_EVENTS = ['PreToolUse', 'PermissionRequest'];
+
+/** As Claude loads a file: a malformed group under any other event is skipped, not the file. */
+function loadableEvent([event, groups]: [string, unknown]): [string, unknown][] {
+  if (GUARD_EVENTS.includes(event)) return [[event, groups]];
+  const valid = Array.isArray(groups)
+    ? groups.filter((group) => hookGroupSchema.safeParse(group).success)
+    : [];
+  return valid.length > 0 ? [[event, valid]] : [];
+}
+
+/** A settings file's hooks as Claude loads them. */
+export const loadedSettingsSchema = settingsSchema.extend({
+  hooks: z
+    .record(z.string(), z.unknown())
+    .transform((events) => Object.fromEntries(Object.entries(events).flatMap(loadableEvent)))
+    .pipe(hookEventsSchema)
+    .optional(),
+});
 
 /** The three Claude settings files, lowest precedence first; a root that is the home lists once. */
 function hookSourceFiles(rootPath: string): Pick<HookSource, 'scope' | 'file'>[] {
@@ -45,6 +67,7 @@ function refuseProtoKey(key: string, value: unknown): unknown {
 
 export async function readHookSettings(
   file: string,
+  schema: z.ZodType<HookSettings> = settingsSchema,
 ): Promise<
   | { status: 'read'; settings: HookSettings }
   | { status: 'missing' }
@@ -53,7 +76,7 @@ export async function readHookSettings(
   try {
     // As Claude does: skip a byte-order mark, and read a blank file as one with no settings.
     const text = (await fs.readFile(file, 'utf8')).replace(/^\uFEFF/, '');
-    const parsed = settingsSchema.safeParse(text.trim() ? JSON.parse(text, refuseProtoKey) : {});
+    const parsed = schema.safeParse(text.trim() ? JSON.parse(text, refuseProtoKey) : {});
     if (parsed.success) return { status: 'read', settings: parsed.data };
     const [issue] = parsed.error.issues;
     const where = issue.path.length ? `${issue.path.join('.')}: ` : '';
