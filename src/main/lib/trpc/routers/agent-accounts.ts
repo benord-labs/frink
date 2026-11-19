@@ -6,11 +6,17 @@ import {
   aiProvider,
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
+import type { AccountConnectFailReason } from '../../../../shared/types/analytics';
 import { findAcpAgent } from '../../agent-runner/acp';
 import { rememberedAgentModels } from '../../agent-runner/agent-models';
 import { cancelCodexSignIn, signInToCodex } from '../../agent-runner/codex/login';
 import { findCopilotAgent } from '../../agent-runner/copilot';
 import { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
+import {
+  trackAccountConnect,
+  trackAccountConnectFailed,
+  trackDetectionFailure,
+} from '../../analytics';
 import { cancelClaudeSignIn, signInToClaude } from '../../claude/login';
 import { detectCodexAccount } from '../../credentials/detect-codex';
 import { claudeCodeCredentials, getDatabase } from '../../db';
@@ -41,7 +47,21 @@ const typeInput = z.object({ type: z.string() });
 type Detection =
   | { available: true; version?: string; email?: string; displayName?: string; sourcePath?: string }
   // Only a signed-out Cursor offers Sign in, since each sign-in makes a new key.
-  | { available: false; reason: string; missing?: true; signedOut?: true };
+  | {
+      available: false;
+      reason: string;
+      missing?: true;
+      signedOut?: true;
+      failure: AccountConnectFailReason | 'unsupported';
+    };
+
+// Cursor ships inside Frink, so a missing Cursor is a damaged install rather than one to install.
+const CURSOR_FAILURE = {
+  missing: 'detection_error',
+  'signed-out': 'not_signed_in',
+  'plan-required': 'unknown',
+  failed: 'detection_error',
+} as const;
 
 /** The provider row for an agent that keeps its own sign-in, when it may be connected here. */
 function connectableAgent(type: string, deps: AgentAccountsDeps) {
@@ -59,7 +79,11 @@ async function detectAgent(
     const { hint, ...login } = await deps.detectCodex();
     return login.available
       ? { ...login, available: true }
-      : { available: false, reason: hint ?? NO_CODEX_LOGIN };
+      : {
+          available: false,
+          reason: hint ?? NO_CODEX_LOGIN,
+          failure: login.failure ?? 'not_signed_in',
+        };
   }
   if (row.runtime === 'cursor') {
     const check = await deps.findCursor();
@@ -68,11 +92,12 @@ async function detectAgent(
       available: false,
       reason: check.reason,
       signedOut: check.status === 'signed-out' || undefined,
+      failure: CURSOR_FAILURE[check.status],
     };
   }
   const found = row.runtime === 'copilot' ? await deps.findCopilot() : await deps.findAgent(row.id);
   return 'reason' in found
-    ? { ...found, available: false }
+    ? { ...found, available: false, failure: found.missing ? 'cli_missing' : 'unknown' }
     : { available: true, version: found.version };
 }
 
@@ -97,22 +122,34 @@ export function createAgentAccountsRouter(
   return router({
     detect: publicProcedure.input(typeInput).query(async ({ input }): Promise<Detection> => {
       const row = connectableAgent(input.type, deps);
-      return row ? detectAgent(row, deps) : { available: false, reason: NOT_AVAILABLE };
+      if (!row) return { available: false, reason: NOT_AVAILABLE, failure: 'unsupported' };
+      const found = await detectAgent(row, deps);
+      if (!found.available) trackDetectionFailure(row.id, found.failure);
+      return found;
     }),
 
     /** Starts Claude's, Codex's or Cursor's own sign-in in the browser; the provider keeps what it makes. */
     signIn: publicProcedure.input(typeInput).mutation(async ({ input }) => {
       if (input.type === 'claude-code' && deps.platform !== 'win32') {
-        if (!(await deps.signInClaude())) throw new Error(signInUnfinished('Claude'));
+        if (!(await deps.signInClaude())) {
+          trackAccountConnectFailed({ provider: 'claude-code', reason: 'cancelled' });
+          throw new Error(signInUnfinished('Claude'));
+        }
         return;
       }
       const runtime = connectableAgent(input.type, deps)?.runtime;
       if (runtime === 'codex' && deps.platform !== 'win32') {
-        if (!(await deps.signInCodex())) throw new Error(signInUnfinished('ChatGPT'));
+        if (!(await deps.signInCodex())) {
+          trackAccountConnectFailed({ provider: 'codex', reason: 'cancelled' });
+          throw new Error(signInUnfinished('ChatGPT'));
+        }
         return;
       }
       if (runtime !== 'cursor') throw new Error(NOT_AVAILABLE);
-      if (!(await deps.signInCursor())) throw new Error(signInUnfinished('Cursor'));
+      if (!(await deps.signInCursor())) {
+        trackAccountConnectFailed({ provider: 'cursor', reason: 'cancelled' });
+        throw new Error(signInUnfinished('Cursor'));
+      }
     }),
 
     /** Stops a sign-in still waiting on the browser. */
@@ -133,48 +170,53 @@ export function createAgentAccountsRouter(
         const row = connectableAgent(input.type, deps);
         if (!row) throw new Error(NOT_AVAILABLE);
         const found = await detectAgent(row, deps);
-        if (!found.available) throw new Error(found.reason);
+        if (!found.available) {
+          trackDetectionFailure(row.id, found.failure);
+          throw new Error(found.reason);
+        }
         const expectedEmail = found.email ?? null;
 
-        const db = deps.db();
-        const existing = db
-          .select({ id: claudeCodeCredentials.id })
-          .from(claudeCodeCredentials)
-          .where(eq(claudeCodeCredentials.source, row.passthroughSource))
-          .get();
-        if (existing) {
-          // With no label given, the stored one stays.
-          db.update(claudeCodeCredentials)
-            .set({
-              accountLabel: input.accountLabel,
+        return trackAccountConnect({ provider: row.id, kind: 'passthrough' }, () => {
+          const db = deps.db();
+          const existing = db
+            .select({ id: claudeCodeCredentials.id })
+            .from(claudeCodeCredentials)
+            .where(eq(claudeCodeCredentials.source, row.passthroughSource))
+            .get();
+          if (existing) {
+            // With no label given, the stored one stays.
+            db.update(claudeCodeCredentials)
+              .set({
+                accountLabel: input.accountLabel,
+                expectedEmail,
+                needsReauthAt: null,
+                connectedAt: new Date(),
+              })
+              .where(eq(claudeCodeCredentials.id, existing.id))
+              .run();
+            return { accountId: existing.id, status: 'updated' as const };
+          }
+          // The same table holds tokens that are not AI accounts, which never count here.
+          const firstAccount = !db
+            .select({ id: claudeCodeCredentials.id })
+            .from(claudeCodeCredentials)
+            .where(inArray(claudeCodeCredentials.type, AI_PROVIDER_IDS))
+            .get();
+          const id = createId();
+          db.insert(claudeCodeCredentials)
+            .values({
+              id,
+              type: row.id,
+              accountLabel: input.accountLabel ?? row.name,
+              oauthToken: null,
+              isDefault: firstAccount,
+              source: row.passthroughSource,
+              sourcePath: found.sourcePath ?? null,
               expectedEmail,
-              needsReauthAt: null,
-              connectedAt: new Date(),
             })
-            .where(eq(claudeCodeCredentials.id, existing.id))
             .run();
-          return { accountId: existing.id, status: 'updated' as const };
-        }
-        // The same table holds tokens that are not AI accounts, which never count here.
-        const firstAccount = !db
-          .select({ id: claudeCodeCredentials.id })
-          .from(claudeCodeCredentials)
-          .where(inArray(claudeCodeCredentials.type, AI_PROVIDER_IDS))
-          .get();
-        const id = createId();
-        db.insert(claudeCodeCredentials)
-          .values({
-            id,
-            type: row.id,
-            accountLabel: input.accountLabel ?? row.name,
-            oauthToken: null,
-            isDefault: firstAccount,
-            source: row.passthroughSource,
-            sourcePath: found.sourcePath ?? null,
-            expectedEmail,
-          })
-          .run();
-        return { accountId: id, status: 'created' as const };
+          return { accountId: id, status: 'created' as const };
+        });
       }),
   });
 }

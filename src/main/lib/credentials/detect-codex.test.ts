@@ -194,6 +194,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toBe("Frink found a ChatGPT login it can't read. Sign in again here.");
+    expect(result.failure).toBe('detection_error');
   });
 
   it('does not point Windows at an in-app sign-in it cannot offer when the login is unreadable', async () => {
@@ -216,6 +217,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/failed to read codex credentials/i);
+    expect(result.failure).toBe('detection_error');
     expect(JSON.stringify(result)).not.toMatch(/EISDIR|auth\.json/i);
   });
 
@@ -271,6 +273,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toBe("Frink didn't find a ChatGPT login on this computer.");
+    expect(result.failure).toBe('not_signed_in');
   });
 
   it('refuses a malformed auth.json even when a keychain login also exists, without probing it', async () => {
@@ -294,6 +297,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toBe("Frink didn't find a ChatGPT login on this computer.");
+    expect(result.failure).toBe('not_signed_in');
     // Linux without a file must not shell out to the macOS `security` tool.
     expect(securityMock).not.toHaveBeenCalled();
     expect(execFileSyncMock).not.toHaveBeenCalled();

@@ -10,6 +10,7 @@ import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import * as analytics from '../../../lib/analytics';
 import { pendingAccountAuthAtom } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
 import { ConnectAgentAccountPage } from './index';
@@ -20,6 +21,8 @@ vi.hoisted(() => {
     electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
   });
 });
+
+const cancelled = vi.spyOn(analytics, 'trackAccountConnectCancelled').mockReturnValue(undefined);
 
 type Detection =
   | { available: true; version?: string; email?: string; displayName?: string }
@@ -119,6 +122,7 @@ afterEach(() => {
   holdDetect = false;
   releaseDetect = undefined;
   Reflect.deleteProperty(window, 'desktopApi');
+  cancelled.mockClear();
 });
 
 const NO_OPENAI_LOGIN: Detection = {
@@ -133,6 +137,15 @@ async function startChatGptSignIn() {
 }
 
 describe('ConnectAgentAccountPage', () => {
+  it('reports leaving without connecting as a cancelled connect of this agent', async () => {
+    const store = renderPage('cursor', { available: false, reason: SIGNED_OUT, signedOut: true });
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Back' }))[0]);
+
+    expect(cancelled).toHaveBeenCalledExactlyOnceWith('cursor');
+    expect(store.get(pendingAccountAuthAtom)).toBeNull();
+  });
+
   it('connects the OpenAI login Codex keeps, named after its email', async () => {
     const store = renderPage('codex', { available: true, email: 'me@openai.example' });
 
