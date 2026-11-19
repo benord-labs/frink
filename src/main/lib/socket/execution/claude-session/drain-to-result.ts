@@ -1,6 +1,6 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeSession } from '../../claude-session-registry';
-import { noteSubagentTaskFrame } from '../../streaming';
+import { noteSessionFrame } from './loaded-check';
 
 /** Advance the shared generator to the caller's own boundary (or its end) WITHOUT
  * emitting — used to realign after an `onMessage` error so the next turn doesn't inherit
@@ -15,7 +15,7 @@ export async function drainToResult(
       const { value, done } = await session.query.next();
       if (done) return;
       // Error-realignment drains would otherwise swallow a task's terminal notification.
-      if (!session.loop.closeExpected) noteSubagentTaskFrame(session.subChatId, value);
+      if (!session.loop.closeExpected) noteSessionFrame(session, value);
       if (isBoundary(value)) return;
     }
   } catch {
