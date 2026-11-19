@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import {
   envelopeBodyParts,
   fromBase64,
   type MobileEnvelope,
 } from '../../../shared/types/remote/mobile-envelope';
-import { MOBILE_UPLOAD_MAX_BYTES } from './server';
+import { MOBILE_CHANNEL_HEADER, MOBILE_UPLOAD_MAX_BYTES } from './server';
+import type { MobileStreamHub } from './stream';
 
 /** Requests one phone may have open at once over a channel; the phone's polling needs a handful.
  * Cancelled requests the app still runs get a separate cap of the same size. */
@@ -68,12 +70,15 @@ export function createBodyBudget(maxBytes: number): BodyBudget {
 
 type BridgeOptions = {
   fetch: (request: Request) => Response | Promise<Response>;
-  send: (envelope: MobileEnvelope) => void;
+  /** Settles once the relay has taken the frame. */
+  send: (envelope: MobileEnvelope) => Promise<void>;
   /** A protocol violation; the caller drops the channel. */
   fail: () => void;
   /** Checked before any body is buffered, so only a paired phone can make this desktop hold bytes. */
   authenticate: (token: string) => boolean;
   budget: BodyBudget;
+  /** Where this channel's live chat watches are kept, from open to close. */
+  streams: Pick<MobileStreamHub, 'register' | 'unregister'>;
 };
 
 export type ChannelBridge = {
@@ -95,12 +100,18 @@ class Bridge implements ChannelBridge {
   private readonly refused = new Set<number>();
   private readonly seen = new Set<string>();
   private closed = false;
+  private readonly channelId = randomUUID();
 
-  constructor(private readonly options: BridgeOptions) {}
+  constructor(private readonly options: BridgeOptions) {
+    // Sealed in call order, so an event queues behind responses already sent.
+    options.streams.register(this.channelId, (envelope) =>
+      this.closed ? Promise.resolve() : options.send(envelope),
+    );
+  }
 
   receive(envelope: MobileEnvelope): void {
     if (this.closed) return;
-    if (envelope.t === 'res') return this.options.fail();
+    if (envelope.t === 'res' || envelope.t === 'evt') return this.options.fail();
     if (envelope.t === 'cancel') {
       this.release(envelope.id);
       this.refused.delete(envelope.id);
@@ -121,6 +132,7 @@ class Bridge implements ChannelBridge {
 
   close(): void {
     this.closed = true;
+    this.options.streams.unregister(this.channelId);
     for (const id of [...this.assembling.keys()]) this.release(id);
     this.running.clear();
     this.cancelled.clear();
@@ -219,10 +231,17 @@ class Bridge implements ChannelBridge {
   private async run(id: number, assembly: Assembly): Promise<void> {
     this.running.set(id, Date.now());
     try {
+      // Only the bridge names the channel; a phone's own claim to one is dropped.
+      const headers = Object.fromEntries(
+        Object.entries(assembly.headers).filter(
+          ([key]) => key.toLowerCase() !== MOBILE_CHANNEL_HEADER,
+        ),
+      );
+      headers[MOBILE_CHANNEL_HEADER] = this.channelId;
       const response = await this.options.fetch(
         new Request(`${CHANNEL_ORIGIN}${assembly.path}`, {
           method: 'POST',
-          headers: assembly.headers,
+          headers,
           body: joined(assembly),
         }),
       );

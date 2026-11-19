@@ -36,6 +36,7 @@ import { abortIfTaskNoLongerRunning } from '../tasks/dispatch-cancel-fence';
 import { runSendSideNaming } from './naming';
 import { describeDelivery, type MessageDelivery } from './execution/message-provenance/origin';
 import { withMessageAdmission } from './execution/send-admission';
+import { emitLiveChatEvent } from './streaming/live-stream/events';
 import { createLiveStreamTransport } from './streaming/live-stream/transport';
 
 // Socket-specific message types (compatible with but distinct from renderer types)
@@ -447,6 +448,7 @@ export function broadcastToRenderer(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isCrashed()) win.webContents.send(channel, payload);
   }
+  emitLiveChatEvent(channel, payload);
 }
 
 /** Mode changed mid-turn (e.g. agent → plan at EnterPlanMode); keeps the renderer's

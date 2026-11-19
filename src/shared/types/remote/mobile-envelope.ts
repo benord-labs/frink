@@ -35,6 +35,8 @@ export const mobileEnvelopeSchema = z.discriminatedUnion('t', [
     end: z.boolean(),
   }),
   z.object({ t: z.literal('cancel'), id }),
+  // Desktop to phone only: one whole MobileChatEvent (JSON) for the live chat watch `sub`.
+  z.object({ t: z.literal('evt'), sub: z.uuid(), seq: id, body }),
 ]);
 
 export type MobileEnvelope = z.infer<typeof mobileEnvelopeSchema>;

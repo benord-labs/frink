@@ -7,6 +7,7 @@ import {
   type MobileEnvelope,
 } from '../../../shared/types/remote/mobile-envelope';
 import { createBodyBudget, createChannelBridge } from './channel-bridge';
+import type { ChatEventEnvelope, ChatEventSender } from './stream';
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
@@ -14,12 +15,19 @@ function harness(fetch = vi.fn(async (request: Request) => Response.json({ echo:
   const sent: MobileEnvelope[] = [];
   const fail = vi.fn();
   const budget = createBodyBudget(MOBILE_ENVELOPE_PART_BYTES * 4);
+  const senders = new Map<string, ChatEventSender>();
   const bridge = createChannelBridge({
     fetch,
-    send: (envelope) => sent.push(envelope),
+    send: async (envelope) => {
+      sent.push(envelope);
+    },
     fail,
     authenticate: (token) => token !== 'revoked',
     budget,
+    streams: {
+      register: (channelId, send) => senders.set(channelId, send),
+      unregister: (channelId) => senders.delete(channelId),
+    },
   });
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   const response = (id: number) => {
@@ -31,7 +39,7 @@ function harness(fetch = vi.fn(async (request: Request) => Response.json({ echo:
       ended: parts.at(-1)?.t === 'res' && (parts.at(-1) as { end: boolean }).end,
     };
   };
-  return { bridge, fetch, sent, fail, settle, response, budget };
+  return { bridge, fetch, sent, fail, settle, response, budget, senders };
 }
 
 function request(
@@ -184,7 +192,33 @@ describe('mobile channel bridge', () => {
     const { bridge, fail } = harness();
     bridge.receive({ t: 'req', id: 9, body: '', end: true });
     bridge.receive({ t: 'res', id: 1, status: 200, body: '', end: true });
-    expect(fail).toHaveBeenCalledTimes(2);
+    bridge.receive({ t: 'evt', sub: crypto.randomUUID(), seq: 1, body: '' });
+    expect(fail).toHaveBeenCalledTimes(3);
+  });
+
+  it('names its own channel to the app, whatever channel the phone claims', async () => {
+    const fetch = vi.fn(async (incoming: Request) =>
+      Response.json({ channel: incoming.headers.get('x-frink-channel') }),
+    );
+    const { bridge, settle, response, senders } = harness(fetch);
+    const headers = { Authorization: 'Bearer ok', 'X-Frink-Channel': 'someone-else' };
+    for (const part of request(1, '/api', encode({}), headers)) bridge.receive(part);
+    await settle();
+    expect(response(1).json.channel).toBe([...senders.keys()][0]);
+  });
+
+  it('sends live events after the responses already sent, and none once closed', async () => {
+    const { bridge, sent, settle, senders } = harness();
+    for (const part of request(1, '/api', encode({}))) bridge.receive(part);
+    await settle();
+    const [send] = senders.values();
+    const event: ChatEventEnvelope = { t: 'evt', sub: crypto.randomUUID(), seq: 1, body: '' };
+    await send(event);
+    expect(sent.map((part) => part.t)).toEqual(['res', 'evt']);
+    bridge.close();
+    expect(senders.size).toBe(0);
+    await send({ ...event, seq: 2 });
+    expect(sent).toHaveLength(2);
   });
 
   it('keeps a cancelled running id taken until the app answers, and never answers it', async () => {

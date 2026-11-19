@@ -20,6 +20,7 @@ import { loadDesktopIdentity, routeOf, type DesktopIdentity } from './identity';
 import { MobilePairingStore } from './pairing-store';
 import { startRelayHost } from './relay-host';
 import { createMobileApp } from './server';
+import type { ChatEventSender } from './stream';
 
 type Handler = (...args: unknown[]) => void;
 
@@ -28,6 +29,8 @@ function fakeRelay() {
   const handlers = new Map<string, Handler>();
   const toPhone: { peerId: string; data: Uint8Array }[] = [];
   const disconnected: string[] = [];
+  /** Frames are recorded at once but acknowledged only once this settles. */
+  const acking = { gate: Promise.resolve() };
   const socket = {
     connected: true,
     active: true,
@@ -40,6 +43,7 @@ function fakeRelay() {
     timeout: () => ({
       emitWithAck: async (_event: string, frame: { peerId: string; data: Uint8Array }) => {
         toPhone.push(frame);
+        await acking.gate;
         return true;
       },
     }),
@@ -50,7 +54,7 @@ function fakeRelay() {
   const fire = (event: string, ...args: unknown[]) => handlers.get(event)?.(...args);
   const fromPhone = (peerId: string, data: Uint8Array) =>
     handlers.get('frame')?.({ peerId, data }, (value: unknown) => acks.push(value));
-  return { connect, socket, toPhone, disconnected, fromPhone, acks, fire };
+  return { connect, socket, toPhone, disconnected, fromPhone, acks, fire, acking };
 }
 
 const address = () => ({
@@ -67,6 +71,7 @@ let identity: DesktopIdentity;
 let store: MobilePairingStore;
 let relay: ReturnType<typeof fakeRelay>;
 let host: ReturnType<typeof startRelayHost>;
+const senders = new Map<string, ChatEventSender>();
 const execute = vi.fn(async () => ({ queue: [] }));
 
 beforeEach(async () => {
@@ -82,6 +87,10 @@ beforeEach(async () => {
     identity,
     fetch: (request) => app.fetch(request),
     authenticate: (token) => store.authenticate(token),
+    streams: {
+      register: (channelId, send) => senders.set(channelId, send),
+      unregister: (channelId) => senders.delete(channelId),
+    },
     connect: relay.connect as never,
   });
 });
@@ -295,6 +304,29 @@ describe('mobile relay host', () => {
     // Proven now, so later squatters evict each other rather than the phone.
     for (let index = 6; index < 12; index++) relay.fire('peer-connected', `squatter-${index}`);
     expect(relay.disconnected).not.toContain('phone');
+  });
+
+  it('settles an event send only once the relay acknowledges its sealed frame', async () => {
+    const iphone = await phone('peer-1');
+    const [send] = senders.values();
+    let release = () => {};
+    relay.acking.gate = new Promise((resolve) => (release = resolve));
+    let settled = false;
+    const sub = crypto.randomUUID();
+    const sending = send({ t: 'evt', sub, seq: 1, body: '' }).then(() => (settled = true));
+    await settle();
+    expect(settled).toBe(false);
+    release();
+    await sending;
+    const frame = relay.toPhone.at(-1)!;
+    expect(decodeEnvelope(iphone.session!.open(frame.data)!)).toEqual({
+      t: 'evt',
+      sub,
+      seq: 1,
+      body: '',
+    });
+    host.close();
+    expect(senders.size).toBe(0);
   });
 
   it('sends nothing on a channel broken while its request was still running', async () => {

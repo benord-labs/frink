@@ -59,7 +59,7 @@ describe('mobile HTTP boundary', () => {
     const response = await request({ type: 'overview' });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: { queue: [] } });
-    expect(execute).toHaveBeenCalledWith({ type: 'overview' });
+    expect(execute).toHaveBeenCalledWith({ type: 'overview' }, undefined);
     await store.revoke(deviceId);
     expect((await request({ type: 'overview' })).status).toBe(401);
     expect(execute).toHaveBeenCalledTimes(1);
@@ -157,7 +157,12 @@ describe('mobile HTTP boundary', () => {
       'Content-Type': contentType,
     });
     expect(response.status).toBe(200);
-    expect(execute).toHaveBeenCalledWith({ type: 'overview' });
+    expect(execute).toHaveBeenCalledWith({ type: 'overview' }, undefined);
+  });
+
+  it('hands the app the channel a request arrived on', async () => {
+    await request({ type: 'overview' }, token, { 'X-Frink-Channel': 'channel' });
+    expect(execute).toHaveBeenCalledWith({ type: 'overview' }, 'channel');
   });
 
   it('classifies invalid JSON only at the request body boundary', async () => {
