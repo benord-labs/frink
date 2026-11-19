@@ -40,3 +40,28 @@ describe('RunCommandConfig project', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('RunCommandConfig while the project list hydrates', () => {
+  it('renders without flagging when the list is briefly not an array', async () => {
+    renderWithTrpc(
+      <TooltipProvider>
+        <RunCommandConfig
+          node={{
+            id: 'cmd-1',
+            blockType: 'run_command',
+            config: { command: 'npm test', projectId: 'gone' },
+          }}
+          onPatchLabel={() => {}}
+          onConfigPatch={() => {}}
+        />
+      </TooltipProvider>,
+      ({ path }) => (path === 'projects.list' ? Promise.resolve({}) : new Promise(() => {})),
+    );
+
+    await screen.findByDisplayValue('npm test');
+    // Let the list resolve: a crash here would unmount the panel.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByDisplayValue('npm test')).toBeInTheDocument();
+    expect(screen.queryByText(/isn't on this computer/)).toBeNull();
+  });
+});

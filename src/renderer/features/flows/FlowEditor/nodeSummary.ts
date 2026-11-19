@@ -11,6 +11,7 @@ import {
 import type { FlowNode } from '../../../../shared/lib/validate-flow-graph';
 import { FLOW_BLOCK_TYPES, type FlowBlockType } from '../../../../shared/types/flow';
 import {
+  classifyProjectRef,
   ID_ONLY_PROJECT_RULES,
   LITERAL_PROJECT_RULES,
   type NodeProjectProblem,
@@ -60,6 +61,16 @@ function unresolvedProjectLine(
   if (problem.state === 'ambiguous') return `More than one project is named “${name}”`;
   if (problem.state === 'malformed') return `“${name}” isn't a valid variable`;
   return `Project “${name}” isn't on this computer`;
+}
+
+/** A post-task binding matches tasks by project id only; an empty one falls back and is allowed. */
+function postTaskProjectGone(
+  cfg: FlowNode['config'],
+  ctx: FlowNodeCanvasContext | undefined,
+): string | null {
+  const id = readString(cfg, 'bindingProjectId');
+  if (id === undefined) return null;
+  return classifyProjectRef(id, ctx?.projects ?? null, ID_ONLY_PROJECT_RULES) === 'ok' ? null : id;
 }
 
 /** A webhook bound to an account that is no longer connected never fires. */
@@ -159,6 +170,8 @@ export function flowNodeSummaryLine(
       return et ? `On ${et}` : 'Choose an event';
     }
     case 'post_task_trigger': {
+      const gone = postTaskProjectGone(cfg, ctx);
+      if (gone) return `Project “${truncateUiString(gone, 40)}” isn't on this computer`;
       const ts = cfg?.triggerStates;
       const n = Array.isArray(ts) ? ts.length : 0;
       return n > 0 ? `Watches ${n} task status${n === 1 ? '' : 'es'}` : 'Runs after a task';
@@ -311,6 +324,7 @@ export function flowNodeNeedsAttention(
     case 'schedule_trigger':
       return !readString(cfg, 'cronExpression');
     case 'post_task_trigger':
+      return postTaskProjectGone(cfg, ctx) !== null;
     case 'manual_trigger':
       return false;
     default: {

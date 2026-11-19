@@ -4,7 +4,9 @@ import { cleanup, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ComponentProps, type ReactElement, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
+import { getQueryKey } from '@trpc/react-query';
+import { newTestQueryClient, renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
+import { trpc } from '@/lib/trpc';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { StoredWebhookConditions } from '../../../../../lib/flows/webhook-trigger/parse-conditions';
 import { WebhookTriggerConfig } from '.';
@@ -270,6 +272,25 @@ describe('WebhookTriggerConfig account no longer connected', () => {
     );
     expect(await screen.findByText('No integrations connected yet.')).toBeInTheDocument();
     expect(screen.getByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it("names the warning as the account picker's description", async () => {
+    renderWithTrpc(panel('gone-1'), answer);
+    await screen.findByText(NOTICE);
+    const picker = screen.getByRole('combobox');
+    expect(picker).toHaveAttribute('aria-invalid', 'true');
+    expect(picker).toHaveAccessibleDescription(NOTICE);
+  });
+
+  it('waits for a refresh of the account list before warning', async () => {
+    const queryClient = newTestQueryClient();
+    queryClient.setQueryData(getQueryKey(trpc.integrations.list, undefined, 'query'), [
+      { id: 'shortcut-1', provider: 'shortcut', accountIdentifier: 'acme' },
+    ]);
+    // The list is cached but stale, so mounting refetches it; that refetch never settles here.
+    renderWithTrpc(panel('gone-1'), () => new Promise(() => {}), queryClient);
+    expect(await screen.findByRole('combobox')).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
   });
 
   it('stays quiet for a connected account', async () => {

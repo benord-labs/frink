@@ -89,6 +89,7 @@ export function NodeProjectField({
               ) : (
                 <ProjectSelector
                   overrideProject={pickerOverride ? overrideProject : null}
+                  displayNameFallback={pickerOverride ? overrideProject?.name : null}
                   onOverrideProjectChange={handleProjectChange}
                 />
               )}

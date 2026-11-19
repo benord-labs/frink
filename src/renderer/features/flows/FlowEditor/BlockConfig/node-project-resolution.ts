@@ -26,7 +26,8 @@ type ProjectRow = { id: string; name: string; path: string };
 
 /** `trpc.projects.list` rows as refs, or `null` while the list is loading or unavailable. */
 export function toProjectRefs(rows: readonly ProjectRow[] | undefined): ProjectRef[] | null {
-  return rows ? rows.map((p) => ({ id: p.id, name: p.name })) : null;
+  // tRPC hydration can briefly yield a non-array value (see ProjectSelector); treat it as loading.
+  return Array.isArray(rows) ? rows.map((p) => ({ id: p.id, name: p.name })) : null;
 }
 
 /** The project a value resolves to: by id, else by a name only one project has. */
@@ -47,7 +48,7 @@ export function pickerProject(
   rows: readonly ProjectRow[] | undefined,
   rules: ProjectRefRules,
 ): ProjectRow {
-  const projects = rows ?? [];
+  const projects = Array.isArray(rows) ? rows : [];
   const found = rules.byName
     ? findProjectRef(value, projects)
     : projects.find((p) => p.id === value.trim());

@@ -239,6 +239,16 @@ describe('FlowSettingsPanel default project', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps a default it cannot find in the picker, rather than its placeholder', async () => {
+    renderWithTrpc(
+      <FlowSettingsPanel {...panelProps} settings={{ defaultProjectId: 'gone-id' }} />,
+      withProjects,
+    );
+    // The picker shows its value while its list loads; check once the list has settled.
+    await screen.findByText("The project “gone-id” isn't on this computer. Pick a project.");
+    expect(screen.getByText('gone-id')).toBeInTheDocument();
+  });
+
   it('asks for nothing when no flow default is set, since that is allowed', () => {
     renderWithTrpc(<FlowSettingsPanel {...panelProps} />, withProjects);
     expect(screen.queryByText('Select a project.')).toBeNull();

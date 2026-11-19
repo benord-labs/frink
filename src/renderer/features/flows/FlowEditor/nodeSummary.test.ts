@@ -663,3 +663,25 @@ describe('manual trigger', () => {
     expect(flowNodeNeedsAttention(node({ id: '1', blockType: 'manual_trigger' }))).toBe(false);
   });
 });
+
+describe('post-task trigger project scope', () => {
+  const ctx = { projects: [{ id: 'id-api', name: 'api' }] };
+  const trigger = (bindingProjectId?: string) =>
+    node({
+      id: '1',
+      blockType: 'post_task_trigger',
+      config: bindingProjectId ? { bindingProjectId } : {},
+    });
+
+  it('flags a binding project that is not on this computer, matching by id only', () => {
+    expect(flowNodeNeedsAttention(trigger('api'), undefined, ctx)).toBe(true);
+    expect(flowNodeSummaryLine(trigger('api'), undefined, ctx)).toBe(
+      "Project “api” isn't on this computer",
+    );
+  });
+
+  it('stays quiet for a known id or an empty binding, which falls back to the flow', () => {
+    expect(flowNodeNeedsAttention(trigger('id-api'), undefined, ctx)).toBe(false);
+    expect(flowNodeNeedsAttention(trigger(), undefined, ctx)).toBe(false);
+  });
+});

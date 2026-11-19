@@ -47,6 +47,7 @@ export function FlowProjectField({
       <div className={error ? 'rounded-md ring-2 ring-destructive/50' : undefined}>
         <ProjectSelector
           overrideProject={overrideProject}
+          displayNameFallback={overrideProject?.name}
           onOverrideProjectChange={onOverrideProjectChange}
         />
       </div>
