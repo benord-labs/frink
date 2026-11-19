@@ -33,7 +33,10 @@ type Reply =
   | McpPage
   | Record<string, never>;
 type McpPage = { data: { name: string }[]; nextCursor: null };
-type FakeClient = Pick<CodexAppServerClient, 'forThread' | 'onClose' | 'onError'> & {
+type FakeClient = Pick<
+  CodexAppServerClient,
+  'forThread' | 'onClose' | 'onError' | 'skillRootsRegistered'
+> & {
   sendRequest: (method: string, request?: ThreadRequest) => Promise<Reply>;
 };
 type ServerArgs = Parameters<typeof appServers.getCodexAppServer>;
@@ -112,8 +115,9 @@ function createServer(wire: Wire): Server {
       answered(method) ? REPLIES[method](wire, request) : {},
     onClose: () => NO_OP,
     onError: () => NO_OP,
+    skillRootsRegistered: true,
   };
-  // SAFETY: the runner, its loaded check and its Stop handler call only these four methods.
+  // SAFETY: the runner, its loaded check and its Stop handler use only these five members.
   return Object.assign(wire, { client: client as CodexAppServerClient });
 }
 

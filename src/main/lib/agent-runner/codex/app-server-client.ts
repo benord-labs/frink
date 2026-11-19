@@ -247,6 +247,8 @@ export class CodexAppServerClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private connection: MessageConnection | null = null;
   private disposed = false;
+  /** False once this server refused its skill roots, so the loaded check skips its skills. */
+  skillRootsRegistered = true;
   private disposalSettlement: Promise<void> | null = null;
   /** Live per-turn subscriptions, grouped by threadId for O(1) routing. */
   private readonly subsByThread = new Map<string, Set<SubState>>();
@@ -313,15 +315,13 @@ export class CodexAppServerClient {
     await connection.sendNotification('initialized');
     const extraRoots = this.options.extraSkillRoots ?? [];
     if (extraRoots.length > 0) {
-      // The RPC REPLACES the process-global root set — safe because Frink
-      // spawns this process and is its sole client. Awaited so the roots are
-      // registered before the registry releases the client to thread/start;
-      // failure is non-fatal (the session runs without vendor skills) but
-      // recorded so the delivery probe reports it honestly.
+      // Replaces the process-global root set (Frink is its sole client), awaited before thread/start.
+      // A failure is non-fatal: it is recorded for the delivery probe and this server's loaded check.
       try {
         await connection.sendRequest('skills/extraRoots/set', { extraRoots });
         recordCodexSkillRootsRpcOutcome({ ok: true });
       } catch (err) {
+        this.skillRootsRegistered = false;
         recordCodexSkillRootsRpcOutcome({ ok: false, error: String(err) });
         captureMainException(err, { surface: 'codex-vendor-skill-roots' });
       }

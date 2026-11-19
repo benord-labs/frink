@@ -1,5 +1,5 @@
 // Provider-specific code lives in that provider's adapter, never in feature code.
-// Existing hits are counted in eslint/baselines/provider-branches.json, and the counts only shrink.
+// Existing hits are counted in eslint-suppressions.json, and the counts only shrink.
 
 /** Provider and runtime ids. Its test keeps this equal to AI_PROVIDER_IDS plus AGENT_RUNTIMES. */
 export const PROVIDER_IDS = [
@@ -74,7 +74,7 @@ export const noProviderBranch = {
     },
     messages: {
       branch:
-        '"{{id}}" branches on a provider outside its adapter. Read the capability row in src/shared/lib/ai-providers or move this into the adapter. Existing ones are counted in eslint/baselines/provider-branches.json and only shrink: after removing one, run `bun run lint:structure --prune-suppressions`.',
+        '"{{id}}" branches on a provider outside its adapter. Read the capability row in src/shared/lib/ai-providers or move this into the adapter. Existing ones are counted in eslint-suppressions.json and only shrink: after removing one, run `bun run lint:structure --prune-suppressions`.',
     },
     schema: [],
   },

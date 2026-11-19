@@ -245,6 +245,7 @@ describe('CodexAppServerClient', () => {
     // start() resolving proves the RPC was awaited: the registry hands the
     // client to thread/start only after start() returns.
     expect(sequence).toEqual(['initialize', 'initialized', 'skills/extraRoots/set']);
+    expect(client.skillRootsRegistered).toBe(true);
     client.dispose();
   });
 
@@ -273,6 +274,7 @@ describe('CodexAppServerClient', () => {
       extraSkillRoots: ['/abs/skills'],
     });
     await expect(client.start()).resolves.toMatchObject({ platformOs: 'linux' });
+    expect(client.skillRootsRegistered).toBe(false);
     client.dispose();
   });
 

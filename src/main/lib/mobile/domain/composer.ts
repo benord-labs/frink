@@ -37,6 +37,7 @@ import {
   claudeVersionSupportsXhigh,
   getBundledClaudeVersion,
 } from '../../claude';
+import { captureMainException } from '../../sentry/init';
 import { MobileApiError, mobileCallers, requireChat } from './context';
 
 type ComposerRequest = Extract<MobileRequest, { type: 'composer' }>;
@@ -96,6 +97,24 @@ function debugAvailable(
   return Boolean(projectId) && !unsupportedModes(accountType).includes('debug');
 }
 
+/** A saved Debug this account can't run becomes Agent, as the desktop picker does, so the next
+ * send runs instead of being refused. */
+async function runnableMode(
+  subChat: { id: string; mode: string | null },
+  accountType: string | undefined,
+): Promise<MobileChatMode> {
+  const mode = (subChat.mode as MobileChatMode | null) ?? 'agent';
+  if (mode !== 'debug' || !unsupportedModes(accountType).includes('debug')) return mode;
+  try {
+    await mobileCallers.chats.updateSubChatMode({ id: subChat.id, mode: 'agent' });
+    return 'agent';
+  } catch (error) {
+    // A failed save keeps the composer readable; the next send is then refused in plain words.
+    captureMainException(error, { surface: 'mobile-composer-mode' });
+    return mode;
+  }
+}
+
 export async function readMobileComposer(input: ComposerRequest): Promise<MobileComposer> {
   const { chat, subChat } = await requireChat(input.chatId, input.subChatId);
   const [account, accounts] = await Promise.all([
@@ -113,7 +132,7 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
   });
   const tiers = provider === 'codex' ? (catalog?.tiers ?? {}) : null;
   return {
-    mode: (subChat.mode as MobileChatMode) ?? 'agent',
+    mode: await runnableMode(subChat, account?.type),
     debugAvailable: debugAvailable(chat.projectId, account?.type),
     provider,
     account: account

@@ -612,7 +612,7 @@ export default [
     plugins: { frink: frinkPlugin },
     rules: { 'frink/no-raw-surface-fill': 'error' },
   },
-  // Provider branches stay in adapters (existing hits: eslint/baselines/provider-branches.json).
+  // Provider branches stay in adapters (existing hits: eslint-suppressions.json).
   {
     files: ['src/**/*.{ts,tsx}', 'mobile/src/**/*.{ts,tsx}'],
     ignores: ['**/*.{test,spec}.{ts,tsx}', '**/test-suites/**', ...PROVIDER_ADAPTER_PATHS],
