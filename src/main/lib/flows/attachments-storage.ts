@@ -22,6 +22,8 @@ export const ATTACHMENT_PROTOCOL = 'frink-attachment';
 
 const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 const LEADING_SLASH_RE = /^\//;
+/** `.` and `..` pass the name check but name a folder, never an uploaded file. */
+const DOTS_ONLY_RE = /^\.+$/;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const MIME_BY_EXT = new Map([
@@ -109,16 +111,12 @@ export async function copyAttachment(
   return { url: buildAttachmentUrl(runId, filename), filename, byteLength: size, path: target };
 }
 
-/** The on-disk path of a `frink-attachment://` URL, or null for any other URL or one that would
- *  leave the attachments folder (`..` passes the name check). */
+/** The on-disk path of a `frink-attachment://` URL, or null for any other URL or one naming a
+ *  folder (`.` and `..` pass the name check). */
 export function attachmentFilePath(url: string, root: string = attachmentsRoot()): string | null {
   const parsed = parseAttachmentUrl(url);
-  if (!parsed) return null;
-  try {
-    return getAttachmentPath(parsed.runId, parsed.filename, root);
-  } catch {
-    return null;
-  }
+  if (!parsed || DOTS_ONLY_RE.test(parsed.runId) || DOTS_ONLY_RE.test(parsed.filename)) return null;
+  return getAttachmentPath(parsed.runId, parsed.filename, root);
 }
 
 export async function readAttachment(

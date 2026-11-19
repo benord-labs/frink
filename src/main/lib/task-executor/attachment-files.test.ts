@@ -108,6 +108,8 @@ describe('attachmentFileNotes', () => {
     const notes = await notesFor(
       [
         { url: 'frink-attachment://stage-run/..', type: 'file', label: 'escape' },
+        { url: 'frink-attachment://stage-run/.', type: 'file', label: 'folder' },
+        { url: 'frink-attachment://../secret.csv', type: 'file', label: 'parent' },
         { url, type: 'file', label: 'report.csv' },
       ],
       warnings,
@@ -116,6 +118,8 @@ describe('attachmentFileNotes', () => {
     expect(notes).toContain('a1b2c3d4-report.csv');
     expect(warnings).toEqual([
       '⚠️ Attached file "escape" was not sent: it is not a file uploaded to the run.',
+      '⚠️ Attached file "folder" was not sent: it is not a file uploaded to the run.',
+      '⚠️ Attached file "parent" was not sent: it is not a file uploaded to the run.',
     ]);
   });
 

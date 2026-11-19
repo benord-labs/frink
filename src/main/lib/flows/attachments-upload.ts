@@ -3,7 +3,7 @@
  * png/jpeg/webp under 5MB is still sent inline). uploadAndAttachImage runtime — decodes base64 bytes, persists under
  * userData/flow-attachments/<runId>/, appends a RunAttachment entry to the
  * batch_stage_run.trigger_context.attachments[] array, returns the cloud-shape
- * `{ url, filename, run: { id, trigger_context } }` the renderer expects.
+ * `{ url, filename, attachment, run: { id, trigger_context } }`; `attachment.type` comes from the bytes.
  *
  * Validation:
  * - mimeType must be in ALLOWED_ATTACHMENT_MIME_TYPES.
