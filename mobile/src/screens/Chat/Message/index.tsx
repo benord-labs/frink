@@ -2,7 +2,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { Check, Copy, CornerDownRight } from 'lucide-react-native';
-import type { MobileMessage, MobileTextRun } from '@frink/shared/types/remote/mobile';
+import type { MobileTextRun } from '@frink/shared/types/remote/mobile';
+import type { PendingMessage } from '../../../lib/chat/pending';
 import { GlassSurface } from '../../../ui/material';
 import { Markdown } from '../../../ui/Markdown';
 import { Text } from '../../../ui/text';
@@ -156,16 +157,57 @@ function AssistantGroup({ group, plan }: { group: Group; plan?: PendingPlan }) {
   return <Markdown content={group.text} />;
 }
 
+/** A message the computer hasn't saved yet: dimmed while it goes, tappable once it failed. */
+function PendingCaption({
+  message,
+  onRetry,
+  onDiscard,
+}: {
+  message: PendingMessage;
+  onRetry?: (id: string) => void;
+  onDiscard?: (id: string) => void;
+}) {
+  if (message.pending !== 'failed')
+    return (
+      <Text variant="label" color="muted">
+        {message.pending === 'sent' ? 'Frink reads this at its next step' : 'Sending…'}
+      </Text>
+    );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityHint="Press and hold to discard it"
+      onPress={() => onRetry?.(message.id)}
+      onLongPress={() => onDiscard?.(message.id)}
+      hitSlop={8}
+      style={{ maxWidth: '84%', alignItems: 'flex-end', gap: 2 }}
+    >
+      <Text variant="label" color="danger">
+        Not delivered · Tap to retry
+      </Text>
+      {!!message.error && (
+        <Text variant="label" color="muted" style={{ textAlign: 'right' }}>
+          {message.error}
+        </Text>
+      )}
+    </Pressable>
+  );
+}
+
 /** One message. Only the newest reply (`latest`) carries a Copy button, so a long chat isn't a
  *  column of repeated icons; earlier replies stay selectable. `plan` is the one awaiting review. */
 export function Message({
   message,
   latest = false,
   plan,
+  onRetry,
+  onDiscard,
 }: {
-  message: MobileMessage;
+  message: PendingMessage;
   latest?: boolean;
   plan?: PendingPlan;
+  onRetry?: (id: string) => void;
+  onDiscard?: (id: string) => void;
 }) {
   const groups = contentGroups(message);
   const attachments = attachmentsOf(message);
@@ -178,15 +220,27 @@ export function Message({
     const prose = groups.filter((group): group is Prose => group.type === 'text');
     return (
       <View testID={`message-${message.id}`} style={{ alignItems: 'flex-end', gap: 6 }}>
-        <AttachmentChips items={attachments} end />
-        {prose.length > 0 && (
-          <Bubble>
-            <View style={{ gap: space.sm }}>
-              {prose.map((group, index) => (
-                <MentionText key={`${index}-${group.text}`} text={group.text} runs={group.runs} />
-              ))}
-            </View>
-          </Bubble>
+        <View
+          style={{
+            alignSelf: 'stretch',
+            alignItems: 'flex-end',
+            gap: 6,
+            opacity: message.pending ? 0.6 : 1,
+          }}
+        >
+          <AttachmentChips items={attachments} end />
+          {prose.length > 0 && (
+            <Bubble>
+              <View style={{ gap: space.sm }}>
+                {prose.map((group, index) => (
+                  <MentionText key={`${index}-${group.text}`} text={group.text} runs={group.runs} />
+                ))}
+              </View>
+            </Bubble>
+          )}
+        </View>
+        {message.pending && (
+          <PendingCaption message={message} onRetry={onRetry} onDiscard={onDiscard} />
         )}
       </View>
     );

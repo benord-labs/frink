@@ -19,7 +19,6 @@ import { useStartChat } from './use-start-chat';
 
 const choice = { projectId: 'project-1', useWorktree: true, mode: 'agent' as const };
 const created = { chatId: 'chat-1', subChatId: 'sub-1' };
-const message = { text: 'Hello', requestId: 'request-1', attachments: [] };
 function setup() {
   // eslint-disable-next-line react-hooks/rules-of-hooks -- Navigation ordering uses deferred state above.
   return useStartChat();
@@ -154,11 +153,10 @@ describe('new-chat ownership across navigation', () => {
     });
   });
 
-  it('does not delete a chat after a first send whose response is uncertain', async () => {
+  it('does not delete a chat claimed for its first message', async () => {
     const chat = setup();
     await chat.create(choice);
-    harness.run.mockResolvedValue(undefined);
-    await chat.send(created, message);
+    expect(chat.claim(created)).toBe(true);
     chat.leave();
     expect(harness.request).not.toHaveBeenCalled();
   });
@@ -167,7 +165,7 @@ describe('new-chat ownership across navigation', () => {
     const chat = setup();
     await chat.create(choice);
     chat.leave();
-    expect(await chat.send(created, message)).toBe(false);
+    expect(chat.claim(created)).toBe(false);
     expect(harness.run).toHaveBeenCalledTimes(1);
   });
 });

@@ -16,14 +16,13 @@ function removeUnusedChat(connection: Connection, chatId: string) {
 
 /**
  * Makes a new chat's chat on the Mac the first time it is needed (its first message, or its model
- * list), then sends that first message. Once made, the chat is reused: a retry never makes another.
+ * list), then claims it for that first message. Once made, the chat is reused: a retry never
+ * makes another.
  */
 export function useStartChat() {
   const action = useAction();
   const { connection } = useConnection();
   const [created, setCreated] = useState<StartedChat | null>(null);
-  // Whether a first message ever went out; such a chat may hold it even if the answer was lost.
-  const [sendTried, setSendTried] = useState(false);
   const owned = useRef<{ chat: StartedChat | null; sent: boolean }>({ chat: null, sent: false });
   const generation = useRef(0);
   const pending = useRef<{
@@ -67,21 +66,13 @@ export function useStartChat() {
     return promise;
   }
 
-  async function send(
-    chat: StartedChat,
-    message: { text: string; requestId: string; attachments: string[] },
-  ): Promise<boolean> {
-    // A chat retired while the caller waited (the project changed) takes no message.
-    if (gone.current || owned.current.chat !== chat) return false;
+  /** Keeps the chat for its first message, which may arrive even if its answer is lost. */
+  function claim(chat: StartedChat): boolean {
+    // A chat retired while the caller waited (the project changed) takes no message, and a
+    // double tap sends one.
+    if (gone.current || owned.current.chat !== chat || owned.current.sent) return false;
     owned.current.sent = true;
-    setSendTried(true);
-    const { attachments, ...rest } = message;
-    return !!(await action.run({
-      type: 'sendMessage',
-      ...chat,
-      ...rest,
-      ...(attachments.length ? { attachments } : {}),
-    }));
+    return true;
   }
 
   /** Removes a chat that was made only to list models and never used, on the Mac too. */
@@ -101,11 +92,10 @@ export function useStartChat() {
 
   return {
     create,
-    send,
+    claim,
     discard,
     leave,
     created,
-    sendTried,
     busy: action.busy,
     error: action.error,
   };

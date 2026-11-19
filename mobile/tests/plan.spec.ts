@@ -116,6 +116,31 @@ test.describe('a plan waiting for review', () => {
     });
   });
 
+  test('a repeated note keeps its request id, and an edited one gets a new id', async ({
+    page,
+  }) => {
+    const state = await openApp(page, {
+      data: { chat: planChat() },
+      respond: (input) =>
+        input.type === 'sendMessage' ? new Error('Can’t reach your computer.') : undefined,
+    });
+    await openChat(page, { id: 'chat-4' });
+    await button(page, 'Send back').click();
+    const note = page.getByRole('textbox', { name: 'What should change' });
+    const sendBack = page.getByRole('button', { name: 'Send back', exact: true }).last();
+    await note.fill('Retry for up to a day.');
+    await sendBack.click();
+    await expect.poll(() => requestsOf(state, 'sendMessage').length).toBe(1);
+    await sendBack.click();
+    await expect.poll(() => requestsOf(state, 'sendMessage').length).toBe(2);
+    await note.fill('Retry for up to a week.');
+    await sendBack.click();
+    await expect.poll(() => requestsOf(state, 'sendMessage').length).toBe(3);
+    const [first, repeat, edited] = requestsOf(state, 'sendMessage');
+    expect(repeat.requestId).toBe(first.requestId);
+    expect(edited.requestId).not.toBe(first.requestId);
+  });
+
   test('a decided plan stays readable without actions, and the message box returns', async ({
     page,
   }) => {

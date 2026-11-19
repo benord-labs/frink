@@ -1,22 +1,35 @@
+import * as Crypto from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
-import { useAction } from '../../lib/connection';
-import type { useDraft } from '../../lib/drafts';
+import { deliver } from '../../lib/chat/deliver';
+import {
+  STEER_REFUSED,
+  STEER_UNREAD,
+  addPending,
+  changePending,
+  hasUnreconciledSend,
+  pendingKey,
+  readPending,
+  reconcile,
+  removePending,
+  steerMarkers,
+  usePending,
+  type PendingEntry,
+} from '../../lib/chat/pending';
+import { useAction, useConnection } from '../../lib/connection';
+import { useDrafts } from '../../lib/drafts';
 import type { Attachments } from './Composer/attach';
-import { STEER_NOT_DELIVERED } from './chat-state';
-import { confirmChatDeletion, confirmStopRun } from './confirm';
-
-type Draft = ReturnType<typeof useDraft<string>>;
+import { confirmChatDeletion, confirmDiscardMessage, confirmStopRun } from './confirm';
 
 /**
- * Send, steer, stop and delete for one conversation.
- * A send keeps its request id until the computer acknowledges it, so a retry after a lost
- * response can't post twice. A steer that wasn't delivered stays in the box with a new id: the
- * computer remembers outcomes by id, and nothing was sent.
+ * Send, steer, stop and delete for one conversation. A message shows at once under its own id;
+ * while a turn runs or a send is unconfirmed, a text-only message steers instead.
  */
 export function useChatActions({
   chatId,
+  subChatId,
   data,
   draft,
   attachments,
@@ -26,8 +39,10 @@ export function useChatActions({
   onDeleted,
 }: {
   chatId: string;
+  subChatId: string | undefined;
   data: MobileChatDetail | undefined;
-  draft: Draft;
+  /** The draft the composer edits, read only when sending. */
+  draft: string;
   attachments: Attachments;
   flowRun: boolean;
   refresh: () => void;
@@ -35,57 +50,75 @@ export function useChatActions({
   onDeleted: () => void;
 }) {
   const action = useAction();
-  const [undelivered, setUndelivered] = useState(false);
-  const subChatId = data?.subChatId;
-  const idle = data?.activity === 'idle';
-  // The note describes the last steer attempt; a new conversation or Frink finishing clears it.
-  useEffect(() => setUndelivered(false), [subChatId, idle]);
-  // A send whose response was lost is acknowledged by the transcript: the saved message carries the
-  // draft's request id. Clearing here stops a retry going out again, e.g. as a steer once running.
-  const acknowledged = !!data?.messages.some((message) => message.id === draft.requestId);
+  const { connection, request } = useConnection();
+  const drafts = useDrafts();
+  const key = pendingKey(connection?.deviceId, chatId, subChatId);
+  const pending = usePending(key);
+  const running = data?.activity === 'running';
   useEffect(() => {
-    if (!acknowledged) return;
-    draft.clear(draft.requestId);
-    attachments.clear();
-  }, [acknowledged]);
+    if (data) changePending(key, (entries) => reconcile(entries, data.messages, running));
+  }, [key, data]);
+  // What the computer took shows in the transcript on the next read, not the next poll.
+  const sent = pending.filter((entry) => entry.state === 'sent').length;
+  useEffect(() => {
+    if (sent) refresh();
+  }, [sent]);
 
-  async function send() {
-    if (!subChatId) return;
-    const sent = await action.run({
-      type: 'sendMessage',
-      chatId,
-      subChatId,
-      text: draft.value,
-      requestId: draft.requestId,
-      ...(attachments.ids.length ? { attachments: attachments.ids } : {}),
-    });
-    if (!sent) return;
-    draft.clear(draft.requestId);
-    attachments.clear();
-    onSent();
-    refresh();
+  /** Steers are text-only, so a message with files always starts a turn. */
+  function kindNow(files: number): PendingEntry['kind'] {
+    return (running || hasUnreconciledSend(readPending(key))) && !files ? 'steer' : 'send';
   }
 
-  async function steer() {
+  /** How a new message goes now, noting the Steered notes a steer must not mistake for its own. */
+  function route(text: string, files: number): Pick<PendingEntry, 'kind' | 'markers'> {
+    const kind = kindNow(files);
+    return { kind, markers: kind === 'steer' ? steerMarkers(data?.messages ?? [], text) : 0 };
+  }
+
+  function deliverEntry(entry: PendingEntry) {
     if (!subChatId) return;
-    const result = await action.run({
-      type: 'steerMessage',
-      chatId,
-      subChatId,
-      requestId: draft.requestId,
-      text: draft.value.trim(),
+    void deliver({ request, app: AppState }, { key, chatId, subChatId }, entry).then((reached) => {
+      if (reached && entry.kind === 'steer')
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     });
-    if (!result) return;
-    if (result.outcome === 'not-delivered') {
-      setUndelivered(true);
-      draft.update(draft.value);
-      return;
-    }
-    setUndelivered(false);
-    draft.clear(draft.requestId);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  }
+
+  function submit() {
+    if (!subChatId) return;
+    const { value, requestId } = drafts.get(draft, '');
+    const files = attachments.files;
+    drafts.clear(draft, requestId);
+    attachments.clear();
+    const entry: PendingEntry = {
+      id: requestId,
+      text: value,
+      attachments: files,
+      ...route(value, files.length),
+      state: 'sending',
+    };
+    changePending(key, (entries) => addPending(entries, entry));
+    deliverEntry(entry);
     onSent();
-    refresh();
+  }
+
+  /**
+   * A failed message is asked again under its own id and kind, so a lost answer never posts twice.
+   * A steer the agent never got goes again under a fresh id, as whatever the chat takes now.
+   */
+  function retry(id: string) {
+    const entry = readPending(key).find((item) => item.id === id);
+    if (entry?.state !== 'failed') return;
+    if (entry.error !== STEER_REFUSED && entry.error !== STEER_UNREAD) return deliverEntry(entry);
+    const next = { ...entry, id: Crypto.randomUUID(), ...route(entry.text, 0) };
+    changePending(key, (entries) => entries.map((item) => (item.id === id ? next : item)));
+    deliverEntry(next);
+  }
+
+  async function discard(id: string) {
+    if (!(await confirmDiscardMessage())) return;
+    // A retry tapped while the dialog was open may be on its way; that one is no longer failed.
+    const entry = readPending(key).find((item) => item.id === id);
+    if (entry?.state === 'failed') changePending(key, (entries) => removePending(entries, id));
   }
 
   async function stop() {
@@ -99,19 +132,15 @@ export function useChatActions({
     if (await action.run({ type: 'deleteChat', chatId })) onDeleted();
   }
 
-  const running = data?.activity === 'running';
-  const note = action.error
-    ? { text: action.error, error: true }
-    : undelivered && running
-      ? { text: STEER_NOT_DELIVERED }
-      : flowRun && data?.activity === 'background' && draft.value.trim()
-        ? { text: 'Kept until the background work finishes.' }
-        : null;
+  const note = action.error ? { text: action.error, error: true } : null;
 
   return {
     busy: action.busy,
     note,
-    submit: () => void (running ? steer() : send()),
+    pending,
+    submit,
+    retry,
+    discard: (id: string) => void discard(id),
     stop: () => void stop(),
     remove,
   };

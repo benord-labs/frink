@@ -30,6 +30,8 @@ const computerFor = (route: string | undefined) =>
   route === secondRoute ? computers.second : computers.first;
 
 type Input = Record<string, unknown> & { type: keyof MobileResponses };
+/** Returned by `respond`: the request is lost on the way, as when the Mac drops off the network. */
+export const UNREACHABLE = Symbol('unreachable');
 export type AppState = {
   offline: boolean;
   data: Partial<Record<keyof MobileResponses, unknown>>;
@@ -37,9 +39,17 @@ export type AppState = {
   /** This iPhone's alert registration on the Mac, and every registration request it received. */
   notifications: { enabled: boolean; error: string | null };
   alerts: { token?: string | null }[];
-  /** Answer one request yourself: return a value to send it, undefined for the default. */
+  /** Answer one request yourself: return a value (or a promise of one) to send it, undefined for
+   *  the default. */
   respond?: (input: Input) => unknown;
 };
+
+/** A promise the test settles itself, for a Mac that takes its time to answer. */
+export function held() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => (release = resolve));
+  return { promise, release };
+}
 
 /** Records a raw attachment upload and answers as the computer would. */
 function recordUpload(request: Request, requests: Input[]) {
@@ -167,7 +177,8 @@ export async function openApp(
     }
     const input = request.postDataJSON() as Input;
     state.requests.push(input);
-    const custom = state.respond?.(input);
+    const custom = await state.respond?.(input);
+    if (custom === UNREACHABLE) return route.abort('connectionreset');
     if (custom instanceof Error)
       return route.fulfill({ status: 409, headers: corsHeaders, json: { error: custom.message } });
     if (custom !== undefined)

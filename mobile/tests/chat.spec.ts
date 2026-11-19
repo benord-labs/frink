@@ -1,12 +1,21 @@
 import { expect, test, type Page } from '@playwright/test';
-import type { MobileQuestion } from '@frink/shared/types/remote/mobile';
-import { openApp, type AppState } from './fixtures/app';
+import type { MobileChatDetail, MobileQuestion } from '@frink/shared/types/remote/mobile';
+import { UNREACHABLE, held, openApp, type AppState } from './fixtures/app';
 import { conversation, messageBox, openChat, requestsOf, scrollTranscript } from './fixtures/chat';
 import { overviewFixture } from './fixtures/data';
 import { openDestination } from './fixtures/navigation';
 
 const send = (page: import('@playwright/test').Page) =>
   page.getByRole('button', { name: 'Send message', exact: true });
+type Input = Parameters<NonNullable<AppState['respond']>>[0];
+/** Answers a send as the Mac does: the message is saved under its request id. */
+function saveSent(state: AppState, input: Input) {
+  // SAFETY: every test that saves a send opened the app with a chat.
+  const chat = state.data.chat as MobileChatDetail;
+  const message = { id: String(input.requestId), role: 'user', text: String(input.text) };
+  state.data.chat = { ...chat, messages: [...chat.messages, message] };
+  return { ok: true };
+}
 const longTranscript = (count: number) =>
   Array.from({ length: count }, (_, index) => ({
     id: `m${index}`,
@@ -325,27 +334,113 @@ test.describe('conversations in one chat', () => {
 });
 
 test.describe('sending and steering', () => {
-  test('a lost send keeps the draft and retries with the same request id', async ({ page }) => {
-    let sends = 0;
+  test('a sent message shows at once and the box stays free while the Mac answers', async ({
+    page,
+  }) => {
+    const answer = held();
     const state = await openApp(page, {
       data: { chat: conversation() },
-      respond: (input) => {
-        if (input.type === 'sendMessage' && ++sends === 1)
-          return new Error(
-            'Cannot reach your computer. If you sent an action, refresh before trying again; it may have reached your computer.',
-          );
-        return undefined;
+      respond: async (input) => {
+        if (input.type !== 'sendMessage') return undefined;
+        await answer.promise;
+        return saveSent(state, input);
       },
     });
     await openChat(page);
     await messageBox(page).fill('Please verify staging first.');
     await send(page).click();
-    await expect(page.getByText(/it may have reached your computer/)).toBeVisible();
-    await expect(messageBox(page)).toHaveValue('Please verify staging first.');
-    await send(page).click();
+    await expect(page.getByText('Please verify staging first.')).toBeVisible();
+    await expect(page.getByText('Sending…', { exact: true })).toBeVisible();
     await expect(messageBox(page)).toHaveValue('');
+    await expect(messageBox(page)).toBeEditable();
+    await messageBox(page).fill('Then the changelog');
+    await page.screenshot({ path: 'test-results/chat-sending-dark.png' });
+    answer.release();
+    await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Please verify staging first.')).toHaveCount(1);
+    await expect(messageBox(page)).toHaveValue('Then the changelog');
+  });
+
+  test('an unreachable send is tried once more under the same request id', async ({ page }) => {
+    let sends = 0;
+    const state = await openApp(page, {
+      data: { chat: conversation() },
+      respond: (input) => {
+        if (input.type !== 'sendMessage') return undefined;
+        return ++sends === 1 ? UNREACHABLE : saveSent(state, input);
+      },
+    });
+    await openChat(page);
+    await messageBox(page).fill('Please verify staging first.');
+    await send(page).click();
+    await expect.poll(() => requestsOf(state, 'sendMessage').length).toBe(2);
     const [first, second] = requestsOf(state, 'sendMessage');
     expect(second.requestId).toBe(first.requestId);
+    await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Please verify staging first.')).toHaveCount(1);
+  });
+
+  test('a send the Mac refuses says so, and a tap retries it under the same id', async ({
+    page,
+  }) => {
+    let sends = 0;
+    const state = await openApp(page, {
+      data: { chat: conversation() },
+      respond: (input) => {
+        if (input.type !== 'sendMessage') return undefined;
+        return ++sends === 1 ? new Error('Frink is busy. Try again.') : saveSent(state, input);
+      },
+    });
+    await openChat(page);
+    await messageBox(page).fill('Please verify staging first.');
+    await send(page).click();
+    const retry = page.getByRole('button', { name: /Not delivered · Tap to retry/ });
+    await expect(retry).toBeVisible();
+    await expect(page.getByText('Frink is busy. Try again.')).toBeVisible();
+    await expect(messageBox(page)).toHaveValue('');
+    await page.screenshot({ path: 'test-results/chat-not-delivered-dark.png' });
+    // A retry stays a send under its id even once a turn runs, so a saved copy is never steered in.
+    state.data.chat = conversation({}, 'running');
+    await expect(messageBox(page)).toHaveAttribute('placeholder', 'Guide Frink while it works');
+    await retry.click();
+    await expect(retry).toHaveCount(0);
+    await expect(page.getByText('Please verify staging first.')).toHaveCount(1);
+    const [first, second] = requestsOf(state, 'sendMessage');
+    expect(second.requestId).toBe(first.requestId);
+    expect(requestsOf(state, 'steerMessage')).toHaveLength(0);
+  });
+
+  test('a second message sent before the first shows up steers instead', async ({ page }) => {
+    const answer = held();
+    const state = await openApp(page, {
+      data: { chat: conversation() },
+      respond: async (input) => {
+        if (input.type === 'steerMessage') {
+          // The first message's turn is running, with the steer's note in its reply.
+          const parts = [{ type: 'steer', text: String(input.text) }];
+          const reply = { id: 'reply', role: 'assistant', text: '', parts };
+          const running = conversation({}, 'running');
+          state.data.chat = { ...running, messages: [...running.messages, reply] };
+          return { outcome: 'delivered' };
+        }
+        if (input.type !== 'sendMessage') return undefined;
+        await answer.promise;
+        return saveSent(state, input);
+      },
+    });
+    await openChat(page);
+    await messageBox(page).fill('Fix the flaky test');
+    await send(page).click();
+    await messageBox(page).fill('Use the existing waitForFrame helper');
+    await send(page).click();
+    await expect
+      .poll(() => requestsOf(state, 'steerMessage'))
+      .toEqual([expect.objectContaining({ text: 'Use the existing waitForFrame helper' })]);
+    answer.release();
+    await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Frink reads this at its next step')).toHaveCount(0);
+    expect(requestsOf(state, 'sendMessage')).toHaveLength(1);
+    await expect(page.getByText(/Not delivered/)).toHaveCount(0);
   });
 
   test('typing while Frink works steers it, then clears the box', async ({ page }) => {
@@ -354,6 +449,7 @@ test.describe('sending and steering', () => {
     // Start a turn from the phone so the header can time it.
     await messageBox(page).fill('Fix the flaky test');
     state.data.chat = conversation({}, 'running');
+    state.respond = (input) => (input.type === 'sendMessage' ? saveSent(state, input) : undefined);
     await send(page).click();
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Guide Frink while it works');
     await page.clock.fastForward(72_000);
@@ -368,6 +464,23 @@ test.describe('sending and steering', () => {
       input.type === 'steerMessage' ? { outcome: 'delivered' } : undefined;
     await send(page).click();
     await expect(messageBox(page)).toHaveValue('');
+    // Taken, but the agent hasn't reached its next step: reads without its note keep the bubble.
+    const waiting = page.getByText('Frink reads this at its next step', { exact: true });
+    await expect(waiting).toBeVisible();
+    const reads = requestsOf(state, 'chat').length;
+    await expect.poll(() => requestsOf(state, 'chat').length).toBeGreaterThan(reads + 1);
+    await expect(waiting).toBeVisible();
+    // The computer shows the steer inside the running reply, never as a message of its own.
+    // SAFETY: this test opened the app with a chat.
+    const chat = state.data.chat as MobileChatDetail;
+    const parts = [{ type: 'steer', text: 'Use the existing waitForFrame helper' }];
+    const reply = { id: 'steered-reply', role: 'assistant', text: '', parts };
+    state.data.chat = { ...chat, messages: [...chat.messages, reply] };
+    await expect(waiting).toHaveCount(0);
+    await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByText('Use the existing waitForFrame helper', { exact: true }),
+    ).toHaveCount(1);
     const [steer] = requestsOf(state, 'steerMessage');
     expect(steer).toEqual({
       type: 'steerMessage',
@@ -379,26 +492,66 @@ test.describe('sending and steering', () => {
     expect(requestsOf(state, 'sendMessage')).toHaveLength(1);
   });
 
-  test('a steer Frink can’t take stays in the box with an honest note', async ({ page }) => {
+  test('a steer Frink can’t take stays as not delivered, and a tap sends it again', async ({
+    page,
+  }) => {
     const state = await openApp(page, {
       data: { chat: conversation({}, 'running') },
-      respond: (input) =>
-        input.type === 'steerMessage' ? { outcome: 'not-delivered' } : undefined,
+      respond: (input) => {
+        if (input.type === 'steerMessage') return { outcome: 'not-delivered' };
+        return input.type === 'sendMessage' ? saveSent(state, input) : undefined;
+      },
     });
     await openChat(page);
     await messageBox(page).fill('Also update the changelog');
     await send(page).click();
+    const retry = page.getByRole('button', { name: /Not delivered · Tap to retry/ });
+    await expect(retry).toBeVisible();
     await expect(
-      page.getByText('Frink can’t take this mid-step. It’s kept for when it finishes.'),
+      page.getByText('Frink couldn’t take this mid-step, so nothing was sent.'),
     ).toBeVisible();
-    await expect(messageBox(page)).toHaveValue('Also update the changelog');
+    await expect(messageBox(page)).toHaveValue('');
     await page.screenshot({ path: 'test-results/chat-steer-kept-dark.png' });
-    // Nothing was sent, so trying again is a new request rather than a replay of the refusal.
-    await send(page).click();
+    // Still running: asked again as a steer, under a new id since the refusal is remembered by id.
+    await retry.click();
     await expect.poll(() => requestsOf(state, 'steerMessage').length).toBe(2);
+    await expect(retry).toBeVisible();
+    // Once the chat is idle the same text starts a turn instead.
+    state.data.chat = conversation();
+    await expect(messageBox(page)).toHaveAttribute('placeholder', 'Message Frink');
+    await retry.click();
+    await expect(retry).toHaveCount(0);
     const [first, second] = requestsOf(state, 'steerMessage');
-    expect(second.requestId).not.toBe(first.requestId);
-    expect(requestsOf(state, 'sendMessage')).toHaveLength(0);
+    const sends = requestsOf(state, 'sendMessage');
+    expect(sends).toEqual([expect.objectContaining({ text: 'Also update the changelog' })]);
+    expect(new Set([first.requestId, second.requestId, sends[0].requestId]).size).toBe(3);
+    await expect(page.getByText('Also update the changelog')).toHaveCount(1);
+  });
+
+  test('a failed message is discarded with press and hold, after a confirm', async ({ page }) => {
+    await openApp(page, {
+      data: { chat: conversation() },
+      respond: (input) =>
+        input.type === 'sendMessage' ? new Error('Frink is busy. Try again.') : undefined,
+    });
+    await openChat(page);
+    await messageBox(page).fill('Please verify staging first.');
+    await send(page).click();
+    const retry = page.getByRole('button', { name: /Not delivered · Tap to retry/ });
+    await expect(retry).toBeVisible();
+    const prompts: string[] = [];
+    page.once('dialog', (dialog) => {
+      prompts.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await retry.click({ delay: 800 });
+    await expect.poll(() => prompts).toEqual([expect.stringContaining('Discard this message?')]);
+    await expect(retry).toBeVisible();
+    page.once('dialog', (dialog) => void dialog.accept());
+    await retry.click({ delay: 800 });
+    await expect(retry).toHaveCount(0);
+    await expect(page.getByText('Please verify staging first.')).toHaveCount(0);
+    await expect(messageBox(page)).toHaveValue('');
   });
 
   test('stopping an ordinary chat is one tap', async ({ page }) => {
