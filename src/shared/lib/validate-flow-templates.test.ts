@@ -1016,6 +1016,8 @@ describe('validateFlowTemplateVariables', () => {
     expect(w?.message).toContain('plugin catalog');
     // The declared set must be empty rather than the two run_command fields.
     expect(w?.message).toContain('Declared: (none)');
+    // An empty list would let the receipt's compactor rewrite the bare "Declared: " label.
+    expect(w).not.toHaveProperty('availableFields');
   });
 
   it('multi-predecessor (diamond) undeclared field: keeps the generic run_command wording, no attribution guess', () => {

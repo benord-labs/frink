@@ -103,3 +103,15 @@ export function customNodeNonFlowRootWarning(
     message: `{{${path}}} is not a Flow variable and will render as an empty string.${remedy}`,
   };
 }
+
+/** Undeclared `{{previous.<key>}}` after a machine-owned plugin node: its `outputs` are re-derived
+ *  from the catalog, so manifest/re-register advice prescribes an edit the spawner discards. */
+export function pluginPreviousWarningMessage(
+  path: string,
+  key: string,
+  declared: string[],
+  pluginId: string,
+  predType: string,
+): string {
+  return `{{${path}}} is not a declared output field. Declared: ${declared.join(', ') || '(none)'}. It may still resolve at runtime if ${pluginId} returns "${key}" in its response. Prefer a declared field: "${predType}" is a machine-owned ${pluginId} plugin node whose outputs come from the plugin catalog, so "${key}" cannot be added to its manifest.`;
+}

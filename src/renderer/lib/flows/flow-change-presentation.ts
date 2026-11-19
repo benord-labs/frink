@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { isPlainObject } from '../../../shared/lib/case-converter';
 import {
   flowChangeStringValue,
@@ -185,10 +186,14 @@ function statusForPhase(
   return PHASE_STATUS_OVERRIDE[phase] ?? status;
 }
 
+/** Template warnings the receipt counted but did not list; absent or malformed counts as none. */
+const SUPPRESSED_WARNING_COUNT = z.number().int().nonnegative().catch(0);
+
 function warningCount(output: Record<string, unknown> | undefined): number {
+  // The receipt caps templateWarnings and counts the rest, so the card still shows the true total.
   return ['templateWarnings', 'webhookSetup'].reduce(
     (count, key) => count + (Array.isArray(output?.[key]) ? output[key].length : 0),
-    0,
+    SUPPRESSED_WARNING_COUNT.parse(output?.templateWarningsSuppressed),
   );
 }
 

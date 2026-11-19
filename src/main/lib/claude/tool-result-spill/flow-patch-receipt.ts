@@ -32,6 +32,7 @@ const spilledReceiptSchema = z.object({
   skipped: z.unknown().optional(),
   retryOps: z.unknown().optional(),
   templateWarnings: z.unknown().optional(),
+  templateWarningsSuppressed: z.number().optional(),
   webhookSetup: z.unknown().optional(),
 });
 

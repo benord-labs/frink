@@ -4,6 +4,7 @@ import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { validateFlowTemplateVariables } from '../../../../shared/lib/validate-flow-templates';
 import type { PatchOperation, PatchResult } from './flow-patch';
 import { buildFlowPatchReceipt, buildFlowPatchResult } from './flow-patch-result';
+import { MAX_TEMPLATE_WARNINGS } from './patch';
 
 type PersistedPatch = Extract<PatchResult, { status: 'success' | 'partial' }>;
 
@@ -164,7 +165,13 @@ describe('Flow patch result size', () => {
         target: agent.id,
       })),
     };
-    const result = largeResultFor({ status: 'success', graph, applied: [0, 1], failed: [], skipped: [] });
+    const result = largeResultFor({
+      status: 'success',
+      graph,
+      applied: [0, 1],
+      failed: [],
+      skipped: [],
+    });
 
     expect(result.content[0]?.text.length).toBeLessThan(MAX_PATCH_RESULT_CHARS);
   });
@@ -174,8 +181,8 @@ describe('Flow patch result size', () => {
  * Agent nodes all referencing an undeclared `{{previous.*}}` below a command node with declared
  * outputs. Each warning quotes the full available-field list, so warning volume drives size.
  */
-function warningProneGraph(): FlowGraph {
-  const agents = Array.from({ length: 24 }, (_, index) => ({
+function warningProneGraph(agentCount = 24): FlowGraph {
+  const agents = Array.from({ length: agentCount }, (_, index) => ({
     id: `agent-${index}`,
     blockType: 'agent',
     label: `Step ${index}`,
@@ -211,8 +218,45 @@ function warningProneGraph(): FlowGraph {
   };
 }
 
+function warningPatchResult(graph: FlowGraph) {
+  return buildFlowPatchResult({
+    patch: { status: 'success', graph, applied: [0], failed: [], skipped: [] },
+    receipt: buildFlowPatchReceipt({
+      mode: 'update',
+      baseGraph: graph,
+      finalGraph: graph,
+      operations: [UPDATE_OPERATION],
+      applied: [0],
+      failed: [],
+      skipped: [],
+      baseVersionNumber: 3,
+      persistedVersionNumber: 4,
+    }),
+    flowId: 'flow-warnings',
+    versionId: 'version-4',
+    name: 'Warning flow',
+    operationCount: 1,
+    creationProjectNote: null,
+    createdFlow: false,
+    templateWarnings: validateFlowTemplateVariables(graph),
+    webhookSetup: [],
+  });
+}
+
+type WarningBody = {
+  message: string;
+  templateWarnings: Array<{ placeholder: string; message: string }>;
+  availableFields: Record<string, string[]>;
+  templateWarningsSuppressed?: number;
+};
+
+function warningBytes(body: WarningBody): number {
+  return JSON.stringify([body.templateWarnings, body.availableFields]).length;
+}
+
 describe('Flow patch result size — warning volume', () => {
   const WARNING_GRAPH = warningProneGraph();
+  const DECLARED = Array.from({ length: 8 }, (_, index) => `previous.declaredOutputField${index}`);
 
   it('produces a warning per offending node, each quoting the available fields', () => {
     const warnings = validateFlowTemplateVariables(WARNING_GRAPH);
@@ -222,35 +266,41 @@ describe('Flow patch result size — warning volume', () => {
   });
 
   it('keeps a patch on a warning-heavy flow within the tool-result budget', () => {
-    const result = buildFlowPatchResult({
-      patch: {
-        status: 'success',
-        graph: WARNING_GRAPH,
-        applied: [0],
-        failed: [],
-        skipped: [],
-      },
-      receipt: buildFlowPatchReceipt({
-        mode: 'update',
-        baseGraph: WARNING_GRAPH,
-        finalGraph: WARNING_GRAPH,
-        operations: [UPDATE_OPERATION],
-        applied: [0],
-        failed: [],
-        skipped: [],
-        baseVersionNumber: 3,
-        persistedVersionNumber: 4,
-      }),
-      flowId: 'flow-warnings',
-      versionId: 'version-4',
-      name: 'Warning flow',
-      operationCount: 1,
-      creationProjectNote: null,
-      createdFlow: false,
-      templateWarnings: validateFlowTemplateVariables(WARNING_GRAPH),
-      webhookSetup: [],
-    });
+    const result = warningPatchResult(WARNING_GRAPH);
 
     expect(result.content[0]?.text.length).toBeLessThan(MAX_PATCH_RESULT_CHARS);
+  });
+
+  it('grows far less than the warning count, quoting a shared field list once', () => {
+    const small = parseResult(warningPatchResult(WARNING_GRAPH)) as WarningBody;
+    const large = parseResult(warningPatchResult(warningProneGraph(96))) as WarningBody;
+
+    expect(warningBytes(large) / warningBytes(small)).toBeLessThan(1.5);
+    expect(Object.values(small.availableFields)).toEqual([expect.arrayContaining(DECLARED)]);
+  });
+
+  it('names the valid fields for every bad {{previous.*}} it shows, with no further call', () => {
+    const body = parseResult(warningPatchResult(warningProneGraph(96))) as WarningBody;
+    const previousWarnings = body.templateWarnings.filter((w) =>
+      w.placeholder.startsWith('{{previous.'),
+    );
+
+    expect(previousWarnings.length).toBeGreaterThan(0);
+    for (const warning of previousWarnings) {
+      const key = /availableFields\.(\w+)/.exec(warning.message)?.[1] ?? '';
+      expect(body.availableFields[key]).toEqual(expect.arrayContaining(DECLARED));
+    }
+  });
+
+  it('counts the warnings past the cap and tells the agent how to see them', () => {
+    const graph = warningProneGraph(96);
+    const total = validateFlowTemplateVariables(graph).length;
+    const body = parseResult(warningPatchResult(graph)) as WarningBody;
+
+    expect(body.templateWarnings).toHaveLength(MAX_TEMPLATE_WARNINGS);
+    expect(body.templateWarningsSuppressed).toBe(total - MAX_TEMPLATE_WARNINGS);
+    expect(body.message).toContain(
+      `${total - MAX_TEMPLATE_WARNINGS} more template warnings not shown`,
+    );
   });
 });

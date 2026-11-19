@@ -518,6 +518,23 @@ describe('buildFlowChangePresentation', () => {
     expect(presentation.versionNumber).toBe(4);
   });
 
+  it('counts warnings the receipt capped, so the card shows the true total', () => {
+    const presentation = buildFlowChangePresentation({
+      state: 'output-available',
+      input: { flowId: 'flow-1', operations: [] },
+      result: {
+        status: 'success',
+        persistence: 'saved',
+        flowId: 'flow-1',
+        templateWarnings: [{ placeholder: '{{previous.a}}' }, { placeholder: '{{previous.b}}' }],
+        templateWarningsSuppressed: 76,
+        webhookSetup: ['Connect the webhook'],
+      },
+    });
+
+    expect(presentation.warningCount).toBe(79);
+  });
+
   it('drops malformed graph entries without crashing the topology contract', () => {
     const presentation = buildFlowChangePresentation({
       state: 'output-available',

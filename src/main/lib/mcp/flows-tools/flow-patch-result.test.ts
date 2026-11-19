@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
+import type { TemplateVariableWarning } from '../../../../shared/lib/validate-flow-templates';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { applyPatchOperations, type PatchOperation, type PatchResult } from './flow-patch';
 import {
@@ -10,6 +11,7 @@ import {
   rollbackCreatedFlow,
   rollbackCreatedFlowUnlessPersisted,
 } from './flow-patch-result';
+import { MAX_TEMPLATE_WARNINGS } from './patch';
 
 const logState = vi.hoisted(() => ({ warn: vi.fn() }));
 
@@ -72,7 +74,11 @@ function receiptFor(patch: PersistedPatch, persistedVersionNumber: unknown) {
   });
 }
 
-function resultFor(patch: PersistedPatch, persistedVersionNumber: unknown) {
+function resultFor(
+  patch: PersistedPatch,
+  persistedVersionNumber: unknown,
+  templateWarnings: TemplateVariableWarning[] = [],
+) {
   return buildFlowPatchResult({
     patch,
     receipt: receiptFor(patch, persistedVersionNumber),
@@ -82,7 +88,7 @@ function resultFor(patch: PersistedPatch, persistedVersionNumber: unknown) {
     operationCount: 1,
     creationProjectNote: null,
     createdFlow: false,
-    templateWarnings: [],
+    templateWarnings,
     webhookSetup: [],
   });
 }
@@ -225,6 +231,9 @@ describe('Flow patch result presentation', () => {
     expect(body.message).not.toMatch(/Re-send the operations/);
     expect(body.message).toContain('Nothing needs retrying');
     expect(body).not.toHaveProperty('templateWarnings');
+    expect(body).not.toHaveProperty('availableFields');
+    expect(body).not.toHaveProperty('templateWarningsSuppressed');
+    expect(body.message).not.toContain('not shown');
   });
 
   it('returns a structured no-write error receipt', () => {
@@ -528,5 +537,29 @@ describe('Flow patch result — agent prose near the length cap', () => {
     };
     const body = parseResult(resultFor(patch, 4));
     expect(JSON.stringify(body.templateWarnings)).toContain('45,000 of 50,000');
+  });
+
+  it('caps only the template warnings, never the partial note or the prose warning', () => {
+    const patch: PersistedPatch = {
+      ...withInstructions('a'.repeat(45_000)),
+      status: 'partial',
+      failed: [{ index: 1, error: 'boom' }],
+    };
+    const templateWarnings = Array.from({ length: MAX_TEMPLATE_WARNINGS + 5 }, (_, index) => ({
+      nodeId: `n${index}`,
+      field: 'instructions',
+      placeholder: '{{trigger.missing}}',
+      message: `warning ${index}`,
+    }));
+    const body = parseResult(resultFor(patch, 4, templateWarnings));
+    const warnings = body.templateWarnings as unknown[];
+
+    expect(warnings).toHaveLength(MAX_TEMPLATE_WARNINGS + 2);
+    expect(warnings[0]).toEqual(expect.stringContaining('graph is partial'));
+    expect(warnings[MAX_TEMPLATE_WARNINGS]).toEqual(
+      expect.objectContaining({ message: `warning ${MAX_TEMPLATE_WARNINGS - 1}` }),
+    );
+    expect(JSON.stringify(warnings.at(-1))).toContain('45,000 of 50,000');
+    expect(body.templateWarningsSuppressed).toBe(5);
   });
 });

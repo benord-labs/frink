@@ -13,6 +13,7 @@ import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { type McpToolResult, toolResult } from '../tool-result';
 import { buildFlowPatchChangeSummary } from './flow-change-presentation';
 import type { FailedOp, PatchOperation, PatchResult, SkippedOp } from './flow-patch';
+import { type CompactedTemplateWarnings, compactTemplateWarnings } from './patch';
 
 export type FlowPatchReceipt = {
   versionNumber: number;
@@ -195,8 +196,21 @@ function layoutReport(graph: FlowGraph, positionsTouched = false): Record<string
   };
 }
 
+/** Capped template warnings, then the near-cap prose warnings, which are short and one per agent. */
+type ReceiptWarnings = Omit<CompactedTemplateWarnings, 'shown'> & {
+  warnings: Array<string | TemplateVariableWarning>;
+};
+
+type ReceiptResultParams = BuildFlowPatchResultParams & { receiptWarnings: ReceiptWarnings };
+
+function suppressedWarningsNote({ suppressed }: ReceiptWarnings): string {
+  return suppressed > 0
+    ? ` ${suppressed} more template warnings not shown — fix these and re-patch to see the rest.`
+    : '';
+}
+
 function optionalPresentationFields(
-  templateWarnings: Array<string | TemplateVariableWarning>,
+  { warnings: templateWarnings, availableFields, suppressed }: ReceiptWarnings,
   webhookSetup: string[],
   graph: FlowGraph,
   positionsTouched?: boolean,
@@ -204,6 +218,8 @@ function optionalPresentationFields(
   const sessions = sessionFootprintNote(graph);
   return {
     ...(templateWarnings.length > 0 ? { templateWarnings } : {}),
+    ...(Object.keys(availableFields).length > 0 ? { availableFields } : {}),
+    ...(suppressed > 0 ? { templateWarningsSuppressed: suppressed } : {}),
     ...(webhookSetup.length > 0 ? { webhookSetup } : {}),
     ...(sessions ? { sessions } : {}),
     ...layoutReport(graph, positionsTouched),
@@ -211,16 +227,16 @@ function optionalPresentationFields(
 }
 
 function partialWarnings(
-  templateWarnings: TemplateVariableWarning[],
+  receiptWarnings: ReceiptWarnings,
   hasRetryableOps: boolean,
-): Array<string | TemplateVariableWarning> {
-  if (!hasRetryableOps) return templateWarnings;
+): ReceiptWarnings {
+  if (!hasRetryableOps) return receiptWarnings;
   const partialNote =
     'Note: graph is partial — some warnings may resolve after retrying failed operations.';
-  return [partialNote, ...templateWarnings];
+  return { ...receiptWarnings, warnings: [partialNote, ...receiptWarnings.warnings] };
 }
 
-function buildPartialFlowPatchResult(params: BuildFlowPatchResultParams): McpToolResult {
+function buildPartialFlowPatchResult(params: ReceiptResultParams): McpToolResult {
   const { patch, receipt } = params;
   const retryOps = retryOperationIndexes(patch.failed, patch.skipped);
   const retryNote =
@@ -242,9 +258,9 @@ function buildPartialFlowPatchResult(params: BuildFlowPatchResultParams): McpToo
         failed: patch.failed,
         skipped: patch.skipped,
         retryOps,
-        message: `Flow "${params.name}" partially patched (${patch.applied.length}/${params.operationCount} operations applied).${receipt.versionSaved ? '' : ' The durable graph was already current, so no new version was saved.'}${retryNote}${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}`,
+        message: `Flow "${params.name}" partially patched (${patch.applied.length}/${params.operationCount} operations applied).${receipt.versionSaved ? '' : ' The durable graph was already current, so no new version was saved.'}${retryNote}${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${suppressedWarningsNote(params.receiptWarnings)}`,
         ...optionalPresentationFields(
-          partialWarnings(params.templateWarnings, retryOps.length > 0),
+          partialWarnings(params.receiptWarnings, retryOps.length > 0),
           params.webhookSetup,
           patch.graph,
           params.positionsTouched,
@@ -256,7 +272,7 @@ function buildPartialFlowPatchResult(params: BuildFlowPatchResultParams): McpToo
   );
 }
 
-function buildSuccessfulFlowPatchResult(params: BuildFlowPatchResultParams): McpToolResult {
+function buildSuccessfulFlowPatchResult(params: ReceiptResultParams): McpToolResult {
   const { patch, receipt } = params;
   const action = receipt.versionSaved
     ? params.createdFlow
@@ -285,9 +301,9 @@ function buildSuccessfulFlowPatchResult(params: BuildFlowPatchResultParams): Mcp
         failed: patch.failed,
         skipped: patch.skipped,
         ...(params.createdFlow ? { agentInvocable: false } : {}),
-        message: `Flow "${params.name}" ${action} successfully (${versionMessage}).${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${runHint} A visual flow preview is already rendered in the chat automatically — do NOT describe the flow layout, draw a Mermaid diagram, or list the nodes/edges again. Just confirm what changed. The graph above is topology only — call frink_flows_get for full node config.`,
+        message: `Flow "${params.name}" ${action} successfully (${versionMessage}).${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${runHint} A visual flow preview is already rendered in the chat automatically — do NOT describe the flow layout, draw a Mermaid diagram, or list the nodes/edges again. Just confirm what changed. The graph above is topology only — call frink_flows_get for full node config.${suppressedWarningsNote(params.receiptWarnings)}`,
         ...optionalPresentationFields(
-          params.templateWarnings,
+          params.receiptWarnings,
           params.webhookSetup,
           patch.graph,
           params.positionsTouched,
@@ -300,17 +316,16 @@ function buildSuccessfulFlowPatchResult(params: BuildFlowPatchResultParams): Mcp
 }
 
 export function buildFlowPatchResult(params: BuildFlowPatchResultParams): McpToolResult {
+  const { shown, ...compacted } = compactTemplateWarnings(params.templateWarnings);
   // Near-cap agent prose rides templateWarnings, the one warning channel a saved patch returns.
-  const withProse = {
-    ...params,
-    templateWarnings: [
-      ...params.templateWarnings,
-      ...agentProseGraphWarnings(params.patch.graph.nodes),
-    ],
+  const receiptWarnings = {
+    ...compacted,
+    warnings: [...shown, ...agentProseGraphWarnings(params.patch.graph.nodes)],
   };
-  return withProse.patch.status === 'partial'
-    ? buildPartialFlowPatchResult(withProse)
-    : buildSuccessfulFlowPatchResult(withProse);
+  const withWarnings = { ...params, receiptWarnings };
+  return withWarnings.patch.status === 'partial'
+    ? buildPartialFlowPatchResult(withWarnings)
+    : buildSuccessfulFlowPatchResult(withWarnings);
 }
 
 export async function rollbackCreatedFlow({
