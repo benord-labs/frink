@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import type { SlashCommandOption } from '@/lib/commands/types';
 import { RECOMMENDED_AGENT_PROMPT_TEMPLATES } from '../../../../../../shared/lib/recommended-prompt-templates';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
+import type { ChatMode } from '../../../../../../shared/types/chat-mode';
 import type { FlowSettings } from '../../../../../../shared/types/flow';
 import { Checkbox } from '../../../../../components/ui/checkbox';
 import {
@@ -34,7 +35,7 @@ import {
 } from '../../../../../features/agents/commands/agents-slash-command';
 import { trpc } from '../../../../../lib/trpc';
 import { cn } from '../../../../../lib/utils';
-import { planModeOption, useProjectModelOptions } from '../../hooks/use-project-model-options';
+import { agentModeOptions, useProjectModelOptions } from '../../hooks/use-project-model-options';
 import { useProjectPath } from '../../hooks/use-project-path';
 import { AvailableVariables } from '../AvailableVariables';
 import { NodeModelField } from '../NodeModelField';
@@ -63,26 +64,26 @@ type Props = UpstreamContextProps & {
 function AgentModeField({
   node,
   onConfigPatch,
-  planUnavailable,
+  modeUnavailable,
 }: {
   node: FlowNode;
   onConfigPatch: Props['onConfigPatch'];
-  /** Why this project's provider can't run Plan; a step already saved as Plan shows it. */
-  planUnavailable: string | null;
+  /** Why this project's provider can't run a mode; a step already saved in it shows why. */
+  modeUnavailable: (mode: ChatMode) => string | null;
 }): ReactElement {
   const config = cfg(node);
   // Per-node mode overrides the inherited Start Task mode for this node only. '' = inherit.
   const mode =
     config.mode === 'agent' || config.mode === 'plan' || config.mode === 'debug' ? config.mode : '';
   const autoApprove = config.autoApprove === true;
-  const plan = planModeOption(mode, planUnavailable);
+  const { plan, debug, error } = agentModeOptions(mode, modeUnavailable);
   return (
     <>
       <FieldRow
         htmlFor="flow-agent-mode"
         label="Mode"
         hint="Plan pauses for your approval before acting. Debug investigates a bug with you (local runs only)."
-        error={plan.error}
+        error={error}
       >
         <Select
           value={mode || 'inherit'}
@@ -95,11 +96,11 @@ function AgentModeField({
             <SelectItem value="inherit">Inherit from Start Task</SelectItem>
             <SelectItem value="agent">Agent (execute)</SelectItem>
             {plan.offered ? <SelectItem value="plan">Plan</SelectItem> : null}
-            <SelectItem value="debug">Debug</SelectItem>
+            {debug.offered ? <SelectItem value="debug">Debug</SelectItem> : null}
           </SelectContent>
         </Select>
       </FieldRow>
-      {plan.autoApprove ? (
+      {plan.ready ? (
         <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5 items-start">
           <Checkbox
             id="flow-agent-auto-approve"
@@ -119,7 +120,7 @@ function AgentModeField({
           </p>
         </div>
       ) : null}
-      {mode === 'debug' ? (
+      {debug.ready ? (
         <p className="text-sm text-warning">
           Debug mode runs an interactive hypothesis-driven session: the agent instruments code and
           asks you to reproduce the bug. It requires <span className="font-medium">local</span>{' '}
@@ -185,7 +186,7 @@ export function AgentConfig({
     return found && isProjectRow(found) ? found.name : null;
   }, [flowDefaultProjectId, allProjects]);
 
-  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable } =
+  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, modeUnavailable } =
     useProjectModelOptions(effectiveProjectId, {
       model,
       flowDefaultModel,
@@ -375,7 +376,7 @@ export function AgentConfig({
           No project in Flow settings, so the model list may be limited.
         </p>
       )}
-      <AgentModeField node={node} onConfigPatch={onConfigPatch} planUnavailable={planUnavailable} />
+      <AgentModeField node={node} onConfigPatch={onConfigPatch} modeUnavailable={modeUnavailable} />
       <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5 pt-1 items-start">
         <Checkbox
           id="flow-agent-fire-forget"

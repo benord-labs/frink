@@ -9,6 +9,7 @@ import {
   type Observed,
   runClaudeWakeBurst,
   runConformanceTurn,
+  type TurnOptions,
   type TurnSetup,
 } from './drive';
 import {
@@ -40,11 +41,11 @@ const LINK_NOTE = 'Projects linked to this chat';
 const OPEN_FILE_NOTE = 'The user opened the file a.ts in the IDE.';
 const PERSON: TurnSetup['delivery'] = { messageOrigin: { source: 'person', kind: 'message' } };
 
-/** Plays one turn of each runtime's own fixture, in a chat set up as `setup` says. */
+/** Plays one turn of each runtime's own fixture. */
 const once =
-  (fixtures: ScenarioFixtures, setup?: TurnSetup): Scenario['play'] =>
+  (fixtures: ScenarioFixtures, options?: TurnOptions): Scenario['play'] =>
   (h, runtime) =>
-    runConformanceTurn(h, runtime, fixtures[runtime].turn, setup);
+    runConformanceTurn(h, runtime, fixtures[runtime].turn, options);
 
 function expectCleanReply(seen: Observed): void {
   const text = seen.chunks.flatMap((chunk) => (chunk.type === 'text-delta' ? [chunk.delta] : []));
@@ -94,6 +95,10 @@ function expectLinkNoteFirst(seen: Observed): void {
   expect(notes.indexOf(LINK_NOTE)).toBeLessThan(notes.indexOf(OPEN_FILE_NOTE));
 }
 
+function expectDebugSession(seen: Observed): void {
+  expect(seen.debugSessions).toBe(1);
+}
+
 const SCENARIOS: Scenario[] = [
   { id: 'simple-turn', play: once(SIMPLE_TURN), check: expectPlainTurn },
   {
@@ -111,6 +116,12 @@ const SCENARIOS: Scenario[] = [
     play: (h) => runClaudeWakeBurst(h, WRITE_FILE.claude.turn),
     precondition: { name: 'the write card reached the stream', check: expectWriteCard },
     check: expectFileChanged,
+  },
+  {
+    id: 'debug-session',
+    play: once(SIMPLE_TURN, { mode: 'debug' }),
+    precondition: { name: 'the turn ran', check: expectCleanReply },
+    check: expectDebugSession,
   },
   {
     id: 'linked-projects-note',
@@ -168,6 +179,6 @@ export function registerConformanceTests(h: GridHarness): void {
     for (const scenario of SCENARIOS) {
       for (const runtime of AGENT_RUNTIMES) registerRow(h, scenario, runtime);
     }
-    registerCapabilityRows(h);
+    registerCapabilityRows(h, SCENARIOS);
   });
 }

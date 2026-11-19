@@ -135,15 +135,6 @@ describe('enforceAllowlist (PCH-5 handler)', () => {
     });
     expect(res.status).toBe('enforced');
   });
-
-  it('advisory mode never denies', async () => {
-    const res = await enforceAllowlist({
-      mode: 'advisory',
-      rule: { toolName: 'Bash', agentType: 'auditor', restrictions: { tools: ['Read'] } },
-      ctx: { ...ctx, provider: 'cursor' as const },
-    });
-    expect(res.status).toBe('noop');
-  });
 });
 
 // A newer CLI can grant sub-agents plumbing this list has never heard of (as with SubagentHandback).

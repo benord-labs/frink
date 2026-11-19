@@ -53,6 +53,7 @@ export const AI_PROVIDERS = {
         // The user's CLAUDE.md is copied into each chat's own config folder.
         instructions: 'copy',
       },
+      features: { debug: true },
     },
   },
   codex: {
@@ -76,6 +77,7 @@ export const AI_PROVIDERS = {
         plugins: 'inject',
         instructions: 'none',
       },
+      features: { debug: false },
     },
   },
   opencode: {
@@ -91,7 +93,10 @@ export const AI_PROVIDERS = {
     signInHint: 'opencode auth login',
     platforms: ['darwin', 'linux'],
     // The launch hands OpenCode the user's instructions files and skill folders in memory.
-    capabilities: { delivery: { ...NOTHING_DELIVERED, skills: 'inject', instructions: 'inject' } },
+    capabilities: {
+      delivery: { ...NOTHING_DELIVERED, skills: 'inject', instructions: 'inject' },
+      features: { debug: false },
+    },
   },
   copilot: {
     runtime: 'copilot',
@@ -104,7 +109,7 @@ export const AI_PROVIDERS = {
     installHint: 'npm install -g @github/copilot',
     signInHint: 'copilot login',
     platforms: ['darwin', 'linux'],
-    capabilities: { delivery: NOTHING_DELIVERED },
+    capabilities: { delivery: NOTHING_DELIVERED, features: { debug: false } },
   },
   cursor: {
     runtime: 'cursor',
@@ -118,7 +123,7 @@ export const AI_PROVIDERS = {
     signInHint: 'Sign in to Cursor',
     platforms: ['darwin', 'linux'],
     // Frink hands Cursor only the turn, which runs on its own settings in a Frink-owned home.
-    capabilities: { delivery: NOTHING_DELIVERED },
+    capabilities: { delivery: NOTHING_DELIVERED, features: { debug: false } },
   },
   grok: {
     runtime: 'acp',
@@ -129,7 +134,7 @@ export const AI_PROVIDERS = {
     installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',
     signInHint: 'grok login',
     platforms: ['darwin'],
-    capabilities: { delivery: NOTHING_DELIVERED },
+    capabilities: { delivery: NOTHING_DELIVERED, features: { debug: false } },
   },
 } as const satisfies Record<string, AiProviderRow>;
 
@@ -163,10 +168,11 @@ export function isInstalledAgent<R extends { runtime: AgentRuntime }>(
 /** Frink modes a provider has no equivalent for yet: never offered, and refused if sent. */
 export function unsupportedModes(type: string | null | undefined): ChatMode[] {
   const row = aiProvider(type);
+  if (!row) return [];
   // Codex is sent no plan mode, so a Plan turn would edit files instead of planning.
-  if (row?.runtime === 'codex') return ['plan'];
-  if (!isInstalledAgent(row)) return [];
-  return row.planMode ? ['debug'] : ['plan', 'debug'];
+  const noPlan = row.runtime === 'codex' || (isInstalledAgent(row) && !row.planMode);
+  const modes: ChatMode[] = noPlan ? ['plan'] : [];
+  return row.capabilities.features.debug ? modes : [...modes, 'debug'];
 }
 
 /** Why a turn can't run in this mode on this provider, or null when it can. */
