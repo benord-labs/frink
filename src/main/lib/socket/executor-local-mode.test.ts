@@ -254,10 +254,6 @@ vi.mock('../permissions/v2/store-local', () => ({
   addProjectRule: vi.fn(async () => undefined),
 }));
 
-vi.mock('../permissions/cursor-config-sync', () => ({
-  addBashRuleToCursorConfig: vi.fn(async () => undefined),
-}));
-
 vi.mock('../permissions/v2/persist-approved-rule', () => ({
   persistApprovedRule: vi.fn(async () => undefined),
 }));

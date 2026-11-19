@@ -12,7 +12,6 @@
 import log from 'electron-log';
 import { validateRuleString } from '../../../../shared/lib/validate-rule';
 import type { getDatabase } from '../../db';
-import { addBashRuleToCursorConfig } from '../cursor-config-sync';
 import { addProjectRule, addUserRule } from './store-local';
 import type { RuleType } from './types';
 
@@ -29,12 +28,10 @@ export async function persistApprovedRule(params: {
   projectPath: string;
   project: { id: string } | null;
   promptResult: ApprovedRulePayload;
-  /** True when the approved tool is Bash — triggers cursor-config sync for project-scope. */
-  isBash: boolean;
   /** Log tag prefix (e.g. "[Permission]", "[claude.ts]", "[executor]"). */
   logTag: string;
 }): Promise<void> {
-  const { db, projectPath, project, promptResult, isBash, logTag } = params;
+  const { db, projectPath, project, promptResult, logTag } = params;
 
   // scope === undefined → "Allow once" → no persistence.
   if (!promptResult.scope || !promptResult.ruleString) return;
@@ -60,10 +57,6 @@ export async function persistApprovedRule(params: {
     }
     try {
       await addProjectRule(db, project.id, promptResult.ruleString, ruleType);
-      if (isBash) {
-        // Cursor config is project-scoped (`<projectPath>/.cursor/cli.json`).
-        await addBashRuleToCursorConfig(projectPath, promptResult.ruleString);
-      }
     } catch (err) {
       log.warn(
         `${logTag} Failed to persist approved project rule:`,

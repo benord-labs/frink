@@ -164,7 +164,7 @@ export async function validateToolPermission(
   // class — vendor plugin MCP servers included (auto-mode-tool-approval 2026-09-03 Target).
   if (deferAskToProvider) return { allowed: null };
 
-  // ask → prompt the renderer in-process, persist + (for bash) sync cursor on approval.
+  // ask → prompt the renderer in-process, persist the rule on approval.
   const isBash = toolName === 'Bash';
   const isMcp = toolName.startsWith('mcp__');
   const fallbackPath = isBash
@@ -221,7 +221,6 @@ export async function validateToolPermission(
       projectPath,
       project: project ?? null,
       promptResult,
-      isBash,
       logTag: '[executor]',
     });
   } catch (err) {
