@@ -61,19 +61,19 @@ export const closePaneTabsAtom = atom(
       return f.isDirty ? [keepUnsavedTab(f)] : [];
     });
 
-    if (!tabsChanged(files, kept)) return;
-
-    const keptKeys = new Set(kept.map((f) => fileKey(f.path, f.projectPath)));
-    files.forEach((f) => {
-      if (!keptKeys.has(fileKey(f.path, f.projectPath))) revokePdfBlobIfPresent(f);
-    });
-
     // Shift sourcePaneIndex on remaining files: indices above the removed pane move down
     const shifted = kept.map((f) => {
       if (f.sourcePaneIndex !== undefined && f.sourcePaneIndex > closedPaneIndex) {
         return { ...f, sourcePaneIndex: f.sourcePaneIndex - 1 };
       }
       return f;
+    });
+
+    if (!tabsChanged(files, shifted)) return;
+
+    const keptKeys = new Set(kept.map((f) => fileKey(f.path, f.projectPath)));
+    files.forEach((f) => {
+      if (!keptKeys.has(fileKey(f.path, f.projectPath))) revokePdfBlobIfPresent(f);
     });
 
     set(openFilesAtom, shifted);

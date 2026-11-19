@@ -31,9 +31,17 @@ export function UnsavedChangesDialog({ saveOpenFile, onCloseAutoFocus }: Props):
   const closeFile = useSetAtom(closeFileAtom);
   const [saving, setSaving] = useState(false);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
+  const unmountedRef = useRef(false);
 
-  // Leaving the editor with the prompt open (e.g. the phone Work Queue) answers it as Cancel.
-  useEffect(() => () => setPendingKeys(null), [setPendingKeys]);
+  // Leaving the editor with the prompt open (e.g. the phone Work Queue) answers it as Cancel, and
+  // stops a running Save from closing tabs (a finished write stays on disk).
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      setPendingKeys(null);
+    };
+  }, [setPendingKeys]);
 
   const keys = pendingKeys ?? [];
   const onlyFile =
@@ -46,7 +54,10 @@ export function UnsavedChangesDialog({ saveOpenFile, onCloseAutoFocus }: Props):
     setSaving(true);
     try {
       for (const key of keys) {
-        if (await saveOpenFile(key)) closeFile(key);
+        if (unmountedRef.current) break;
+        const saved = await saveOpenFile(key);
+        if (unmountedRef.current) break;
+        if (saved) closeFile(key);
       }
     } finally {
       setSaving(false);

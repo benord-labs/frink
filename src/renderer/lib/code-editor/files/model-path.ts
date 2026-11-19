@@ -1,3 +1,5 @@
+import { isWindowsAbsolutePath } from '../../../../shared/lib/path-normalization';
+
 const TRAILING_SLASHES = /\/+$/;
 const LEADING_TRAILING_SLASHES = /^\/+|\/+$/g;
 
@@ -12,7 +14,7 @@ function joinPath(...parts: string[]): string {
 }
 
 export function getFullPath(projectPath: string | undefined, path: string): string {
-  if (path.startsWith('/')) return path;
+  if (path.startsWith('/') || isWindowsAbsolutePath(path)) return path;
   if (!projectPath) return path;
   return joinPath(projectPath, path);
 }

@@ -109,6 +109,8 @@ describe('UnsavedChangesDialog', () => {
     await act(async () => finishWrite(true));
 
     expect(store.get(pendingCloseKeysAtom)).toBe(newer);
+    // Leaving counted as Cancel, so the finished write does not close the tab.
+    expect(store.get(openFilesAtom)).toHaveLength(1);
   });
 
   it('answers Cancel when the editor unmounts with the prompt open, so later closes still work', () => {

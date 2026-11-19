@@ -91,4 +91,12 @@ describe('closePaneTabsAtom', () => {
     expect(files[0]).toMatchObject({ content: 'edited', isOtherProject: true });
     expect(files[0]?.sourcePaneIndex).toBeUndefined();
   });
+
+  it("moves the next pane's tabs down a pane even when the closed pane had none", () => {
+    const store = storeWithTabs();
+
+    store.set(closePaneTabsAtom, { closedPaneIndex: 0, remainingProjectPaths: ['/repo'] });
+
+    expect(store.get(openFilesAtom).map((f) => f.sourcePaneIndex)).toEqual([0, 0]);
+  });
 });
