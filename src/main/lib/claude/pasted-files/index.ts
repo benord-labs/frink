@@ -1,6 +1,6 @@
 /** A chat's agent-readable `pasted/` folder: large pastes and attached files, read by path. */
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { app } from 'electron';
 import { findMentionTokens } from '../../../../shared/lib/mentions/mention-grammar';
@@ -77,6 +77,43 @@ export async function copyIntoPasted(
     throw new Error(UNREADABLE);
   });
   return { filePath, filename, size: source.size };
+}
+
+/** Copies `sourcePath` into `pasted/` as `filename` once; renamed into place, never partial. */
+export async function placeInPasted(
+  input: { subChatId: string; sourcePath: string; filename: string },
+  userData?: string,
+): Promise<string> {
+  const filePath = join(await pastedDirFor(input.subChatId, userData), input.filename);
+  if (
+    await stat(filePath).then(
+      () => true,
+      () => false,
+    )
+  )
+    return filePath;
+  const partial = `${filePath}.${randomUUID().slice(0, 8)}.part`;
+  try {
+    await copyFile(input.sourcePath, partial);
+    await rename(partial, filePath);
+  } finally {
+    await rm(partial, { force: true });
+  }
+  return filePath;
+}
+
+/** Inline code that holds `text` whole, even when it contains backticks. */
+function codeSpan(text: string): string {
+  const longestRun = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(longestRun + 1);
+  return longestRun > 0 ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
+}
+
+/** Tells the agent to read an attached file by path; the path sits in backticks so it cannot
+ *  start a slash command and its spaces stay one path. */
+export function attachedFileNote(path: string): string {
+  const shown = path.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  return `The user attached the file ${codeSpan(shown)}. Its contents are not in this message: read it with your file tools before responding.`;
 }
 
 /** Names the file here, never from the caller, so a paste can't take an attached file's shape. */

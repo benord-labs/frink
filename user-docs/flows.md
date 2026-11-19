@@ -550,18 +550,23 @@ Collapsing a row you opened from history clears the historical canvas overlay.
 
 **Clear** invokes `clearOverlay()` in the editor: it hides node borders and badges on the canvas immediately. **For historical or idle overlays** (no active run driving the canvas—e.g. you finished inspecting a past run, or nothing is running), that hide is **complete**—the overlay stays gone until you open another run from history or start a new execution. **For live runs** (**running** or **paused**), `clearOverlay()` is only **temporary**: the next socket execution event for that run will repaint borders and badges, so the overlay **reappears**. In short: for historical/idle overlays, Clear removes the overlay entirely; for live runs, Clear is temporary.
 
-## Monitor image uploads
+## Monitor file uploads
 
-In the **Monitor**, you can attach images (screenshots, references, etc.) to a run via the **Images** panel in the run detail view. Images are only accepted for runs in **pending** status — once a run starts, the upload controls are hidden.
+In the **Monitor**, you can attach files to a run in the **Files** panel of the run detail view: screenshots and references, but also CSV exports, PDFs, text and other documents. Drop them, paste them, or click to pick them. Files are only accepted for runs in **pending** status. Once a run starts, the upload controls are hidden.
 
-**Supported formats:** PNG, JPEG, WebP  
-**Size limit:** 5MB per image, maximum 10 images per run
+**What the agent receives:**
+- A PNG, JPEG or WebP image of 5MB or less is sent to each agent step inline, as an image.
+- Any other file, or a larger image, is copied into the agent's chat folder. The prompt names its full path and asks the agent to read it, which it can do without a permission prompt.
 
-**"Run has started…" message:** If you begin uploading an image just as the batch starts dispatching that run, the server detects the conflict and shows `Run has started and images can no longer be added`. The run itself is unaffected — the image was not saved.
+**Limits:** 20MB per file, maximum 10 files per run.
 
-**"Upload failed" message:** Usually a transient network or storage error. Retry by adding the image again.
+**"Save it to your computer…" message:** the file has no place on disk (for example, it was dragged from a web page). Save it first, then drag it in or click to add it.
 
-**Image privacy:** Uploaded images are stored privately and served through the Frink backend with your authentication. They are not publicly accessible — only you can retrieve them via the authenticated API. Images cannot be opened directly in a browser.
+**"Attachments can only be added before the run starts" message:** you added a file just as the batch started that run. The run itself is unaffected; the file was not saved.
+
+**A warning in the agent's prompt:** a file that went missing from this computer since it was attached is skipped, and the prompt says so. Attach it again on a new run.
+
+**Where files are stored:** on this computer, in Frink's app data folder, in a folder for each run. Agent steps read a copy kept in their own chat folder.
 
 ## Failure handling
 

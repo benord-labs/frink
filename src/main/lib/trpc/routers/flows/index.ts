@@ -9,7 +9,10 @@ import {
   recoveryKindSchema,
   resumeRunInputSchema,
 } from '../../../../../shared/types/flow-run/resume';
-import { MAX_ATTACHMENT_URL_LENGTH } from '../../../../../shared/types/run-attachment';
+import {
+  MAX_ATTACHMENT_URL_LENGTH,
+  type RunAttachment,
+} from '../../../../../shared/types/run-attachment';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
   BatchStageDetail,
@@ -65,6 +68,7 @@ import { pauseActiveExecutionForSubChat } from '../../../socket/executor';
 import { publicProcedureRaw, router } from '../../index';
 import { flowAdmissionQueueProcedures } from './admission-queue';
 import { flowAdmissionSettingsProcedures } from './admission-settings';
+import { flowAttachmentProcedures } from './attachments';
 import { createFlowCopyProcedures } from './copy';
 import { createFlowListProcedures, flowGraphMeta } from './list';
 import {
@@ -79,6 +83,7 @@ export const flowsRouter = router({
   ...createFlowListProcedures(),
   ...createFlowCopyProcedures(),
   ...flowAdmissionQueueProcedures(),
+  ...flowAttachmentProcedures(),
   workQueueApprovals: publicProcedureRaw.query(() => listAwaitingApprovals(getDatabase())),
   ...createFlowVersionProcedures(),
   get: publicProcedureRaw.input(z.object({ id: z.string().min(1) })).query(async ({ input }) => {
@@ -491,6 +496,7 @@ export const flowsRouter = router({
       }): Promise<{
         url: string;
         filename: string;
+        attachment: RunAttachment;
         run: { id: string; trigger_context: Record<string, unknown> };
       }> => {
         const { uploadAttachmentToStageRun } = await import('../../../flows/attachments-upload');

@@ -10,6 +10,7 @@ import {
   type ParsedMention,
   parseMention,
 } from '../../../../../shared/lib/mentions/parse-mention';
+import { attachedFileNote } from '../../../claude/pasted-files';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { MessageDelivery } from '../message-provenance/origin';
 
@@ -103,9 +104,8 @@ function toolNote(id: string): string {
 function pathAttachment({ type, path, label }: ParsedMention): Projection | null {
   if (!path) return null;
   if (type === 'pasted') {
-    const text = `The user attached the file \`${notePath(path)}\`. Its contents are not in this message: read it with your file tools before responding.`;
     // In backticks, so a path cannot start a slash command and its spaces stay one path.
-    return { text: `\`${path}\``, note: { kind: 'attached_file', text } };
+    return { text: `\`${path}\``, note: { kind: 'attached_file', text: attachedFileNote(path) } };
   }
   if (type === 'tool') return { text: label || path, note: { kind: 'tool', text: toolNote(path) } };
   return null;

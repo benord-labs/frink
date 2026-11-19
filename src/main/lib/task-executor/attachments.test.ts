@@ -164,6 +164,24 @@ describe('fetchAttachmentImages from the local attachment store', () => {
     expect(warnings[0]).toContain('Bad');
   });
 
+  // A CSV is the agent's to read by path (attachment-files.ts): no image, no warning here.
+  it('leaves file attachments alone', async () => {
+    const stored = await writeAttachment(
+      runId,
+      'report.csv',
+      Buffer.from('a,b').toString('base64'),
+    );
+
+    const warnings: string[] = [];
+    const result = await fetchAttachmentImages(
+      [{ url: stored.url, type: 'file', label: 'report.csv' }],
+      warnings,
+    );
+
+    expect(result).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
   it('sends an image whose filename extension is not a known one', async () => {
     const base64 = Buffer.from(pngBuffer()).toString('base64');
     const stored = await writeAttachment(runId, 'photo.jfif', base64);

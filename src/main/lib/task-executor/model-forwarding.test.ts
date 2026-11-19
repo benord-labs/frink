@@ -41,7 +41,9 @@ const {
 
 vi.mock('electron', () => ({
   BrowserWindow: {
-    getAllWindows: vi.fn(() => [{ isDestroyed: () => false, webContents: { send: sendMock } }]),
+    getAllWindows: vi.fn(() => [
+      { isDestroyed: () => false, webContents: { send: sendMock, isCrashed: () => false } },
+    ]),
   },
   app: { isPackaged: false, getAppPath: () => '/mock/app', getPath: () => '/mock/home' },
   safeStorage: {
@@ -61,7 +63,11 @@ vi.mock('../db', async (importOriginal) => ({
 }));
 
 vi.mock('../db/repos/projects', () => ({ getProjectById: getCloudProjectByIdMock }));
-vi.mock('../db/repos/chats', () => ({ updateChat: updateChatMock, createChat: createChatMock }));
+vi.mock('../db/repos/chats', () => ({
+  updateChat: updateChatMock,
+  createChat: createChatMock,
+  getChatWithProjectAccount: vi.fn(async () => null),
+}));
 vi.mock('../db/repos/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db/repos/tasks')>()),
   updateTaskStatus: updateTaskStatusMock,
@@ -73,6 +79,8 @@ vi.mock('../db/repos/project-ai-accounts', () => ({
 vi.mock('../db/repos/sub-chats', () => ({
   createSubChat: createSubChatMock,
   listSubChatsByChat: getSubChatsForChatMock,
+  getSubChatById: vi.fn(async () => null),
+  updateSubChatMode: vi.fn(async () => undefined),
 }));
 
 vi.mock('../git/worktree', async (importOriginal) => ({
@@ -216,5 +224,48 @@ describe('handleClaimedTask — model forwarding into task:chat-ready', () => {
 
     expect(sentChatReadyPayload()?.model).toBe('codex-gpt-5.2');
     expect(runningResult()?.modelFallbackReason).toBeUndefined();
+  });
+});
+
+// Each unit of the file hand-over is tested alone; this pins the claim wiring between them.
+describe('handleClaimedTask — run file attachments reach the prompt', () => {
+  // Not a file uploaded to the run, so delivery warns without touching the disk.
+  const attachments = [{ url: '/Users/x/.ssh/id_rsa', type: 'file', label: 'id_rsa' }];
+  const sentPrompt = (): string =>
+    String(sendMock.mock.calls.find(([channel]) => channel === 'task:chat-ready')?.[1]?.prompt);
+
+  beforeEach(() => {
+    createChatMock.mockResolvedValue({ id: 'chat-1' });
+    createSubChatMock.mockResolvedValue({ id: 'sub-1' });
+    updateTaskStatusMock.mockResolvedValue({ id: 'task-model-1', status: 'running' });
+    getTaskByIdMock.mockResolvedValue({ id: 'task-model-1', status: 'running' });
+    getDefaultClaudeCodeTokenMock.mockResolvedValue({ type: 'claude-code', token: 't' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('hands the run files over and sends what came of them', async () => {
+    await handleClaimedTask({
+      ...noModelTask(),
+      triggerContext: { _config: { startMode: 'execute' }, attachments },
+    });
+
+    expect(sentPrompt()).toContain('"id_rsa" was not sent: it is not a file uploaded to the run.');
+  });
+
+  // The continuation prompt is a hidden wake: a note appended to it would show in the chat.
+  it('hands no files over when a Continue resumes the session', async () => {
+    getSubChatsForChatMock.mockResolvedValue([{ id: 'sub-1', mode: 'agent' }]);
+
+    await handleClaimedTask({
+      ...noModelTask(),
+      result: { chatId: 'chat-1', subChatId: 'sub-1', retryMode: 'continue' },
+      triggerContext: { _config: { startMode: 'execute' }, attachments },
+    });
+
+    expect(sentPrompt()).not.toBe('undefined');
+    expect(sentPrompt()).not.toContain('id_rsa');
   });
 });
