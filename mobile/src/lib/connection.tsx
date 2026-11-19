@@ -22,6 +22,7 @@ import {
 import { showNotice } from './notice';
 import { forgetTurnedOn } from './notifications/default-on';
 import { closeMobileRelay } from './relay/client';
+import { clearCache, readCache, resourceKey, share, writeCache } from './resource/cache';
 import { readSavedComputers, savingComputers } from './storage';
 
 type Session = {
@@ -122,6 +123,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       }
       // Only once it is really gone: a computer that stays keeps its alerts choice.
       forgetTurnedOn(deviceId);
+      clearCache(deviceId);
     },
     [update],
   );
@@ -129,6 +131,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const dropRevoked = useCallback(
     async (host: Connection) => {
       closeMobileRelay();
+      clearCache(host.deviceId);
       const othersRemain = current.current.computers.length > 1;
       await update((state) => removeComputer(state, host.deviceId), false).catch(() => undefined);
       if (!othersRemain) return setError(REVOKED);
@@ -159,6 +162,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     [dropRevoked],
   );
   const connection = selectedComputer(state);
+  useEffect(() => {
+    if (connection) prefetch(connection, request);
+  }, [connection, request]);
   return (
     <Context.Provider
       value={{
@@ -179,6 +185,30 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
 const isRevocation = (error: unknown) => error instanceof ApiError && error.status === 401;
 
+// The first request the Chats and Flows screens make, so their first open draws from the cache.
+const PREFETCHED: MobileRequest[] = [{ type: 'chats', limit: 30 }, { type: 'flows' }];
+
+/** Prefetches still on their way, so a screen opened meanwhile waits for one instead of asking twice. */
+const prefetching = new Map<string, Promise<Response<MobileRequest>>>();
+
+function prefetch(host: Connection, request: Session['request']) {
+  for (const input of PREFETCHED) {
+    const key = resourceKey(host.deviceId, host.route, input);
+    if (readCache(key) || prefetching.has(key)) continue;
+    const answer = request(input);
+    prefetching.set(key, answer);
+    answer
+      .then((data) => readCache(key) || writeCache(key, host.deviceId, data))
+      .catch(() => undefined)
+      .finally(() => prefetching.delete(key));
+  }
+}
+
+function prefetched<T extends MobileRequest>(key: string) {
+  // SAFETY: a key serializes its request, and only that request's answer is stored under it.
+  return prefetching.get(key) as Promise<Response<T>> | undefined;
+}
+
 export function useConnection() {
   const value = useContext(Context);
   if (!value) throw new Error('ConnectionProvider is missing');
@@ -190,6 +220,44 @@ function failureState(error: unknown) {
   return {
     error: error instanceof Error ? error.message : 'Could not refresh.',
     errorStatus: error instanceof ApiError ? error.status : undefined,
+  };
+}
+
+type Response<T extends MobileRequest> = MobileResponses[T['type']];
+
+/** When the cached answer is younger than `interval`, the time it was written. */
+function freshSince(key: string, interval: number) {
+  const at = readCache(key)?.updatedAt;
+  return at !== undefined && Date.now() - at < interval ? at : undefined;
+}
+
+/** Calls `tick` an interval after `since`, then an interval after each tick settles. The interval is
+ *  read when scheduling, and `retime` re-reads it for the tick already waiting. */
+function pollTimer(tick: () => Promise<void>, every: () => number, since: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        void tick().then(() => {
+          since = Date.now();
+          if (!stopped) schedule();
+        });
+      },
+      Math.max(0, since + every() - Date.now()),
+    );
+  };
+  schedule();
+  return {
+    retime: () => {
+      if (timer !== undefined) schedule();
+    },
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+    },
   };
 }
 
@@ -208,22 +276,37 @@ export function useResource<T extends MobileRequest>(
   const { connection, request } = useConnection();
   // Polls only while its own screen is visible (a hidden tab or a screen under a pushed one waits).
   const focused = useIsFocused();
-  const key = JSON.stringify([connection?.deviceId, connection?.route, input]);
+  const key = resourceKey(connection?.deviceId ?? '', connection?.route ?? '', input);
   const currentKey = useRef(key);
   currentKey.current = key;
+  // Read on each tick, so a new interval applies next time without restarting the in-flight poll.
+  const every = useRef(interval);
+  every.current = interval;
   const [revision, setRevision] = useState(0);
   // Only a pull-to-refresh gesture shows the spinner; mounts, focus and command follow-ups stay silent.
   const pulled = useRef(false);
+  // An asked-for refresh reads now, even when the cached answer is younger than the interval.
+  const forced = useRef(false);
   const [state, setState] = useState<{
     key: string;
-    data?: MobileResponses[T['type']];
+    data?: Response<T>;
     error?: string;
     errorStatus?: number;
     updatedAt?: number;
     refreshing?: boolean;
-  }>({ key });
+  }>(() => {
+    const cached = readCache<Response<T>>(key);
+    return { key, data: cached?.data, updatedAt: cached?.updatedAt };
+  });
+  const current = state.key === key;
+  // A shorter interval (a chat that starts running) brings the waiting tick forward.
+  const retime = useRef<() => void>(undefined);
+  useEffect(() => {
+    retime.current?.();
+  }, [interval]);
   useEffect(() => {
     if (!focused || !connection || !enabled) return;
+    const { deviceId } = connection;
     let cancelled = false;
     let pending: AbortController | null = null;
     // Reason: The polling request owns cancellation, visibility, and error state together.
@@ -240,9 +323,13 @@ export function useResource<T extends MobileRequest>(
       const controller = pending;
       if (visible) setState((old) => ({ ...old, refreshing: true }));
       try {
-        const data = await request(input, pending.signal);
-        if (!cancelled && currentKey.current === key)
-          setState({ key, data, updatedAt: Date.now(), refreshing: false });
+        const next = await (prefetched<T>(key) ?? request(input, pending.signal));
+        if (!cancelled && currentKey.current === key) {
+          const data = share(readCache<Response<T>>(key)?.data, next);
+          const updatedAt = Date.now();
+          writeCache(key, deviceId, data, updatedAt);
+          setState({ key, data, updatedAt, refreshing: false });
+        }
       } catch (error) {
         if (!cancelled && currentKey.current === key && !controller.signal.aborted)
           setState((old) => ({
@@ -257,34 +344,46 @@ export function useResource<T extends MobileRequest>(
           setState((old) => ({ ...old, refreshing: false }));
       }
     }
-    void refresh(pulled.current);
+    // A new request reads at once; a remount or refocus waits out its cached answer's interval.
+    const since = current && !forced.current ? freshSince(key, every.current) : undefined;
+    forced.current = false;
+    if (since === undefined) void refresh(pulled.current);
     pulled.current = false;
-    const timer = setInterval(() => void refresh(), interval);
+    const timer = pollTimer(refresh, () => every.current, since ?? Date.now());
+    retime.current = timer.retime;
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active') void refresh();
       else pending?.abort();
     });
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      retime.current = undefined;
+      timer.stop();
       listener.remove();
       pending?.abort();
     };
     // The serialized input is the request identity, including host and pagination.
-  }, [key, revision, request, focused, enabled, interval]);
-  const current = state.key === key;
+  }, [key, revision, request, focused, enabled]);
+  // A new request (another chat, say) draws its cached answer until its own poll lands.
+  const own = current && state.data !== undefined ? state : undefined;
+  const shown = own ?? readCache<Response<T>>(key);
+  const data = shown ? shown.data : keep ? state.data : undefined;
+  const refresh = () => {
+    forced.current = true;
+    setRevision((v) => v + 1);
+  };
   return {
-    data: current || keep ? state.data : undefined,
-    /** True while `data` belongs to the previous request (kept by `keep`). */
-    stale: !current && state.data !== undefined,
-    error: state.key === key ? state.error : undefined,
-    errorStatus: state.key === key ? state.errorStatus : undefined,
-    updatedAt: state.key === key ? state.updatedAt : undefined,
-    refreshing: focused && state.key === key && !!state.refreshing,
-    refresh: () => setRevision((v) => v + 1),
+    data,
+    /** True while `data` is not this request's own answer: a cached one, or the previous request's. */
+    stale: !own && data !== undefined,
+    error: current ? state.error : undefined,
+    errorStatus: current ? state.errorStatus : undefined,
+    updatedAt: shown?.updatedAt,
+    refreshing: focused && current && !!state.refreshing,
+    refresh,
     pull: () => {
       pulled.current = true;
-      setRevision((v) => v + 1);
+      refresh();
     },
   };
 }

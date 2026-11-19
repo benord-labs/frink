@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Keyboard, Platform } from 'react-native';
-import { useResource } from '../../lib/connection';
+import { useOverview } from '../../lib/overview';
 
 const ios = Platform.OS === 'ios';
 
@@ -19,11 +19,7 @@ export function useKeyboardShown() {
   return shown;
 }
 
-/** Only whether the Mac can run chats is needed here, so the overview's lists stay one row long. */
+/** Whether the Mac can run chats, read from the app-wide overview poll. */
 export function useExecutionReady() {
-  const overview = useResource(
-    { type: 'overview', limits: { attention: 1, running: 1 } },
-    { interval: 10_000 },
-  );
-  return overview.data?.executionReady ?? true;
+  return useOverview().data?.executionReady ?? true;
 }
