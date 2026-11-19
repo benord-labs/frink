@@ -67,6 +67,8 @@ export const MAIN_LIB_DOMAINS = [
   // Command-line launch arguments (`frink <dir>`) parsed at startup.
   'cli',
   'cloud',
+  // Go to definition in the code viewer: tsconfig ownership, module resolution, export positions.
+  'code-navigation',
   'commands',
   'credentials',
   'custom-nodes',
