@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -276,5 +276,17 @@ describe('filesRouter.duplicateFile', () => {
     ).rejects.toThrow(
       'Failed to generate duplicate name after 1000 attempts in destination folder',
     );
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps a relative link relative', async () => {
+    await writeFile(join(projectPath, 'AGENTS.md'), '# agents', 'utf8');
+    await symlink('AGENTS.md', join(projectPath, 'CLAUDE.md'));
+
+    const { filesRouter } = await import('./files');
+    const caller = filesRouter.createCaller({ getWindow: () => null });
+    const result = await caller.duplicateFile({ projectPath, relativePath: 'CLAUDE.md' });
+
+    expect(result.newPath).toBe('CLAUDE copy.md');
+    expect(await readlink(join(projectPath, 'CLAUDE copy.md'))).toBe('AGENTS.md');
   });
 });

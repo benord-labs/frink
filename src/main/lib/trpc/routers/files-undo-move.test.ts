@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -122,6 +122,44 @@ describe('filesRouter.undoFileMove within a single project', () => {
     // The file that was recreated in the meantime must survive untouched.
     expect(await readFile(join(projectPath, 'src', 'a.txt'), 'utf8')).toBe('recreated');
   });
+
+  // A relative link moved away from its target dangles at the destination until undo.
+  it.skipIf(process.platform === 'win32')('returns a link the move left dangling', async () => {
+    await writeFile(join(projectPath, 'src', 'target.md'), 'target', 'utf8');
+    await symlink('target.md', join(projectPath, 'dst', 'alias.md'));
+
+    const { filesRouter } = await import('./files');
+    const caller = filesRouter.createCaller({ getWindow: () => null });
+    await caller.undoFileMove({
+      sourceProjectPath: projectPath,
+      sourcePath: 'src/alias.md',
+      destProjectPath: projectPath,
+      destPath: 'dst/alias.md',
+    });
+
+    expect(await readFile(join(projectPath, 'src', 'alias.md'), 'utf8')).toBe('target');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses to put a dangling link back over a file that took its place',
+    async () => {
+      await symlink('target.md', join(projectPath, 'dst', 'alias.md'));
+      await writeFile(join(projectPath, 'src', 'alias.md'), 'recreated', 'utf8');
+
+      const { filesRouter } = await import('./files');
+      const caller = filesRouter.createCaller({ getWindow: () => null });
+
+      await expect(
+        caller.undoFileMove({
+          sourceProjectPath: projectPath,
+          sourcePath: 'src/alias.md',
+          destProjectPath: projectPath,
+          destPath: 'dst/alias.md',
+        }),
+      ).rejects.toThrow(/different file/);
+      expect(await readFile(join(projectPath, 'src', 'alias.md'), 'utf8')).toBe('recreated');
+    },
+  );
 });
 
 describe('filesRouter.batchMoveFiles reports where each item landed', () => {

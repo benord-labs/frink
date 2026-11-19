@@ -1,7 +1,11 @@
+import { execFileSync } from 'node:child_process';
 import {
+  lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile as readFileFs,
+  readlink,
   realpath,
   rm,
   symlink,
@@ -219,5 +223,150 @@ describe('filesRouter search tree scan', () => {
     const results = await caller.search({ projectPath, query: 'c.txt' });
 
     expect(results.map((entry) => entry.path)).toContain(join('sub', 'deeper', 'c.txt'));
+  });
+});
+
+const isWindows = process.platform === 'win32';
+
+/** Windows needs no privilege for a junction, so folder links are junctions there. */
+const linkFolder = (target: string, path: string) =>
+  symlink(target, path, isWindows ? 'junction' : 'dir');
+
+async function caller() {
+  const { filesRouter } = await import('./files');
+  return filesRouter.createCaller({ getWindow: () => null });
+}
+
+describe('filesRouter symlinked entries', () => {
+  let root: string;
+  let projectPath: string;
+  let outside: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'frink-files-symlinks-'));
+    projectPath = join(root, 'project');
+    outside = join(root, 'outside');
+    await mkdir(projectPath);
+    await mkdir(outside);
+    await writeFile(join(outside, 'notes.md'), 'outside', 'utf8');
+    await linkFolder(outside, join(projectPath, 'linked'));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('lists file and folder links by their target kind and skips broken links', async (ctx) => {
+    await writeFile(join(projectPath, 'AGENTS.md'), '# agents', 'utf8');
+    try {
+      await symlink('missing', join(projectPath, 'dangling'));
+      await symlink('loop', join(projectPath, 'loop'));
+      await symlink('AGENTS.md', join(projectPath, 'CLAUDE.md'));
+    } catch (error) {
+      // Windows file links need Developer Mode or elevation.
+      if (isWindows && error instanceof Error && 'code' in error && error.code === 'EPERM')
+        ctx.skip();
+      throw error;
+    }
+
+    const rows = await (await caller()).listDirectory({ projectPath });
+
+    expect(rows.map((row) => [row.name, row.type])).toEqual([
+      ['linked', 'folder'],
+      ['AGENTS.md', 'file'],
+      ['CLAUDE.md', 'file'],
+    ]);
+  });
+
+  it('expands a linked folder inside a git repo and creates files through it', async () => {
+    // git check-ignore refuses paths "beyond a symbolic link", which real projects hit.
+    execFileSync('git', ['init', '-q'], { cwd: projectPath });
+    const files = await caller();
+
+    expect(await files.listDirectory({ projectPath, relativePath: 'linked' })).toMatchObject([
+      { name: 'notes.md', path: join('linked', 'notes.md'), type: 'file' },
+    ]);
+
+    await files.createFile({ projectPath, relativePath: join('linked', 'new.md') });
+    expect(await readdir(outside)).toContain('new.md');
+  });
+
+  it('copies a folder link to another project as the link, not its contents', async () => {
+    const destProjectPath = join(root, 'dest');
+    await mkdir(destProjectPath);
+    const files = await caller();
+
+    await files.crossProjectCopy({
+      sourceProjectPath: projectPath,
+      sourcePath: 'linked',
+      destProjectPath,
+      operationId: 'op-1',
+    });
+
+    const copied = join(destProjectPath, 'linked');
+    expect((await lstat(copied)).isSymbolicLink()).toBe(true);
+    expect(await readlink(copied)).toBe(await readlink(join(projectPath, 'linked')));
+  });
+
+  it('still copies a regular file to another project with progress', async () => {
+    const destProjectPath = join(root, 'dest');
+    await mkdir(destProjectPath);
+    await writeFile(join(projectPath, 'plain.md'), 'plain', 'utf8');
+
+    await (
+      await caller()
+    ).crossProjectCopy({
+      sourceProjectPath: projectPath,
+      sourcePath: 'plain.md',
+      destProjectPath,
+      operationId: 'op-2',
+    });
+
+    const copied = join(destProjectPath, 'plain.md');
+    expect((await lstat(copied)).isFile()).toBe(true);
+    expect(await readFileFs(copied, 'utf8')).toBe('plain');
+  });
+
+  it.skipIf(isWindows)('keeps links nested in a folder copied with progress', async () => {
+    const destProjectPath = join(root, 'dest');
+    await mkdir(destProjectPath);
+    await mkdir(join(projectPath, 'docs'));
+    await writeFile(join(projectPath, 'docs', 'guide.md'), 'guide', 'utf8');
+    await symlink('guide.md', join(projectPath, 'docs', 'alias.md'));
+
+    await (
+      await caller()
+    ).crossProjectCopy({
+      sourceProjectPath: projectPath,
+      sourcePath: 'docs',
+      destProjectPath,
+      operationId: 'op-3',
+    });
+
+    expect(await readlink(join(destProjectPath, 'docs', 'alias.md'))).toBe('guide.md');
+    expect(await readFileFs(join(destProjectPath, 'docs', 'guide.md'), 'utf8')).toBe('guide');
+  });
+
+  // Windows only allows folder symlinks with Developer Mode; junctions need no privilege.
+  it.skipIf(isWindows)('copies a folder link as an absolute junction on Windows', async () => {
+    const destProjectPath = join(root, 'dest');
+    await mkdir(destProjectPath);
+    await symlink(join('..', 'outside'), join(projectPath, 'relative'), 'dir');
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await (
+        await caller()
+      ).crossProjectCopy({
+        sourceProjectPath: projectPath,
+        sourcePath: 'relative',
+        destProjectPath,
+        operationId: 'op-4',
+      });
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+    }
+
+    expect(await readlink(join(destProjectPath, 'relative'))).toBe(outside);
   });
 });

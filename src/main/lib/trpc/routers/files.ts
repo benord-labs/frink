@@ -2,8 +2,8 @@
 import { existsSync } from 'node:fs';
 import {
   access,
-  copyFile,
   cp,
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -30,7 +30,8 @@ import { captureMainException } from '../../sentry/init';
 // reach any path the user could already open in a terminal. Operations that take a
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
-import { findEntryType } from './entry-type';
+import { copyEntry, listAllFiles } from './copy-entry';
+import { direntKind, findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
 import { resolveNamesProcedure } from './resolve-file-names';
 import { findSymlinkEscape } from './symlink-escape';
@@ -292,24 +293,6 @@ function sendProgress(
   }
 }
 
-/** Recursively list all files inside a directory (for progress counting).
- *  Skips symbolic links to prevent symlink-escape attacks. */
-async function listAllFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    // Security: skip symlinks to prevent copying data from outside the project
-    if (entry.isSymbolicLink()) continue;
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await listAllFiles(full)));
-    } else {
-      files.push(full);
-    }
-  }
-  return files;
-}
-
 /** Options for copyWithProgress */
 type CopyProgressOpts = {
   operationId: string;
@@ -333,7 +316,7 @@ async function copyWithProgress(
   opts: CopyProgressOpts,
 ): Promise<void> {
   const { operationId, targetWebContentsId, signal } = opts;
-  const srcStat = await stat(source);
+  const srcStat = await lstat(source);
 
   // Set up timeout
   const timeoutController = new AbortController();
@@ -343,9 +326,7 @@ async function copyWithProgress(
 
   try {
     if (!srcStat.isDirectory()) {
-      // Single file — no progress needed
-      await mkdir(dirname(dest), { recursive: true });
-      await copyFile(source, dest);
+      await copyEntry(source, dest, srcStat.isSymbolicLink());
       sendProgress(
         { operationId, current: 1, total: 1, currentFile: basename(source), done: true },
         targetWebContentsId,
@@ -368,7 +349,7 @@ async function copyWithProgress(
     }
 
     let current = 0;
-    for (const filePath of allFiles) {
+    for (const { path: filePath, isLink } of allFiles) {
       // Throttle abort check to every 10 files for performance
       if (current % 10 === 0 && isAborted()) {
         throw new Error(
@@ -377,9 +358,7 @@ async function copyWithProgress(
       }
 
       const relativePath = relative(source, filePath);
-      const destFile = join(dest, relativePath);
-      await mkdir(dirname(destFile), { recursive: true });
-      await copyFile(filePath, destFile);
+      await copyEntry(filePath, join(dest, relativePath), isLink);
       current++;
 
       // Emit progress every 10 files (throttled for performance)
@@ -399,7 +378,7 @@ async function copyWithProgress(
           current: total,
           total,
           currentFile:
-            allFiles.length > 0 ? relative(source, allFiles[allFiles.length - 1] ?? '') : '',
+            allFiles.length > 0 ? relative(source, allFiles[allFiles.length - 1]?.path ?? '') : '',
           done: true,
         },
         targetWebContentsId,
@@ -574,17 +553,22 @@ async function listDirectoryContents(
 
   try {
     const dirEntries = await readdir(dirPath, { withFileTypes: true });
+    const kinds = await Promise.all(
+      dirEntries.map((entry) => direntKind(entry, join(dirPath, entry.name))),
+    );
 
-    for (const entry of dirEntries) {
+    for (const [index, entry] of dirEntries.entries()) {
       const fullPath = join(dirPath, entry.name);
       const relativePath = relative(rootPath, fullPath);
       const relativePathNorm = normalizePathForGit(relativePath);
+      const kind = kinds[index];
 
-      if (entry.isDirectory()) {
+      if (kind === 'folder') {
         // Skip ignored directories
         if (isIgnoredDirectory(entry.name)) continue;
 
-        // Check if folder contains any modified files (use normalized paths - git uses / on all platforms)
+        // Roll up changed children (git paths use /). A linked folder is one blob to git, so its
+        // children carry no git status or ignored state, and the root watcher misses outside edits.
         let folderGitStatus: FileStatus | undefined = gitStatusMap?.get(relativePathNorm);
         if (!folderGitStatus && gitStatusMap) {
           const folderPrefix = relativePathNorm ? `${relativePathNorm}/` : '';
@@ -603,7 +587,7 @@ async function listDirectoryContents(
           gitStatus: folderGitStatus,
           isGitIgnored,
         });
-      } else if (entry.isFile()) {
+      } else if (kind === 'file') {
         // Skip ignored files
         if (isIgnoredFileByName(entry.name)) continue;
 
@@ -1939,7 +1923,7 @@ export const filesRouter = router({
 
       // Copy the file or folder
       try {
-        await cp(absoluteSource, absoluteDest, { recursive: true });
+        await cp(absoluteSource, absoluteDest, { recursive: true, verbatimSymlinks: true });
       } catch (_error) {
         throw new Error('Failed to duplicate file. Please check permissions and try again.');
       }
@@ -2139,7 +2123,7 @@ export const filesRouter = router({
           activeOperations.delete(input.operationId);
         }
       } else {
-        await cp(absoluteSource, absoluteDest, { recursive: true });
+        await cp(absoluteSource, absoluteDest, { recursive: true, verbatimSymlinks: true });
       }
 
       // Invalidate caches for destination project
@@ -2191,7 +2175,7 @@ export const filesRouter = router({
             activeOperations.delete(input.operationId);
           }
         } else {
-          await cp(absoluteSource, absoluteDest, { recursive: true });
+          await cp(absoluteSource, absoluteDest, { recursive: true, verbatimSymlinks: true });
         }
         await rm(absoluteSource, { recursive: true, force: true });
       }
@@ -2297,7 +2281,10 @@ export const filesRouter = router({
                 signal: controller.signal,
               });
             } else {
-              await cp(resolved.absoluteSource, resolved.absoluteDest, { recursive: true });
+              await cp(resolved.absoluteSource, resolved.absoluteDest, {
+                recursive: true,
+                verbatimSymlinks: true,
+              });
             }
 
             completed.push(sourcePath);
@@ -2427,7 +2414,10 @@ export const filesRouter = router({
                   signal: controller.signal,
                 });
               } else {
-                await cp(resolved.absoluteSource, resolved.absoluteDest, { recursive: true });
+                await cp(resolved.absoluteSource, resolved.absoluteDest, {
+                  recursive: true,
+                  verbatimSymlinks: true,
+                });
               }
               await rm(resolved.absoluteSource, { recursive: true, force: true });
             }
@@ -2519,8 +2509,9 @@ export const filesRouter = router({
         throw new Error('Access denied: original path outside project');
       }
 
+      // lstat throughout: a moved link can dangle at the destination, and must still undo.
       try {
-        await access(absoluteCurrent);
+        await lstat(absoluteCurrent);
       } catch {
         throw new Error('Cannot undo: file no longer exists at destination');
       }
@@ -2531,10 +2522,9 @@ export const filesRouter = router({
 
       // Check if a different file now exists at the original location
       try {
-        await access(absoluteOriginal);
         // Something exists — check if it's a different file (different inode)
-        const originalStat = await stat(absoluteOriginal);
-        const currentStat = await stat(absoluteCurrent);
+        const originalStat = await lstat(absoluteOriginal);
+        const currentStat = await lstat(absoluteCurrent);
         if (originalStat.ino !== currentStat.ino) {
           throw new Error('Cannot undo: original location now contains a different file');
         }
@@ -2546,7 +2536,7 @@ export const filesRouter = router({
       try {
         await rename(absoluteCurrent, absoluteOriginal);
       } catch {
-        await cp(absoluteCurrent, absoluteOriginal, { recursive: true });
+        await cp(absoluteCurrent, absoluteOriginal, { recursive: true, verbatimSymlinks: true });
         await rm(absoluteCurrent, { recursive: true, force: true });
       }
 

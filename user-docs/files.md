@@ -86,3 +86,11 @@ Press **Cmd+Shift+P / Ctrl+Shift+P** (**Search files**) and type part of a file'
 Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a linked project shows that project's name. Search files starts with **All in this tree** each time you open it.
 
 In split view, Search files looks in the projects of the pane you're working in. It doesn't open for a pane with no project, such as a new chat that hasn't started yet.
+
+## Symbolic links in the tree
+
+A **symbolic link** (a file or folder that points at another one, such as `CLAUDE.md` pointing at `AGENTS.md`) shows in the tree like the thing it points at. Open a linked folder to browse the real folder's contents. A link whose target is missing is hidden.
+
+- **Editing inside a linked folder changes the real folder.** If the link points outside the project, new, renamed and deleted files land there too.
+- **Copying, duplicating or moving a link keeps it a link.** The files it points at are not copied. A link that points at a full path keeps pointing at the same place. A link that points at a nearby file by a short path (such as `CLAUDE.md` pointing at `AGENTS.md`) looks for that file next to its new location, so moved to another folder it can point at a different file or stop working. On Windows without Developer Mode, a linked file is copied as a normal file instead.
+- **No change markers inside linked folders.** Git sees the link itself, not the files behind it, so those files never show as changed or ignored. Edits made outside Frink inside a folder linked from outside the project show up after you close and reopen the folder.
