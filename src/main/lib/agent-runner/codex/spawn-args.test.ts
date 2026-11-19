@@ -5,6 +5,7 @@ import {
   buildCodexDynamicChatMcpUrl,
   buildSpawnArgs,
   CODEX_SHELL_ENV_SCRUB_ARGS,
+  CODEX_SUB_AGENTS_OFF_ARGS,
 } from './spawn-args';
 
 const base = {
@@ -15,7 +16,7 @@ const base = {
 };
 
 describe('buildSpawnArgs', () => {
-  const lockedArgs = [
+  const disabledFeatures = [
     '--disable',
     'computer_use',
     '--disable',
@@ -30,9 +31,8 @@ describe('buildSpawnArgs', () => {
     'multi_agent',
     '--disable',
     'multi_agent_v2',
-    '--config',
-    'agents.enabled=false',
   ];
+  const lockedTail = [...CODEX_SUB_AGENTS_OFF_ARGS, ...CODEX_SHELL_ENV_SCRUB_ARGS];
 
   it('disables exactly the features the pinned Codex config surface routes as disabled', () => {
     const args = buildSpawnArgs();
@@ -44,14 +44,21 @@ describe('buildSpawnArgs', () => {
     expect(disabled).toEqual(routed);
   });
 
-  it('disables every unrouted execution surface before appending config args', () => {
+  it('disables every unrouted execution surface before config args, and locks the rest after them', () => {
     expect(buildSpawnArgs(['--config', 'x=1'])).toEqual([
-      ...lockedArgs,
+      ...disabledFeatures,
       '--config',
       'x=1',
-      ...CODEX_SHELL_ENV_SCRUB_ARGS,
+      ...lockedTail,
     ]);
-    expect(buildSpawnArgs()).toEqual([...lockedArgs, ...CODEX_SHELL_ENV_SCRUB_ARGS]);
+    expect(buildSpawnArgs()).toEqual([...disabledFeatures, ...lockedTail]);
+  });
+
+  it('switches sub-agents off after config args, so a caller override cannot turn them back on', () => {
+    const args = buildSpawnArgs(['--config', 'agents.enabled=true']);
+    expect(args.filter((arg) => arg.startsWith('agents.enabled=')).at(-1)).toBe(
+      'agents.enabled=false',
+    );
   });
 
   it('scrubs credentials from Codex shells last, so a caller override cannot re-enable them', () => {
