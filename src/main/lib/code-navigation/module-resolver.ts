@@ -114,7 +114,8 @@ function resolveViaAliasSubstitution(
 
   for (const [pattern, targets] of Object.entries(options.paths)) {
     const prefix = pattern.replace(TS_PATHS_TRAILING_GLOB, '');
-    if (!specifier.startsWith(prefix)) continue;
+    const matches = prefix === pattern ? specifier === pattern : specifier.startsWith(prefix);
+    if (!matches) continue;
     const remainder = specifier.slice(prefix.length);
     const found = firstAsset(targets, (target) =>
       join(base.data, target.replace(TS_PATHS_TRAILING_GLOB, ''), remainder),

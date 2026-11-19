@@ -35,11 +35,13 @@ export async function resolveAliasDefinition(
   const line = model.getLineContent(position.lineNumber);
   const isTS = TS_LANGUAGES.has(model.getLanguageId());
   const quotedString = extractQuotedStringAtPosition(line, position.column);
+  if (token.isCancellationRequested) return null;
 
   try {
     const resolved = await queryDefinition({
       projectPath,
-      containingFile: decodeURIComponent(model.uri.path),
+      // Monaco's Uri.path is already decoded; decoding again breaks names containing '%'.
+      containingFile: model.uri.path,
       // Always the live buffer: the main process keeps no copy of unsaved edits.
       fileContent: isTS ? model.getValue() : undefined,
       offset: isTS ? model.getOffsetAt(position) : undefined,

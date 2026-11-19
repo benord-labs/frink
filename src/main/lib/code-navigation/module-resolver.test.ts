@@ -153,6 +153,23 @@ describe('config ownership', () => {
     expect(resolveModuleSpecifier(root, containing, '@new/z')).toBe(join(root, 'src/z.ts'));
   });
 
+  it('treats a folder whose name starts with two dots as inside the project', async () => {
+    await writeTree(root, VITE_PROJECT);
+    const owner = findOwningCompilerOptions(root, join(root, '..generated/a.ts'));
+    expect(owner.configPath).not.toBeNull();
+  });
+
+  it('matches a paths key without a wildcard only exactly', async () => {
+    await writeTree(root, {
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { baseUrl: '.', paths: { '@ui': ['./src/ui'] } },
+      }),
+      'src/ui/kit/x.scss': '$x: 1;',
+    });
+    const containing = join(root, 'src/App.tsx');
+    expect(resolveModuleSpecifier(root, containing, '@uikit/x.scss')).toBeNull();
+  });
+
   it('resolves an aliased asset when paths is set without baseUrl', async () => {
     await writeTree(root, VITE_PROJECT);
     const result = resolveModuleSpecifier(root, join(root, 'src/App.tsx'), '@/styles/theme');

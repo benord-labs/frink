@@ -1,6 +1,6 @@
 // Picks the tsconfig/jsconfig that owns a file, including solution-style roots and monorepo packages.
 import { statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import ts from 'typescript';
 import { CONFIG_CANDIDATES } from './constants';
 
@@ -51,6 +51,7 @@ function parseConfig(configPath: string): ParsedConfig | null {
     return null;
   }
 
+  const configStamp = stampOf([configPath]);
   const sourceFile = ts.readJsonConfigFile(configPath, ts.sys.readFile);
   const parsed = ts.parseJsonSourceFileConfigFileContent(
     sourceFile,
@@ -59,7 +60,8 @@ function parseConfig(configPath: string): ParsedConfig | null {
     undefined,
     configPath,
   );
-  const watchedFiles = [configPath, ...(sourceFile.extendedSourceFiles ?? [])];
+  const extended = sourceFile.extendedSourceFiles ?? [];
+  const watchedFiles = [configPath, ...extended];
   const result: ParsedConfig = {
     configPath,
     options: parsed.options,
@@ -68,7 +70,8 @@ function parseConfig(configPath: string): ParsedConfig | null {
       ts.resolveProjectReferencePath(ref),
     ),
     watchedFiles,
-    stamp: stampOf(watchedFiles),
+    // Stamped before the read, so an edit landing mid-parse invalidates on the next lookup.
+    stamp: [configStamp, ...extended.map((path) => stampOf([path]))].join('|'),
   };
   parsedCache.set(configPath, result);
   return result;
@@ -115,7 +118,7 @@ function* configsInDirectory(dir: string): Generator<ParsedConfig> {
 
 export function isWithin(root: string, dir: string): boolean {
   const rel = relative(root, dir);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 function* configsUpTo(projectPath: string, containingFile: string): Generator<ParsedConfig> {

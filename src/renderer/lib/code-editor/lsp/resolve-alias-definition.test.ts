@@ -43,14 +43,49 @@ describe('resolveAliasDefinition', () => {
     });
   });
 
-  it('drops a reply that arrives after the request was cancelled', async () => {
+  it('sends nothing when the request is already cancelled', async () => {
+    let calls = 0;
     const result = await resolveAliasDefinition(
       model,
       position,
       { isCancellationRequested: true },
       '/repo',
-      async () => reply,
+      async () => {
+        calls += 1;
+        return reply;
+      },
     );
+
+    expect(result).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  // Monaco's Uri.path is already decoded, so a second decode throws on '%' or rewrites '%20'.
+  it.each(['/repo/src/100%.ts', '/repo/src/a%20b.ts'])(
+    'sends the model path %s unchanged',
+    async (path) => {
+      const sent: string[] = [];
+      await resolveAliasDefinition(
+        { ...model, uri: { path } },
+        position,
+        { isCancellationRequested: false },
+        '/repo',
+        async (input) => {
+          sent.push(input.containingFile);
+          return reply;
+        },
+      );
+
+      expect(sent).toEqual([path]);
+    },
+  );
+
+  it('drops a reply that arrives after the request was cancelled', async () => {
+    const token = { isCancellationRequested: false };
+    const result = await resolveAliasDefinition(model, position, token, '/repo', async () => {
+      token.isCancellationRequested = true;
+      return reply;
+    });
 
     expect(result).toBeNull();
   });
