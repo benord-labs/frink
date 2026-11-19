@@ -110,9 +110,7 @@ function loadTheme(highlighter: shiki.Highlighter, themeId: string): Promise<voi
   return load;
 }
 
-/**
- * Get or create the Shiki highlighter instance
- */
+/** The Shiki highlighter shared by chat code blocks and the code editor. */
 async function getHighlighter(): Promise<shiki.Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = shiki.createHighlighter({
@@ -121,6 +119,21 @@ async function getHighlighter(): Promise<shiki.Highlighter> {
     });
   }
   return highlighterPromise;
+}
+
+const languageLoads = new Map<string, Promise<void>>();
+
+/** Loads a bundled grammar (and those it embeds) on first use, once however many callers ask. */
+export async function loadLanguage(id: shiki.BundledLanguage): Promise<shiki.Highlighter> {
+  const highlighter = await getHighlighter();
+  if (highlighter.getLoadedLanguages().includes(id)) return highlighter;
+  let load = languageLoads.get(id);
+  if (!load) {
+    load = highlighter.loadLanguage(id).finally(() => languageLoads.delete(id));
+    languageLoads.set(id, load);
+  }
+  await load;
+  return highlighter;
 }
 
 /** A bundled Shiki theme, resolved, loading it first if no code block has yet. */

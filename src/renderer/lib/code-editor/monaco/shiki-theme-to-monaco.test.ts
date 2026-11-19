@@ -12,14 +12,16 @@ function colourOf(rules: Awaited<ReturnType<typeof rulesFor>>, token: string) {
 }
 
 describe('shikiThemeToMonacoRules', () => {
-  it("paints Monarch's own token names with the code theme's colours", async () => {
-    const rules = await rulesFor('github-dark');
+  it('paints each colour token, in each font style the theme uses, with its own colour', async () => {
+    const rules = await rulesFor('one-dark-pro');
 
-    expect(colourOf(rules, 'number')).toBe('#79b8ff');
-    expect(colourOf(rules, 'type')).toBe('#b392f0');
-    expect(colourOf(rules, 'string.key.json')).toBe('#79b8ff');
-    expect(colourOf(rules, 'string.value.json')).toBe('#9ecbff');
-    expect(colourOf(rules, '')).toBe('#e1e4e8');
+    expect(colourOf(rules, 'shiki-61afef')).toBe('#61afef');
+    expect(rules).toContainEqual({
+      token: 'shiki-7f848e.f1',
+      foreground: '#7f848e',
+      fontStyle: 'italic',
+    });
+    expect(colourOf(rules, '')).toBe('#abb2bf');
   });
 
   it('gives a light theme its own rules', async () => {
@@ -55,9 +57,9 @@ describe('shikiThemeToMonacoRules', () => {
     );
 
     expect(colourOf(rules, 'keyword')).toBe('#222222');
-    expect(colourOf(rules, 'string')).toBe('#aabbcc');
-    // A Monarch token whose scope the theme leaves unstyled shows the theme's text colour, as in chat.
-    expect(colourOf(rules, 'number')).toBe('#aabbcc');
+    expect(colourOf(rules, 'shiki-222222')).toBe('#222222');
+    // Monaco can't paint a named colour, so that scope falls back to the theme's text colour.
+    expect(colourOf(rules, 'string')).toBeUndefined();
     expect(colourOf(rules, '')).toBe('#aabbcc');
   });
 });

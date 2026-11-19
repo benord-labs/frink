@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { getShikiTheme, highlightCode } from './shiki-theme-loader';
+import { getShikiTheme, highlightCode, loadLanguage } from './shiki-theme-loader';
 
 describe('getShikiTheme', () => {
   it('resolves a code theme the code editor asks for before any code block has loaded it', async () => {
@@ -8,6 +8,24 @@ describe('getShikiTheme', () => {
 
     expect(theme).toMatchObject({ name: 'ayu-dark', type: 'dark' });
     expect(theme.settings.length).toBeGreaterThan(1);
+  });
+});
+
+describe('loadLanguage', () => {
+  it('loads a grammar outside the preload list once, however many editors ask at the same time', async () => {
+    const highlighter = await loadLanguage('json');
+    const load = vi.spyOn(highlighter, 'loadLanguage');
+
+    const [first, second] = await Promise.all([loadLanguage('ruby'), loadLanguage('ruby')]);
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(
+      first.getLanguage('ruby').tokenizeLine('def a; end', null).tokens.length,
+    ).toBeGreaterThan(1);
+    expect(second).toBe(first);
+    await loadLanguage('ruby');
+    expect(load).toHaveBeenCalledOnce();
+    load.mockRestore();
   });
 });
 
