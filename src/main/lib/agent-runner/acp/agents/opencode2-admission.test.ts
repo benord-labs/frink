@@ -15,6 +15,10 @@ import type {
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CodexApprovalCheck } from '../../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../../codex/codex-events';
+import {
+  plantCanarySetup,
+  registerCanaryRows,
+} from '../../../socket/test-suites/conformance/canary';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from '../acp-process';
 import { runAcpAgent } from '../acp-runner';
 import { collectChunks } from '../acp-test-fixtures';
@@ -33,8 +37,6 @@ const SAVED_ANSWERS = (data: string) =>
   `OpenCode has saved "Always allow" answers in the folder Frink keeps for it, so it wouldn't ask Frink first. Delete ${data}, then try again.`;
 const UNSAFE_SETTINGS =
   "Settings from an organisation, sign-in provider or administrator can change how OpenCode asks for permission, so Frink can't run it safely.";
-const INSTRUCTION_MARK = 'admission-instruction-7f3a';
-const SKILL_MARK = 'admission-skill-91b2';
 const SECRET_TEXT = 'outside-secret-5c1e';
 const ENV_TEXT = 'env-secret-2d4b';
 const CHECKED_TOOLS = [
@@ -218,11 +220,7 @@ describe.runIf(IS_V2)('OpenCode 2 admission', () => {
       path.join(project, '.opencode', 'commands', 'status.md'),
       `---\ndescription: status\n---\n!\`touch '${mark('command')}'\`\n`,
     );
-    await write(path.join(project, 'AGENTS.md'), `Follow the house style. ${INSTRUCTION_MARK}\n`);
-    await write(
-      path.join(home, '.claude', 'skills', 'house-style', 'SKILL.md'),
-      `---\nname: house-style\ndescription: House style guide ${SKILL_MARK}\n---\nUse tabs.\n`,
-    );
+    await plantCanarySetup({ home, project });
     await write(path.join(project, 'notes.txt'), 'scratch\n');
     await write(path.join(project, '.env'), `${ENV_TEXT}\n`);
     await write(path.join(outside, 'existing.txt'), 'keep me\n');
@@ -386,18 +384,21 @@ describe.runIf(IS_V2)('OpenCode 2 admission', () => {
     expect(hits.tcp).toBe(0);
   }
 
+  let inventory: Promise<Turn> | undefined;
+  const inventoryTurn = () => (inventory ??= turn('inventory', [], true));
+
   it(
-    'offers exactly the checked tools, with the project instructions and the user’s skills',
+    'offers exactly the checked tools',
     async () => {
-      const result = await turn('inventory', [], true);
+      const result = await inventoryTurn();
       const first = JSON.parse(result.requests[0] ?? '{}');
       const tools = first.tools.map((tool: { function: { name: string } }) => tool.function.name);
       expect([...tools].sort()).toEqual(CHECKED_TOOLS);
-      expect(result.requests[0]).toContain(INSTRUCTION_MARK);
-      expect(result.requests[0]).toContain(SKILL_MARK);
     },
     TURN_MS,
   );
+
+  registerCanaryRows('opencode', () => inventoryTurn().then(({ requests }) => requests), TURN_MS);
 
   describe.each([
     ['refused', false],

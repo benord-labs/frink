@@ -1,5 +1,5 @@
-/** How one kind of config reaches a provider: `inject` in memory at launch, `copy` or `file` on
- * disk, `enforce` at its permission gate, or `none`. */
+/** `none`: never reaches the model in a Frink chat. `inject`: reaches it with no Frink file write.
+ * `copy`, `file`: Frink writes it, as files or settings. `enforce`: held at the permission gate. */
 export type CapabilityMode = 'inject' | 'copy' | 'file' | 'enforce' | 'none';
 
 /** How each kind of the user's config reaches one provider. */
@@ -15,6 +15,8 @@ export type Delivery = {
   plugins: CapabilityMode;
   /** The user's instructions files. Report-only: no handler delivers them. */
   instructions: CapabilityMode;
+  /** The project memory the agent keeps for itself. Report-only, like instructions. */
+  memory: CapabilityMode;
 };
 
 export type CapabilityCategory = keyof Delivery;
@@ -35,4 +37,5 @@ export const NOTHING_DELIVERED: Delivery = {
   hooks: 'none',
   plugins: 'none',
   instructions: 'none',
+  memory: 'none',
 };
