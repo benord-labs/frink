@@ -37,6 +37,7 @@ import { getCodexCliMissingMessage, resolveCodexBinary } from './codex-binary';
 import { extractFileChangeItem, type FileChange, mapNotificationToChunks } from './codex-events';
 import { type CodexCommandOutputs, recordCodexCommandOutput } from './command-output';
 import { setCodexLiveTurn } from './codex-live-turn';
+import { type CodexStaged, checkCodexThreadLoaded } from './loaded-check';
 import { registerCloseHandlers } from './codex-stream-chunks';
 import { buildCodexMcpBinding } from './mcp';
 import { buildCodexSkillRootsBinding } from './skill-roots';
@@ -124,6 +125,8 @@ export type CodexRunnerParams = {
   threadConfig?: Record<string, unknown>;
   /** Non-secret digest that supersedes a warm app-server when effective MCP state changes. */
   configRevision?: string;
+  /** What a fresh thread is handed, checked against what it lists as loaded. */
+  staged?: CodexStaged;
   /** The downstream Frink permission gate is waiting on this turn's user. */
   hasOpenPermission?: () => boolean;
   /** Delegate eligible approval requests to Codex's provider-owned AI reviewer. */
@@ -198,6 +201,7 @@ async function startFreshThread(
   });
   const threadId = started.thread?.id;
   if (!threadId) throw new Error('Codex did not return a thread id');
+  if (params.staged) void checkCodexThreadLoaded(client, threadId, params.staged);
   if (developerInstructions) provenanceRule.markDurable(client, threadId);
   return threadId;
 }
@@ -377,6 +381,14 @@ async function* codexTurnChunks(
       ...params,
       threadConfig: binding.threadConfig,
       configRevision: `${binding.revision}:${skillRoots.revision}`,
+      staged: params.sessionKey
+        ? {
+            subChatId: params.sessionKey,
+            cwd,
+            mcpServers: binding.serverNames,
+            skillRoots: skillRoots.extraSkillRoots,
+          }
+        : undefined,
     };
   } catch (err) {
     yield { type: 'error', errorText: errorText(err) };
