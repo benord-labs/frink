@@ -31,7 +31,7 @@ export function isFieldReservedChord(
  * Off Mac it yields field-reserved chords (see isFieldReservedChord), like the hotkeys manager.
  */
 export function isPrimaryChord(e: KeyboardEvent, isMac = isMacOS()): boolean {
-  if (e.altKey) return false;
+  if (e.altKey || e.getModifierState('AltGraph')) return false;
   if (isMac) return e.metaKey && !e.ctrlKey;
   if (!e.ctrlKey || e.metaKey) return false;
   const key = e.key === '+' ? 'plus' : e.key.toLowerCase();

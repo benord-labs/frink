@@ -57,6 +57,12 @@ describe('isPrimaryChord', () => {
     expect(isPrimaryChord(cmdOpt, true)).toBe(false);
   });
 
+  it('rejects AltGr even when the platform reports it without Alt (Linux)', () => {
+    const e = new KeyboardEvent('keydown', { key: 'j', ctrlKey: true });
+    Object.defineProperty(e, 'getModifierState', { value: (k: string) => k === 'AltGraph' });
+    expect(isPrimaryChord(e, false)).toBe(false);
+  });
+
   it('yields plain Ctrl chords typed in the terminal to the shell, but not Ctrl+Shift ones', () => {
     const terminal = document.body.appendChild(document.createElement('div'));
     terminal.className = 'xterm';
