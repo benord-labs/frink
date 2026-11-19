@@ -59,10 +59,12 @@ export function parkedQuestion(
   };
 }
 
+/** `driving` is the sub-chat's already-looked-up driving task, saving a second lookup. */
 export async function mobileQuestions(
   chatId: string,
   subChatId: string,
   fallbackTaskId: string | null,
+  driving?: { task: Parameters<typeof parkedQuestion>[0] | null },
 ) {
   const live = listPendingQuestionProjections(subChatId)
     .filter((q) => q.chatId === chatId)
@@ -75,10 +77,8 @@ export async function mobileQuestions(
       title: q.questions[0]?.header ?? 'Question',
     }));
   if (live.length) return live;
-  const { task } = await mobileCallers.tasks.getDrivingTaskForSubChat({
-    subChatId,
-    fallbackTaskId,
-  });
+  const { task } =
+    driving ?? (await mobileCallers.tasks.getDrivingTaskForSubChat({ subChatId, fallbackTaskId }));
   const parked = task && parkedQuestion(task, chatId, subChatId);
   return parked ? [parked] : [];
 }

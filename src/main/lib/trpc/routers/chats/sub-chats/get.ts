@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { getDatabase } from '../../../../db';
 import { getChatById as getChatByIdLocal } from '../../../../db/repos/chats';
 import { getProjectById } from '../../../../db/repos/projects';
-import { getSubChatById as getSubChatByIdLocal } from '../../../../db/repos/sub-chats';
+import { readTranscript, readTranscriptTail } from '../../../../db/repos/sub-chat-messages';
+import {
+  getSubChatById as getSubChatByIdLocal,
+  readSubChatRow,
+} from '../../../../db/repos/sub-chats';
 import { publicProcedure, publicProcedureRaw, router } from '../../../index';
 import { mapChatProject } from '../map-chat-response';
 import { mapSubChatResponse } from './map-sub-chat-response';
@@ -28,18 +32,17 @@ export const subChatGetRouter = router({
     )
     .query(async ({ input }) => {
       const { subChatId, limit, beforeMessageId } = input;
-      const subChat = await getSubChatByIdLocal(getDatabase(), subChatId);
+      const db = getDatabase();
+      const subChat = readSubChatRow(db, subChatId);
       if (!subChat) {
         return { messages: [], hasMore: false, sessionId: null };
       }
-
-      const arr = subChat.messages as { id?: string }[];
-      if (arr.length === 0) {
-        return { messages: [], hasMore: false, sessionId: subChat.sessionId ?? null };
-      }
-
-      const { messages: slice, hasMore } = paginateMessages(arr, limit, beforeMessageId);
-      return { messages: slice, hasMore, sessionId: subChat.sessionId ?? null };
+      const sessionId = subChat.sessionId ?? null;
+      // The first page, polled on every open chat, reads only its own rows unless one is corrupt.
+      const tail = beforeMessageId === undefined && readTranscriptTail(db, subChatId, limit);
+      if (tail) return { ...tail, sessionId };
+      const { messages } = readTranscript(db, subChatId);
+      return { ...paginateMessages(messages, limit, beforeMessageId), sessionId };
     }),
 
   getSubChat: publicProcedure.input(z.object({ id: z.string() })).query(async ({ input }) => {

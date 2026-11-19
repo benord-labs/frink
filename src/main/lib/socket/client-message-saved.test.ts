@@ -32,9 +32,14 @@ vi.mock('../credentials', () => ({
   isResolvedCredential: () => true,
 }));
 
+import { getDatabase } from '../db';
 import { assertChatLogin } from '../db/repos/project-ai-accounts';
+import * as transcripts from '../db/repos/sub-chat-messages';
 import { setStreamId } from '../db/repos/sub-chats';
+import { chats, subChatMessages, subChats } from '../db/schema';
+import { freshDb } from '../db/test-utils/fresh-db';
 import { onExecuteRequest, sendMessage } from './client';
+import { DuplicateMessageError } from './execution/send-admission';
 
 const send = vi.fn();
 const events: string[] = [];
@@ -142,5 +147,30 @@ describe('sendMessage → socket:message-saved', () => {
     expect(send).toHaveBeenCalledWith('socket:message-saved', expect.anything());
     expect(events).not.toContain('execute');
     expect(setStreamId).not.toHaveBeenCalled();
+  });
+
+  it('refuses a resent phone message by id without reading the transcript', async () => {
+    const db = freshDb();
+    db.insert(chats).values({ id: 'c1' }).run();
+    db.insert(subChats).values({ id: 's1', chatId: 'c1' }).run();
+    db.insert(subChatMessages).values({ subChatId: 's1', seq: 0, message: '{"id":"u1"}' }).run();
+    vi.mocked(getDatabase).mockReturnValueOnce(db);
+    const readTranscript = vi.spyOn(transcripts, 'readTranscript');
+    const off = onExecuteRequest(() => events.push('execute'));
+    const payload: Parameters<typeof sendMessage>[0] = {
+      chatId: 'c1',
+      subChatId: 's1',
+      projectId: 'p1',
+      trigger: 'submit-message',
+      userMessage: { id: 'u1', role: 'user', parts: [] },
+    };
+
+    await expect(sendMessage(payload, { rejectIfBusy: true }).finally(off)).rejects.toBeInstanceOf(
+      DuplicateMessageError,
+    );
+
+    expect(readTranscript).not.toHaveBeenCalled();
+    expect(appendUserMessageLocalMock).not.toHaveBeenCalled();
+    expect(events).not.toContain('execute');
   });
 });

@@ -20,6 +20,7 @@ import type { ApprovedPlanContext } from '../../../shared/types/plan';
 import type { WakeHoldChangedPayload } from '../../../shared/types/wake-hold';
 import { getDatabase } from '../db';
 import { assertChatLogin } from '../db/repos/project-ai-accounts';
+import { transcriptHasMessage } from '../db/repos/sub-chat-messages';
 import { withSubChatLock } from '../db/repos/sub-chat-mutex';
 import {
   appendUserMessage as appendUserMessageLocal,
@@ -232,18 +233,7 @@ export async function sendMessage(
       }
     },
     options?.rejectIfBusy
-      ? async () => {
-          const subChat = await getSubChatByIdLocal(getDatabase(), payload.subChatId);
-          return (
-            subChat?.messages.some(
-              (message) =>
-                message !== null &&
-                typeof message === 'object' &&
-                'id' in message &&
-                message.id === payload.userMessage.id,
-            ) ?? false
-          );
-        }
+      ? async () => !!transcriptHasMessage(getDatabase(), payload.subChatId, payload.userMessage.id)
       : undefined,
   );
 }
