@@ -113,3 +113,28 @@ describe('FlowStepNodeView Fan Out', () => {
     expect(container.querySelector('[data-resize]')).toBeNull();
   });
 });
+
+describe('FlowStepNodeView project not on this computer', () => {
+  const ctx = { projects: [{ id: 'p-api', name: 'api' }] };
+
+  it('sends an unknown flow default to flow settings', () => {
+    renderCard('start_task', undefined, {
+      flowDefaultProjectId: 'gone',
+      customFlowCanvasContext: ctx,
+      onRequestOpenFlowSettings: vi.fn(),
+    });
+    expect(screen.getByText("Project “gone” isn't on this computer")).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Set flow default project' }).length).toBe(2);
+  });
+
+  it("never sends a step's own unknown project to flow settings, where it can't be fixed", () => {
+    renderCard('start_task', undefined, {
+      node: { id: 'n1', blockType: 'start_task', config: { projectId: 'gone' } },
+      flowDefaultProjectId: 'p-api',
+      customFlowCanvasContext: ctx,
+      onRequestOpenFlowSettings: vi.fn(),
+    });
+    expect(screen.getByText("Project “gone” isn't on this computer")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Set flow default project' })).toBeNull();
+  });
+});

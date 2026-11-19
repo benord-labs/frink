@@ -25,7 +25,9 @@ import {
 } from '../../../../../../shared/lib/flows/custom-node-required-inputs';
 import { trpc } from '../../../../../lib/trpc';
 import { AvailableVariables } from '../AvailableVariables';
-import { NodeProjectField } from '../NodeProjectField';
+import { useNodeProjectError } from '../../hooks/use-node-project-error';
+import { NodeProjectRow } from '../NodeProjectRow';
+import { ID_ONLY_PROJECT_RULES } from '../node-project-resolution';
 import { type ManifestInput, SchemaFields } from '../SchemaFields';
 import { cfg, FieldRow, type ProjectNodeConfigProps } from '../shared';
 import { CredentialField } from './CredentialField';
@@ -148,6 +150,11 @@ export function CustomNodeConfig({
   const c = cfg(node);
   const blockType = node.blockType;
   const projectId = typeof c.projectId === 'string' ? c.projectId : '';
+  const projErr = useNodeProjectError(
+    projectId,
+    flowSettings?.defaultProjectId,
+    ID_ONLY_PROJECT_RULES,
+  );
 
   // Name-derived and synchronous, so the panel picks its shape on first render.
   // Matches the dispatcher's own predicate — the UI must not present a step as a
@@ -225,13 +232,14 @@ export function CustomNodeConfig({
 
       {/* Plugin dispatch resolves the catalog action and never reads projectId. */}
       {pluginStep ? null : (
-        <NodeProjectField
-          key={node.id}
+        <NodeProjectRow
+          nodeId={node.id}
           allowTemplate={false}
           projectId={projectId}
           flowDefaultProjectId={flowSettings?.defaultProjectId}
           onProjectIdChange={(id: string) => onConfigPatch({ projectId: id })}
           onOpenFlowSettings={onOpenFlowSettings}
+          error={projErr}
         />
       )}
 

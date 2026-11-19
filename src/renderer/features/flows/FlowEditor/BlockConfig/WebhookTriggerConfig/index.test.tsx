@@ -244,3 +244,37 @@ describe('WebhookTriggerConfig advanced filters', () => {
     expect(screen.getByDisplayValue('Retry')).toBeInTheDocument();
   });
 });
+
+describe('WebhookTriggerConfig account no longer connected', () => {
+  const NOTICE = 'This account is no longer connected. Pick another or reconnect it.';
+  const panel = (integrationId: string) => (
+    <WebhookTriggerConfig
+      node={{
+        id: 'trigger',
+        blockType: 'webhook_trigger',
+        config: { integrationId, eventType: 'story_assigned' },
+      }}
+      onPatchLabel={() => undefined}
+      onPatchConfig={() => undefined}
+    />
+  );
+
+  it('warns beside the account picker', async () => {
+    renderWithTrpc(panel('gone-1'), answer);
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it('warns when no accounts are left, where the picker is hidden', async () => {
+    renderWithTrpc(panel('gone-1'), ({ path }) =>
+      path === 'integrations.list' ? Promise.resolve([]) : new Promise(() => {}),
+    );
+    expect(await screen.findByText('No integrations connected yet.')).toBeInTheDocument();
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it('stays quiet for a connected account', async () => {
+    renderWithTrpc(panel('shortcut-1'), answer);
+    expect(await filtersSwitch()).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+});

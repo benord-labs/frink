@@ -112,6 +112,13 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
     [integrations, integrationId],
   );
 
+  // integrations.list returns active accounts only, the same set the runtime matches against.
+  const accountGone = integrationId !== '' && integrations !== undefined && !selected;
+  const accountGoneNotice = accountGone ? (
+    <p role="alert" className="text-sm text-destructive">
+      This account is no longer connected. Pick another or reconnect it.
+    </p>
+  ) : null;
   const supportedProvider: IntegrationProvider | undefined = selected?.provider;
   const providerMeta = getProviderById(supportedProvider ?? '');
   // Every catalog row carries its event registry + condition filters; a row with one event
@@ -281,6 +288,7 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
       {!integrations?.length && !integrationsLoading ? (
         <div className="rounded-md border border-dashed border-border/80 p-3 space-y-2">
           <p className="text-xs text-muted-foreground">No integrations connected yet.</p>
+          {accountGoneNotice}
           <Button type="button" size="sm" variant="secondary" onClick={handleManageConnections}>
             Connect an integration
           </Button>
@@ -304,6 +312,7 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
               ))}
             </SelectContent>
           </Select>
+          {accountGoneNotice}
           <Button
             type="button"
             variant="link"

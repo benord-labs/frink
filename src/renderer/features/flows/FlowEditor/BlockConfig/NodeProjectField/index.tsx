@@ -10,7 +10,11 @@ import { trpc } from '@/lib/trpc';
 import type { SelectedProject } from '../../../../agents/atoms';
 import { ProjectSelector } from '../../../../agents/ProjectSelector';
 import { NodeInheritableField } from '../NodeInheritableField';
-import { isProjectRow } from '../shared';
+import {
+  ID_ONLY_PROJECT_RULES,
+  pickerProject,
+  STEP_PROJECT_RULES,
+} from '../node-project-resolution';
 import { ModeToggle } from '../TemplatableField';
 
 type NodeProjectFieldProps = {
@@ -41,21 +45,17 @@ export function NodeProjectField({
   const flowDefault = flowDefaultProjectId?.trim() ?? '';
   const isInherited = !hasOverride && flowDefault !== '';
 
+  // Template-capable steps resolve a unique name too; custom nodes (no templates) match ids only.
+  const rules = allowTemplate ? STEP_PROJECT_RULES : ID_ONLY_PROJECT_RULES;
   const inheritedProjectName = useMemo((): string => {
     if (!isInherited || !flowDefaultProjectId) return '';
-    const list = Array.isArray(allProjects) ? allProjects : [];
-    const found = list.find((p) => isProjectRow(p) && p.id === flowDefaultProjectId);
-    if (found && isProjectRow(found)) return found.name;
-    return `${flowDefaultProjectId.slice(0, 8)}…`;
-  }, [isInherited, flowDefaultProjectId, allProjects]);
+    return pickerProject(flowDefaultProjectId, allProjects, rules).name;
+  }, [isInherited, flowDefaultProjectId, allProjects, rules]);
 
   const overrideProject = useMemo((): SelectedProject => {
     if (!hasOverride) return null;
-    const list = Array.isArray(allProjects) ? allProjects : [];
-    const found = list.find((p) => isProjectRow(p) && p.id === projectId);
-    if (found && isProjectRow(found)) return { id: found.id, name: found.name, path: found.path };
-    return { id: projectId, name: `${projectId.slice(0, 8)}…`, path: '' };
-  }, [hasOverride, allProjects, projectId]);
+    return pickerProject(projectId, allProjects, rules);
+  }, [hasOverride, allProjects, projectId, rules]);
 
   const handleProjectChange = (project: SelectedProject): void => {
     onProjectIdChange(project?.id?.trim() ?? '');

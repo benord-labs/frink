@@ -553,3 +553,107 @@ describe('flowNodeNeedsProject', () => {
     );
   });
 });
+
+describe('project or account not on this computer', () => {
+  const ctx = {
+    projects: [
+      { id: 'id-api', name: 'api' },
+      { id: 'id-web-1', name: 'web' },
+      { id: 'id-web-2', name: 'web' },
+    ],
+    connectedIntegrationIds: new Set(['int-1']),
+  };
+  const startTask = (projectId?: string) =>
+    node({ id: '1', blockType: 'start_task', config: projectId ? { projectId } : {} });
+
+  it('flags a step whose project id or name is unknown, and says so', () => {
+    expect(flowNodeNeedsAttention(startTask('mobile'), undefined, ctx)).toBe(true);
+    expect(flowNodeSummaryLine(startTask('mobile'), undefined, ctx)).toBe(
+      "Project “mobile” isn't on this computer",
+    );
+  });
+
+  it('flags a name two projects share', () => {
+    expect(flowNodeNeedsAttention(startTask('web'), undefined, ctx)).toBe(true);
+    expect(flowNodeSummaryLine(startTask('web'), undefined, ctx)).toBe(
+      'More than one project is named “web”',
+    );
+  });
+
+  it('accepts a unique name and never flags a template', () => {
+    expect(flowNodeNeedsAttention(startTask('api'), undefined, ctx)).toBe(false);
+    expect(flowNodeNeedsAttention(startTask('{{trigger.project}}'), undefined, ctx)).toBe(false);
+  });
+
+  it('puts the project problem ahead of the command on run_command', () => {
+    const n = node({
+      id: '1',
+      blockType: 'run_command',
+      config: { command: 'npm test', projectId: 'gone' },
+    });
+    expect(flowNodeNeedsAttention(n, undefined, ctx)).toBe(true);
+    expect(flowNodeSummaryLine(n, undefined, ctx)).toBe("Project “gone” isn't on this computer");
+  });
+
+  it('flags a custom step holding a project name, since custom nodes match ids only', () => {
+    const n = node({ id: '1', blockType: 'greeting_generator', config: { projectId: 'api' } });
+    expect(flowNodeNeedsAttention(n, undefined, ctx)).toBe(true);
+    expect(flowNodeNeedsAttention({ ...n, config: { projectId: 'id-api' } }, undefined, ctx)).toBe(
+      false,
+    );
+  });
+
+  it('skips the check while the project list is unavailable', () => {
+    expect(flowNodeNeedsAttention(startTask('mobile'), undefined, { projects: null })).toBe(false);
+  });
+
+  it('deep-links to flow settings only when the flow default is the bad value', () => {
+    expect(flowNodeNeedsProject(startTask(), 'gone', ctx)).toBe(true);
+    expect(flowNodeNeedsProject(startTask('gone'), 'id-api', ctx)).toBe(false);
+    expect(flowNodeNeedsAttention(startTask('gone'), 'id-api', ctx)).toBe(true);
+  });
+
+  it('flags a webhook whose account is no longer connected', () => {
+    const hook = (integrationId: string) =>
+      node({
+        id: '1',
+        blockType: 'webhook_trigger',
+        config: { integrationId, eventType: 'issue.created' },
+      });
+    expect(flowNodeNeedsAttention(hook('int-1'), undefined, ctx)).toBe(false);
+    expect(flowNodeNeedsAttention(hook('int-gone'), undefined, ctx)).toBe(true);
+    expect(flowNodeSummaryLine(hook('int-gone'), undefined, ctx)).toBe("Account isn't connected");
+    expect(
+      flowNodeNeedsAttention(hook('int-1'), undefined, { connectedIntegrationIds: new Set() }),
+    ).toBe(true);
+    expect(
+      flowNodeNeedsAttention(hook('int-gone'), undefined, { connectedIntegrationIds: null }),
+    ).toBe(false);
+  });
+});
+
+describe('plugin step with a stale project id', () => {
+  it('is never flagged, since plugin dispatch never reads projectId', () => {
+    const n = node({ id: '1', blockType: 'clickup_create_task', config: { projectId: 'gone' } });
+    const ctx = { projects: [], connectedIntegrationIds: new Set<string>() };
+    expect(flowNodeNeedsAttention(n, undefined, ctx)).toBe(false);
+    expect(flowNodeSummaryLine(n, undefined, ctx)).not.toContain("isn't on this computer");
+  });
+});
+
+describe('project variable dispatch would refuse', () => {
+  it('flags a stray brace on the step, and a template as the flow default', () => {
+    const ctx = { projects: [{ id: 'id-api', name: 'api' }] };
+    const broken = node({
+      id: '1',
+      blockType: 'start_task',
+      config: { projectId: '{{trigger.project' },
+    });
+    expect(flowNodeNeedsAttention(broken, undefined, ctx)).toBe(true);
+    expect(flowNodeSummaryLine(broken, undefined, ctx)).toBe(
+      "“{{trigger.project” isn't a valid variable",
+    );
+    const inherits = node({ id: '1', blockType: 'start_task', config: {} });
+    expect(flowNodeNeedsAttention(inherits, '{{trigger.project}}', ctx)).toBe(true);
+  });
+});

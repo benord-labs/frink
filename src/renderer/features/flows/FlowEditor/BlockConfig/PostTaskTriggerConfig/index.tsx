@@ -15,6 +15,7 @@ import { trpc } from '../../../../../lib/trpc';
 import { cn } from '../../../../../lib/utils';
 import { BLOCK_CONFIG_CALLOUT_CLASS } from '../block-config-chrome';
 import { FlowProjectField } from '../FlowProjectField';
+import { ID_ONLY_PROJECT_RULES } from '../node-project-resolution';
 import { FieldRow } from '../shared';
 import { toastTriggerBindingMutationError } from '../triggerBindingToasts';
 
@@ -223,7 +224,12 @@ export function PostTaskTriggerConfig({
           label="Project scope"
           hint="Tasks must belong to this project."
         >
-          <FlowProjectField projectId={bindingProjectId} onProjectIdChange={setBindingProject} />
+          {/* Bindings match tasks by project id only (post-task-trigger.ts). */}
+          <FlowProjectField
+            projectId={bindingProjectId}
+            onProjectIdChange={setBindingProject}
+            rules={ID_ONLY_PROJECT_RULES}
+          />
         </FieldRow>
 
         {isLoading ? (
