@@ -4,6 +4,7 @@ import { Clipboard, Folder } from 'lucide-react';
 import { getShortcutAction, keysToDisplay } from '@/lib/hotkeys/shortcut-registry';
 import { getRevealLabel } from '@/lib/utils/platform';
 import { useIsSelected, useSelectionCount, useSelectionStore } from '../MultiSelectContext';
+import { AddToChatItem } from './AddToChatItem';
 import { CopyPasteItems } from './CopyPasteItems';
 import { CreateItems } from './CreateItems';
 import { DeleteItem } from './DeleteItem';
@@ -32,8 +33,8 @@ function getMenuText(isBatch: boolean, count: number) {
 }
 
 type Props = {
-  /** Path of the node this menu belongs to — used to check its own selected-bit */
-  nodePath: string;
+  /** The node this menu belongs to; its path checks its own selected-bit */
+  node: { path: string; type: 'file' | 'folder' };
   hasCopiedItem?: boolean;
   /** Whether "New File/Folder" may be offered (folder + create handler present) */
   canCreate: boolean;
@@ -60,7 +61,7 @@ type Props = {
  * without every tree node re-rendering on selection changes.
  */
 export function TreeNodeMenu({
-  nodePath,
+  node,
   hasCopiedItem,
   canCreate,
   canDelete,
@@ -77,7 +78,7 @@ export function TreeNodeMenu({
 }: Props): ReactElement {
   const store = useSelectionStore();
   const count = useSelectionCount();
-  const isBatch = useIsSelected(nodePath) && count > 1;
+  const isBatch = useIsSelected(node.path) && count > 1;
   const text = getMenuText(isBatch, count);
 
   return (
@@ -91,6 +92,7 @@ export function TreeNodeMenu({
         <Clipboard className="mr-2 size-4" />
         {text.copyRelLabel}
       </ContextMenuItem>
+      <AddToChatItem node={node} isBatch={isBatch} count={count} store={store} />
       <CopyPasteItems
         show={!isBatch}
         hasCopiedItem={hasCopiedItem}

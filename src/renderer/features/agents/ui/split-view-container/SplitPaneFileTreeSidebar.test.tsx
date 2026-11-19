@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
+import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useAddToChat } from '@/lib/agent-chat/composer-input/add-to-chat-context';
+import { pendingComposerInputAtomFamily } from '@/lib/agent-chat/composer-input/pending-input';
 import { SplitPaneFileTreeSidebar } from './SplitPaneFileTreeSidebar';
 
 const capturedResizable = {
@@ -11,6 +14,7 @@ const capturedResizable = {
 const capturedPaneFileTree = {
   onClose: undefined as (() => void) | undefined,
 };
+let capturedAddToChat: ReturnType<typeof useAddToChat>;
 
 vi.mock('@/components/ui/resizable-sidebar', () => ({
   ResizableSidebar: (props: Record<string, unknown>) => {
@@ -22,6 +26,7 @@ vi.mock('@/components/ui/resizable-sidebar', () => ({
 vi.mock('../../../../features/files-sidebar/PaneFileTree', () => ({
   PaneFileTree: (props: { onClose?: () => void }) => {
     capturedPaneFileTree.onClose = props.onClose;
+    capturedAddToChat = useAddToChat();
     return <div data-testid="pane-file-tree">tree</div>;
   },
 }));
@@ -92,5 +97,26 @@ describe('SplitPaneFileTreeSidebar', () => {
     );
 
     expect(capturedPaneFileTree.onClose).toBeUndefined();
+  });
+
+  it("gives the pane's tree Add to Chat for the pane's own chat", () => {
+    const store = createStore();
+    render(
+      <Provider store={store}>
+        <SplitPaneFileTreeSidebar
+          projectPath="/tmp/proj"
+          isWorktree={false}
+          chatId="chat-4"
+          paneIndex={1}
+          onFileTreeRef={() => {}}
+        />
+      </Provider>,
+    );
+
+    capturedAddToChat?.([{ path: 'src/a.ts', type: 'file' }]);
+
+    expect(store.get(pendingComposerInputAtomFamily('chat-4'))).toEqual([
+      { kind: 'paths', items: [{ path: 'src/a.ts', type: 'file' }] },
+    ]);
   });
 });

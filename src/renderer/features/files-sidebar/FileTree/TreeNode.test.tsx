@@ -2,7 +2,10 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { createStore, Provider } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AddToChatProvider } from '@/lib/agent-chat/composer-input/add-to-chat-context';
+import { pendingComposerInputAtomFamily } from '@/lib/agent-chat/composer-input/pending-input';
 import type { FileTreeNode } from '../types';
 import { SelectionActionsContext, SelectionStateContext } from './MultiSelectContext';
 import { ModifiedFilterContext } from './modified-filter-context';
@@ -10,13 +13,14 @@ import { RefreshContext } from './RefreshContext';
 import { TreeNode } from './TreeNode';
 import { createSelectionStore, NOOP_SELECTION_STORE } from './use-multi-select';
 
-/** Build a seeded selection store from a set of selected paths (test helper) */
+/** Build a seeded selection store from a set of selected paths (test helper); a path without an
+ * extension is a folder. */
 function seedStore(selectedPaths?: Set<string>) {
   const store = createSelectionStore();
   if (selectedPaths && selectedPaths.size > 0) {
     store.selectAll(Array.from(selectedPaths), (p) => ({
       name: p.split('/').pop() ?? p,
-      type: 'file',
+      type: p.includes('.') ? 'file' : 'folder',
     }));
   }
   return store;
@@ -147,6 +151,8 @@ function renderTreeNode(
     isMultiSelected?: boolean;
     selectedPaths?: Set<string>;
     modifiedOnly?: boolean;
+    /** The chat the tree belongs to; without one there is no Add to Chat */
+    chatId?: string;
   },
 ) {
   const node = options?.node ?? folderNode;
@@ -154,26 +160,32 @@ function renderTreeNode(
   // isMultiSelected is requested (membership is what drives the highlight).
   const paths =
     options?.selectedPaths ?? (options?.isMultiSelected ? new Set([node.path]) : undefined);
-  return render(
-    <ModifiedFilterContext.Provider value={Boolean(options?.modifiedOnly)}>
-      <RefreshContext.Provider value={0}>
-        <SelectionActionsContext.Provider value={{}}>
-          <SelectionStateContext.Provider value={seedStore(paths)}>
-            <TreeNode
-              node={node}
-              level={0}
-              projectPath="/tmp/proj"
-              onFileClick={vi.fn()}
-              onCopyItem={options?.onCopyItem}
-              onPasteIntoFolder={options?.onPasteIntoFolder}
-              hasCopiedItem={options?.hasCopiedItem}
-              pathToExpandAfterDrop={pathToExpandAfterDrop}
-            />
-          </SelectionStateContext.Provider>
-        </SelectionActionsContext.Provider>
-      </RefreshContext.Provider>
-    </ModifiedFilterContext.Provider>,
+  const store = createStore();
+  const view = render(
+    <Provider store={store}>
+      <AddToChatProvider chatId={options?.chatId}>
+        <ModifiedFilterContext.Provider value={Boolean(options?.modifiedOnly)}>
+          <RefreshContext.Provider value={0}>
+            <SelectionActionsContext.Provider value={{}}>
+              <SelectionStateContext.Provider value={seedStore(paths)}>
+                <TreeNode
+                  node={node}
+                  level={0}
+                  projectPath="/tmp/proj"
+                  onFileClick={vi.fn()}
+                  onCopyItem={options?.onCopyItem}
+                  onPasteIntoFolder={options?.onPasteIntoFolder}
+                  hasCopiedItem={options?.hasCopiedItem}
+                  pathToExpandAfterDrop={pathToExpandAfterDrop}
+                />
+              </SelectionStateContext.Provider>
+            </SelectionActionsContext.Provider>
+          </RefreshContext.Provider>
+        </ModifiedFilterContext.Provider>
+      </AddToChatProvider>
+    </Provider>,
   );
+  return { ...view, store };
 }
 
 describe('TreeNode drop reveal', () => {
@@ -321,6 +333,40 @@ describe('TreeNode drop reveal', () => {
     expect(buttons.some((b) => b.textContent?.includes('Copy 1 Paths'))).toBe(false);
     // Internal copy/paste stays available for a single selection.
     expect(buttons.some((b) => b.textContent?.trim() === 'Copy')).toBe(true);
+  });
+
+  it("queues every selected path for the tree's chat from a batch selection", () => {
+    const { store } = renderTreeNode(null, {
+      selectedPaths: new Set(['src/components', 'src/a.ts', 'src/b.ts']),
+      chatId: 'chat-1',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add 3 to Chat' }));
+    expect(store.get(pendingComposerInputAtomFamily('chat-1'))).toEqual([
+      {
+        kind: 'paths',
+        items: [
+          { path: 'src/components', type: 'folder' },
+          { path: 'src/a.ts', type: 'file' },
+          { path: 'src/b.ts', type: 'file' },
+        ],
+      },
+    ]);
+  });
+
+  it('queues only the right-clicked node when it is outside the selection', () => {
+    const { store } = renderTreeNode(null, {
+      selectedPaths: new Set(['src/a.ts', 'src/b.ts']),
+      chatId: 'chat-1',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add to Chat' }));
+    expect(store.get(pendingComposerInputAtomFamily('chat-1'))).toEqual([
+      { kind: 'paths', items: [{ path: 'src/components', type: 'folder' }] },
+    ]);
+  });
+
+  it('offers no Add to Chat when the tree has no chat to send to', () => {
+    renderTreeNode(null);
+    expect(screen.queryByRole('button', { name: /to Chat/ })).not.toBeInTheDocument();
   });
 
   it('disables paste menu item when no copied item exists', () => {

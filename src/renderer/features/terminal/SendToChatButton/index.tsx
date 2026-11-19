@@ -4,7 +4,7 @@ import { MessageSquarePlus } from 'lucide-react';
 import { useCallback } from 'react';
 import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
+import { pendingComposerInputAtomFamily } from '@/lib/agent-chat/composer-input/pending-input';
 import { readRecentOutput } from '@/lib/terminal/recent-output';
 import { getTerminalInstance } from '@/lib/terminal/terminal-instances';
 import type { TerminalInstance } from '../types';
@@ -22,7 +22,7 @@ type Props = {
 
 /** Puts the pane's selection, or its newest output, in this chat's composer as an attachment. */
 export function SendToChatButton({ chatId, terminal, tooltipSide = 'bottom', onSent }: Props) {
-  const setPending = useSetAtom(pendingTerminalOutputAtomFamily(chatId));
+  const setPending = useSetAtom(pendingComposerInputAtomFamily(chatId));
 
   const send = useCallback(() => {
     const xterm = terminal && getTerminalInstance(terminal.paneId);
@@ -33,7 +33,8 @@ export function SendToChatButton({ chatId, terminal, tooltipSide = 'bottom', onS
       toast('This terminal has no output yet');
       return;
     }
-    setPending({ text, label: `${terminal.name} ${selection ? 'selection' : 'output'}` });
+    const label = `${terminal.name} ${selection ? 'selection' : 'output'}`;
+    setPending((prev) => [...prev, { kind: 'text', text, label }]);
     onSent?.();
   }, [terminal, setPending, onSent]);
 

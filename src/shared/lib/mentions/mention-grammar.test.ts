@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findMentionTokens } from './mention-grammar';
+import { findMentionTokens, isWholeMentionId } from './mention-grammar';
 
 describe('findMentionTokens', () => {
   it.each(['', 'plain text, user@example.com and [brackets]', '@[]'])(
@@ -81,5 +81,16 @@ describe('findMentionTokens', () => {
     findMentionTokens('a long text that ends in a token @[skill:x]');
 
     expect(findMentionTokens('@[agent:y]')).toStrictEqual([{ id: 'agent:y', start: 0, end: 10 }]);
+  });
+});
+
+describe('isWholeMentionId', () => {
+  it.each([
+    ['file:local:src/app/[id]/page.tsx', true],
+    ['folder:local:docs/10:30 notes', true],
+    ['file:local:src/a]b.ts', false],
+    ['file:local:app/[id] notes/page.tsx', false],
+  ])('%s → %s', (id, whole) => {
+    expect(isWholeMentionId(id)).toBe(whole);
   });
 });

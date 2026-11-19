@@ -23,7 +23,7 @@ import {
   pastedTextMention,
 } from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
-import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
+import { usePendingInputIntake } from '@/lib/agent-chat/composer-input/use-pending-input-intake';
 import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePersistedToggle } from '../../../hooks/use-persisted-toggle';
@@ -273,7 +273,7 @@ export function NewChatForm({
     resumeDraftPersistence,
     hasAttachments,
   } = useDraftManagement({ editorRef, setHasContent, draftKey, subChatId });
-  useTerminalOutputIntake({ chatId: terminalId, addPastedText, editorRef });
+  usePendingInputIntake({ chatId: terminalId, addPastedText, editorRef });
 
   // Editor handlers (mentions, slash, paste, drag & drop)
   const editorHandlers = useEditorHandlers({

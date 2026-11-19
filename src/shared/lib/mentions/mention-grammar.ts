@@ -15,6 +15,9 @@ export const MENTION_PREFIXES = {
  * this one for the file open in the editor, attached without the user picking it. */
 export const OPEN_EDITOR_FILE_SOURCE = 'editor';
 
+/** The second slot of a file or folder token the user picked, from the @ menu or the file tree. */
+export const PICKED_PATH_SOURCE = 'local';
+
 /** Strips characters that would break the `@[type:preview:payload]` mention grammar. */
 export const MENTION_PREVIEW_SANITIZE_REGEX = /[:[\]]/g;
 
@@ -38,4 +41,10 @@ export function findMentionTokens(text: string): MentionToken[] {
     start: match.index,
     end: match.index + match[0].length,
   }));
+}
+
+/** Whether `id` reads back as one whole `@[id]` token; some paths with brackets do not. */
+export function isWholeMentionId(id: string): boolean {
+  const tokens = findMentionTokens(`@[${id}]`);
+  return tokens.length === 1 && tokens[0].id === id;
 }

@@ -1,4 +1,5 @@
 import { ResizableSidebar } from '@/components/ui/resizable-sidebar';
+import { AddToChatProvider } from '@/lib/agent-chat/composer-input/add-to-chat-context';
 import { cn } from '@/lib/utils';
 import { splitPaneFileTreeWidthAtom } from '../../../../features/files-sidebar/atoms';
 import {
@@ -55,14 +56,16 @@ export function SplitPaneFileTreeSidebar({
         )}
       >
         {isWorktree && <div className="h-[2px] shrink-0 bg-primary/50" aria-hidden />}
-        <PaneFileTree
-          ref={onFileTreeRef}
-          projectPath={projectPath}
-          chatId={chatId}
-          paneIndex={paneIndex}
-          isWorktree={isWorktree}
-          onClose={onCloseFileTree}
-        />
+        <AddToChatProvider chatId={chatId}>
+          <PaneFileTree
+            ref={onFileTreeRef}
+            projectPath={projectPath}
+            chatId={chatId}
+            paneIndex={paneIndex}
+            isWorktree={isWorktree}
+            onClose={onCloseFileTree}
+          />
+        </AddToChatProvider>
       </div>
     </ResizableSidebar>
   );

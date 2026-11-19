@@ -18,6 +18,7 @@ import simpleGit from 'simple-git';
 import { z } from 'zod';
 import type { FileStatus } from '../../../../shared/changes-types';
 import { getImageMimeType, isImagePath } from '../../../../shared/image-extensions';
+import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import { isPdfPath, MAX_PDF_BYTES } from '../../../../shared/pdf-extensions';
 import { escapeRegExp } from '../../../../shared/utils/escape-regexp';
 import { PathValidationError, resolvePathInWorktree } from '../../git/security/path-validation';
@@ -753,13 +754,7 @@ function filterEntries(
   });
 
   // Map to expected format with type
-  return filtered.map((entry) => ({
-    id: `${entry.type}:local:${entry.path}`,
-    label: basename(entry.path),
-    path: entry.path,
-    repository: 'local',
-    type: entry.type,
-  }));
+  return filtered.map((entry) => pickedPathMention(entry.type, entry.path));
 }
 
 export type FileContentMatch = {

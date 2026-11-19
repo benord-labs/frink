@@ -14,7 +14,7 @@ import { codeSelectionMention } from '@/lib/mentions/queued-message-text';
 import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { TooltipProvider } from '../../../components/ui/tooltip';
 import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
-import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
+import { pendingComposerInputAtomFamily } from '@/lib/agent-chat/composer-input/pending-input';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
 import { lastSelectedModelIdAtom, lastSelectedModelIdAtomFamily, NEW_CHAT_PANE } from '../atoms';
@@ -119,15 +119,45 @@ describe('NewChatForm editor context', () => {
   // Keyed by the form's terminal id, not its draft key: outside split view the two differ.
   it("puts its terminal's output in the composer as a labelled chip", async () => {
     const store = createStore();
-    store.set(pendingTerminalOutputAtomFamily(newChatTerminalId()), {
-      text: 'FAIL',
-      label: 'Terminal 1 output',
-    });
+    store.set(pendingComposerInputAtomFamily(newChatTerminalId()), [
+      { kind: 'text', text: 'FAIL', label: 'Terminal 1 output' },
+    ]);
 
     renderNewChat(store);
 
     expect(await screen.findByText('Terminal 1 output')).toBeInTheDocument();
-    expect(store.get(pendingTerminalOutputAtomFamily(newChatTerminalId()))).toBeNull();
+    expect(store.get(pendingComposerInputAtomFamily(newChatTerminalId()))).toEqual([]);
+  });
+
+  it('puts sent paths in the real composer as mention chips that go out with the message', async () => {
+    const store = createStore();
+    store.set(pendingComposerInputAtomFamily(newChatTerminalId()), [
+      {
+        kind: 'paths',
+        items: [
+          { path: 'src/a.ts', type: 'file' },
+          { path: 'src/lib', type: 'folder' },
+        ],
+      },
+    ]);
+    const { container } = renderNewChat(store);
+
+    const chips = container.querySelectorAll('[contenteditable="true"] [data-mention-id]');
+    expect(Array.from(chips, (chip) => chip.getAttribute('data-mention-id'))).toEqual([
+      'file:local:src/a.ts',
+      'folder:local:src/lib',
+    ]);
+    const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!editor) throw new Error('composer editor not found');
+    fireEvent.keyDown(editor, { key: 'Enter' });
+
+    await waitFor(() => expect(createChat).toHaveBeenCalledOnce());
+    expect(createChat.mock.calls[0][0].initialMessageParts).toEqual([
+      {
+        type: 'text',
+        text: expect.stringContaining('@[file:local:src/a.ts] @[folder:local:src/lib]'),
+      },
+    ]);
   });
 
   it('sends the file it shows with the first message', async () => {

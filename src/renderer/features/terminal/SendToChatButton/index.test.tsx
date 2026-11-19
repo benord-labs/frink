@@ -7,7 +7,7 @@ import { Toaster } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { trpc } from '@/lib/trpc';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
+import { pendingComposerInputAtomFamily } from '@/lib/agent-chat/composer-input/pending-input';
 import {
   registerTerminalInstance,
   type TerminalReader,
@@ -63,7 +63,7 @@ function renderButton(xterm: TerminalReader | null, onSent = vi.fn()) {
   );
   fireEvent.click(screen.getByRole('button', { name: 'Send selection or recent output to chat' }));
   if (xterm) unregisterTerminalInstance(terminal.paneId);
-  return { pending: store.get(pendingTerminalOutputAtomFamily(CHAT)), onSent };
+  return { pending: store.get(pendingComposerInputAtomFamily(CHAT)), onSent };
 }
 
 describe('SendToChatButton', () => {
@@ -73,25 +73,29 @@ describe('SendToChatButton', () => {
     const { pending, onSent } = renderButton(
       fakeXterm('expected 1\nreceived 2\n\n', ['$ bun test']),
     );
-    expect(pending).toEqual({ text: 'expected 1\nreceived 2', label: 'Terminal 1 selection' });
+    expect(pending).toEqual([
+      { kind: 'text', text: 'expected 1\nreceived 2', label: 'Terminal 1 selection' },
+    ]);
     expect(onSent).toHaveBeenCalledOnce();
   });
 
   it('sends the recent output when nothing is selected', () => {
     const { pending } = renderButton(fakeXterm('', ['$ bun test', 'FAIL a.test.ts', '$']));
-    expect(pending).toEqual({ text: '$ bun test\nFAIL a.test.ts\n$', label: 'Terminal 1 output' });
+    expect(pending).toEqual([
+      { kind: 'text', text: '$ bun test\nFAIL a.test.ts\n$', label: 'Terminal 1 output' },
+    ]);
   });
 
   it('says the terminal has no output yet, and sends nothing, for an empty pane', async () => {
     const { pending, onSent } = renderButton(fakeXterm('', ['', '']));
-    expect(pending).toBeNull();
+    expect(pending).toEqual([]);
     expect(onSent).not.toHaveBeenCalled();
     expect(await screen.findByText('This terminal has no output yet')).toBeTruthy();
   });
 
   it('does nothing for a pane that is not mounted', () => {
     const { pending, onSent } = renderButton(null);
-    expect(pending).toBeNull();
+    expect(pending).toEqual([]);
     expect(onSent).not.toHaveBeenCalled();
   });
 });
@@ -131,10 +135,9 @@ describe('TerminalSidebar in a narrow window', () => {
     );
     unregisterTerminalInstance(terminal.paneId);
 
-    expect(store.get(pendingTerminalOutputAtomFamily(CHAT))).toEqual({
-      text: 'FAIL a.test.ts',
-      label: 'Terminal 1 output',
-    });
+    expect(store.get(pendingComposerInputAtomFamily(CHAT))).toEqual([
+      { kind: 'text', text: 'FAIL a.test.ts', label: 'Terminal 1 output' },
+    ]);
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
