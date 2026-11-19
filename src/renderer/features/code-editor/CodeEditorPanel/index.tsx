@@ -85,6 +85,7 @@ import {
   lastActiveTabPerPaneAtom,
   markFileSavedAtom,
   normalizeRevealSelection,
+  revealPendingOnMount,
   type OpenFile,
   openFilesAtom,
   pinFileAtom,
@@ -596,6 +597,8 @@ export function CodeEditorPanel() {
   }, [activePath, markdownPreviewVisible]);
 
   const activeAbsoluteFilePath = activeFile ? getFullPath(projectPath, activeFile.path) : null;
+  const activeAbsoluteFilePathRef = useRef(activeAbsoluteFilePath);
+  activeAbsoluteFilePathRef.current = activeAbsoluteFilePath;
   const activeFileModelPath = useMemo(() => {
     if (!activeFile) return undefined;
     return buildFileModelPath(projectPath, activeFile.path);
@@ -1990,15 +1993,11 @@ export function CodeEditorPanel() {
                       if (content) {
                         acquireTypes(content);
                       }
-                      // Apply any pending reveal that was queued before Monaco mounted
-                      const pending = pendingRevealRef.current;
-                      if (pending) {
-                        const model = editor.getModel();
-                        if (model) {
-                          revealLineInEditor(pending);
-                          pendingRevealRef.current = null;
-                        }
-                      }
+                      pendingRevealRef.current = revealPendingOnMount(
+                        pendingRevealRef.current,
+                        activeAbsoluteFilePathRef.current,
+                        revealLineInEditor,
+                      );
                     }}
                     theme={monacoTheme}
                     options={{

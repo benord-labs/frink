@@ -8,7 +8,7 @@ The panel only shows changes. It never edits, commits or uploads anything itself
 
 - Each changed file has its own section with the lines that were added (green) and removed (red).
 - The row under the header counts the files and the lines added and removed.
-- Click a file's name to open it in the editor. Right-click it to reveal it in Finder or copy its path.
+- Click a file's name to open it in the editor at its first changed line. Right-click it to open it the same way, reveal it in Finder or copy its path.
 - Collapse one file with the arrow next to its name, or all of them with the button at the top.
 - Switch between one column and old-and-new side by side with the layout button at the top.
 - Select some lines and add them to your message to ask the agent about them.

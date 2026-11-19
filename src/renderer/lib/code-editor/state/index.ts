@@ -41,5 +41,6 @@ export {
   dispatchEditorRevealLine,
   normalizeRevealSelection,
   type RevealLineDetail,
+  revealPendingOnMount,
   shouldRevealNow,
 } from './reveal-line-state';
