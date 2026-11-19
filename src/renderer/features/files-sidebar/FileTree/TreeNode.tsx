@@ -15,6 +15,7 @@ import type { CreatingItem, FileTreeNode } from '../types';
 import { InlineInput } from './InlineInput';
 import { useIsSelected, useSelectionActions, useSelectionStore } from './MultiSelectContext';
 import { useModifiedFilter } from './modified-filter-context';
+import { useReadOnlyTree } from './ReadOnlyContext';
 import { useRefreshTrigger } from './RefreshContext';
 import { DragButton, DropRoot } from './TreeNode.dnd';
 import { TreeNodeMenu } from './TreeNodeMenu';
@@ -188,6 +189,7 @@ export const TreeNode = memo(function TreeNode({
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(node.childrenLoaded ?? false);
   const refreshTrigger = useRefreshTrigger();
+  const readOnly = useReadOnlyTree();
 
   const isFolder = node.type === 'folder';
   const hasChildren = children && children.length > 0;
@@ -217,8 +219,12 @@ export const TreeNode = memo(function TreeNode({
     [node.path, projectPath],
   );
 
-  const dragId = `tree-drag-${projectPath}:${node.path}`;
-  const dropId = `tree-drop-${projectPath}:${node.path}`;
+  // dnd-kit registers a row by id even when it can't be dragged or dropped on. A read-only tree
+  // can share a DndContext with another pane's tree of the same folder, so its rows take ids of
+  // their own and never replace that tree's.
+  const dndKey = `${readOnly ? 'read-only:' : ''}${projectPath}:${node.path}`;
+  const dragId = `tree-drag-${dndKey}`;
+  const dropId = `tree-drop-${dndKey}`;
 
   // Refetch directory contents (used for initial load and for refresh-in-place)
   const fetchChildren = useCallback(async () => {
@@ -472,6 +478,7 @@ export const TreeNode = memo(function TreeNode({
     <DragButton
       draggableId={dragId}
       draggableData={draggableData}
+      readOnly={readOnly}
       type="button"
       data-tree-path={node.path}
       data-tree-type={node.type}
@@ -535,7 +542,7 @@ export const TreeNode = memo(function TreeNode({
     <DropRoot
       id={dropId}
       data={droppableData}
-      disabled={!isFolder}
+      disabled={readOnly || !isFolder}
       className="relative"
       overClassName="bg-primary/10 rounded-md"
     >

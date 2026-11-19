@@ -4,6 +4,7 @@ import { Clipboard, Folder } from 'lucide-react';
 import { getShortcutAction, keysToDisplay } from '@/lib/hotkeys/shortcut-registry';
 import { getRevealLabel } from '@/lib/utils/platform';
 import { useIsSelected, useSelectionCount, useSelectionStore } from '../MultiSelectContext';
+import { useReadOnlyTree } from '../ReadOnlyContext';
 import { AddToChatItem } from './AddToChatItem';
 import { CopyPasteItems } from './CopyPasteItems';
 import { CreateItems } from './CreateItems';
@@ -79,11 +80,19 @@ export function TreeNodeMenu({
   const store = useSelectionStore();
   const count = useSelectionCount();
   const isBatch = useIsSelected(node.path) && count > 1;
+  // FileTree always hands rows a create handler, and Copy only feeds Paste, so a read-only tree
+  // hides both here; Rename and Delete go with their missing handlers. Add to Chat is hidden too:
+  // its paths are relative to the chat's own project, not to the project a read-only tree shows.
+  const readOnly = useReadOnlyTree();
   const text = getMenuText(isBatch, count);
 
   return (
     <>
-      <CreateItems show={canCreate && !isBatch} onNewFile={onNewFile} onNewFolder={onNewFolder} />
+      <CreateItems
+        show={canCreate && !isBatch && !readOnly}
+        onNewFile={onNewFile}
+        onNewFolder={onNewFolder}
+      />
       <ContextMenuItem onClick={onCopyPath}>
         <Clipboard className="mr-2 size-4" />
         {text.copyPathLabel}
@@ -92,9 +101,9 @@ export function TreeNodeMenu({
         <Clipboard className="mr-2 size-4" />
         {text.copyRelLabel}
       </ContextMenuItem>
-      <AddToChatItem node={node} isBatch={isBatch} count={count} store={store} />
+      {!readOnly && <AddToChatItem node={node} isBatch={isBatch} count={count} store={store} />}
       <CopyPasteItems
-        show={!isBatch}
+        show={!isBatch && !readOnly}
         hasCopiedItem={hasCopiedItem}
         copyHint={text.copyHint}
         pasteHint={text.pasteHint}

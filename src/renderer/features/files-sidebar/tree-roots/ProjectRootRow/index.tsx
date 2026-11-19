@@ -11,14 +11,46 @@ const BADGE_TONES = {
   linked: 'bg-primary/10 text-primary',
 };
 
+/** What a project is to its tree, e.g. "Browsing"; `tone` tints it, neutral by default */
+type RootBadgeProps = { label: string; icon?: LucideIcon; tone?: keyof typeof BADGE_TONES };
+
+function RootBadge({ label, icon: Icon, tone = 'main' }: RootBadgeProps): ReactElement {
+  return (
+    <Badge shape="tag" className={cn('shrink-0 gap-1 font-normal', BADGE_TONES[tone])}>
+      {Icon && <Icon className="size-3" aria-hidden />}
+      {label}
+    </Badge>
+  );
+}
+
+/** A project's name and badge over its search results; its folder shows on hover. */
+export function RootHeading({
+  name,
+  path,
+  badge,
+}: {
+  name: string;
+  path: string;
+  badge: RootBadgeProps;
+}): ReactElement {
+  return (
+    <h3
+      title={path}
+      className="flex min-w-0 items-center gap-1.5 px-1 pb-1 text-xs font-semibold text-foreground/85"
+    >
+      <span className="truncate">{name}</span>
+      <RootBadge {...badge} />
+    </h3>
+  );
+}
+
 type Props = {
   name: string;
   /** The project's folder, shown in the row's tooltip */
   path: string;
   /** The folder's current branch; nothing shows without one */
   branch?: string | null;
-  /** What the project is to this tree, e.g. "Browsing"; `tone` tints it, neutral by default */
-  badge?: { label: string; icon?: LucideIcon; tone?: keyof typeof BADGE_TONES };
+  badge?: RootBadgeProps;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   /** The id of the element the row shows and hides */
@@ -45,7 +77,6 @@ export function ProjectRootRow({
     const next = event.key === 'ArrowRight';
     if (next !== expanded) onExpandedChange(next);
   };
-  const BadgeIcon = badge?.icon;
 
   return (
     <div className="flex items-center gap-0.5 pr-1">
@@ -53,6 +84,7 @@ export function ProjectRootRow({
         <TooltipTrigger asChild>
           <button
             type="button"
+            data-root-row
             aria-expanded={expanded}
             aria-controls={controlsId}
             onClick={() => onExpandedChange(!expanded)}
@@ -71,15 +103,7 @@ export function ProjectRootRow({
               aria-hidden
             />
             <span className="truncate">{name}</span>
-            {badge && (
-              <Badge
-                shape="tag"
-                className={cn('shrink-0 gap-1 font-normal', BADGE_TONES[badge.tone ?? 'main'])}
-              >
-                {BadgeIcon && <BadgeIcon className="size-3" aria-hidden />}
-                {badge.label}
-              </Badge>
-            )}
+            {badge && <RootBadge {...badge} />}
             {branch && (
               <span className="flex min-w-0 items-center gap-1 font-normal text-muted-foreground">
                 <GitBranch className="size-3 shrink-0" aria-hidden />

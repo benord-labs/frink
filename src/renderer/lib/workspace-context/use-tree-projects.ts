@@ -64,9 +64,11 @@ export function useTreeProjects(chatId: string | null | undefined) {
   const ids = useAtomValue(chatTreeProjectIdsAtomFamily(key));
   const addProject = useSetAtom(addChatTreeProjectAtom);
   const removeProject = useSetAtom(removeChatTreeProjectAtom);
-  const chatProject =
-    trpc.chats.get.useQuery({ id: key }, { enabled: Boolean(chatId), select: mainTreeProject })
-      .data ?? null;
+  const chatQuery = trpc.chats.get.useQuery(
+    { id: key },
+    { enabled: Boolean(chatId), select: mainTreeProject },
+  );
+  const chatProject = chatQuery.data ?? null;
   // The branch checked out in the chat's folder now, read as the composer bar reads it. The branch
   // stored with the chat is set only when its worktree is made, so it misses any later checkout.
   const currentBranch = trpc.changes.getBranches.useQuery(
@@ -93,6 +95,10 @@ export function useTreeProjects(chatId: string | null | undefined) {
     extras,
     candidates,
     projectsStatus: projectsQuery.status,
+    /** Whether `main` and `extras` are final: there is no chat, or it has loaded and, when it has
+     *  a project folder, so has the project list (loaded or failed). */
+    isLoaded:
+      (!chatId || chatQuery.status !== 'pending') && (!main || projectsQuery.status !== 'pending'),
     canAdd: Boolean(main),
     add: (projectId: string) => {
       if (main) addProject({ chatId: key, projectId });
@@ -100,3 +106,5 @@ export function useTreeProjects(chatId: string | null | undefined) {
     remove: (projectId: string) => removeProject({ chatId: key, projectId }),
   };
 }
+
+export type TreeProjects = ReturnType<typeof useTreeProjects>;

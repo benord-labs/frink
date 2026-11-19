@@ -58,7 +58,18 @@ export const DropRoot = memo(function DropRoot({
 type DragButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'id'> & {
   draggableId: string;
   draggableData: TreeNodeDragData;
+  /** A row of a read-only tree. Not `disabled`, which `rest` would pass on to the <button>. */
+  readOnly?: boolean;
   children: ReactNode;
+};
+
+/** What a read-only row takes from dnd-kit: no handlers, attributes or node, so it can't be
+ *  dragged and isn't announced as a disabled draggable. */
+const READ_ONLY_DRAGGABLE = {
+  attributes: undefined,
+  listeners: undefined,
+  setNodeRef: () => {},
+  isDragging: false,
 };
 
 /**
@@ -72,6 +83,7 @@ export const DragButton = memo(
     {
       draggableId,
       draggableData,
+      readOnly = false,
       children,
       className,
       style,
@@ -81,10 +93,10 @@ export const DragButton = memo(
     },
     forwardedRef,
   ) {
-    const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-      id: draggableId,
-      data: draggableData,
-    });
+    const draggable = useDraggable({ id: draggableId, data: draggableData, disabled: readOnly });
+    const { attributes, listeners, setNodeRef, isDragging } = readOnly
+      ? READ_ONLY_DRAGGABLE
+      : draggable;
 
     const refCallback = useCallback(
       (el: HTMLButtonElement | null) => {

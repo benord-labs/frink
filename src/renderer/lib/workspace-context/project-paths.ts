@@ -6,6 +6,8 @@ import {
   isRootLikePath,
   isWindowsAbsolutePath,
   normalizePathForComparison,
+  normalizePathSlashes,
+  trimTrailingSlashes,
 } from '../../../shared/lib/path-normalization';
 
 /** True for a project with a folder on disk; a `virtual://` project only groups chats. */
@@ -37,6 +39,13 @@ export function findProjectForPath<T extends { path: string }>(
     }
   }
   return found;
+}
+
+/** A folder as an entry of the folder that holds it, which is how files.entryType can stat it. */
+export function asEntryOfParent(folderPath: string): { projectPath: string; relativePath: string } {
+  const folder = trimTrailingSlashes(normalizePathSlashes(folderPath));
+  const cut = folder.lastIndexOf('/') + 1;
+  return { projectPath: folder.slice(0, cut), relativePath: folder.slice(cut) };
 }
 
 /** True when two folders are the same or one lies inside the other. */

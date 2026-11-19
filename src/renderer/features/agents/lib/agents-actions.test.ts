@@ -8,12 +8,25 @@ describe('agents-actions', () => {
 
     const result = await executeAgentAction(
       'file-search',
-      { setFileSearchDialogOpen, canShowFilesSidebar: true },
+      { setFileSearchDialogOpen, canSearchFiles: true },
       'hotkey',
     );
 
     expect(result.success).toBe(true);
     expect(setFileSearchDialogOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('no-ops file-search when it has no folder to search, even with a project selected', async () => {
+    const setFileSearchDialogOpen = vi.fn();
+
+    const result = await executeAgentAction(
+      'file-search',
+      { setFileSearchDialogOpen, canShowFilesSidebar: true, canSearchFiles: false },
+      'hotkey',
+    );
+
+    expect(result.success).toBe(true);
+    expect(setFileSearchDialogOpen).not.toHaveBeenCalled();
   });
 
   it('activates file-tree search for find-in-files action', async () => {

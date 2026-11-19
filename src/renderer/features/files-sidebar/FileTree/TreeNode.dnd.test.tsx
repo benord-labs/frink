@@ -1,9 +1,12 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createRef, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TreeNodeDragData, TreeNodeDropData } from './TreeNode';
+import type { FileTreeNode } from '../types';
+import { ReadOnlyContext } from './ReadOnlyContext';
+import { TreeNode, type TreeNodeDragData, type TreeNodeDropData } from './TreeNode';
 import { DragButton, DropRoot } from './TreeNode.dnd';
 
 /**
@@ -24,8 +27,15 @@ const dndMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@dnd-kit/core', () => ({
-  useDraggable: () => ({
-    attributes: { 'aria-roledescription': 'draggable' },
+  // As in dnd-kit, a draggable hands out a button role, a tab stop and its disabled state, even
+  // when it is disabled.
+  useDraggable: ({ disabled }: { disabled?: boolean }) => ({
+    attributes: {
+      role: 'button',
+      tabIndex: 0,
+      'aria-roledescription': 'draggable',
+      'aria-disabled': Boolean(disabled),
+    },
     listeners: { onPointerDown: dndMocks.dndPointerDown, onKeyDown: dndMocks.dndKeyDown },
     setNodeRef: dndMocks.draggableSetNodeRef,
     isDragging: false,
@@ -36,11 +46,14 @@ vi.mock('@dnd-kit/core', () => ({
   }),
 }));
 
-// Minimum mocks so TreeNode.tsx module can load (we only use DragButton/DropRoot exports).
+// Minimum mocks so a TreeNode row can render around DragButton and DropRoot.
 vi.mock('lucide-react', () => ({
+  Clipboard: () => null,
   ClipboardPaste: () => null,
   ChevronRight: () => null,
   Copy: () => null,
+  Files: () => null,
+  Folder: () => null,
   Loader2: () => null,
   PencilLine: () => null,
 }));
@@ -243,5 +256,58 @@ describe('DropRoot', () => {
     // is never called with the DOM element. Prevents file nodes from participating in collision
     // detection even if dnd-kit's own `disabled` flag is ever misused.
     expect(dndMocks.droppableSetNodeRef).not.toHaveBeenCalledWith(expect.any(HTMLElement));
+  });
+});
+
+describe('TreeNode in a read-only tree', () => {
+  const nodes: FileTreeNode[] = [
+    { id: 'a.ts', name: 'a.ts', path: 'a.ts', type: 'file' },
+    { id: 'src', name: 'src', path: 'src', type: 'folder' },
+  ];
+  function renderRows(readOnly: boolean) {
+    const onFileClick = vi.fn();
+    const { container } = render(
+      <ReadOnlyContext.Provider value={readOnly}>
+        {nodes.map((node) => (
+          <TreeNode
+            key={node.id}
+            node={node}
+            level={0}
+            projectPath="/tmp/proj"
+            onFileClick={onFileClick}
+          />
+        ))}
+      </ReadOnlyContext.Provider>,
+    );
+    const file = container.querySelector<HTMLElement>('[data-tree-path="a.ts"]');
+    if (!file) throw new Error('no a.ts row');
+    return { onFileClick, file };
+  }
+
+  it('is not announced as a draggable, still opens on click and Space, and its folder takes no drops', async () => {
+    const user = userEvent.setup();
+    const { onFileClick, file } = renderRows(true);
+
+    expect(file).toBe(screen.getByRole('treeitem', { name: 'a.ts' }));
+    expect(file).not.toHaveAttribute('aria-disabled');
+    expect(file).not.toHaveAttribute('aria-roledescription');
+    expect(dndMocks.draggableSetNodeRef).not.toHaveBeenCalled();
+    expect(dndMocks.droppableSetNodeRef).not.toHaveBeenCalled();
+
+    await user.click(file);
+    await user.keyboard(' ');
+    expect(onFileClick).toHaveBeenCalledTimes(2);
+    expect(dndMocks.dndPointerDown).not.toHaveBeenCalled();
+    expect(dndMocks.dndKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('keeps drag and drop outside a read-only tree', () => {
+    const { file } = renderRows(false);
+
+    // dnd-kit's attributes are spread last, so its button role replaces the row's treeitem.
+    expect(file).toHaveAttribute('role', 'button');
+    expect(file).toHaveAttribute('aria-roledescription', 'draggable');
+    expect(dndMocks.draggableSetNodeRef).toHaveBeenCalledWith(file);
+    expect(dndMocks.droppableSetNodeRef).toHaveBeenCalledWith(expect.any(HTMLDivElement));
   });
 });

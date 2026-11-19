@@ -131,7 +131,9 @@ const fileSearchAction: AgentActionDefinition = {
   category: 'view',
   hotkey: ['cmd+shift+p', 'ctrl+shift+p'],
   handler: async (context) => {
-    if (!context.canShowFilesSidebar) return { success: true };
+    // Gated on the folders the dialog searches, not the selected project: a split pane with no
+    // project chat has none, and an open the dialog can't show would pop it up later by itself.
+    if (!context.canSearchFiles) return { success: true };
     context.setFileSearchDialogOpen?.(true);
     return { success: true };
   },

@@ -90,7 +90,7 @@ import {
   type IdeWatcherPaneContext,
   useIdeConfigWatcher,
 } from '../../../hooks/use-ide-config-watcher';
-import { useSettleBrowsedTabs } from '../../../lib/code-editor/state';
+import { useSettleBrowsedTabsForChat } from '../../../lib/workspace-context/use-settle-browsed-tabs-for-chat';
 import {
   clearPaneContextAtom,
   closeFilesOutsideProjectAtom,
@@ -546,9 +546,11 @@ export function AgentsContent() {
     prevSelectedChatIdRef.current = selectedChatId;
   }, [selectedChatId, setPreviousChatId]);
 
-  // Single view: another project's tabs stay only with the chat that opened them, even when the
-  // project id is unchanged (the project sync below skips that case).
-  useSettleBrowsedTabs({ chat: chatData, isSplitActive });
+  // Single view: another project's tabs stay only with the chat that opened them or one whose file
+  // tree has their project, even when the project id is unchanged (the project sync below skips
+  // that case). Settling waits for that tree's project list, so a tab isn't closed before its
+  // project shows up.
+  useSettleBrowsedTabsForChat({ chatId: selectedChatId, chat: chatData, isSplitActive });
 
   const chatWorktreePath =
     chatData && 'worktreePath' in chatData

@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { atom, getDefaultStore } from 'jotai';
+import { createRef, useCallback, useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   activeFilePathAtom,
@@ -9,8 +11,9 @@ import {
   fileKey,
   openFilesAtom,
 } from '@/lib/code-editor/state';
-import { PaneFileTree } from './PaneFileTree';
+import { PaneFileTree, type PaneFileTreeHandle } from './PaneFileTree';
 import { FILE_TREE_REFRESH_EVENT } from './refresh-trigger';
+import { useFileTreeHotkeys } from './use-file-tree-hotkeys';
 
 const mockState = vi.hoisted(() => ({
   selectedCount: 0,
@@ -34,6 +37,12 @@ const searchState = vi.hoisted(() => ({
   searchQuery: '',
   debouncedQuery: '',
 }));
+// The Search tab's query and each folder's matches for it.
+const contentState = vi.hoisted(() => ({
+  query: '',
+  invalidRegex: false,
+  matchesByPath: {} as Record<string, unknown[]>,
+}));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
     name: string;
@@ -49,6 +58,14 @@ const fileTreePropsState = vi.hoisted(() => ({
   onPasteIntoFolder: null as null | ((targetFolder: string) => void),
   nodes: [] as Array<{ path: string; gitStatus?: string }>,
   onFileClick: null as null | ((path: string) => void),
+  renamingPath: null as string | null | undefined,
+}));
+// The other projects in the chat's tree, and the ones that could be added; none unless a test adds some.
+const treeState = vi.hoisted(() => ({
+  extras: [] as Array<{ id: string; name: string; path: string }>,
+  candidates: [] as Array<{ id: string; name: string; path: string }>,
+  add: vi.fn(),
+  remove: vi.fn(),
 }));
 
 vi.mock('@dnd-kit/core', () => ({
@@ -87,11 +104,13 @@ vi.mock('@/lib/trpc', () => ({
         listDirectory: { invalidate: utilsInvalidate.listDirectory },
         search: { invalidate: utilsInvalidate.search },
         searchContent: { invalidate: utilsInvalidate.searchContent },
+        entryType: { invalidate: vi.fn() },
       },
     }),
     files: {
       listDirectory: { useQuery: () => ({ data: directoryState.rootContents, isLoading: false }) },
       search: { useQuery: () => ({ data: [], isLoading: false }) },
+      entryType: { useQuery: () => ({ data: 'folder', isSuccess: true }) },
       moveFile: { useMutation: () => ({ mutate: vi.fn() }) },
       batchMoveFiles: { useMutation: () => ({ mutate: vi.fn() }) },
       createFile: { useMutation: () => ({ mutate: vi.fn() }) },
@@ -114,10 +133,6 @@ vi.mock('./ContentSearchOptionsRow', () => ({
   ContentSearchOptionsRow: () => null,
 }));
 
-vi.mock('./ContentSearchResults', () => ({
-  ContentSearchResults: () => null,
-}));
-
 vi.mock('./FileTree', () => ({
   FileTree: (props: {
     pathToExpandAfterDrop?: string | null;
@@ -125,8 +140,10 @@ vi.mock('./FileTree', () => ({
     onPasteIntoFolder?: (targetFolder: string) => void;
     nodes: Array<{ path: string; gitStatus?: string }>;
     onFileClick?: (path: string) => void;
+    renamingPath?: string | null;
   }) => {
     fileTreePropsState.onFileClick = props.onFileClick ?? null;
+    fileTreePropsState.renamingPath = props.renamingPath;
     fileTreePropsState.pathToExpandAfterDrop = props.pathToExpandAfterDrop;
     fileTreePropsState.onCopyItem = props.onCopyItem ?? null;
     fileTreePropsState.onPasteIntoFolder = props.onPasteIntoFolder ?? null;
@@ -135,21 +152,50 @@ vi.mock('./FileTree', () => ({
   },
 }));
 
+vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
+  useTreeProjects: (chatId?: string) => ({
+    main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: 'main' },
+    extras: treeState.extras,
+    candidates: treeState.candidates,
+    projectsStatus: 'success',
+    canAdd: Boolean(chatId),
+    add: treeState.add,
+    remove: treeState.remove,
+  }),
+}));
+
+vi.mock('./tree-roots/ExtraProjectRoot', () => ({
+  ExtraProjectRoot: (props: {
+    project: { name: string };
+    searchQuery: string;
+    onRemove: () => void;
+  }) => (
+    <section data-read-only-root aria-label={props.project.name} data-query={props.searchQuery}>
+      <button type="button" onClick={props.onRemove}>{`Remove ${props.project.name}`}</button>
+    </section>
+  ),
+}));
+
 vi.mock('./use-chat-context-file', () => ({
   useChatContextFile: () => ({ setContextFileFromPath: vi.fn() }),
 }));
 
 vi.mock('./use-content-search-tab', () => ({
-  useContentSearchTab: () => ({
-    contentSearchQuery: '',
-    contentDebouncedQuery: '',
+  useContentSearchTab: ({ projectPath }: { projectPath: string }) => ({
+    contentSearchQuery: contentState.query,
+    contentDebouncedQuery: contentState.query,
     setContentSearchQuery: vi.fn(),
     contentSearchOptions: { caseSensitive: false, wholeWord: false, regex: false },
     setContentSearchOptions: vi.fn(),
-    contentMatches: [],
-    contentSearchInvalidRegex: false,
+    contentMatches: contentState.matchesByPath[projectPath] ?? [],
+    contentSearchInvalidRegex: contentState.invalidRegex,
     isLoadingContentSearch: false,
     highlightContentMatch: (line: string) => line,
+  }),
+  useContentSearch: ({ projectPath }: { projectPath: string }) => ({
+    matches: contentState.matchesByPath[projectPath] ?? [],
+    invalidRegex: contentState.invalidRegex,
+    isLoading: false,
   }),
 }));
 
@@ -192,6 +238,9 @@ afterEach(() => {
   clearSelectionMock.mockReset();
   searchState.searchQuery = '';
   searchState.debouncedQuery = '';
+  contentState.query = '';
+  contentState.invalidRegex = false;
+  contentState.matchesByPath = {};
   directoryState.rootContents = [];
   duplicateMutateMock.mockReset();
   externalOnPasteMock.mockReset();
@@ -201,6 +250,11 @@ afterEach(() => {
   fileTreePropsState.onPasteIntoFolder = null;
   fileTreePropsState.nodes = [];
   fileTreePropsState.onFileClick = null;
+  fileTreePropsState.renamingPath = null;
+  treeState.extras = [];
+  treeState.candidates = [];
+  treeState.add.mockReset();
+  treeState.remove.mockReset();
   mutationHandlers.deleteOnSuccess = null;
   utilsInvalidate.listDirectory.mockReset();
   utilsInvalidate.search.mockReset();
@@ -756,5 +810,279 @@ describe('PaneFileTree opens files into the editor', () => {
 
     expect(store.get(codeEditorOpenAtom)).toBe(true);
     expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/a.ts']);
+  });
+});
+
+// Wired as split view wires the active pane: a callback ref files the pane's handle in a map, and
+// the handle is read from there only while this container renders, which a pane toggling its own
+// row doesn't cause.
+function PaneWithShortcuts(actions: {
+  onDeleteFile: (path: string) => void;
+  onSetRootCreating: (type: 'file' | 'folder') => void;
+}) {
+  const handles = useRef(new Map<number, PaneFileTreeHandle>());
+  const activeHandleRef = useRef<PaneFileTreeHandle | null>(null);
+  activeHandleRef.current = handles.current.get(0) ?? null;
+  const setHandle = useCallback((handle: PaneFileTreeHandle | null) => {
+    if (handle) handles.current.set(0, handle);
+    else handles.current.delete(0);
+  }, []);
+  useFileTreeHotkeys({
+    projectPath: '/tmp/proj',
+    isOpen: true,
+    onOpen: () => {},
+    selectedNodePath: 'src/a.ts',
+    isInlineActive: false,
+    treeContainerRef: { current: null },
+    isMainRootHidden: () => activeHandleRef.current?.getIsMainRootHidden?.() ?? false,
+    ...actions,
+  });
+  return <PaneFileTree ref={setHandle} projectPath="/tmp/proj" chatId="chat-1" />;
+}
+
+/** Renders the pane as split view does, once more so the container holds the pane's handle. */
+function renderPaneWithShortcuts() {
+  const actions = { onDeleteFile: vi.fn(), onSetRootCreating: vi.fn() };
+  const view = render(<PaneWithShortcuts {...actions} />);
+  const rerenderContainer = () => view.rerender(<PaneWithShortcuts {...actions} />);
+  rerenderContainer();
+  return { actions, rerenderContainer };
+}
+
+const pressDeleteAndNewFile = (target: Element) => {
+  fireEvent.keyDown(target, { key: 'Backspace', metaKey: true });
+  fireEvent.keyDown(target, { key: 'N', code: 'KeyN', metaKey: true, shiftKey: true });
+};
+
+describe('PaneFileTree with another project in the tree', () => {
+  const api = { id: 'api', name: 'api', path: '/w/api' };
+  const thisChatRow = () => screen.getByRole('button', { name: 'proj This chat on branch main' });
+  const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
+  const sectionButton = () => screen.getByRole('button', { name: 'Remove api' });
+
+  it("shows This chat and the project outside the chat's tree, counted in the footer", () => {
+    treeState.extras = [api];
+    searchState.debouncedQuery = 'src';
+    render(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" isWorktree={false} />);
+    const section = screen.getByRole('region', { name: 'api' });
+
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    // The chat's tree takes its keys and pastes on its own element, so they never reach the section.
+    expect(chatTree().contains(section)).toBe(false);
+    expect(section).toHaveAttribute('data-query', 'src');
+    expect(screen.getByText('2 projects in this tree')).toBeInTheDocument();
+
+    fireEvent.click(sectionButton());
+    expect(treeState.remove).toHaveBeenCalledExactlyOnceWith('api');
+  });
+
+  it("closes the chat's tree on Enter on This chat, without renaming the selected file", async () => {
+    treeState.extras = [api];
+    mockState.primary = { path: 'src/a.ts', name: 'a.ts', type: 'file' };
+    const handle = createRef<PaneFileTreeHandle>();
+    render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="chat-1" />);
+    expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
+
+    thisChatRow().focus();
+    await userEvent.keyboard('{Enter}');
+
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'false');
+    expect(chatTree()).not.toBeVisible();
+    expect(handle.current?.getIsMainRootHidden?.()).toBe(true);
+    expect(fileTreePropsState.renamingPath).toBeNull();
+    // The same key on the tree itself does rename, so the row's Enter really missed the tree.
+    fireEvent.keyDown(chatTree(), { key: 'Enter' });
+    expect(fileTreePropsState.renamingPath).toBe('src/a.ts');
+  });
+
+  it.each([
+    ['act', "in the chat's tree", 1, chatTree],
+    ['do nothing', "in the project's section", 0, sectionButton],
+  ])('Cmd+Backspace and Cmd+Shift+N %s with focus %s', (_, __, calls, focusTarget) => {
+    treeState.extras = [api];
+    const { actions } = renderPaneWithShortcuts();
+
+    pressDeleteAndNewFile(focusTarget());
+
+    expect(actions.onDeleteFile).toHaveBeenCalledTimes(calls);
+    expect(actions.onSetRootCreating).toHaveBeenCalledTimes(calls);
+  });
+
+  it('Cmd+Backspace and Cmd+Shift+N skip a closed This chat and act once it opens again', () => {
+    treeState.extras = [api];
+    const { actions, rerenderContainer } = renderPaneWithShortcuts();
+
+    // The container doesn't re-render, so it still holds the handle from before the row closed.
+    fireEvent.click(thisChatRow());
+    pressDeleteAndNewFile(thisChatRow());
+    expect(actions.onDeleteFile).not.toHaveBeenCalled();
+    expect(actions.onSetRootCreating).not.toHaveBeenCalled();
+
+    // Now it holds one from while the row was closed.
+    rerenderContainer();
+    fireEvent.click(thisChatRow());
+    pressDeleteAndNewFile(thisChatRow());
+    expect(actions.onDeleteFile).toHaveBeenCalledExactlyOnceWith('src/a.ts');
+    expect(actions.onSetRootCreating).toHaveBeenCalledExactlyOnceWith('file');
+  });
+
+  it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
+    const user = userEvent.setup();
+    treeState.candidates = [api];
+    const { rerender } = render(
+      <PaneFileTree
+        projectPath="/tmp/proj"
+        chatId="chat-1"
+        getMentionTexts={() => ['Read /w/api/a.ts']}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Add project' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
+    expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
+
+    // What the real hook does once the project is in the chat's list.
+    treeState.extras = [api];
+    chatTree().focus();
+    rerender(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" />);
+    expect(screen.getByRole('region', { name: 'api' })).toBeInTheDocument();
+    // A remounted tree would have lost focus.
+    expect(chatTree()).toHaveFocus();
+  });
+
+  it('opens This chat again for another chat, and once no other project is left', () => {
+    treeState.extras = [api];
+    const handle = createRef<PaneFileTreeHandle>();
+    const { rerender } = render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="a" />);
+    const showChat = (chatId: string) =>
+      rerender(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId={chatId} />);
+
+    fireEvent.click(thisChatRow());
+    showChat('b');
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
+
+    fireEvent.click(thisChatRow());
+    treeState.extras = [];
+    showChat('b');
+    treeState.extras = [api];
+    showChat('b');
+    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(chatTree()).toBeVisible();
+  });
+});
+
+describe('PaneFileTree Search tab with other projects in the tree', () => {
+  const store = getDefaultStore();
+  const api = { id: 'api', name: 'api', path: '/w/api' };
+  const match = (id: string) => ({
+    id,
+    filePath: 'src/a.ts',
+    lineNumber: 4,
+    startColumn: 1,
+    endColumn: 10,
+    lineText: 'useOrders()',
+  });
+  // `count` matches spread over five files, each a line of its own.
+  const matchesIn = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      ...match(`${prefix}-${i}`),
+      filePath: `src/${prefix}-${i % 5}.ts`,
+      lineNumber: i + 1,
+    }));
+  const showSearchTab = (projectPath = '/tmp/proj') => {
+    render(<PaneFileTree projectPath={projectPath} chatId="chat-1" paneIndex={0} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  };
+  const searchFor = (query: string, projectPath = '/tmp/proj') => {
+    contentState.query = query;
+    contentState.matchesByPath = { [projectPath]: [match('own')], '/w/api': [match('browsed')] };
+    showSearchTab(projectPath);
+  };
+  const section = (heading: string) =>
+    within(screen.getByRole('heading', { name: heading }).parentElement as HTMLElement);
+  const openTab = () =>
+    store.get(openFilesAtom).map(({ path, projectPath, isOtherProject }) => ({
+      path,
+      projectPath,
+      isOtherProject,
+    }));
+
+  afterEach(() => {
+    store.set(openFilesAtom, []);
+    store.set(activeFilePathAtom, null);
+  });
+
+  it.each([
+    ['no other project is in the tree', [], 'useOrders', 1],
+    ['nothing is typed yet', [api], '', 0],
+  ])("shows only the chat's results, with no heading, when %s", (_, extras, query, matches) => {
+    treeState.extras = extras;
+    searchFor(query);
+
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /useOrders/ })).toHaveLength(matches);
+  });
+
+  it('groups matches under each project in tree order, opening the same path from each', () => {
+    treeState.extras = [api];
+    searchFor('useOrders');
+
+    expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+      'projThis chat',
+      'apiBrowsing',
+    ]);
+    const [own, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
+    fireEvent.click(own);
+    expect(openTab()).toEqual([
+      { path: '/tmp/proj/src/a.ts', projectPath: '/tmp/proj', isOtherProject: undefined },
+    ]);
+    fireEvent.click(browsed);
+    expect(openTab()).toEqual([
+      { path: '/w/api/src/a.ts', projectPath: '/w/api', isOtherProject: true },
+    ]);
+  });
+
+  it("names the pane's folder in This chat's tooltip, the folder its matches come from", () => {
+    treeState.extras = [api];
+    searchFor('useOrders', '/tmp/proj-wt');
+
+    expect(screen.getByRole('heading', { name: 'proj This chat' })).toHaveAttribute(
+      'title',
+      '/tmp/proj-wt',
+    );
+  });
+
+  it('says once, with no heading, that an invalid pattern is invalid', () => {
+    treeState.extras = [api];
+    contentState.invalidRegex = true;
+    searchFor('use(');
+
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Invalid regular expression.')).toHaveLength(1);
+  });
+
+  it('counts and pages each project on its own', () => {
+    treeState.extras = [api];
+    contentState.query = 'useOrders';
+    contentState.matchesByPath = {
+      '/tmp/proj': matchesIn('own', 60),
+      '/w/api': matchesIn('api', 55),
+    };
+    showSearchTab();
+    const own = () => section('proj This chat');
+    const browsed = () => section('api Browsing');
+    const shown = (part: ReturnType<typeof section>) =>
+      part.getAllByRole('button', { name: /useOrders/ }).length;
+
+    expect(own().getByText('60 results in 5 files')).toBeInTheDocument();
+    expect(browsed().getByText('55 results in 5 files')).toBeInTheDocument();
+    expect([shown(own()), shown(browsed())]).toEqual([50, 50]);
+
+    fireEvent.click(browsed().getByRole('button', { name: 'Show 5 more (5 remaining)' }));
+
+    expect([shown(own()), shown(browsed())]).toEqual([50, 55]);
+    expect(browsed().queryByRole('button', { name: /^Show/ })).not.toBeInTheDocument();
+    expect(own().getByRole('button', { name: 'Show 10 more (10 remaining)' })).toBeInTheDocument();
   });
 });

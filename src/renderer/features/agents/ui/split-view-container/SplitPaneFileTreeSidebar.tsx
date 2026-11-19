@@ -10,6 +10,7 @@ import {
   PaneFileTree,
   type PaneFileTreeHandle,
 } from '../../../../features/files-sidebar/PaneFileTree';
+import { readLoadedChatTexts } from '../../stores/message-store';
 
 type SplitPaneFileTreeSidebarProps = {
   projectPath: string;
@@ -64,6 +65,7 @@ export function SplitPaneFileTreeSidebar({
             paneIndex={paneIndex}
             isWorktree={isWorktree}
             onClose={onCloseFileTree}
+            getMentionTexts={() => readLoadedChatTexts(chatId)}
           />
         </AddToChatProvider>
       </div>

@@ -34,6 +34,29 @@ describe('useAgentsHotkeys', () => {
     expect(activateFilesSidebarSearch).toHaveBeenCalledTimes(1);
   });
 
+  it('opens Search files with Cmd+Shift+P only while it has a folder to search', () => {
+    const setFileSearchDialogOpen = vi.fn();
+    const harness = (canSearchFiles: boolean) => (
+      <HotkeysHarness
+        canShowFilesSidebar={true}
+        canSearchFiles={canSearchFiles}
+        setFileSearchDialogOpen={setFileSearchDialogOpen}
+      />
+    );
+    const pressCmdShiftP = () =>
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'p', metaKey: true, shiftKey: true }),
+      );
+    const { rerender } = render(harness(false));
+
+    pressCmdShiftP();
+    expect(setFileSearchDialogOpen).not.toHaveBeenCalled();
+
+    rerender(harness(true));
+    pressCmdShiftP();
+    expect(setFileSearchDialogOpen).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
   it('opens Flows with Cmd+1 and Work Queue with Cmd+2, even while typing', async () => {
     const store = createStore();
     render(

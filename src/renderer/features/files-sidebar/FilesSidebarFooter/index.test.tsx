@@ -17,6 +17,24 @@ describe('FilesSidebarFooter', () => {
     expect(container.querySelector('.h-3.w-3')).toBeInTheDocument();
   });
 
+  it.each([
+    [undefined, undefined, null],
+    [1, undefined, null],
+    [2, undefined, '2 projects in this tree'],
+    [3, '/tmp/proj/.worktrees/feature-foo', '3 projects in this tree'],
+  ])('with %s projects (worktree %s) shows the count %s', (projectCount, worktreePath, count) => {
+    const { queryByText } = render(
+      <FilesSidebarFooter
+        projectName="proj"
+        projectPath="/tmp/proj/.worktrees/feature-foo"
+        worktreePath={worktreePath}
+        projectCount={projectCount}
+      />,
+    );
+
+    expect(queryByText(/projects in this tree/)?.textContent ?? null).toBe(count);
+  });
+
   it('hides duplicate project row when worktree and project paths are the same', () => {
     const { container, queryByTitle } = render(
       <FilesSidebarFooter

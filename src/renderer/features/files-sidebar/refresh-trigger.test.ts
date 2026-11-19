@@ -2,6 +2,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { Operation } from '@trpc/client';
+import { getQueryKey } from '@trpc/react-query';
 import { observable } from '@trpc/server/observable';
 import { createElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,8 +63,9 @@ describe('refresh-trigger', () => {
 
     invalidateFileTreeQueries(utils, setRefreshTrigger);
 
-    expect(invalidateList).toHaveBeenCalledTimes(1);
-    expect(invalidateSearch).toHaveBeenCalledTimes(1);
+    // With no input, so it re-reads every project's listings, not only the chat's own.
+    expect(invalidateList).toHaveBeenCalledExactlyOnceWith();
+    expect(invalidateSearch).toHaveBeenCalledExactlyOnceWith();
     expect(setRefreshTrigger).toHaveBeenCalledTimes(1);
 
     // Verify the updater increments
@@ -152,6 +154,27 @@ describe('useFileTreeRefreshListeners', () => {
     act(() => gitStatusCallback?.({ worktreePath: '/tmp/project-a', changes: [] }));
     expect(result.current.refreshTrigger).toBe(1);
     expect(invalidateQueriesSpy).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a git change', () => gitStatusCallback?.({ worktreePath: '/tmp/project-a', changes: [] })],
+    ['a file-tree refresh', () => triggerFileTreeRefresh('/tmp/project-a', { force: true })],
+  ])("re-reads only the project's own listings and searches after %s", (_, fire) => {
+    invalidateQueriesSpy.mockRestore();
+    const keys = ['/tmp/project-a', '/tmp/project-b'].flatMap((projectPath) => [
+      getQueryKey(trpc.files.listDirectory, { projectPath, relativePath: '' }, 'query'),
+      getQueryKey(trpc.files.search, { projectPath, query: 'a' }, 'query'),
+      getQueryKey(trpc.files.searchContent, { projectPath, query: 'a' }, 'query'),
+    ]);
+    for (const key of keys) queryClient.setQueryData(key, []);
+    renderHook(() => useFileTreeRefreshListeners({ projectPath: '/tmp/project-a' }), {
+      wrapper: createTrpcWrapper(queryClient),
+    });
+
+    act(fire);
+
+    const invalidated = keys.map((key) => queryClient.getQueryState(key)?.isInvalidated);
+    expect(invalidated).toEqual([true, true, true, false, false, false]);
   });
 
   it('unsubscribes from the git watcher on unmount', () => {

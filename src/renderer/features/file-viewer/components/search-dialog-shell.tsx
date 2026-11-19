@@ -26,6 +26,8 @@ type SearchDialogShellProps = {
   paneDotClassName?: string;
   paneDotBorderClassName?: string;
   paneBorderClassName?: string;
+  /** Sits between the input and the results, e.g. controls that narrow the search */
+  toolbar?: React.ReactNode;
   children: React.ReactNode;
   contentWidthClassName: string;
 };
@@ -46,6 +48,7 @@ export function SearchDialogShell({
   paneDotClassName,
   paneDotBorderClassName,
   paneBorderClassName,
+  toolbar,
   children,
   contentWidthClassName,
 }: SearchDialogShellProps) {
@@ -102,6 +105,7 @@ export function SearchDialogShell({
             </div>
           </div>
 
+          {toolbar}
           {children}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
