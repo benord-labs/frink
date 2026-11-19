@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeForMentionToken } from './mention-token-codec';
-import { isAttachedFilePath, parseMention } from './parse-mention';
+import { isAttachedFilePath, parseMention, pickedPathMention } from './parse-mention';
 
 // A payload that does not decode logs a warning by design; keep it out of the test log.
 beforeEach(() => {
@@ -13,6 +13,11 @@ afterEach(() => {
 
 describe('parseMention', () => {
   describe('file and folder tokens', () => {
+    it('reads back a picked folder exactly as it was built', () => {
+      const picked = pickedPathMention('folder', 'src/app');
+      expect(parseMention(picked.id)).toStrictEqual(picked);
+    });
+
     it('reads a dotfile at the repository root', () => {
       expect(parseMention('file:local:.oxlintrc.json')).toStrictEqual({
         id: 'file:local:.oxlintrc.json',

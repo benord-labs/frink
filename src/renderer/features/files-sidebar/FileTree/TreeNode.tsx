@@ -552,7 +552,7 @@ export const TreeNode = memo(function TreeNode({
         <ContextMenuTrigger asChild>{nodeButton}</ContextMenuTrigger>
         <ContextMenuContent className="w-52" onCloseAutoFocus={handleCloseAutoFocus}>
           <TreeNodeMenu
-            nodePath={node.path}
+            node={node}
             hasCopiedItem={hasCopiedItem}
             canCreate={isFolder && Boolean(onCreateItem)}
             canDelete={Boolean(onDeleteItem)}

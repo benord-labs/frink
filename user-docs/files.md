@@ -36,3 +36,11 @@ report (1).pdf    ← the one you just added
 The confirmation toast tells you when this happened — for example **"Added 3 item(s) (1 renamed to avoid overwriting)"** — so you always know a rename occurred rather than a replace.
 
 > Re-adding an updated version of a file? Because nothing is overwritten, you'll get a `(1)` copy next to the old one rather than an in-place update. Delete whichever you don't want — your original is always the one without the number.
+
+## Adding files to the chat
+
+Right-click a file or folder in the tree and choose **Add to Chat**. Each one appears in the message box as a chip, the same as typing **@** and picking it. With several items selected (⌘-click or Shift-click), the menu reads **Add 3 to Chat** and adds them all. Remove one before you send the same way you would remove an @ mention.
+
+In split view, each pane's tree adds to that pane's chat. The item doesn't appear until a chat is open.
+
+> A name with square brackets that the message can't hold, such as `a]b.ts`, isn't added. Frink tells you so; type its path instead.

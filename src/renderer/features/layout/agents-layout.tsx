@@ -58,6 +58,7 @@ import {
   openFilesAtom,
 } from '../code-editor';
 import { FileSearchDialog } from '../file-viewer/components/file-search-dialog';
+import { AddToChatProvider } from '@/lib/agent-chat/composer-input/add-to-chat-context';
 import { FilesSidebar } from '../files-sidebar';
 import {
   filesSidebarOpenAtom,
@@ -424,10 +425,12 @@ export function AgentsLayout() {
               </ResizableSidebar>
               {viewPolicy.showFilesSidebar && (
                 <div className={editorYield.files}>
-                  <FilesSidebar
-                    chatId={selectedChatId ?? undefined}
-                    worktreePath={selectedChatWorktreePath}
-                  />
+                  <AddToChatProvider chatId={selectedChatId}>
+                    <FilesSidebar
+                      chatId={selectedChatId ?? undefined}
+                      worktreePath={selectedChatWorktreePath}
+                    />
+                  </AddToChatProvider>
                 </div>
               )}
             </>
