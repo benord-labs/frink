@@ -258,9 +258,9 @@ describe('filesRouter symlinked entries', () => {
 
   it('lists file and folder links by their target kind and skips broken links', async (ctx) => {
     await writeFile(join(projectPath, 'AGENTS.md'), '# agents', 'utf8');
-    await symlink('missing', join(projectPath, 'dangling'));
-    await symlink('loop', join(projectPath, 'loop'));
     try {
+      await symlink('missing', join(projectPath, 'dangling'));
+      await symlink('loop', join(projectPath, 'loop'));
       await symlink('AGENTS.md', join(projectPath, 'CLAUDE.md'));
     } catch (error) {
       // Windows file links need Developer Mode or elevation.

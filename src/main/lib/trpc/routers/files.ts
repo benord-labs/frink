@@ -2514,8 +2514,9 @@ export const filesRouter = router({
         throw new Error('Access denied: original path outside project');
       }
 
+      // lstat throughout: a moved link can dangle at the destination, and must still undo.
       try {
-        await access(absoluteCurrent);
+        await lstat(absoluteCurrent);
       } catch {
         throw new Error('Cannot undo: file no longer exists at destination');
       }
@@ -2526,10 +2527,9 @@ export const filesRouter = router({
 
       // Check if a different file now exists at the original location
       try {
-        await access(absoluteOriginal);
         // Something exists — check if it's a different file (different inode)
-        const originalStat = await stat(absoluteOriginal);
-        const currentStat = await stat(absoluteCurrent);
+        const originalStat = await lstat(absoluteOriginal);
+        const currentStat = await lstat(absoluteCurrent);
         if (originalStat.ino !== currentStat.ino) {
           throw new Error('Cannot undo: original location now contains a different file');
         }
