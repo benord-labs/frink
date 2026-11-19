@@ -269,6 +269,8 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       append: `\n\n${frinkSystemPromptAppend}`,
       // A changed append recreates the CLI with `resume`; a recorded prompt would ignore it there.
       snapshot: false,
+      // Unrecorded, the cwd/date/memory sections would re-render on every relaunch and miss the cache.
+      excludeDynamicSections: true,
     },
     // Skills and hooks from every native settings file Claude Code reads; the user tier resolves to
     // the isolated config dir, so ~/.claude hooks arrive through `settings` below.
