@@ -772,6 +772,38 @@ describe('database migration chain', () => {
     }
   });
 
+  it('deletes only inactive schedule bindings so their flows can fire again', () => {
+    const tag = '0115_drop_inactive_schedule_bindings';
+    const sqlite = new NodeSqliteDatabase(':memory:');
+    try {
+      sqlite.pragma('foreign_keys = ON');
+      for (const entry of readJournalEntries()) {
+        if (entry.tag === tag) break;
+        sqlite.exec(readFileSync(join(drizzleDir, `${entry.tag}.sql`), 'utf-8'));
+      }
+      sqlite.exec(`
+        INSERT INTO projects (id, name, path) VALUES ('p1', 'P', '/tmp/p');
+        INSERT INTO flows (id, name) VALUES ('live', 'Live'), ('copy', 'Live (copy)');
+        INSERT INTO flow_trigger_bindings (id, flow_id, project_id, trigger_type, is_active, created_at, updated_at)
+          VALUES ('live-schedule', 'live', NULL, 'schedule_trigger', 1, 1, 1),
+                 ('copy-schedule', 'copy', NULL, 'schedule_trigger', 0, 2, 2),
+                 ('copy-post-task', 'copy', 'p1', 'post_task_trigger', 0, 2, 2);
+      `);
+
+      sqlite.exec(readFileSync(join(drizzleDir, `${tag}.sql`), 'utf-8'));
+
+      // SAFETY: this projection returns the TEXT id column only.
+      const ids = (
+        sqlite.prepare('SELECT id FROM flow_trigger_bindings ORDER BY id').all() as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id);
+      expect(ids).toEqual(['copy-post-task', 'live-schedule']);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it('leaves no dropped column or table behind after the real migration runner', () => {
     const db = freshDb();
     try {

@@ -59,7 +59,7 @@ describe('copyFlow', () => {
     db = freshDb();
   });
 
-  it('copies metadata, the latest graph, a fresh batch ID, and inactive binding snapshots', async () => {
+  it('copies metadata, the latest graph, a fresh batch ID, inactive binding snapshots, and no schedule binding', async () => {
     const project = db
       .insert(projects)
       .values({ name: 'Project', path: '/tmp/copy-flow-project' })
@@ -155,7 +155,8 @@ describe('copyFlow', () => {
       .from(flowTriggerBindings)
       .where(eq(flowTriggerBindings.flowId, result.id))
       .all();
-    expect(bindings).toHaveLength(2);
+    expect(bindings).toHaveLength(1);
+    expect(bindings.some((binding) => binding.triggerType === 'schedule_trigger')).toBe(false);
     expect(bindings.every((binding) => !binding.isActive)).toBe(true);
     expect(
       bindings.every((binding) => binding.lastError === null && binding.lastErrorAt === null),
@@ -167,9 +168,7 @@ describe('copyFlow', () => {
         .where(eq(flowTriggerBindings.flowId, source.id))
         .get()?.id,
     );
-    expect(bindings.map((binding) => binding.config)).toEqual(
-      expect.arrayContaining([{ source: 'active-preferred' }, { cron: 'newest-disabled' }]),
-    );
+    expect(bindings.map((binding) => binding.config)).toEqual([{ source: 'active-preferred' }]);
   });
 
   it('removes a batch ID when the copied briefing is empty', async () => {
@@ -226,11 +225,17 @@ describe('copyFlow', () => {
       const source = await createFlow(db, { name: 'Rollback' });
       await createFlowVersion(db, { flowId: source.id, graph: graph('saved') });
       if (table === 'flow_trigger_bindings') {
+        const project = db
+          .insert(projects)
+          .values({ name: 'Rollback project', path: '/tmp/copy-flow-rollback' })
+          .returning()
+          .get();
         db.insert(flowTriggerBindings)
           .values({
             flowId: source.id,
-            triggerType: 'schedule_trigger',
-            config: { cron: '* * * * *' },
+            projectId: project.id,
+            triggerType: 'post_task_trigger',
+            config: {},
             isActive: true,
           })
           .run();
