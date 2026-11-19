@@ -25,7 +25,7 @@ import {
 } from '../../../../../../shared/lib/flows/custom-node-required-inputs';
 import { trpc } from '../../../../../lib/trpc';
 import { AvailableVariables } from '../AvailableVariables';
-import { useNodeProjectError } from '../../hooks/use-node-project-error';
+import { useNodeProject } from '../../hooks/use-node-project-error';
 import { NodeProjectRow } from '../NodeProjectRow';
 import { ID_ONLY_PROJECT_RULES } from '../node-project-resolution';
 import { type ManifestInput, SchemaFields } from '../SchemaFields';
@@ -150,7 +150,7 @@ export function CustomNodeConfig({
   const c = cfg(node);
   const blockType = node.blockType;
   const projectId = typeof c.projectId === 'string' ? c.projectId : '';
-  const projErr = useNodeProjectError(
+  const { error: projErr } = useNodeProject(
     projectId,
     flowSettings?.defaultProjectId,
     ID_ONLY_PROJECT_RULES,

@@ -16,7 +16,7 @@ import { AvailableVariables } from '../AvailableVariables';
 import { NodeProjectRow } from '../NodeProjectRow';
 import { STEP_PROJECT_RULES } from '../node-project-resolution';
 import { cfg, FieldRow, type ProjectNodeConfigProps } from '../shared';
-import { useNodeProjectError } from '../../hooks/use-node-project-error';
+import { useNodeProject } from '../../hooks/use-node-project-error';
 
 function expectedOutputsToText(c: Record<string, unknown>): string {
   const eo = c.expectedOutputs;
@@ -110,7 +110,7 @@ export function RunCommandConfig({
   };
 
   const cmdErr = command.trim() === '' ? 'Command is required.' : null;
-  const projErr = useNodeProjectError(
+  const { error: projErr } = useNodeProject(
     projectId,
     flowSettings?.defaultProjectId,
     STEP_PROJECT_RULES,

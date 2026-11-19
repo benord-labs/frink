@@ -6,6 +6,7 @@ import {
   ID_ONLY_PROJECT_RULES as ID_ONLY,
   LITERAL_PROJECT_RULES as LITERAL,
   pickerProject,
+  resolveNodeProjectId,
   STEP_PROJECT_RULES as STEP,
 } from './node-project-resolution';
 
@@ -118,5 +119,20 @@ describe('pickerProject', () => {
 
   it('shows an unresolved value in full, not a truncated id', () => {
     expect(pickerProject('api', rows, ID_ONLY)).toEqual({ id: 'api', name: 'api', path: '' });
+  });
+});
+
+describe('resolveNodeProjectId', () => {
+  it('turns a unique project name into its id, so lookups keyed by id work', () => {
+    expect(resolveNodeProjectId('api', undefined, LOCAL, STEP)).toBe('id-api');
+    expect(resolveNodeProjectId('', 'api', LOCAL, STEP)).toBe('id-api');
+  });
+
+  it('leaves a template, a shared name and an id-only step as they are', () => {
+    expect(resolveNodeProjectId('{{trigger.project}}', undefined, LOCAL, STEP)).toBe(
+      '{{trigger.project}}',
+    );
+    expect(resolveNodeProjectId('web', undefined, LOCAL, STEP)).toBe('web');
+    expect(resolveNodeProjectId('api', undefined, LOCAL, ID_ONLY)).toBe('api');
   });
 });

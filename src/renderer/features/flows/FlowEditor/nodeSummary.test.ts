@@ -657,3 +657,9 @@ describe('project variable dispatch would refuse', () => {
     expect(flowNodeNeedsAttention(inherits, '{{trigger.project}}', ctx)).toBe(true);
   });
 });
+
+describe('manual trigger', () => {
+  it('never needs attention, since it takes no project', () => {
+    expect(flowNodeNeedsAttention(node({ id: '1', blockType: 'manual_trigger' }))).toBe(false);
+  });
+});

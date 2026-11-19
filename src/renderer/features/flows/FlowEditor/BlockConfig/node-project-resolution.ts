@@ -116,6 +116,18 @@ export function nodeProjectProblem(
   return state === 'ok' ? null : { state, value, fromDefault };
 }
 
+/** The project id the step will run in: a unique name becomes its id; anything else is returned as is. */
+export function resolveNodeProjectId(
+  ownProjectId: string,
+  flowDefaultProjectId: string | undefined,
+  projects: readonly ProjectRef[] | null,
+  stepRules: ProjectRefRules,
+): string | undefined {
+  const value = getEffectiveNodeProjectId(ownProjectId, flowDefaultProjectId);
+  if (!value || !projects || !stepRules.byName) return value;
+  return findProjectRef(value, projects)?.id ?? value;
+}
+
 export function getNodeProjectFieldError(
   ownProjectId: string,
   flowDefaultProjectId: string | undefined,

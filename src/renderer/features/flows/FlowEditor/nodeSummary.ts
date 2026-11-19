@@ -12,9 +12,11 @@ import type { FlowNode } from '../../../../shared/lib/validate-flow-graph';
 import { FLOW_BLOCK_TYPES, type FlowBlockType } from '../../../../shared/types/flow';
 import {
   ID_ONLY_PROJECT_RULES,
+  LITERAL_PROJECT_RULES,
   type NodeProjectProblem,
   nodeProjectProblem,
   type ProjectRef,
+  type ProjectRefRules,
   STEP_PROJECT_RULES,
 } from './BlockConfig/node-project-resolution';
 import { FLOW_BLOCK_LABELS } from './constants';
@@ -99,6 +101,15 @@ export function flowNodeNeedsProject(
   return (
     takesProject(node) && projectProblem(node, flowDefaultProjectId, ctx)?.fromDefault === true
   );
+}
+
+/** How flow settings checks the default: by id only once a custom step inherits it, as the canvas does. */
+export function flowDefaultProjectRules(nodes: readonly FlowNode[]): ProjectRefRules {
+  const customInherits = nodes.some(
+    (n) =>
+      isCustomNodeBlockType(n.blockType) && takesProject(n) && !readString(n.config, 'projectId'),
+  );
+  return customInherits ? ID_ONLY_PROJECT_RULES : LITERAL_PROJECT_RULES;
 }
 
 /** A step's name and kind, as both the canvas card and the config panel title it. */
@@ -300,6 +311,7 @@ export function flowNodeNeedsAttention(
     case 'schedule_trigger':
       return !readString(cfg, 'cronExpression');
     case 'post_task_trigger':
+    case 'manual_trigger':
       return false;
     default: {
       if (isCustomNodeBlockType(block)) {

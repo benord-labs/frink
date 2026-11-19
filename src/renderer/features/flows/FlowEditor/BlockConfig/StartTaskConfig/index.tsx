@@ -19,9 +19,9 @@ import { planModeOption, useProjectModelOptions } from '../../hooks/use-project-
 import { AvailableVariables } from '../AvailableVariables';
 import { NodeModelField } from '../NodeModelField';
 import { NodeProjectRow } from '../NodeProjectRow';
-import { getEffectiveNodeProjectId, STEP_PROJECT_RULES } from '../node-project-resolution';
+import { STEP_PROJECT_RULES } from '../node-project-resolution';
 import { cfg, FieldRow, type ProjectNodeConfigProps } from '../shared';
-import { useNodeProjectError } from '../../hooks/use-node-project-error';
+import { useNodeProject } from '../../hooks/use-node-project-error';
 import { FlowBranchField } from './FlowBranchField';
 
 // Reason: existing step form; agent support only passes one more prop to its model field.
@@ -53,7 +53,11 @@ export function StartTaskConfig({
   const branch = typeof c.branch === 'string' ? c.branch : '';
 
   const flowDefaultModel = flowSettings?.defaultModel;
-  const effectiveProjectId = getEffectiveNodeProjectId(projectId, flowSettings?.defaultProjectId);
+  const { error: projErr, projectId: effectiveProjectId } = useNodeProject(
+    projectId,
+    flowSettings?.defaultProjectId,
+    STEP_PROJECT_RULES,
+  );
   const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable } =
     useProjectModelOptions(effectiveProjectId, {
       model,
@@ -61,11 +65,6 @@ export function StartTaskConfig({
       onClearModel: () => onConfigPatch({ model: undefined }),
     });
 
-  const projErr = useNodeProjectError(
-    projectId,
-    flowSettings?.defaultProjectId,
-    STEP_PROJECT_RULES,
-  );
   const plan = planModeOption(startMode, planUnavailable);
 
   return (

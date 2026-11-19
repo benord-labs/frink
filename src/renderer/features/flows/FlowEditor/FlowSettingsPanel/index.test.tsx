@@ -225,6 +225,20 @@ describe('FlowSettingsPanel default project', () => {
     ).toBeInTheDocument();
   });
 
+  it('checks the default by id only once a custom step inherits it, as the canvas does', async () => {
+    renderWithTrpc(
+      <FlowSettingsPanel
+        {...panelProps}
+        settings={{ defaultProjectId: 'api' }}
+        nodes={[{ id: 'c', blockType: 'greeting_generator', config: {} }]}
+      />,
+      withProjects,
+    );
+    expect(
+      await screen.findByText("The project “api” isn't on this computer. Pick a project."),
+    ).toBeInTheDocument();
+  });
+
   it('asks for nothing when no flow default is set, since that is allowed', () => {
     renderWithTrpc(<FlowSettingsPanel {...panelProps} />, withProjects);
     expect(screen.queryByText('Select a project.')).toBeNull();
