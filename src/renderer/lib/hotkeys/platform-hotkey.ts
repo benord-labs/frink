@@ -20,9 +20,9 @@ export function isFieldReservedChord(
 ): boolean {
   if (isMac || !(target instanceof HTMLElement)) return false;
   const parts = platformHotkey.toLowerCase().split('+');
-  if (!parts.includes('ctrl')) return false;
-  const isPlainPaste = parts.includes('shift') && parts[parts.length - 1] === 'v';
-  if (target.closest('.xterm')) return !parts.includes('shift') || isPlainPaste;
+  const modifiers = parts.slice(0, -1).sort().join('+');
+  const isPlainPaste = modifiers === 'ctrl+shift' && parts[parts.length - 1] === 'v';
+  if (target.closest('.xterm')) return modifiers === 'ctrl' || isPlainPaste;
   return isPlainPaste && (target.matches('input, textarea') || target.isContentEditable);
 }
 
@@ -33,6 +33,6 @@ export function isFieldReservedChord(
 export function isPrimaryChord(e: KeyboardEvent, isMac = isMacOS()): boolean {
   if (isMac) return e.metaKey && !e.ctrlKey;
   if (!e.ctrlKey || e.metaKey || e.getModifierState('AltGraph')) return false;
-  const chord = `ctrl+${e.shiftKey ? 'shift+' : ''}${e.key.toLowerCase()}`;
+  const chord = `ctrl+${e.altKey ? 'alt+' : ''}${e.shiftKey ? 'shift+' : ''}${e.key.toLowerCase()}`;
   return !isFieldReservedChord(chord, e.target, false);
 }

@@ -8,10 +8,11 @@ describe('isFieldReservedChord', () => {
   const input = terminal.appendChild(document.createElement('textarea'));
   const outside = document.createElement('textarea');
 
-  it('reserves plain Ctrl chords and Ctrl+Shift+V paste inside the terminal off Mac', () => {
+  it('reserves Ctrl-only chords and Ctrl+Shift+V paste inside the terminal off Mac', () => {
     expect(isFieldReservedChord('ctrl+b', input, false)).toBe(true);
     expect(isFieldReservedChord('ctrl+shift+v', input, false)).toBe(true);
     expect(isFieldReservedChord('ctrl+shift+p', input, false)).toBe(false);
+    expect(isFieldReservedChord('ctrl+alt+arrowright', input, false)).toBe(false);
   });
 
   it('reserves only Ctrl+Shift+V paste in other text fields, and nothing on Mac', () => {

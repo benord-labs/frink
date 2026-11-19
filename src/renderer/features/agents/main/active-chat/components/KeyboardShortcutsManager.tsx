@@ -147,13 +147,15 @@ export function KeyboardShortcutsManager({
         hasUnapprovedPlan &&
         !isStreaming
       ) {
+        // Capture phase + stop: the composer also submits on Enter, so it must not see this one.
         e.preventDefault();
+        e.stopPropagation();
         handleApprovePlan();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [isActive, isPaneActive, hasUnapprovedPlan, isStreaming, handleApprovePlan]);
 
   // Cmd/Ctrl + Arrow Down to scroll to bottom (only when this pane is focused)

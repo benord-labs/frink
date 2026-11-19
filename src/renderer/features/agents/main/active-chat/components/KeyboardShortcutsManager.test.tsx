@@ -243,4 +243,40 @@ describe('KeyboardShortcutsManager', () => {
     fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
     expect(handleApprovePlan).toHaveBeenCalledOnce();
   });
+
+  it('lets the approve shortcut own Ctrl+Enter typed in the composer, so the draft is not also sent', () => {
+    setPlatform('win32');
+    const handleApprovePlan = vi.fn();
+    const submit = vi.fn();
+    render(
+      <>
+        <textarea
+          aria-label="composer"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) submit();
+          }}
+        />
+        <KeyboardShortcutsManager
+          isActive={true}
+          isPaneActive={true}
+          isStreaming={false}
+          pendingQuestions={null}
+          hasUnapprovedPlan={true}
+          editorRef={createRef()}
+          stop={vi.fn(async () => undefined)}
+          handleQuestionsSkip={vi.fn(async () => undefined)}
+          handleApprovePlan={handleApprovePlan}
+          scrollToBottom={vi.fn()}
+        />
+      </>,
+    );
+
+    const composer = screen.getByLabelText('composer');
+    fireEvent.keyDown(composer, { key: 'Enter', ctrlKey: true });
+    expect(handleApprovePlan).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(submit).toHaveBeenCalledOnce();
+  });
 });
