@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createFlowVersion } from '../db/repos/flow-versions';
-import { createFlow } from '../db/repos/flows';
+import { copyFlow, createFlow, updateFlow } from '../db/repos/flows';
 import { freshDb } from '../db/test-utils/fresh-db';
 import type { FlowGraphNode, ParsedFlowGraph } from './graph';
 import { findScheduleTrigger, runScheduledTriggerTick } from './schedule-trigger';
@@ -49,5 +49,31 @@ describe('runScheduledTriggerTick', () => {
         idempotencyKey: `schedule:flow-1:${now.getTime()}`,
       }),
     );
+  });
+
+  it('runs a duplicated schedule flow once it is turned on, and stops when it is turned off', async () => {
+    const db = freshDb();
+    await createFlow(db, { id: 'source', name: 'Every minute' });
+    await createFlowVersion(db, {
+      flowId: 'source',
+      graph: graphOf([
+        { id: 'tick', blockType: 'schedule_trigger', config: { cronExpression: '* * * * *' } },
+      ]),
+    });
+    const startRun = vi.fn<typeof startFlowRun>();
+    const minute = (n: number) => new Date(Date.UTC(2026, 10, 18, 7, n));
+    await runScheduledTriggerTick(minute(0), { db, startRun });
+
+    const { id: copyId } = await copyFlow(db, { sourceFlowId: 'source' });
+    await updateFlow(db, copyId, { isEnabled: true });
+    await runScheduledTriggerTick(minute(1), { db, startRun });
+
+    const copyRuns = () => startRun.mock.calls.filter(([input]) => input.flowId === copyId);
+    expect(copyRuns()).toHaveLength(1);
+
+    await updateFlow(db, copyId, { isEnabled: false });
+    await runScheduledTriggerTick(minute(2), { db, startRun });
+
+    expect(copyRuns()).toHaveLength(1);
   });
 });

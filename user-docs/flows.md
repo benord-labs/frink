@@ -20,7 +20,7 @@ Blocks execute top-to-bottom following the edges. When a block completes, its ou
 
 Open a flow row's **⋯** menu and choose **Duplicate** to copy its latest saved version. The new flow appears in the list with its name suffixed by “(copy)”, while your current selection stays unchanged. Unsaved editor changes, earlier versions, and run history are not included.
 
-Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. Trigger-binding configuration is also preserved, but every copied binding starts inactive and must be explicitly reactivated before it can fire.
+Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. A scheduled copy runs on its schedule once you turn it on. Post-Task Trigger automations are copied turned off; turn them on in the trigger step.
 
 ## Moving a flow to another computer
 
