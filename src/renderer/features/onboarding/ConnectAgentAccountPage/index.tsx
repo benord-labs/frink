@@ -144,6 +144,7 @@ export function ConnectAgentAccountPage({
   const connectMutation = trpc.agentAccounts.connect.useMutation();
 
   const flow = useConnectAccountFlow({
+    provider,
     detectionQuery,
     connectMutation,
     buildConnectInput: (accountLabel) => ({ type: provider, accountLabel }),

@@ -111,6 +111,7 @@ describe('detectClaudeAccount on linux — credentials file only', () => {
     expect(result.available).toBe(false);
     expect(result.sourcePath).toBeUndefined();
     expect(result.hint).toBe("Frink didn't find a Claude login on this computer.");
+    expect(result.failure).toBe('not_signed_in');
     // Don't point users at a store the CLI can't read.
     expect(result.hint).not.toMatch(/keyring/i);
     expect(JSON.stringify(result)).not.toContain(LEAKED);
@@ -129,6 +130,29 @@ describe('detectClaudeAccount on linux — credentials file only', () => {
     expect(execFileSyncMock).not.toHaveBeenCalled();
     expect(execSyncMock).not.toHaveBeenCalled();
   });
+});
+
+describe('detectClaudeAccount on Windows', () => {
+  const originalPlatform = process.platform;
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    existsSyncMock.mockReset();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
+
+  // A Windows user with a real Claude login must not be counted as not signed in on every visit
+  it.each([true, false])(
+    'reports passthrough as unsupported, not a failed sign-in (login file: %s)',
+    (hasFile) => {
+      existsSyncMock.mockReturnValue(hasFile);
+
+      expect(detectClaudeAccount()).toMatchObject({ available: false, failure: 'unsupported' });
+    },
+  );
 });
 
 describe('detectClaudeAccount on macOS', () => {
@@ -206,6 +230,7 @@ describe('detectClaudeAccount on macOS', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toBe('macOS blocked Frink from your Claude login. Sign in again here.');
+    expect(result.failure).toBe('access_denied');
 
     // Most importantly: no dump-keychain (which would precede TCC-prompting
     // every workspace entry).
@@ -242,6 +267,7 @@ describe('detectClaudeAccount on macOS', () => {
     expect(result.available).toBe(false);
     expect(result.sourcePath).toBeUndefined();
     expect(result.hint).toBe("Frink didn't find a Claude login on this Mac.");
+    expect(result.failure).toBe('not_signed_in');
     // No dump-keychain, and no probe of anything but the canonical service.
     expect(execFileSyncMock.mock.calls.filter(isWorkspaceDump)).toHaveLength(0);
     expect(execFileSyncMock.mock.calls.every(isCanonicalProbe)).toBe(true);

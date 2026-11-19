@@ -9,7 +9,12 @@ import type { PickerGroupFields } from '../../../../shared/lib/model-picker-labe
 import type { DetectCodexAccountResult } from '../../credentials/detect-codex';
 import * as schema from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
+import * as analytics from '../../analytics';
 import { createAgentAccountsRouter } from './agent-accounts';
+
+vi.spyOn(analytics, 'trackAccountConnect');
+vi.spyOn(analytics, 'trackAccountConnectFailed');
+vi.spyOn(analytics, 'trackDetectionFailure');
 
 /** Stands in for an installed OpenCode: it only prints its version. */
 const FAKE_OPENCODE = `#!/bin/sh
@@ -90,6 +95,7 @@ describe('agentAccounts', () => {
     detectCodex.mockReset().mockResolvedValue(CODEX_LOGIN);
     findCursor.mockReset().mockResolvedValue({ status: 'ready' });
     signInCursor.mockReset().mockResolvedValue(true);
+    vi.clearAllMocks();
     signInClaude.mockReset().mockResolvedValue(true);
     cancelClaude.mockReset();
     signInCodex.mockReset().mockResolvedValue(true);
@@ -154,9 +160,12 @@ describe('agentAccounts', () => {
     await expect(caller().detect({ type: 'opencode' })).resolves.toEqual({
       available: false,
       reason,
+      failure: 'unknown',
     });
     await expect(caller().connect({ type: 'opencode' })).rejects.toThrow(reason);
     expect(rows()).toEqual([]);
+    expect(analytics.trackDetectionFailure).toHaveBeenCalledWith('opencode', 'unknown');
+    expect(analytics.trackAccountConnect).not.toHaveBeenCalled();
   });
 
   it('says how to install OpenCode when it is missing', async () => {
@@ -166,7 +175,9 @@ describe('agentAccounts', () => {
       available: false,
       reason: expect.stringContaining('npm install -g opencode-ai@1.19'),
       missing: true,
+      failure: 'cli_missing',
     });
+    expect(analytics.trackDetectionFailure).toHaveBeenCalledWith('opencode', 'cli_missing');
   });
 
   it.each([
@@ -185,6 +196,8 @@ describe('agentAccounts', () => {
     });
     await expect(caller(flags, platform).connect({ type })).rejects.toThrow();
     expect(rows()).toEqual([]);
+    // An agent Frink cannot connect here is not a failed attempt
+    expect(analytics.trackDetectionFailure).not.toHaveBeenCalled();
   });
 
   it('finds and connects the GitHub Copilot CLI installed here, with no stored sign-in', async () => {
@@ -212,6 +225,7 @@ describe('agentAccounts', () => {
     await expect(caller(COPILOT_ON).detect({ type: 'copilot' })).resolves.toEqual({
       available: false,
       reason,
+      failure: 'unknown',
     });
     await expect(caller(COPILOT_ON).connect({ type: 'copilot' })).rejects.toThrow(reason);
     expect(rows()).toEqual([]);
@@ -222,17 +236,17 @@ describe('agentAccounts', () => {
     [
       'signed out, so it offers Sign in',
       { status: 'signed-out', reason: SIGNED_OUT },
-      { available: false, reason: SIGNED_OUT, signedOut: true },
+      { available: false, reason: SIGNED_OUT, signedOut: true, failure: 'not_signed_in' },
     ],
     [
       'on a free plan',
       { status: 'plan-required', reason: PAID_PLAN },
-      { available: false, reason: PAID_PLAN },
+      { available: false, reason: PAID_PLAN, failure: 'unknown' },
     ],
     [
       'without its SDK',
       { status: 'missing', reason: NO_SDK },
-      { available: false, reason: NO_SDK },
+      { available: false, reason: NO_SDK, failure: 'detection_error' },
     ],
   ] as const)('reports Cursor %s', async (_case, check, expected) => {
     findCursor.mockResolvedValue(check);
@@ -268,6 +282,10 @@ describe('agentAccounts', () => {
     await expect(caller(CURSOR_ON).signIn({ type: 'cursor' })).rejects.toThrow(
       "Cursor's sign-in didn't finish. Try again.",
     );
+    expect(analytics.trackAccountConnectFailed).toHaveBeenCalledExactlyOnceWith({
+      provider: 'cursor',
+      reason: 'cancelled',
+    });
     await expect(
       caller({ ...CURSOR_ON, ...COPILOT_ON }).signIn({ type: 'copilot' }),
     ).rejects.toThrow(NOT_AVAILABLE);
@@ -285,6 +303,11 @@ describe('agentAccounts', () => {
       NOT_AVAILABLE,
     );
     expect(signInClaude).toHaveBeenCalledTimes(2);
+    // Only the unfinished sign-in counts; Windows cannot sign in here, which is not a failed attempt
+    expect(analytics.trackAccountConnectFailed).toHaveBeenCalledExactlyOnceWith({
+      provider: 'claude-code',
+      reason: 'cancelled',
+    });
 
     await caller().cancelSignIn({ type: 'cursor' });
     expect(cancelClaude).not.toHaveBeenCalled();
@@ -305,6 +328,10 @@ describe('agentAccounts', () => {
     );
     await expect(caller({}).signIn({ type: 'codex' })).rejects.toThrow(NOT_AVAILABLE);
     expect(signInCodex).toHaveBeenCalledTimes(2);
+    expect(analytics.trackAccountConnectFailed).toHaveBeenCalledExactlyOnceWith({
+      provider: 'codex',
+      reason: 'cancelled',
+    });
 
     await caller(CODEX_ON).cancelSignIn({ type: 'codex' });
     expect(cancelCodex).toHaveBeenCalledOnce();
@@ -327,11 +354,17 @@ describe('agentAccounts', () => {
       email: 'me@openai.example',
       sourcePath: 'codex-passthrough://local',
     });
-    detectCodex.mockResolvedValue({ available: false, hint: 'No login here.' });
+    detectCodex.mockResolvedValue({
+      available: false,
+      hint: 'No login here.',
+      failure: 'not_signed_in',
+    });
     await expect(caller(CODEX_ON).detect({ type: 'codex' })).resolves.toEqual({
       available: false,
       reason: 'No login here.',
+      failure: 'not_signed_in',
     });
+    expect(analytics.trackDetectionFailure).toHaveBeenCalledWith('codex', 'not_signed_in');
   });
 
   it('connects one OpenAI login per device, labelled by the user, with no stored token', async () => {
@@ -346,6 +379,10 @@ describe('agentAccounts', () => {
       expectedEmail: 'me@openai.example',
       isDefault: true,
     });
+    expect(analytics.trackAccountConnect).toHaveBeenCalledWith(
+      { provider: 'codex', kind: 'passthrough' },
+      expect.any(Function),
+    );
 
     detectCodex.mockResolvedValue({ available: true, displayName: 'OpenAI' });
     await expect(

@@ -17,6 +17,7 @@ const flowRun = { flowId: 'flow-1', outcome: 'completed', stepCount: 3, batchSiz
 const HOUR = 60 * 60 * 1000;
 let userData: string;
 let appEvents: EventEmitter;
+let launched: typeof import('.') | undefined;
 
 const installIdFile = () => join(userData, '.install_id');
 const sentEvents = () => capture.mock.calls.map(([sent]) => sent.event);
@@ -47,6 +48,7 @@ async function launch(overrides: Partial<AnalyticsHost> = {}) {
   vi.resetModules();
   appEvents = new EventEmitter();
   const analytics = await import('.');
+  launched = analytics;
   analytics.initAnalytics({
     isPackaged: true,
     userDataDir: userData,
@@ -65,7 +67,10 @@ beforeEach(() => {
   userData = mkdtempSync(join(tmpdir(), 'frink-analytics-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // The install id is written in the background; it must land before its folder is removed
+  await launched?.shutdown();
+  launched = undefined;
   rmSync(userData, { recursive: true, force: true });
   capture.mockClear();
   vi.useRealTimers();
@@ -237,6 +242,8 @@ describe('main-process analytics', () => {
     await finishReply('chat-1');
     reopenWindow();
     refocusAfter(5);
+    analytics.trackAccountConnected({ provider: 'codex', kind: 'passthrough', reconnect: false });
+    analytics.trackAccountConnectFailed({ provider: 'cursor', reason: 'not_signed_in' });
 
     const sentWithEveryEvent = [
       'source',
@@ -262,7 +269,70 @@ describe('main-process analytics', () => {
       ['reply_finished', ['workspace_id']],
       ['desktop_opened', ['trigger']],
       ['desktop_opened', ['trigger']],
+      ['account_connected', ['provider', 'kind', 'reconnect']],
+      ['account_connect_failed', ['provider', 'reason']],
     ]);
+  });
+
+  it('counts each account connect failure once per launch, from the first report after opt-in', async () => {
+    const analytics = await launch();
+    const notSignedIn = { provider: 'codex', reason: 'not_signed_in' } as const;
+
+    analytics.setOptOut(true);
+    analytics.trackAccountConnectFailed(notSignedIn);
+    analytics.setOptOut(false);
+    capture.mockClear();
+    analytics.trackAccountConnectFailed(notSignedIn);
+    analytics.trackAccountConnectFailed(notSignedIn);
+    analytics.trackDetectionFailure('codex', 'not_signed_in');
+    analytics.trackDetectionFailure('codex', 'cli_missing');
+    // Keyed by provider too: a second agent with the same reason is a separate failure
+    analytics.trackDetectionFailure('claude-code', 'not_signed_in');
+    analytics.trackDetectionFailure('claude-code', 'unsupported');
+    analytics.trackDetectionFailure('claude-code', undefined);
+
+    expect(capture.mock.calls.map(([{ properties }]) => properties.reason)).toEqual([
+      'not_signed_in',
+      'cli_missing',
+      'not_signed_in',
+    ]);
+  });
+
+  it('counts a connect, marks a reconnect, and counts a thrown connect as unknown', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+    const account = { provider: 'opencode', kind: 'passthrough' } as const;
+
+    await analytics.trackAccountConnect(account, () => ({ status: 'created' as const }));
+    await analytics.trackAccountConnect(account, async () => ({ status: 'updated' as const }));
+    await expect(
+      analytics.trackAccountConnect(account, () => {
+        throw new Error('An account named "Work" already exists.');
+      }),
+    ).rejects.toThrow('already exists');
+
+    expect(capture.mock.calls.map(([{ event, properties }]) => [event, properties])).toEqual([
+      ['account_connected', expect.objectContaining({ ...account, reconnect: false })],
+      ['account_connected', expect.objectContaining({ ...account, reconnect: true })],
+      [
+        'account_connect_failed',
+        expect.objectContaining({ provider: 'opencode', reason: 'unknown' }),
+      ],
+    ]);
+    expect(JSON.stringify(capture.mock.calls)).not.toContain('Work');
+  });
+
+  it('sends no account event for an install that opted out', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(true);
+
+    await analytics.trackAccountConnect({ provider: 'codex', kind: 'passthrough' }, () => ({
+      status: 'created' as const,
+    }));
+    analytics.trackAccountConnectFailed({ provider: 'codex', reason: 'cli_missing' });
+
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it('sends nothing after shutdown', async () => {

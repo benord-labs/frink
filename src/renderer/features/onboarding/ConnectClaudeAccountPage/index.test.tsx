@@ -9,6 +9,7 @@ import { observable, type Observer } from '@trpc/server/observable';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import * as analytics from '../../../lib/analytics';
 import { pendingAccountAuthAtom } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
 import { ConnectClaudeAccountPage } from '..';
@@ -102,8 +103,11 @@ async function startSignIn() {
   return screen.findByText(/Finish signing in in your browser/);
 }
 
+const cancelled = vi.spyOn(analytics, 'trackAccountConnectCancelled').mockReturnValue(undefined);
+
 afterEach(() => {
   cleanup();
+  cancelled.mockClear();
   calls.mockReset();
   finishSignIn = undefined;
 });
@@ -116,6 +120,15 @@ describe('ConnectClaudeAccountPage', () => {
     expect(screen.getByText(NO_LOGIN.hint ?? '')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in with Claude' })).toBeInTheDocument();
     expect(screen.queryByText(/Terminal|claude auth login/)).not.toBeInTheDocument();
+  });
+
+  it('reports leaving without connecting as a cancelled Claude Code connect', async () => {
+    const { store } = renderPage(NO_LOGIN);
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Back' }))[0]);
+
+    expect(cancelled).toHaveBeenCalledExactlyOnceWith('claude-code');
+    expect(store.get(pendingAccountAuthAtom)).toBeNull();
   });
 
   it('keeps a login it finds, with Connect and no sign-in', async () => {
