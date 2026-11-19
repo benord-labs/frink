@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { type FlowGraph, flowGraphsEqual } from '../../../../shared/lib/validate-flow-graph';
 import {
   applyCurrentBatchIdForBriefingTransition,
@@ -111,4 +111,18 @@ export async function getLatestVersion(db: Db, flowId: string): Promise<FlowVers
 export async function getVersion(db: Db, id: string): Promise<FlowVersion | null> {
   const [row] = await db.select().from(flowVersions).where(eq(flowVersions.id, id)).limit(1);
   return row ?? null;
+}
+
+export function getVersionByNumber(
+  db: Db,
+  flowId: string,
+  versionNumber: number,
+): FlowVersion | null {
+  return (
+    db
+      .select()
+      .from(flowVersions)
+      .where(and(eq(flowVersions.flowId, flowId), eq(flowVersions.versionNumber, versionNumber)))
+      .get() ?? null
+  );
 }

@@ -2,6 +2,7 @@ import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
 import { flowGraphSchema } from '../../../../../shared/types/flow-graph-schema';
 import { getDatabase } from '../../../db';
+import { getVersionByNumber } from '../../../db/repos/flow-versions';
 import { toDbFlowVersion } from '../../../flows/adapters';
 import {
   commitFlowVersion,
@@ -37,6 +38,14 @@ export function createFlowVersionProcedures() {
         } catch (e) {
           mapEngineError(e);
         }
+      }),
+
+    /** One immutable saved version, or null when the flow or that version number is gone. */
+    getVersion: publicProcedureRaw
+      .input(z.object({ flowId: z.string().min(1), versionNumber: z.number().int().min(1) }))
+      .query(({ input }) => {
+        const row = getVersionByNumber(getDatabase(), input.flowId, input.versionNumber);
+        return row ? toDbFlowVersion(row) : null;
       }),
 
     /** Pushes each newly committed version of one flow, so an open editor need not wait for its poll. */

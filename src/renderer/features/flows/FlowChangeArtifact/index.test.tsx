@@ -2,6 +2,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { FlowNode } from '../../../../shared/lib/validate-flow-graph';
 import type { FlowChangePresentation } from '../../../../shared/types/flows/flow-change-presentation';
 import { FlowChangeArtifact } from './index';
 
@@ -415,5 +416,138 @@ describe('FlowChangeArtifact', () => {
     expect(screen.getByText('Flow change finished')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Flow steps/i })).toBeNull();
     expect(screen.getByRole('button', { name: 'Open Flow' })).toBeTruthy();
+  });
+});
+
+type FlowNodeConfig = FlowNode['config'];
+
+describe('FlowChangeArtifact — what changed', () => {
+  afterEach(cleanup);
+
+  const RULES = [
+    'Open a pull request for the current branch.',
+    'Write the description from the acceptance criteria.',
+    'Do not merge the PR.',
+  ];
+
+  function versionsFor(
+    nodes: Array<{ id: string; before: FlowNodeConfig; after: FlowNodeConfig }>,
+  ) {
+    const graph = (side: 'before' | 'after') => ({
+      nodes: nodes.map((node) => ({
+        id: node.id,
+        blockType: 'agent',
+        label: node.id,
+        config: node[side],
+      })),
+      edges: [],
+    });
+    return { before: graph('before'), after: graph('after') };
+  }
+
+  it('shows field-level edits without expanding the Flow, opening the first text change', () => {
+    const versions = versionsFor([
+      {
+        id: 'agent',
+        before: {
+          instructions: RULES.join('\n\n'),
+          agentInstructions: 'Alpha one Beta two Gamma',
+          model: 'sonnet',
+        },
+        after: {
+          instructions: RULES.join('\n\n').replace('criteria.', 'criteria. Attach UI screenshots.'),
+          agentInstructions: 'Alpha Beta Gamma',
+          model: 'opus',
+        },
+      },
+    ]);
+
+    render(<FlowChangeArtifact presentation={PRESENTATION} versions={versions} />);
+
+    const list = screen.getByRole('region', { name: 'What changed' });
+    expect(list.querySelector('ins')?.textContent).toContain('Attach UI screenshots.');
+    expect(
+      screen.getByRole('button', { name: /Show Flow steps/ }).getAttribute('aria-expanded'),
+    ).toBe('false');
+    expect(screen.getByText('Model').parentElement?.textContent).toMatch(
+      /Sonnet.*changed to.*Opus/,
+    );
+
+    const folds = screen.getAllByRole('button', { name: /1 unchanged paragraph/ });
+    expect(folds).toHaveLength(2);
+    expect(screen.queryByText('Do not merge the PR.')).toBeNull();
+    fireEvent.click(folds[1]);
+    expect(screen.getByText('Do not merge the PR.')).toBeTruthy();
+    expect(document.activeElement?.textContent).toContain('Do not merge the PR.');
+
+    const role = screen.getByRole('button', { name: /Agent role/ });
+    expect(role.getAttribute('aria-expanded')).toBe('false');
+    expect(role.parentElement?.querySelector('p')?.textContent).toBe('one, two');
+    fireEvent.click(role);
+    expect(role.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('shows a rewrite as the new text with the previous version one click away', () => {
+    const versions = versionsFor([
+      {
+        id: 'agent',
+        before: { instructions: RULES.join('\n\n') },
+        after: {
+          instructions: ['Ship it as one PR and stop.', ...Array(9).fill('Wait.')].join('\n'),
+        },
+      },
+    ]);
+
+    render(<FlowChangeArtifact presentation={PRESENTATION} versions={versions} />);
+
+    expect(screen.getByText('Rewritten')).toBeTruthy();
+    expect(screen.getByText(/Ship it as one PR and stop\./)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show all' })).toBeTruthy();
+    expect(screen.getByText('Previous version').closest('details')?.textContent).toContain(
+      'Do not merge the PR.',
+    );
+  });
+
+  it('keeps a changed command closed so its text only shows when the user opens it', () => {
+    const versions = versionsFor([
+      {
+        id: 'agent',
+        before: { command: 'deploy --token old' },
+        after: { command: 'deploy --token new' },
+      },
+    ]);
+
+    render(<FlowChangeArtifact presentation={PRESENTATION} versions={versions} />);
+
+    const command = screen.getByRole('button', { name: /Command/ });
+    expect(command.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText(/--token/)).toBeNull();
+  });
+
+  it('lists at most three changed steps until the user asks for the rest', () => {
+    const ids = ['one', 'two', 'three', 'four'];
+    const presentation: FlowChangePresentation = {
+      ...PRESENTATION,
+      graph: undefined,
+      changes: ids.map((id, operationIndex) => ({
+        operationIndex,
+        action: 'update',
+        kind: 'node',
+        status: 'applied',
+        label: id,
+        nodeId: id,
+      })),
+    };
+    const versions = versionsFor(
+      ids.map((id) => ({ id, before: { model: 'sonnet' }, after: { model: 'opus' } })),
+    );
+
+    render(<FlowChangeArtifact presentation={presentation} versions={versions} />);
+
+    const list = screen.getByRole('region', { name: 'What changed' });
+    expect(list.querySelectorAll('ol > li')).toHaveLength(3);
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more changed step' }));
+    expect(list.querySelectorAll('ol > li')).toHaveLength(4);
+    expect(document.activeElement).toBe(list.querySelectorAll('ol > li')[3]);
   });
 });

@@ -11,8 +11,10 @@ import {
   buildFlowChangeOutline,
   type FlowChangeOutlineModel,
 } from '../../../lib/flows/flow-change-outline';
+import { buildStepChanges, type FlowVersionPair } from '../../../lib/flows/flow-step-diff';
 import { FlowChangeOutline } from './FlowChangeOutline';
 import { FlowChangeReceipt } from './FlowChangeReceipt';
+import { StepChanges } from './StepChanges';
 
 type Props = {
   presentation: FlowChangePresentation;
@@ -20,6 +22,8 @@ type Props = {
   defaultExpanded?: boolean;
   /** Inside another glass card (a subagent's): a tint, not a second glass. */
   nested?: boolean;
+  /** The saved versions this patch went from and to; enables the field-level "What changed" list. */
+  versions?: FlowVersionPair;
 };
 
 type ChangeCounts = Record<FlowChangeOperationStatus, number>;
@@ -163,6 +167,7 @@ export const FlowChangeArtifact = memo(function FlowChangeArtifact({
   onOpenFlow,
   defaultExpanded,
   nested,
+  versions,
 }: Props): ReactElement {
   const [expanded, setExpanded] = useState(defaultExpanded ?? false);
   const detailsId = useId();
@@ -170,6 +175,10 @@ export const FlowChangeArtifact = memo(function FlowChangeArtifact({
   const counts = useMemo(() => countChanges(presentation.changes), [presentation.changes]);
   // AgentFlowTool rebuilds this semantic presentation whenever its mutable MessagePart changes.
   const outline = useMemo(() => buildFlowChangeOutline(presentation), [presentation]);
+  const stepChanges = useMemo(
+    () => (versions ? buildStepChanges(presentation, versions, outline.routes) : []),
+    [presentation, versions, outline.routes],
+  );
   const canOpenFlow = Boolean(presentation.flowId && onOpenFlow);
   const summary = summaryFor(presentation, counts, canOpenFlow, outline.synopsis);
   const status = flowStatus(presentation);
@@ -195,6 +204,8 @@ export const FlowChangeArtifact = memo(function FlowChangeArtifact({
         summary={summary}
         titleId={titleId}
       />
+
+      <StepChanges entries={stepChanges} />
 
       <span aria-atomic="true" aria-live="polite" className="sr-only">
         {presentation.name}. {status}. {summary}.

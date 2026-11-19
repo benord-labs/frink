@@ -6,6 +6,7 @@ import {
   createFlowVersionWithResult,
   FlowVersionConflictError,
   getLatestVersion,
+  getVersionByNumber,
 } from './flow-versions';
 import { createFlow } from './flows';
 
@@ -165,5 +166,20 @@ describe('createFlowVersion — currentBatchId minting on briefing transition', 
   it('does not set currentBatchId when there is no briefing', async () => {
     const v = await createFlowVersion(db, { flowId, graph: graph('do it') });
     expect(persistedBatchId(v)).toBeUndefined();
+  });
+});
+
+describe('getVersionByNumber', () => {
+  it('returns the pinned version, not the latest, and null for a missing number', async () => {
+    const db = freshDb();
+    const { id: flowId } = await createFlow(db, { name: 'F' });
+    await createFlowVersion(db, { flowId, graph: graph('first') });
+    await createFlowVersion(db, { flowId, graph: graph('second'), expectedVersionNumber: 1 });
+
+    expect(getVersionByNumber(db, flowId, 1)?.graph).toMatchObject({
+      nodes: [{ id: 't' }, { id: 'a', config: { instructions: 'first' } }],
+    });
+    expect(getVersionByNumber(db, flowId, 3)).toBeNull();
+    expect(getVersionByNumber(db, 'missing-flow', 1)).toBeNull();
   });
 });

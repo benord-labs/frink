@@ -5,6 +5,7 @@
  * The card must follow main's task tracker via {@link runningSubagentToolIdsAtom} instead.
  */
 import '@testing-library/jest-dom/vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
@@ -16,6 +17,8 @@ import { AgentMcpToolCall } from './agent-mcp-tool-call';
 import { AgentTaskTool } from './agent-task-tool';
 import type { McpToolInfo } from './agent-tool-registry';
 import { AgentFlowTool } from './AgentFlowTool';
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 vi.mock('../../../hooks/useFlowBaseSnapshot', () => ({
   useFlowBaseSnapshot: () => undefined,
@@ -122,17 +125,19 @@ describe('AgentTaskTool — nested narration', () => {
       taskIsRunning ? new Set([asyncLaunchedPart.toolCallId ?? '']) : new Set<string>(),
     );
     const tree = (tools: MessagePart[]) => (
-      <Provider store={store}>
-        <TooltipProvider>
-          <AgentTaskTool
-            part={asyncLaunchedPart}
-            nestedTools={tools}
-            chatStatus="ready"
-            subChatId="sub-1"
-            isLastAssistantMessage
-          />
-        </TooltipProvider>
-      </Provider>
+      <QueryClientProvider client={queryClient}>
+        <Provider store={store}>
+          <TooltipProvider>
+            <AgentTaskTool
+              part={asyncLaunchedPart}
+              nestedTools={tools}
+              chatStatus="ready"
+              subChatId="sub-1"
+              isLastAssistantMessage
+            />
+          </TooltipProvider>
+        </Provider>
+      </QueryClientProvider>
     );
     const view = render(tree(nestedTools));
     return {
@@ -187,10 +192,12 @@ describe('AgentTaskTool — nested narration', () => {
     cleanup();
 
     render(
-      <TooltipProvider>
-        <AgentFlowTool part={flowPart} chatStatus="ready" />
-        <AgentMcpToolCall part={mcpPart} mcpInfo={mcpInfo} chatStatus="ready" />
-      </TooltipProvider>,
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <AgentFlowTool part={flowPart} chatStatus="ready" />
+          <AgentMcpToolCall part={mcpPart} mcpInfo={mcpInfo} chatStatus="ready" />
+        </TooltipProvider>
+      </QueryClientProvider>,
     );
     expect(screen.getByRole('region', { name: 'Release train' })).toHaveClass('glass-card');
     expect(screen.getByText('Search Code').closest('.glass-card')).not.toBeNull();

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'jotai';
 import { createElement, type ReactNode } from 'react';
@@ -11,8 +12,14 @@ vi.mock('../../../../hooks/useFlowBaseSnapshot', () => ({
   useFlowBaseSnapshot: () => undefined,
 }));
 
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
 function wrap(node: ReactNode) {
-  return createElement(Provider, null, node);
+  return createElement(
+    QueryClientProvider,
+    { client: queryClient },
+    createElement(Provider, null, node),
+  );
 }
 
 const GRAPH = {
