@@ -102,7 +102,7 @@ export function parseCodexAuthBlob(raw: string): { email?: string; apiKey: boole
   return { email, apiKey };
 }
 
-const NO_LOGIN_HINT = 'No Codex login found. Run `codex login` and try again.';
+const NO_LOGIN_HINT = "Frink didn't find a ChatGPT login on this computer.";
 
 /**
  * Public entrypoint. A file-stored login is parsed for its identity; a keychain-stored
@@ -129,9 +129,11 @@ export async function detectCodexAccount(): Promise<DetectCodexAccountResult> {
 
     const parsed = parseCodexAuthBlob(readFileSync(authFile, 'utf-8'));
     if (!parsed) {
+      // Windows has no in-app ChatGPT sign-in to point at.
+      const unreadable = "Frink found a ChatGPT login it can't read.";
       return {
         available: false,
-        hint: 'Codex credentials are present but unreadable. Re-run `codex login`.',
+        hint: process.platform === 'win32' ? unreadable : `${unreadable} Sign in again here.`,
       };
     }
 
