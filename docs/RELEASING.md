@@ -51,7 +51,7 @@ someone decides what each change means for Frink.
 |----------|-----|------------------|
 | Claude CLI | `scripts/binaries/claude-cli-version.json` | `cli-pin.test.ts` in `src/main/lib/claude/settings-contract/`: the CLI must not be older than the Agent SDK's `claudeCodeVersion`, or more than 25 patches newer. |
 | Claude Agent SDK | `@anthropic-ai/claude-agent-sdk` in `package.json` (exact) | `bun run ts:check`: `CLAUDE_SETTINGS_CONTRACT` in `src/main/lib/claude/settings-contract/index.ts` must route every top-level key of the SDK's `Settings`. |
-| Codex | `patches/codex/manifest.json` | `codex:build` and CI `--test-only`: `patches/codex/thread-item-variants.json` and `patches/codex/config-surface.json` must match the pinned source. `spawn-args.test.ts` checks that the features Frink turns off are the ones routed `disabled-by-frink`. |
+| Codex | `patches/codex/manifest.json` | `codex:build` and CI `--test-only`: `patches/codex/thread-item-variants.json` and `patches/codex/config-surface.json` must match the pinned source. `codex-config-surface.test.ts` and `build-codex-frink.test.ts` fail in seconds when either file, or the build constants, pin another version. `spawn-args.test.ts` checks that the features Frink turns off are the ones routed `disabled-by-frink`. |
 | Cursor | `@cursor/sdk` in `package.json` | `cursor-launch.test.ts`: must equal `CURSOR_ROW.sdk.version`. `ts:check`: `CURSOR_SETTING_SOURCES` must route every `SettingSource`. |
 | Copilot | `@github/copilot-sdk` in `package.json` | `ts:check`: `COPILOT_SESSION_OPTIONS` in `copilot-session.ts` must route every session option. |
 
