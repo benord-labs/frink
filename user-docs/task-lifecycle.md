@@ -79,6 +79,16 @@ After stopping, you can:
 
 Stopping is not a failure — it's a pause.
 
+### Programs a command leaves running
+
+Commands an agent runs can start programs of their own. Frink ends those programs once the agent is done with them, so leftover programs don't keep slowing your computer down:
+
+- **Claude chats:** when a background command is stopped, whether you stop it or the agent does, and when the chat's agent session ends, for example when you archive or delete the chat or quit Frink.
+- **Codex, Cursor and OpenCode chats:** when the agent process ends. That is when a Cursor turn finishes, when an OpenCode agent is stopped, when Codex closes or crashes, and when you quit Frink.
+- **GitHub Copilot chats:** when the agent's turn ends.
+
+A program the agent started on purpose to keep running, such as a dev server that writes to its own log file, keeps running once the command that started it has finished, unless the agent ends within a few seconds of that. In Claude chats, a program still writing into the command's output ends with the session. On Windows, Frink doesn't do this yet.
+
 ### Cancel or Delete in the work queue
 
 Each work-queue row offers one way out. **Cancel** stops work that is still going or waiting on you (Running, Plan Ready, Needs Attention, Interrupted, or a Pending task whose chat already exists) and keeps the record in **History**. **Delete** removes a record once nothing is running (Ready for review, Completed, Failed, Cancelled, or a Pending task that never started).

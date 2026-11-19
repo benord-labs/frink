@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type {
+  PostToolUseHookInput,
   PreToolUseHookInput,
   PreToolUseHookSpecificOutput,
   SyncHookJSONOutput,
@@ -444,5 +445,47 @@ describe("Frink's gate in a worktree chat", () => {
     expect(validate.mock.calls[0][13]).toBe('/work-tree');
     // The session's own folder from the hook input, which follows an earlier `cd`.
     expect(validate.mock.calls[0][14]).toBe('/work');
+  });
+});
+
+describe("the agent's own TaskStop", () => {
+  it('links what the task started before the stop, and ends it once the stop succeeds', async () => {
+    const groups = {
+      noteTaskGroupsNow: vi.fn(async () => {}),
+      reapStoppedTaskGroups: vi.fn(async () => {}),
+    };
+    const scope = {
+      chatId: 'chat',
+      subChatId: 'sub',
+      project: null,
+      projectPath: '/work',
+      permissionProjectPath: '/work',
+      agents: {},
+      validateToolPermission: vi.fn<typeof validateToolPermission>(),
+      abortSources: new Map<string, string>(),
+    };
+    const { hooks } = buildClaudeSessionCallbacks(scope, { current: null }, groups);
+    const before = hooks.PreToolUse.find((entry) => entry.matcher === 'TaskStop|KillShell');
+    const after = hooks.PostToolUse.find((entry) => entry.matcher === 'TaskStop|KillShell');
+    const stop: PostToolUseHookInput = {
+      session_id: 's',
+      transcript_path: '/dev/null',
+      cwd: '/work',
+      hook_event_name: 'PostToolUse',
+      tool_name: 'TaskStop',
+      tool_input: { task_id: 'b1' },
+      tool_response: {},
+      tool_use_id: 'tool-1',
+    };
+
+    await before?.hooks[0](toolCall('TaskStop', { task_id: 'b1' }), 'tool-1', { signal });
+    expect(groups.noteTaskGroupsNow).toHaveBeenCalledWith({ teardown: true });
+    await after?.hooks[0](stop, 'tool-1', { signal });
+    expect(groups.reapStoppedTaskGroups).toHaveBeenCalledWith('b1');
+    // An empty task_id must not hide the legacy shell_id.
+    await after?.hooks[0]({ ...stop, tool_input: { task_id: '', shell_id: 'b2' } }, 'tool-1', {
+      signal,
+    });
+    expect(groups.reapStoppedTaskGroups).toHaveBeenCalledWith('b2');
   });
 });

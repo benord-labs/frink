@@ -211,4 +211,33 @@ describe('stopBackgroundTask', () => {
     expect(repeat).toEqual({ ok: true });
     expect(hold.session.query.stopTask).toHaveBeenCalledTimes(1);
   });
+
+  it('links what the task started before stopping it, and ends that once the stop succeeds', async () => {
+    const hold = heldWith([task('s1'), task('s2')]);
+    const groups = {
+      noteTaskGroupsNow: vi.fn(async () => {}),
+      reapStoppedTaskGroups: vi.fn(async () => {}),
+    };
+
+    expect(await stopBackgroundTask('sc1', 's1', groups)).toEqual({ ok: true });
+
+    expect(groups.noteTaskGroupsNow).toHaveBeenCalledWith({ teardown: true });
+    expect(groups.noteTaskGroupsNow.mock.invocationCallOrder[0]).toBeLessThan(
+      hold.session.query.stopTask.mock.invocationCallOrder[0],
+    );
+    expect(groups.reapStoppedTaskGroups).toHaveBeenCalledWith('s1');
+  });
+
+  it('leaves what a task started alone when its stop fails', async () => {
+    const hold = heldWith([task('s1'), task('s2')]);
+    hold.session.query.stopTask.mockRejectedValueOnce(new Error('boom'));
+    const groups = {
+      noteTaskGroupsNow: vi.fn(async () => {}),
+      reapStoppedTaskGroups: vi.fn(async () => {}),
+    };
+
+    expect(await stopBackgroundTask('sc1', 's1', groups)).toMatchObject({ ok: false });
+
+    expect(groups.reapStoppedTaskGroups).not.toHaveBeenCalled();
+  });
 });

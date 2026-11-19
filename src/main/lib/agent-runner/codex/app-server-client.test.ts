@@ -1114,3 +1114,22 @@ describe('CodexAppServerClient threadId demux', () => {
     client.dispose();
   });
 });
+
+describe('CodexAppServerClient leftover commands', () => {
+  it('hands the spawned server to the tracker that ends what its commands leave running', async () => {
+    const server = makeFakeChild();
+    spawnMock.mockReturnValue(server);
+    answerInitialize(server);
+    const adoptProcess = vi.fn();
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      clientInfo: CLIENT_INFO,
+      adoptProcess,
+    });
+
+    await client.start();
+
+    expect(adoptProcess).toHaveBeenCalledWith(server);
+    client.dispose();
+  });
+});

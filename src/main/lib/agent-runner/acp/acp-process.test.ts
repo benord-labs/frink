@@ -210,6 +210,23 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect(agent.describeExit()).toContain('could not start');
     await agent.dispose();
   });
+
+  it('ends what a command started in a group of its own once the agent behind a launcher is stopped', async () => {
+    const command = `const c = require('node:child_process').spawn(process.execPath, ['--eval', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true }); process.stderr.write(String(c.pid)); setInterval(() => {}, 1000);`;
+    const agent = startAcpAgentProcess(
+      launch(`
+        import { spawn } from 'node:child_process';
+        spawn(process.execPath, ['--eval', ${JSON.stringify(command)}], { stdio: ['ignore', 'ignore', 'inherit'] });
+        setInterval(() => {}, 1000);
+      `),
+    );
+    await expect.poll(() => agent.describeExit(), SETTLE).toMatch(/^\d+$/);
+    const started = Number(agent.describeExit());
+
+    await agent.dispose(0);
+
+    await expect.poll(() => isAlive(started), SETTLE).toBe(false);
+  });
 });
 
 describe('disposeAllAcpAgents', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {

@@ -1,10 +1,16 @@
 import type {
   CanUseTool,
+  HookCallback,
   PermissionResult,
   PreToolUseHookInput,
   UserPromptSubmitHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { REQUIRED_TOOLS } from '../../../../../shared/types/permissions';
+import {
+  TASK_GROUP_CONTROLS,
+  type TaskGroupControls,
+} from '../../../agent-runner/process-settlement';
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
 import {
@@ -92,7 +98,12 @@ function isClassifierFallbackAsk(toolName: string, decisionReason: string | unde
 
 /** A session's SDK callbacks. Every per-turn read goes through the turn attached to the session
  * they were built for; with no turn attached, tools are denied and Stop allows. */
-export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: ClaudeSessionRef) {
+export function buildClaudeSessionCallbacks(
+  scope: ClaudeSessionScope,
+  session: ClaudeSessionRef,
+  taskGroups: TaskGroupControls = TASK_GROUP_CONTROLS,
+) {
+  const taskStop = createTaskStopHooks(taskGroups);
   const activeTurn: ActiveTurn = () => session.current?.currentTurn ?? null;
   const stopHook = createClaudeStopHook(activeTurn, scope.subChatId, session);
   const allowlistOnlyHook = createSubagentAllowlistHook({
@@ -135,11 +146,37 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
         { hooks: [createPreToolUseHook(scope, activeTurn) as any] },
         // Every tool, sub-agent calls only: the per-agent allowlist backstop.
         { hooks: [allowlistOnlyHook as any] },
+        { matcher: TASK_STOP_TOOLS, hooks: [taskStop.before] },
       ],
+      PostToolUse: [{ matcher: TASK_STOP_TOOLS, hooks: [taskStop.after] }],
       // Enforces frink_task_signal on a turn that owes one, and records pending harness work.
       Stop: [{ hooks: [stopHook as any] }],
       // Delivers the active turn's operator reminders as an in-conversation system message.
       UserPromptSubmit: [{ hooks: [userPromptSubmitReminderHook as any] }],
+    },
+  };
+}
+
+const TASK_STOP_TOOLS = 'TaskStop|KillShell';
+
+const TaskStopInput = z.object({ task_id: z.string().optional(), shell_id: z.string().optional() });
+
+type TaskStopHooks = { before: HookCallback; after: HookCallback };
+
+/** The agent's own TaskStop ends only the task shell's group, so Frink ends what the task started:
+ * linked before the stop, since the shell is then gone, and ended once the stop succeeds. */
+function createTaskStopHooks(taskGroups: TaskGroupControls): TaskStopHooks {
+  return {
+    before: async () => {
+      await taskGroups.noteTaskGroupsNow({ teardown: true });
+      return {};
+    },
+    after: async (input) => {
+      const stop =
+        input.hook_event_name === 'PostToolUse' && TaskStopInput.safeParse(input.tool_input);
+      const taskId = stop && stop.success ? stop.data.task_id || stop.data.shell_id : undefined;
+      if (taskId) void taskGroups.reapStoppedTaskGroups(taskId);
+      return {};
     },
   };
 }

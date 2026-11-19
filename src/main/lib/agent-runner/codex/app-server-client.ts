@@ -39,9 +39,8 @@ import {
   type MessageReader,
   type MessageWriter,
 } from 'vscode-jsonrpc/node';
-import { lowerChildPriority } from '../../platform/lower-child-priority';
 import { captureMainException } from '../../sentry/init';
-import { createChildProcessCloseBarrier } from '../process-settlement';
+import { adoptAgentProcess, createChildProcessCloseBarrier } from '../process-settlement';
 import { APPROVAL_REQUEST_METHODS, declineApprovalResponse } from './codex-events';
 import { recordCodexSkillRootsRpcOutcome } from './skill-roots';
 import {
@@ -153,6 +152,7 @@ export type CodexAppServerClientOptions = {
   extraSkillRoots?: string[];
   /** Awaited before the spawn, e.g. so the server starts on the user's login-shell PATH. */
   beforeSpawn?: () => Promise<void>;
+  adoptProcess?: typeof adoptAgentProcess;
 };
 
 /** Hard cap on the initialize handshake so a hung/wrong binary can't wedge a turn forever. */
@@ -266,7 +266,7 @@ export class CodexAppServerClient {
       env: { ...process.env, ...this.options.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
-    lowerChildPriority(child.pid);
+    (this.options.adoptProcess ?? adoptAgentProcess)(child);
     this.child = child;
 
     // Drain stderr so the pipe never blocks; log under debug only.

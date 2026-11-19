@@ -15,6 +15,7 @@ vi.mock('../platform', () => ({
 }));
 
 import { isWindows } from '../platform';
+import { spawnCredentialFingerprint } from './credential-fd-spawn';
 import {
   LoginShellEnvResolver,
   type ShellEnv,
@@ -206,7 +207,7 @@ describe('buildOneShotClaudeLaunch', () => {
 
     expect(launch.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(launch.env).not.toHaveProperty('ANTHROPIC_API_KEY');
-    expect(launch.spawnClaudeCodeProcess).toBeUndefined();
+    expect(spawnCredentialFingerprint(launch.spawnClaudeCodeProcess)).toBeUndefined();
   });
 
   it("pins CLAUDE_SECURESTORAGE_CONFIG_DIR to '' so the CLI reads the canonical keychain login", () => {
