@@ -5,7 +5,6 @@ export {
   clearPaneContextAtom,
   closeFileAtom,
   closeFilesOutsideProjectAtom,
-  closePaneTabsAtom,
   codeEditorActiveChatIdAtom,
   codeEditorHeightAtom,
   codeEditorLayoutAtom,
@@ -22,7 +21,6 @@ export {
   isMarkdownPath,
   isPdfPath,
   lastActiveTabPerPaneAtom,
-  markFileSavedAtom,
   type OpenFile,
   openFileAtom,
   openFilesAtom,
@@ -35,6 +33,12 @@ export {
 } from './atoms';
 export { chatContextFileAtomFamily, chatContextFileDismissedAtomFamily } from './chat-context-file';
 export { closesEditorOnEscape } from './close-on-escape';
+export {
+  closePaneTabsAtom,
+  pendingCloseKeysAtom,
+  requestCloseAllFilesAtom,
+  requestCloseFilesAtom,
+} from './close-tabs';
 export { contextPathForTab, selectionFileNameForTab } from './context-file-for-tab';
 export { type CodeEditorLayout, getNextCodeEditorLayout } from './layout-cycle';
 export {

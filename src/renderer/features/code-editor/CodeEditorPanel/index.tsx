@@ -1,7 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
 import { Button } from '@benord-labs/frink-primitives';
-import Editor from '@monaco-editor/react';
+import MonacoEditor, { type EditorProps } from '@monaco-editor/react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
   BookOpen,
@@ -18,8 +18,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { type ComponentType, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MemoizedMarkdown } from '@/components/chat-markdown-renderer';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -39,6 +38,7 @@ import {
   shouldApplyExternalRefreshResult,
   shouldScheduleExternalRefresh,
 } from '@/lib/code-editor/files';
+import { useSaveOpenFile } from '@/lib/code-editor/files/use-save-open-file';
 import {
   buildInlineDiffLayout,
   getInlineDiffState,
@@ -63,7 +63,6 @@ import {
   activeFilePathAtom,
   type CodeEditorLayout,
   chatContextFileAtomFamily,
-  closeFileAtom,
   closesEditorOnEscape,
   codeEditorActiveChatIdAtom,
   codeEditorHeightAtom,
@@ -84,13 +83,13 @@ import {
   isMarkdownPath,
   isPdfPath,
   lastActiveTabPerPaneAtom,
-  markFileSavedAtom,
   normalizeRevealSelection,
   revealPendingOnMount,
   type OpenFile,
   openFilesAtom,
   pinFileAtom,
   type RevealLineDetail,
+  requestCloseFilesAtom,
   revokeBlobUrlIfPresent,
   revokePdfBlobIfPresent,
   selectionFileNameForTab,
@@ -113,6 +112,7 @@ import { cn, isMac } from '@/lib/utils';
 import { OtherProjectNotice } from './OtherProjectNotice';
 import { ProjectGroupSeparator } from './ProjectGroupSeparator';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
+import { UnsavedChangesDialog } from './UnsavedChangesDialog';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
 const MARKDOWN_PREVIEW_MAX_CHARS = 200_000;
@@ -343,21 +343,24 @@ function ToolbarIconButton({
 }
 
 // Main CodeEditorPanel component
-export function CodeEditorPanel() {
+/** `Editor` is the Monaco editor; tests pass a stand-in, since Monaco needs a canvas and workers. */
+export function CodeEditorPanel({
+  Editor = MonacoEditor,
+}: { Editor?: ComponentType<EditorProps> } = {}) {
   const [isOpen, setIsOpen] = useAtom(codeEditorOpenAtom);
   const [files, setFiles] = useAtom(openFilesAtom);
   const [activePath, setActivePath] = useAtom(activeFilePathAtom);
   const activeFile = useAtomValue(activeFileAtom);
-  const closeFile = useSetAtom(closeFileAtom);
+  const requestCloseFiles = useSetAtom(requestCloseFilesAtom);
   const codeEditorActiveChatId = useAtomValue(codeEditorActiveChatIdAtom);
   const updateContent = useSetAtom(updateFileContentAtom);
-  const markFileSaved = useSetAtom(markFileSavedAtom);
   const pinFile = useSetAtom(pinFileAtom);
   const [height, setHeight] = useAtom(codeEditorHeightAtom);
   const [width, setWidth] = useAtom(codeEditorWidthAtom);
   const [layout, setLayout] = useAtom(codeEditorLayoutAtom);
   const [diffModePreference, setDiffModePreference] = useAtom(diffModePreferenceAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
+  const saveOpenFile = useSaveOpenFile(selectedProject?.path, triggerFileTreeRefresh);
   const customHotkeys = useAtomValue(customHotkeysAtom);
   const monacoTheme = useMonacoTheme();
   const utils = trpc.useUtils();
@@ -1314,35 +1317,8 @@ export function CodeEditorPanel() {
       }
       return;
     }
-    if (activeFile.content === undefined) return;
-
-    const content = activeFile.content;
-    // activePath is composite key; use activeFile.path for the actual filesystem path
-    const fullPath = getFullPath(projectPath, activeFile.path);
-    try {
-      await trpcClient.files.writeFile.mutate({ filePath: fullPath, content });
-      markFileSaved(activePath); // composite key
-      // Invalidate file tree cache to refresh git status indicators
-      utils.files.listDirectory.invalidate();
-      utils.files.symlinkEscape.invalidate();
-      // Git status is worktree-scoped — a file outside any project has none to refresh.
-      if (projectPath) {
-        utils.changes.getStatus.invalidate({ worktreePath: projectPath });
-        utils.changes.getWorkingFileLineChanges.invalidate({
-          worktreePath: projectPath,
-          filePath: activeFile.path,
-        });
-        utils.changes.getOriginalContent.invalidate({
-          worktreePath: projectPath,
-          filePath: activeFile.path,
-        });
-        // Trigger file tree refresh event so expanded folders reload with fresh git status
-        triggerFileTreeRefresh(projectPath);
-      }
-    } catch (_err) {
-      toast.error('Failed to save file');
-    }
-  }, [activePath, activeFile, projectPath, pinFile, markFileSaved, utils]);
+    await saveOpenFile(activePath);
+  }, [activePath, activeFile, pinFile, saveOpenFile]);
 
   const toggleMarkdownPreview = useCallback(() => {
     setMarkdownPreviewVisible((prev) => {
@@ -1432,7 +1408,7 @@ export function CodeEditorPanel() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'w' && isOpen && activePath) {
         e.preventDefault();
-        closeFile(activePath);
+        requestCloseFiles([activePath]);
       }
       if (
         (e.metaKey || e.ctrlKey) &&
@@ -1450,7 +1426,7 @@ export function CodeEditorPanel() {
       activePath,
       activeFile,
       canShowInlineDiff,
-      closeFile,
+      requestCloseFiles,
       customHotkeys,
       handleSave,
       setDiffModePreference,
@@ -1531,10 +1507,8 @@ export function CodeEditorPanel() {
   );
 
   const handleTabClose = useCallback(
-    (path: string) => {
-      closeFile(path);
-    },
-    [closeFile],
+    (path: string) => requestCloseFiles([path]),
+    [requestCloseFiles],
   );
 
   const handleTabPin = useCallback(
@@ -1624,8 +1598,17 @@ export function CodeEditorPanel() {
 
   return (
     <AnimatePresence>
+      <UnsavedChangesDialog
+        key="unsaved-changes"
+        saveOpenFile={saveOpenFile}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          editorRef.current?.focus();
+        }}
+      />
       {isOpen && (
         <motion.div
+          key="panel"
           ref={panelRef}
           data-code-editor-panel="true"
           {...animationProps}

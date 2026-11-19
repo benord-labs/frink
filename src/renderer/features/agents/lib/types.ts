@@ -34,9 +34,6 @@ export type AgentActionContext = {
   /** Toggle the active pane's file tree in split view */
   toggleActivePaneFileTree?: () => void;
 
-  /** Close all open text files in the code editor */
-  closeAllEditorFiles?: () => void;
-
   /** Cycle code editor layout (top -> left -> right) when editor is open */
   toggleEditorLayout?: () => void;
 

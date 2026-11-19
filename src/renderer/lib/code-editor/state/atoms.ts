@@ -16,6 +16,7 @@ import {
   type LegacyCodeEditorLayout,
   normalizeCodeEditorLayout,
 } from './layout-cycle';
+import { keepUnsavedTab, tabsChanged } from './unsaved-tab';
 
 export { isPdfPath } from '../../../../shared/pdf-extensions';
 
@@ -509,68 +510,6 @@ export const clearPaneContextAtom = atom(null, (get, set) => {
 });
 
 /**
- * Action: close editor tabs for a closed pane, unless another remaining pane
- * shares the same project. Keeps the tab bar tidy after pane removal.
- *
- * Legacy tabs (opened before split view, so missing `projectPath`) that were
- * retroactively tagged with `sourcePaneIndex` are intentionally closed here.
- * They have no project association to "survive" the pane removal, and keeping
- * them would leave orphan tabs with stale pane colors.
- */
-export const closePaneTabsAtom = atom(
-  null,
-  (
-    get,
-    set,
-    {
-      closedPaneIndex,
-      remainingProjectPaths,
-    }: { closedPaneIndex: number; remainingProjectPaths: string[] },
-  ) => {
-    const files = get(openFilesAtom);
-    if (files.length === 0) return;
-
-    const remainingProjects = new Set(remainingProjectPaths);
-
-    // Keep files that don't belong to the closed pane, or whose project
-    // is still represented by another remaining pane.
-    // Note: legacy tabs without projectPath that match the closed pane are
-    // dropped — see JSDoc above for rationale.
-    const kept = files.filter((f) => {
-      if (f.sourcePaneIndex !== closedPaneIndex) return true;
-      return f.projectPath !== undefined && remainingProjects.has(f.projectPath);
-    });
-
-    if (kept.length === files.length) return;
-
-    const keptKeys = new Set(kept.map((f) => fileKey(f.path, f.projectPath)));
-    files.forEach((f) => {
-      if (!keptKeys.has(fileKey(f.path, f.projectPath))) revokePdfBlobIfPresent(f);
-    });
-
-    // Shift sourcePaneIndex on remaining files: indices above the removed pane move down
-    const shifted = kept.map((f) => {
-      if (f.sourcePaneIndex !== undefined && f.sourcePaneIndex > closedPaneIndex) {
-        return { ...f, sourcePaneIndex: f.sourcePaneIndex - 1 };
-      }
-      return f;
-    });
-
-    set(openFilesAtom, shifted);
-
-    const activeKey = get(activeFilePathAtom);
-    const activeStillOpen = kept.some((f) => fileKey(f.path, f.projectPath) === activeKey);
-    if (!activeStillOpen) {
-      const first = kept[0];
-      set(activeFilePathAtom, first ? fileKey(first.path, first.projectPath) : null);
-      if (kept.length === 0) {
-        set(codeEditorOpenAtom, false);
-      }
-    }
-  },
-);
-
-/**
  * Whether to filter tabs to active pane only (persisted across reloads).
  *
  * Persistence is mainly useful for mid-session reloads while split view is
@@ -595,11 +534,15 @@ export const closeFilesOutsideProjectAtom = atom(null, (get, set, projectPath: s
   }
 
   if (!projectPath) {
-    // No project selected - close all files
-    files.forEach(revokePdfBlobIfPresent);
-    set(openFilesAtom, []);
-    set(activeFilePathAtom, null);
-    set(codeEditorOpenAtom, false);
+    // No project selected - close every saved file; unsaved ones stay
+    const unsaved = files.filter((f) => f.isDirty).map(keepUnsavedTab);
+    files.forEach((f) => {
+      if (!f.isDirty) revokePdfBlobIfPresent(f);
+    });
+    set(openFilesAtom, unsaved);
+    const first = unsaved[0];
+    set(activeFilePathAtom, first ? fileKey(first.path, first.projectPath) : null);
+    if (unsaved.length === 0) set(codeEditorOpenAtom, false);
     return;
   }
 
@@ -610,22 +553,24 @@ export const closeFilesOutsideProjectAtom = atom(null, (get, set, projectPath: s
   // Another project's tabs are left to settleBrowsedTabsAtom, which knows their chat.
   const normalizedProjectPath = normalizePathForComparison(projectPath);
   const normalizedProjectPrefix = normalizedProjectPath ? `${normalizedProjectPath}/` : '';
-  const filesInProject = files.filter((f) => {
-    if (f.isOtherProject) return true;
+  const filesInProject = files.flatMap((f) => {
+    if (f.isOtherProject) return [f];
     const normalizedFileProjectPath = normalizePathForComparison(f.projectPath);
     const normalizedFilePath = normalizePathForComparison(f.path) ?? '';
-    return (
+    if (
       normalizedFileProjectPath === normalizedProjectPath ||
       normalizedFilePath.startsWith(normalizedProjectPrefix)
-    );
+    ) {
+      return [f];
+    }
+    return f.isDirty ? [keepUnsavedTab(f)] : [];
   });
 
   const projectKeys = new Set(filesInProject.map((f) => fileKey(f.path, f.projectPath)));
   files.forEach((f) => {
     if (!projectKeys.has(fileKey(f.path, f.projectPath))) revokePdfBlobIfPresent(f);
   });
-  // If files were removed, update state
-  if (filesInProject.length !== files.length) {
+  if (tabsChanged(files, filesInProject)) {
     set(openFilesAtom, filesInProject);
 
     const activeKey = get(activeFilePathAtom);
