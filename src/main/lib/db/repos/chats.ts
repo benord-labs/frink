@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-
 import type { getDatabase } from '../index';
 import { type Chat, chats, type NewChat, type SubChat, subChats } from '../schema';
 import { createId } from '../utils';
+import { copyChatLinks, settleLinksAfterMove } from './chat-linked-projects';
 import { assertProjectNotBeingDeleted } from './projects';
 import { getAiAccountType, getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
 import { copyTranscript } from './sub-chat-messages';
@@ -306,7 +307,7 @@ export async function moveChatToProjectLocal(
       .where(eq(chats.id, id))
       .returning()
       .get() as Chat | undefined;
-
+    settleLinksAfterMove(db, id, opts);
     return { updated: updated ?? null, previousWorktreePath: current.worktreePath ?? null };
   });
 }
@@ -415,7 +416,7 @@ export async function updateChatBranchByWorktreePath(
 
 /**
  * Deep-copy a chat and its sub-chats with fresh IDs in one sync transaction. The fork keeps the
- * worktree, branch and account; its sub-chats start with no session id.
+ * worktree, branch, account and linked projects; its sub-chats start with no session id.
  *
  * Returns the new chat + new sub-chats. Throws if the source chat doesn't exist.
  */
@@ -464,6 +465,7 @@ export async function forkChatWithSubChats(
         provider: source.provider,
       })
       .run();
+    copyChatLinks(db, sourceChatId, newChatId);
 
     const newSubs: SubChat[] = [];
     for (const sub of sourceSubs) {

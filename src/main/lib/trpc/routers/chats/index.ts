@@ -10,6 +10,7 @@ import { diffRouter } from './git/diff';
 import { parsedDiffRouter } from './git/parsed-diff';
 import { switchWorktreeRouter } from './git/switch-worktree';
 import { worktreeStatusRouter } from './git/worktree-status';
+import { linkedProjectsRouter } from './linked-projects';
 import { listRouter } from './list';
 import { pinRouter } from './pin';
 import { prContextRouter } from './pr/context';
@@ -44,6 +45,9 @@ export const chatsRouter = router({
 
   // Composer settings (model / Auto / Fast / Thinking) shared with every window and the phone
   ...composerRouter._def.procedures,
+
+  // Projects linked to a chat (linkProject / unlinkProject), mirrored to every window
+  ...linkedProjectsRouter._def.procedures,
 
   // Sub-chat operations
   ...subChatGetRouter._def.procedures,

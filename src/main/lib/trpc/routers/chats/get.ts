@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import { z } from 'zod';
 import { getDatabase } from '../../../db';
+import { listLinkedProjects } from '../../../db/repos/chat-linked-projects';
 import { getChatById as getChatByIdLocal } from '../../../db/repos/chats';
 import { getProjectById } from '../../../db/repos/projects';
 import { listSubChatsByChat as listSubChatsByChatLocal } from '../../../db/repos/sub-chats';
@@ -7,8 +9,9 @@ import { publicProcedure, router } from '../../index';
 import { mapChatProject, mapLocalChatResponse } from './map-chat-response';
 
 /**
- * Phase 1 local-first migration: read a single chat (with sub-chats + project) from local
- * SQLite. Every project on this machine is "local" by definition.
+ * Phase 1 local-first migration: read a single chat (with sub-chats, project and linked
+ * projects, each flagged `missing` when its folder is gone) from local SQLite. Every project on
+ * this machine is "local" by definition.
  *
  * Transcripts are elided as `messages: '[]'`; the renderer fetches each per sub-chat via
  * `chats.getSubChatMessages`.
@@ -25,6 +28,11 @@ export const getRouter = router({
     const project = mapChatProject(
       chat.projectId ? await getProjectById(db, chat.projectId) : null,
     );
+    // Only here, not in mapLocalChatResponse, so list payloads don't carry it.
+    const linkedProjects = listLinkedProjects(db, chat.id).map((linked) => ({
+      ...mapChatProject(linked),
+      missing: !fs.existsSync(linked.path),
+    }));
 
     return {
       ...mapLocalChatResponse(chat),
@@ -43,6 +51,7 @@ export const getRouter = router({
         fileCount: sc.fileCount ?? 0,
       })),
       project,
+      linkedProjects,
     };
   }),
 });

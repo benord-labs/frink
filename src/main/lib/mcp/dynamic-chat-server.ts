@@ -16,6 +16,7 @@ import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import type { AgentRuntime } from '../../../shared/lib/ai-providers';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { getDatabase } from '../db';
+import { dropLinksOverlapping } from '../db/repos/chat-linked-projects';
 import {
   getChatById,
   moveChatToProjectLocal,
@@ -684,9 +685,8 @@ async function handleToolsCall(
     let moved: { branch: string | null; worktreePath: string | null } | null = null;
     try {
       if (isSameProject) {
-        const updated = await updateChat(getDatabase(), ctx.chatId, {
-          worktreePath: requestedWorktreePath,
-        });
+        const updated = await updateChat(db, ctx.chatId, { worktreePath: requestedWorktreePath });
+        dropLinksOverlapping(db, ctx.chatId, [requestedWorktreePath]);
         moved = updated ? { branch: updated.branch, worktreePath: updated.worktreePath } : null;
       } else {
         // `resolvedTarget` is computed for every cross-project case above; this is an
