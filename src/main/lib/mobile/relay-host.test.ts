@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('electron-log', () => ({ default: { warn: vi.fn(), debug: vi.fn() } }));
 vi.mock('../sentry', () => ({ captureContained: vi.fn() }));
@@ -192,6 +193,7 @@ describe('mobile relay host', () => {
   it('drops a peer whose first frame is not a hello', () => {
     relay.fromPhone('peer-1', Buffer.from(new Uint8Array(40)));
     expect(relay.disconnected).toEqual(['peer-1']);
+    expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('peer-1'));
   });
 
   it('severs exactly the channels of a revoked phone, at once', async () => {

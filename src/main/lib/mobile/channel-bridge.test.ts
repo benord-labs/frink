@@ -118,6 +118,25 @@ describe('mobile channel bridge', () => {
     expect(fail).not.toHaveBeenCalled();
   });
 
+  it('drops the channel once every slot has been held by an unanswered request for minutes', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const fetch = vi.fn(() => new Promise<Response>(() => {}));
+      const { bridge, fail, response } = harness(fetch);
+      for (let id = 0; id < 8; id++)
+        for (const part of request(id, '/api', encode({}))) bridge.receive(part);
+      vi.advanceTimersByTime(60_000);
+      for (const part of request(8, '/api', encode({}))) bridge.receive(part);
+      expect(response(8).status).toBe(429);
+      expect(fail).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(5 * 60_000);
+      for (const part of request(9, '/api', encode({}))) bridge.receive(part);
+      expect(fail).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves the live cap to running requests, whatever refusals are still being swallowed', () => {
     const fetch = vi.fn(() => new Promise<Response>(() => {}));
     const { bridge, response } = harness(fetch);

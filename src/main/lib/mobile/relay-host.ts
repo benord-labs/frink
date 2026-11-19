@@ -42,7 +42,7 @@ export type RelayHost = {
   /** Closes every channel whose bearer token `revoked` rejects, at once. */
   sever(revoked: (token: string) => boolean): void;
   connected(): boolean;
-  /** Redials the relay at once, for a socket that may have died while the Mac slept. */
+  /** Redials the relay at once, for a socket that may have died while the computer slept. */
   reconnect(): void;
   close(): void;
 };
@@ -72,7 +72,8 @@ export function startRelayHost(options: {
     for (const peerId of [...deadlines.keys(), ...peers.keys()]) forget(peerId);
   };
   const drop = (peerId: string, reason: string) => {
-    log.debug(`[Mobile] Dropped phone channel: ${reason}`);
+    // A peer id is the relay's random per-connection socket id, not a key or token.
+    log.debug(`[Mobile] Dropped phone channel ${peerId.slice(0, 8)}: ${reason}`);
     forget(peerId);
     socket.emit('disconnect-peer', peerId);
   };

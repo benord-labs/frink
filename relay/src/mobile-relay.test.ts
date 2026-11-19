@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRelay, MOBILE_PING, type Relay } from './index.js';
+import { createRelay, type Relay } from './index.js';
 
 let relay: Relay | undefined;
 const clients: Socket[] = [];
@@ -67,9 +67,10 @@ describe('mobile relay', () => {
     ).toBe(true);
   });
 
-  it('drops a silent connection after the short mobile heartbeat', () => {
+  it('drops a dead client within 15 s yet tolerates a pong up to 10 s late', () => {
     relay = createRelay();
-    expect(relay.io.engine.opts).toMatchObject(MOBILE_PING);
+    // A pong is due 10 s after each ping, and pings follow 5 s after the last pong.
+    expect(relay.io.engine.opts).toMatchObject({ pingInterval: 5_000, pingTimeout: 10_000 });
   });
 
   it('refuses missing desktops and replaces a stale host on a new ownership proof', async () => {

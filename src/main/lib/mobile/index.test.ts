@@ -158,6 +158,8 @@ describe('desktop mobile access lifecycle', () => {
     try {
       const mobile = await import('./index');
       await mobile.enableMobileAccess();
+      // A resume with no recorded suspend, like one for a sleep before the host started, is ignored.
+      mocks.power.get('resume')?.();
       // A short sleep leaves the socket, and the phones on it, alone.
       mocks.power.get('suspend')?.();
       vi.advanceTimersByTime(5_000);
@@ -165,6 +167,8 @@ describe('desktop mobile access lifecycle', () => {
       expect(mocks.reconnect).not.toHaveBeenCalled();
       mocks.power.get('suspend')?.();
       vi.advanceTimersByTime(60_000);
+      mocks.power.get('resume')?.();
+      // A repeated resume does not reuse the suspend the first one consumed.
       mocks.power.get('resume')?.();
       expect(mocks.reconnect).toHaveBeenCalledOnce();
       await mobile.stopMobileAccess();

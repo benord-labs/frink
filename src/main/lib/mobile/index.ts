@@ -21,14 +21,16 @@ const lifecycle = new Mutex();
 const identityPath = () => join(app.getPath('userData'), 'mobile-identity.json');
 /** The relay drops a socket silent for this long, so a longer sleep has already cost the link. */
 const RELAY_HEARTBEAT_MS = 15_000;
-let suspendedAt = 0;
+let suspendedAt: number | null = null;
 const noteSuspend = () => {
   suspendedAt = Date.now();
 };
 /** Redials after a long sleep instead of waiting out a heartbeat. A short one keeps a live socket,
- * and redialling it would cut off phones mid-request. */
+ * and redialling it would cut off phones mid-request. Each suspend is consumed by one resume. */
 const reconnectAfterSleep = () => {
-  if (Date.now() - suspendedAt >= RELAY_HEARTBEAT_MS) host?.channel.reconnect();
+  const slept = suspendedAt === null ? 0 : Date.now() - suspendedAt;
+  suspendedAt = null;
+  if (slept >= RELAY_HEARTBEAT_MS) host?.channel.reconnect();
 };
 
 function getStore(): Promise<MobilePairingStore> {

@@ -8,6 +8,8 @@ import { MOBILE_UPLOAD_MAX_BYTES } from './server';
 /** Requests one phone may have open at once over a channel; the phone's polling needs a handful.
  * Cancelled requests the app still runs get a separate cap of the same size. */
 const MAX_IN_FLIGHT = 8;
+/** Far past any phone's own timeout: a channel whose live or cancelled slots are all this old is hung. */
+const STUCK_MS = 5 * 60_000;
 const JSON_BODY_MAX_BYTES = 128 * 1024;
 const ATTACHMENTS_PATH = '/api/attachments';
 const PAIR_PATH = '/pair';
@@ -85,7 +87,8 @@ export type ChannelBridge = {
  * its responses back into parts. */
 class Bridge implements ChannelBridge {
   private readonly assembling = new Map<number, Assembly>();
-  private readonly running = new Set<number>();
+  /** Requests the app is running, with when each started. */
+  private readonly running = new Map<number, number>();
   /** Running requests the phone cancelled: their ids stay taken until the app answers, unsent. */
   private readonly cancelled = new Set<number>();
   /** Refused requests whose remaining parts are still to be swallowed. */
@@ -129,11 +132,17 @@ class Bridge implements ChannelBridge {
     return this.refused.size < MAX_IN_FLIGHT;
   }
 
-  /** Whether a new request would exceed what one phone may have in flight. Refused ids hold no body
-   * or app work, and `admits` bounds them on its own. */
-  private busy(): boolean {
-    const live = this.assembling.size + this.running.size - this.cancelled.size;
-    return live >= MAX_IN_FLIGHT || this.cancelled.size >= MAX_IN_FLIGHT;
+  /** Whether requests the app started by `before`, plus `assembling` unfinished ones, fill the live
+   * or the cancelled cap. Refused ids hold no body or app work, and `admits` bounds them. */
+  private full(before: number, assembling: number): boolean {
+    let live = assembling;
+    let cancelled = 0;
+    for (const [id, started] of this.running) {
+      if (started > before) continue;
+      if (this.cancelled.has(id)) cancelled++;
+      else live++;
+    }
+    return live >= MAX_IN_FLIGHT || cancelled >= MAX_IN_FLIGHT;
   }
 
   /** Whether the request may make this desktop hold a body; remembers a token that authenticates,
@@ -153,7 +162,13 @@ class Bridge implements ChannelBridge {
       this.options.fail();
       return null;
     }
-    if (this.busy()) {
+    const now = Date.now();
+    // Requests the app never answers would refuse this phone for good; a fresh channel recovers.
+    if (this.full(now - STUCK_MS, 0)) {
+      this.options.fail();
+      return null;
+    }
+    if (this.full(now, this.assembling.size)) {
       this.refuse(envelope, 429, 'Too many requests. Try again in a moment.');
       return null;
     }
@@ -197,12 +212,12 @@ class Bridge implements ChannelBridge {
   private refuse(envelope: { id: number; end: boolean }, status: number, error: string): void {
     this.release(envelope.id);
     if (!envelope.end) this.refused.add(envelope.id);
-    this.running.add(envelope.id);
+    this.running.set(envelope.id, Date.now());
     this.respond(envelope.id, status, encoder.encode(JSON.stringify({ error })));
   }
 
   private async run(id: number, assembly: Assembly): Promise<void> {
-    this.running.add(id);
+    this.running.set(id, Date.now());
     try {
       const response = await this.options.fetch(
         new Request(`${CHANNEL_ORIGIN}${assembly.path}`, {
