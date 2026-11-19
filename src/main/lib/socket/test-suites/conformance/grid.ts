@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { AGENT_RUNTIMES, type AgentRuntime } from '../../../../../shared/lib/ai-providers';
 import { __resetSessionsForTest } from '../../claude-session-registry';
-import type { OperatorReminderHarness } from '../operator-reminders/delivery';
+import { APPROVAL_SCENARIOS } from './approvals';
 import { EXPECTED_FAILURES, type RowId, type ScenarioId } from './baseline';
-import { type Observed, runClaudeWakeBurst, runConformanceTurn, type TurnSetup } from './drive';
+import {
+  type GridHarness,
+  type Observed,
+  runClaudeWakeBurst,
+  runConformanceTurn,
+  type TurnSetup,
+} from './drive';
 import {
   LINKED_PROJECT,
   REPLY,
@@ -14,13 +20,14 @@ import {
   WRITE_FILE,
   WRITE_PATH,
 } from './fixtures';
+import { SESSION_SCENARIOS } from './sessions';
 
 type Check = (seen: Observed, runtime: AgentRuntime) => void;
 
 /** Runs as one row per runtime. Its precondition is its own test and never takes `fails`. */
-type Scenario = {
+export type Scenario = {
   id: ScenarioId;
-  play: (h: OperatorReminderHarness, runtime: AgentRuntime) => Promise<Observed>;
+  play: (h: GridHarness, runtime: AgentRuntime) => Promise<Observed>;
   /** The runtimes the scenario can happen on; every other cell is skipped with `otherwise`. */
   appliesTo?: { runtimes: readonly AgentRuntime[]; otherwise: string };
   precondition?: { name: string; check: Check };
@@ -130,9 +137,11 @@ const SCENARIOS: Scenario[] = [
     play: once(SIMPLE_TURN, { links: [LINKED_PROJECT], message: '/compact', delivery: PERSON }),
     check: expectPlainTurn,
   },
+  ...SESSION_SCENARIOS,
+  ...APPROVAL_SCENARIOS,
 ];
 
-function registerRow(h: OperatorReminderHarness, scenario: Scenario, runtime: AgentRuntime): void {
+function registerRow(h: GridHarness, scenario: Scenario, runtime: AgentRuntime): void {
   const row: RowId = `${scenario.id} x ${runtime}`;
   if (scenario.appliesTo && !scenario.appliesTo.runtimes.includes(runtime)) {
     it.skip(`conformance: ${row} (n/a: ${scenario.appliesTo.otherwise})`);
@@ -152,7 +161,7 @@ function registerRow(h: OperatorReminderHarness, scenario: Scenario, runtime: Ag
 
 /** The scenario x runtime parity grid, each row run through handleRemoteExecute.
  * Registered from executor.test.ts, whose module mocks it relies on. */
-export function registerConformanceTests(h: OperatorReminderHarness): void {
+export function registerConformanceTests(h: GridHarness): void {
   describe('conformance grid: every scenario on every runtime', () => {
     afterEach(() => __resetSessionsForTest());
     for (const scenario of SCENARIOS) {

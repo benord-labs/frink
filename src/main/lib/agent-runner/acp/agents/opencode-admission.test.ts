@@ -13,6 +13,7 @@ import { freshDb } from '../../../db/test-utils/fresh-db';
 import { startAcpAgentProcess } from '../acp-process';
 import { runAcpAgent } from '../acp-runner';
 import { collectChunks } from '../acp-test-fixtures';
+import * as acpUpdates from '../acp-updates';
 import { resolveAcpLaunch } from '../index';
 import { listen, markerModule, type Step, startScriptedModel } from './admission-model';
 import { launchFromRows } from './launch';
@@ -439,9 +440,16 @@ describe.runIf(BIN)('OpenCode admission', () => {
   it(
     'follows the project instructions and lists the user’s skills',
     async () => {
+      const updates = vi.spyOn(acpUpdates, 'mapSessionUpdate');
+      const replies = vi.spyOn(acpUpdates, 'mapPromptResponse');
       const result = await turn('instructions', [], true);
       expect(result.requests[0]).toContain(INSTRUCTION_MARK);
       expect(result.requests[0]).toContain(SKILL_MARK);
+      // Tees this real turn as the conformance grid's RECORDED OpenCode fixture.
+      const recordTo = process.env.FRINK_RECORD_ACP_TURN;
+      const messages = updates.mock.calls.map(([update]) => ({ update }));
+      const recorded = { messages, response: replies.mock.calls[0]?.[0] };
+      if (recordTo) await writeFile(recordTo, JSON.stringify(recorded, null, 2));
     },
     TURN_MS,
   );

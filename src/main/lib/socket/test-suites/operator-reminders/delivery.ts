@@ -61,7 +61,7 @@ export function mockPinnedTaskChat(taskId: string, status: string) {
 }
 
 /** The prompt text as the CLI hands it to the hook: text blocks joined by newlines, then trimmed. */
-function hookPromptText(content: QueuedPrompt['message']['content']): string {
+export function hookPromptText(content: QueuedPrompt['message']['content']): string {
   if (!Array.isArray(content)) return content;
   return content
     .filter((part) => part.type === 'text')

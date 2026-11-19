@@ -5,7 +5,7 @@ import type { CodexContextEntry } from '../../../shared/lib/message-markers/mess
 import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
 
 // Worded to be unconditionally TRUE for any agent-mode turn: it fires on unknown history too
-// (previousMode is an in-memory map, wiped by app restart and skipped by error-path turns), so it
+// (previousMode is an in-memory map, wiped by app restart and skipped by turns never taken), so it
 // must assert nothing about what the transcript actually contains.
 export const PLAN_MODE_EXIT_REMINDER =
   'Plan mode is not active. If any earlier "Plan mode is active" reminders appear in this conversation, they no longer apply — you can make edits, run tools, and take actions.';
@@ -62,7 +62,7 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
   // Plan→non-plan: the resumed transcript still holds the SDK's own "Plan mode is active"
   // reminder, and debug turns act too (their permissionMode is default/auto, never 'plan'), so
   // every non-plan mode gets the rebuttal. `previousMode === undefined` (unknown history — the
-  // tracking map is in-memory, wiped by app restart, and only written on a turn's success path)
+  // tracking map is in-memory, wiped by app restart, and written only when a provider takes a turn)
   // also fires: the wording is true regardless, and skipping it is how restart-resumed turns
   // parroted stale plan reminders.
   if (
