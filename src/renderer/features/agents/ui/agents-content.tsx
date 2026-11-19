@@ -818,10 +818,7 @@ export function AgentsContent() {
           {isSplitActive ? (
             /* Split view: multiple ChatViews side-by-side */
             <div
-              className={cn(
-                'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
-                !isTopLayout && 'h-full',
-              )}
+              className={cn('flex flex-col overflow-hidden min-h-0', !isTopLayout && 'h-full')}
               style={chatContainerStyle}
             >
               <SplitViewContainer
@@ -844,10 +841,7 @@ export function AgentsContent() {
           ) : selectedChatId ? (
             /* Single chat view */
             <div
-              className={cn(
-                'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
-                !isTopLayout && 'h-full',
-              )}
+              className={cn('flex flex-col overflow-hidden min-h-0', !isTopLayout && 'h-full')}
               style={chatContainerStyle}
             >
               <HtmlArtifactChatView
@@ -862,10 +856,7 @@ export function AgentsContent() {
           ) : (
             /* New chat form (default when no chat selected) */
             <div
-              className={cn(
-                'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
-                !isTopLayout && 'h-full',
-              )}
+              className={cn('flex flex-col overflow-hidden min-h-0', !isTopLayout && 'h-full')}
               style={chatContainerStyle}
             >
               <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />

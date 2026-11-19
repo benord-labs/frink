@@ -745,70 +745,75 @@ html.theme-switching *::after {
   -webkit-app-region: no-drag;
 }
 
-/* Chroma gradient animation for special keywords */
-@keyframes chroma-slide {
-  0% {
-    background-position: 100% 0;
-  }
-  40% {
-    background-position: 0% 0;
-  }
-  45% {
-    background-position: 0% 0;
-  }
-  46% {
-    background-position: 100% 0;
-  }
+/* Chroma for power keywords: a violet band sweeps across the word or glyph. The band is a
+   pseudo-element moved by transform, so the loop never asks the main thread for a frame. */
+@keyframes chroma-sweep {
+  0%,
+  46%,
   100% {
-    background-position: 100% 0;
+    transform: translateX(-83.33%);
+  }
+  40%,
+  45% {
+    transform: translateX(83.33%);
   }
 }
 
 /* Utilities, not plain classes, so they can switch on at a container tier.
-   `chroma-fill` paints a background (a masked glyph); `chroma-text` clips it to text. */
+   `chroma-fill` runs the band inside the element's own shape (a masked glyph); `chroma-text`
+   gives a word that shape by masking it to its glyphs. */
 @utility chroma-fill {
-  background-image: linear-gradient(
-    90deg,
-    #0a0a0a 0%,
-    #0a0a0a 30%,
-    #6366f1 42%,
-    #8b5cf6 50%,
-    #a855f7 58%,
-    #0a0a0a 70%,
-    #0a0a0a 100%
-  );
-  background-size: 300% 100%;
-  background-position: 100% 0;
+  position: relative;
+  color: #0a0a0a;
 
-  @variant dark {
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0 -10%;
     background-image: linear-gradient(
       90deg,
-      #fafafa 0%,
-      #fafafa 30%,
-      #818cf8 42%,
-      #a78bfa 50%,
-      #c084fc 58%,
-      #fafafa 70%,
-      #fafafa 100%
+      transparent,
+      #6366f1 30%,
+      #8b5cf6 50%,
+      #a855f7 70%,
+      transparent
     );
+    transform: translateX(-83.33%);
+  }
+
+  @variant dark {
+    color: #fafafa;
+
+    &::after {
+      background-image: linear-gradient(
+        90deg,
+        transparent,
+        #818cf8 30%,
+        #a78bfa 50%,
+        #c084fc 70%,
+        transparent
+      );
+    }
   }
 }
 
 @utility chroma-text {
   @apply chroma-fill;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
+  -webkit-mask-image: linear-gradient(#000, #000);
+  -webkit-mask-clip: text;
 }
 
 /* Reduced motion parks the violet band on the element, so the mode still reads. */
 @utility chroma-text-animate {
-  animation: chroma-slide 2s ease-out infinite;
+  &::after {
+    animation: chroma-sweep 2s ease-out infinite;
+  }
 
   @media (prefers-reduced-motion: reduce) {
-    animation: none !important;
-    background-position: 50% 0 !important;
+    &::after {
+      animation: none;
+      transform: none;
+    }
   }
 }
 

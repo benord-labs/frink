@@ -35,7 +35,7 @@ import { api } from '../../../lib/mock-api';
 import { hasActiveTransport, runLiveAtomFamily } from '@/lib/stores/active-transport-registry';
 import { askAgent, createPr, startReview } from '../../../lib/agent-chat/git-context';
 import { liveGitContextIo } from '../../../lib/agent-chat/git-context/live-io';
-import { useChatDiff } from '../../../lib/hooks/diff-panel/use-chat-diff';
+import { hasModifiedFiles } from '../../../lib/utils/git-status';
 import {
   generateCommitMessage,
   generateCommitToPrMessage,
@@ -65,6 +65,7 @@ import {
   expiredUserQuestionsAtom,
   filteredDiffFilesAtomFamily,
   filteredSubChatIdAtomFamily,
+  hasAnyUnseenChangesAtom,
   isCreatingPrAtomFamily,
   loadingSubChatsAtom,
   pendingBuildPlanSubChatIdAtom,
@@ -76,9 +77,9 @@ import {
   selectedAgentChatIdAtom,
   setLoading,
   showNewChatFormAtom,
-  splitViewAtom,
-  subChatFilesAtom,
+  splitViewChatIdsAtom,
   taskExecutionErrorAtomFamily,
+  totalSubChatFileCountAtom,
 } from '../atoms';
 import { CurrentChatWorktreeProvider } from '../context/current-chat-worktree-context';
 import { TextSelectionProvider } from '../context/text-selection-context';
@@ -1579,17 +1580,14 @@ export const ChatView = memo(function ChatView({
   const [selectedTeamId] = useAtom(selectedTeamIdAtom);
   const [chatMode] = useAtom(chatModeAtomFamily(chatId));
   const isActive = useIsPaneActive(splitPaneIndex);
-  const splitViewState = useAtomValue(splitViewAtom);
-  const isSplitActive = splitViewState.chatIds.length > 0;
-  const unseenChanges = useAtomValue(agentsUnseenChangesAtom);
+  const isSplitActive = useAtomValue(splitViewChatIdsAtom).length > 0;
+  const hasAnyUnseenChanges = useAtomValue(hasAnyUnseenChangesAtom);
   const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom);
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom);
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom);
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom);
   const { notifyAgentComplete } = useDesktopNotifications();
 
-  // Check if any chat has unseen changes
-  const hasAnyUnseenChanges = unseenChanges.size > 0;
   // Per-chat diff sidebar state - each chat remembers its own open/close state
   const diffSidebarAtom = useMemo(() => diffSidebarOpenAtomFamily(chatId), [chatId]);
   const [isDiffSidebarOpen, setIsDiffSidebarOpen] = useAtom(diffSidebarAtom);
@@ -1635,7 +1633,7 @@ export const ChatView = memo(function ChatView({
   const terminalSidebarAtom = useMemo(() => terminalSidebarOpenAtomFamily(chatId), [chatId]);
   const [isTerminalSidebarOpen, setIsTerminalSidebarOpen] = useAtom(terminalSidebarAtom);
   // Track changed files across all sub-chats for throttled diff refresh
-  const subChatFiles = useAtomValue(subChatFilesAtom);
+  const totalSubChatFileCount = useAtomValue(totalSubChatFileCountAtom);
 
   // Clear "unseen changes" when chat is opened
   useEffect(() => {
@@ -1796,8 +1794,21 @@ export const ChatView = memo(function ChatView({
   // The sidebar render is guarded by canOpenDiff, so it naturally hides.
   // Per-chat state (diffSidebarOpenAtomFamily) preserves each chat's preference.
 
-  // One cached diff per chat (useChatDiff); these triggers only mark it stale
-  const { diffStats, refresh: refreshDiff } = useChatDiff(chatId, !!worktreePath);
+  // The header needs only "uncommitted changes exist". useFileChangeListener and useGitWatcher in
+  // this component invalidate this query on agent writes and git changes.
+  const { data: worktreeStatus, isLoading: isStatusLoading } = trpc.changes.getStatus.useQuery(
+    { worktreePath: worktreePath ?? '' },
+    { enabled: !!worktreePath },
+  );
+  const diffStats = useMemo(
+    () => ({ isLoading: isStatusLoading, hasChanges: hasModifiedFiles(worktreeStatus) }),
+    [isStatusLoading, worktreeStatus],
+  );
+  // The triggers below mark the diff stale; only an open DiffPanel observes it and refetches
+  const refreshDiff = useCallback(
+    () => void trpcUtils.chats.getParsedDiff.invalidate({ chatId }),
+    [trpcUtils, chatId],
+  );
   const refreshDiffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Bursts of agent edits and stream ends collapse into one refresh
   const refreshDiffSoon = useCallback(() => {
@@ -1817,13 +1828,6 @@ export const ChatView = memo(function ChatView({
   }, [isDiffSidebarOpen, refreshDiff]);
 
   // Agent edits and writes change the per-sub-chat file lists; refresh the diff to match
-  const totalSubChatFileCount = useMemo(() => {
-    let count: number = 0;
-    subChatFiles.forEach((files) => {
-      count += files.length;
-    });
-    return count;
-  }, [subChatFiles]);
   useEffect(() => {
     if (totalSubChatFileCount > 0) refreshDiffSoonRef.current();
   }, [totalSubChatFileCount]);

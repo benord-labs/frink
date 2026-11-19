@@ -1,5 +1,4 @@
-import { stat } from 'node:fs/promises';
-import { devNull } from 'node:os';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import simpleGit, { type StatusResult } from 'simple-git';
 import { getDefaultBranch, refExistsLocally } from '../worktree';
@@ -11,15 +10,13 @@ type WorktreeDiffOptions = { onlyUncommitted?: boolean };
 export type WorktreeDiffGit = {
   status(): Promise<StatusResult>;
   diff(args: string[]): Promise<string>;
-  raw(args: string[]): Promise<string>;
 };
 
-/** Untracked files above this are listed as binary instead of diffed: a multi-hundred-MB file
- * makes each `git diff --no-index` run for minutes, and every refresh starts another. */
+/** Untracked files above this are listed as binary instead of read into the diff text. */
 const MAX_UNTRACKED_DIFF_SIZE = 1024 * 1024;
 
-/** Each diffed untracked file costs one git process, so only the most recently modified ones
- * are diffed and the rest are listed as binary. */
+/** Bounds the diff text sent to the renderer: only the newest untracked files are shown in full,
+ * the rest are listed as binary. */
 export const MAX_UNTRACKED_DIFFED_FILES = 100;
 
 const LOCKFILE_EXCLUSIONS = [
@@ -35,35 +32,53 @@ const isLockfile = (file: string) => file.endsWith('.lock') || file.includes('-l
 const listedOnlyStanza = (file: string) =>
   `diff --git a/${file} b/${file}\nnew file mode 100644\nBinary files /dev/null and b/${file} differ`;
 
+type SizedFile = { file: string; size: number; mtimeMs: number; mode: number; isFile: boolean };
+
 /** The untracked files worth a real diff: under the size cap, newest first, up to the file cap. */
-function pickFilesToDiff(sized: { file: string; size: number; mtimeMs: number }[]): Set<string> {
+function pickFilesToDiff(sized: SizedFile[]): Set<string> {
   const newestFirst = sized
-    .filter((entry) => entry.size <= MAX_UNTRACKED_DIFF_SIZE)
+    // Reading a pipe or device would block, and a directory cannot be read as text
+    .filter((entry) => entry.isFile && entry.size <= MAX_UNTRACKED_DIFF_SIZE)
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   return new Set(newestFirst.slice(0, MAX_UNTRACKED_DIFFED_FILES).map((entry) => entry.file));
 }
 
-async function diffUntrackedFile(git: WorktreeDiffGit, file: string): Promise<string | null> {
-  try {
-    return (await git.raw(['diff', '--no-color', '--no-index', devNull, file])) || null;
-  } catch (error: unknown) {
-    // git diff --no-index exits 1 when files differ; simple-git throws with the diff in the message
-    const message = error instanceof Error ? error.message : undefined;
-    const diffStart = message?.indexOf('diff --git') ?? -1;
-    return message && diffStart !== -1 ? message.substring(diffStart) : null;
+/** The stanza `git diff --no-index /dev/null <file>` prints, minus its unread `index` line. */
+async function newFileStanza(worktreePath: string, file: string, mode: number): Promise<string> {
+  const buf = await readFile(join(worktreePath, file));
+  const fileMode = mode & 0o100 ? '100755' : '100644';
+  const header = `diff --git a/${file} b/${file}\nnew file mode ${fileMode}`;
+  if (buf.length === 0) return header;
+  // git's own binary heuristic: a NUL byte in the first 8000 bytes
+  if (buf.subarray(0, 8000).includes(0)) {
+    return `${header}\nBinary files /dev/null and b/${file} differ`;
   }
+  const lines = buf.toString('utf8').split('\n');
+  const endsWithNewline = lines.at(-1) === '';
+  if (endsWithNewline) lines.pop();
+  const range = lines.length === 1 ? '1' : `1,${lines.length}`;
+  return [
+    header,
+    '--- /dev/null',
+    `+++ b/${file}`,
+    `@@ -0,0 +${range} @@`,
+    ...lines.map((line) => `+${line}`),
+    ...(endsWithNewline ? [] : ['\\ No newline at end of file']),
+  ].join('\n');
 }
 
-async function diffUntrackedFiles(
-  git: WorktreeDiffGit,
-  worktreePath: string,
-  files: string[],
-): Promise<string> {
-  const sized: { file: string; size: number; mtimeMs: number }[] = [];
+async function diffUntrackedFiles(worktreePath: string, files: string[]): Promise<string> {
+  const sized: SizedFile[] = [];
   for (const file of files) {
     try {
-      const { size, mtimeMs } = await stat(join(worktreePath, file));
-      sized.push({ file, size, mtimeMs });
+      const stats = await stat(join(worktreePath, file));
+      sized.push({
+        file,
+        size: stats.size,
+        mtimeMs: stats.mtimeMs,
+        mode: stats.mode,
+        isFile: stats.isFile(),
+      });
     } catch {
       // Gone since `git status` listed it: nothing to show.
     }
@@ -71,9 +86,11 @@ async function diffUntrackedFiles(
 
   const toDiff = pickFilesToDiff(sized);
   const stanzas: string[] = [];
-  for (const { file } of sized) {
-    // git diff --no-index only accepts 2 paths, so each file is diffed separately
-    const stanza = toDiff.has(file) ? await diffUntrackedFile(git, file) : listedOnlyStanza(file);
+  for (const { file, mode } of sized) {
+    // Gone since the stat: nothing to show
+    const stanza = toDiff.has(file)
+      ? await newFileStanza(worktreePath, file, mode).catch(() => null)
+      : listedOnlyStanza(file);
     if (stanza) stanzas.push(stanza);
   }
   return stanzas.join('\n');
@@ -97,7 +114,6 @@ async function runWorktreeDiff(
     if (!status.isClean()) {
       const workingDiff = await git.diff(['HEAD', '--no-color', '--', ...LOCKFILE_EXCLUSIONS]);
       const untrackedDiff = await diffUntrackedFiles(
-        git,
         worktreePath,
         status.not_added.filter((file) => !isLockfile(file)),
       );

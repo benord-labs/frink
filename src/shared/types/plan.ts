@@ -191,27 +191,29 @@ export function hasCurrentUnapprovedPlan(
   if (!isPlanMode) return false;
 
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
-    const message = messages[messageIndex];
-    const parts = message?.parts ?? [];
-
-    if (message?.role === 'assistant') {
-      for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
-        const part = parts[partIndex];
-        if (!part || !isFrinkPlanMessagePartType(part.type)) continue;
-        return isFrinkPlanReadyPart(part);
-      }
-    }
-
-    if (message?.role === 'user') {
-      for (const part of parts) {
-        if (part.type === 'text' && part.text && isPlanApprovalTriggerText(part.text)) {
-          return false;
-        }
-      }
-    }
+    const decision = planEpochDecision(messages[messageIndex]);
+    if (decision !== undefined) return decision;
   }
 
   return false;
+}
+
+/**
+ * One newest-first step of {@link hasCurrentUnapprovedPlan}: whether this message decides the open
+ * approval epoch, or `undefined` when an older message must decide it.
+ */
+export function planEpochDecision(message: PlanMessageLike | undefined): boolean | undefined {
+  const parts = message?.parts ?? [];
+  if (message?.role === 'assistant') {
+    const plan = parts.findLast((part) => part && isFrinkPlanMessagePartType(part.type));
+    return plan ? isFrinkPlanReadyPart(plan) : undefined;
+  }
+  if (message?.role === 'user' && parts.some(isPlanApprovalTriggerPart)) return false;
+  return undefined;
+}
+
+function isPlanApprovalTriggerPart(part: MessagePartLike): boolean {
+  return part.type === 'text' && !!part.text && isPlanApprovalTriggerText(part.text);
 }
 
 /**

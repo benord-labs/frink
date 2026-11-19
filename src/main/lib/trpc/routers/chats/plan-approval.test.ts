@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../../shared/types';
 import * as schema from '../../../db/schema';
+import {
+  _resetCorruptTranscriptReportsForTests,
+  _setCorruptTranscriptCaptureForTests,
+} from '../../../db/transcript-corruption';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 
 const state = vi.hoisted(() => ({ db: null as unknown }));
@@ -107,5 +111,38 @@ describe('planApprovalRouter.getPendingPlanApprovals', () => {
     seedRow('broken', 0, 'not-json');
 
     await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([]);
+  });
+
+  it('stops reading at the newest row that decides', async () => {
+    const captured: unknown[] = [];
+    _resetCorruptTranscriptReportsForTests();
+    _setCorruptTranscriptCaptureForTests((err) => void captured.push(err));
+    rows.push({ id: 'sub-1', chatId: 'chat-1', mode: 'plan', messages: '[]' });
+    seedRow('sub-1', 0, '{');
+    seedRow('sub-1', 1, JSON.stringify(JSON.parse(planMessage('plan-1'))[0]));
+
+    await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([
+      { subChatId: 'sub-1', chatId: 'chat-1' },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    _setCorruptTranscriptCaptureForTests(null);
+    expect(captured).toEqual([]);
+  });
+
+  it('finds a plan older than many undecided rows', async () => {
+    const noise = Array.from({ length: 20 }, (_, i) => ({
+      role: 'user',
+      parts: [{ type: 'text', text: `note ${i}` }],
+    }));
+    rows.push({
+      id: 'sub-1',
+      chatId: 'chat-1',
+      mode: 'plan',
+      messages: JSON.stringify([...JSON.parse(planMessage('plan-1')), ...noise]),
+    });
+
+    await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([
+      { subChatId: 'sub-1', chatId: 'chat-1' },
+    ]);
   });
 });

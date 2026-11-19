@@ -1,5 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import simpleGit from 'simple-git';
@@ -8,13 +16,12 @@ import { splitUnifiedDiffByFile } from './diff-parser';
 import { getWorktreeDiff as appWorktreeDiff } from './index';
 import { createWorktreeDiff, MAX_UNTRACKED_DIFFED_FILES } from './worktree/diff';
 
-/** Real git, observed: counts the spawns under test and can hold a run while its `git status` is still pending. */
+/** Real git, observed: counts `git status` runs and can hold a run while that status is still pending. */
 type GitProbe = {
   statusCalls: number;
-  untrackedDiffCalls: number;
   holdDuringStatus: null | { reached: () => void; release: Promise<void> };
 };
-const gitProbe: GitProbe = { statusCalls: 0, untrackedDiffCalls: 0, holdDuringStatus: null };
+const gitProbe: GitProbe = { statusCalls: 0, holdDuringStatus: null };
 
 const getWorktreeDiff = createWorktreeDiff((worktreePath) => {
   const real = simpleGit(worktreePath);
@@ -31,10 +38,6 @@ const getWorktreeDiff = createWorktreeDiff((worktreePath) => {
       return status;
     },
     diff: (args) => real.diff(args),
-    raw: async (args) => {
-      if (args.includes('--no-index')) gitProbe.untrackedDiffCalls += 1;
-      return real.raw(args);
-    },
   };
 });
 
@@ -69,7 +72,6 @@ beforeEach(() => {
   git('add', 'a.txt');
   commit('a');
   gitProbe.statusCalls = 0;
-  gitProbe.untrackedDiffCalls = 0;
   gitProbe.holdDuringStatus = null;
 });
 
@@ -100,7 +102,6 @@ describe('getWorktreeDiff untracked files', () => {
     const result = await getWorktreeDiff(repo, undefined, { onlyUncommitted: true });
 
     expect(diffedPaths(result.diff)).toEqual(['locksmith.txt']);
-    expect(gitProbe.untrackedDiffCalls).toBe(1);
   });
 
   it('diffs only the most recently modified files past the file cap and lists the rest', async () => {
@@ -120,9 +121,75 @@ describe('getWorktreeDiff untracked files', () => {
 
     const files = splitUnifiedDiffByFile(result.diff ?? '');
     expect(files.map((f) => f.newPath)).toEqual(names);
-    expect(gitProbe.untrackedDiffCalls).toBe(MAX_UNTRACKED_DIFFED_FILES);
     expect(files.filter((f) => f.isBinary).map((f) => f.newPath)).toEqual(names.slice(0, extra));
     expect(files.at(-1)).toMatchObject({ isBinary: false, additions: 1 });
+  });
+
+  // Reading a pipe blocks until something writes to it, which would hang every refresh.
+  it('lists an untracked symlink to a directory or a pipe without reading it', async () => {
+    mkdirSync(path.join(repo, 'target'));
+    write('target/inside.txt', 'x\n');
+    execFileSync('git', ['add', 'target'], { cwd: repo });
+    symlinkSync('target', path.join(repo, 'dir-link'));
+    execFileSync('mkfifo', [path.join(repo, 'pipe')]);
+    symlinkSync('pipe', path.join(repo, 'pipe-link'));
+
+    const result = await getWorktreeDiff(repo, undefined, { onlyUncommitted: true });
+
+    const links = splitUnifiedDiffByFile(result.diff ?? '').filter((f) =>
+      f.newPath.endsWith('-link'),
+    );
+    expect(links.map((f) => [f.newPath, f.isBinary])).toEqual([
+      ['dir-link', true],
+      ['pipe-link', true],
+    ]);
+  });
+
+  it('prints each untracked file exactly as `git diff --no-index /dev/null` does', async () => {
+    const samples = {
+      'lines.txt': 'a\nb\n',
+      'no-eol.txt': 'a\nb',
+      'one-line.txt': 'solo',
+      'crlf.txt': 'x\r\ny\r\n',
+      'empty.txt': '',
+      'run.sh': '#!/bin/sh\necho hi\n',
+      'blob.bin': 'head\0tail\n',
+    };
+    for (const [name, content] of Object.entries(samples)) write(name, content);
+    chmodSync(path.join(repo, 'run.sh'), 0o755);
+    const withoutIndex = (stanza: string) =>
+      stanza
+        .split('\n')
+        .filter((line) => !line.startsWith('index '))
+        .join('\n')
+        .trimEnd();
+    const gitStanza = (name: string) =>
+      withoutIndex(
+        spawnSync(
+          'git',
+          // Pinned so a developer's global prefix settings cannot change the expected text
+          [
+            '-c',
+            'diff.noprefix=false',
+            '-c',
+            'diff.mnemonicPrefix=false',
+            'diff',
+            '--no-color',
+            '--no-index',
+            '/dev/null',
+            name,
+          ],
+          { cwd: repo, encoding: 'utf8' },
+        ).stdout,
+      );
+
+    const result = await getWorktreeDiff(repo, undefined, { onlyUncommitted: true });
+
+    const stanzas = (result.diff ?? '')
+      .split(/\n(?=diff --git )/)
+      .map(withoutIndex)
+      .sort();
+    expect(stanzas).toEqual(Object.keys(samples).map(gitStanza).sort());
   });
 });
 
@@ -140,7 +207,6 @@ describe('getWorktreeDiff overlapping calls', () => {
     const results = await Promise.all(calls);
 
     expect(gitProbe.statusCalls).toBe(1);
-    expect(gitProbe.untrackedDiffCalls).toBe(3);
     expect(diffedPaths(results[0].diff)).toEqual(['one.txt', 'three.txt', 'two.txt']);
     for (const result of results) expect(result).toEqual(results[0]);
   });
@@ -160,7 +226,6 @@ describe('getWorktreeDiff overlapping calls', () => {
     expect(diffedPaths((await second).diff)).toEqual(['before.txt', 'later.txt']);
     expect(diffedPaths((await third).diff)).toEqual(['before.txt', 'later.txt']);
     expect(gitProbe.statusCalls).toBe(2);
-    expect(gitProbe.untrackedDiffCalls).toBe(3);
   });
 
   it('does not reuse a failed run for a later call', async () => {
