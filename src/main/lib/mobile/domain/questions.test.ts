@@ -9,8 +9,10 @@ vi.mock('../../claude/ask-user-question-approval', () => ({
 }));
 vi.mock('../../trpc/routers/frink-task-signal', () => ({ agentUserQuestionsSchema: {} }));
 vi.mock('./context', () => ({ mobileCallers: {}, record: vi.fn(), text: vi.fn() }));
+import * as approval from '../../claude/ask-user-question-approval';
+import * as signals from '../../trpc/routers/frink-task-signal';
 import * as context from './context';
-import { mobilePermissions, parkedQuestion } from './questions';
+import { mobilePermissions, mobileQuestions, parkedQuestion } from './questions';
 
 beforeEach(() => {
   fixture.moves.mockReturnValue([]);
@@ -60,5 +62,25 @@ describe('parked questions on the phone', () => {
     const task = { id: 't', status: 'needs_attention', result: { agentSignal } };
 
     expect(parkedQuestion(task, 'c', 's')).toBeNull();
+  });
+});
+
+describe('phone questions for a chat with no live question', () => {
+  it('uses the driving task it is given instead of looking it up again', async () => {
+    vi.mocked(context.record).mockImplementation((value) => Object(value));
+    vi.mocked(context.text).mockImplementation((value, fallback = '') => String(value ?? fallback));
+    vi.mocked(approval.listPendingQuestionProjections).mockReturnValue([]);
+    Object.assign(signals.agentUserQuestionsSchema, { safeParse: () => ({ success: false }) });
+    const getDrivingTaskForSubChat = vi.fn();
+    Object.assign(context.mobileCallers, { tasks: { getDrivingTaskForSubChat } });
+    const agentSignal = { state: 'awaiting_input', summary: 'Pick a colour' };
+    const task = { id: 't', status: 'needs_attention', result: { agentSignal } };
+
+    const questions = await mobileQuestions('c', 's', null, { task });
+
+    expect(getDrivingTaskForSubChat).not.toHaveBeenCalled();
+    expect(questions).toEqual([
+      expect.objectContaining({ id: 't', source: 'parked', title: 'Pick a colour' }),
+    ]);
   });
 });

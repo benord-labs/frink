@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { getDatabase } from '../../index';
 import { subChatMessages, subChats } from '../../schema';
@@ -43,6 +43,23 @@ export function readTranscript(db: Db, subChatId: string): StoredTranscript {
     .all()
     .map((row) => row.message);
   return { rows, messages: parseRows(subChatId, rows) };
+}
+
+/** The newest `limit` messages, oldest first, or null when a row it read is corrupt so the caller
+ * falls back to the whole transcript (which skips and reports it). */
+export function readTranscriptTail(db: Db, subChatId: string, limit: number) {
+  const rows = db
+    .select({ message: subChatMessages.message })
+    .from(subChatMessages)
+    .where(eq(subChatMessages.subChatId, subChatId))
+    .orderBy(desc(subChatMessages.seq))
+    .limit(limit + 1)
+    .all()
+    .map((row) => row.message)
+    .reverse();
+  const messages = parseRows(subChatId, rows);
+  if (messages.length < rows.length) return null;
+  return { messages: messages.slice(-limit), hasMore: messages.length > limit };
 }
 
 /**
@@ -102,22 +119,28 @@ export function readTranscripts(db: Db, subChatIds: string[]): Map<string, Messa
   return new Map([...rowsById].map(([id, stored]) => [id, parseRows(id, stored)]));
 }
 
-/** Null when the sub-chat does not exist; true when it exists and no `messageId` is asked for. */
+/** Null when the sub-chat does not exist; true when it exists and no `messageId` is asked for.
+ * Matches the id in SQL, so the transcript is never parsed in JS. */
 export function transcriptHasMessage(
   db: Db,
   subChatId: string,
   messageId: string | undefined,
 ): boolean | null {
-  if (!messageId) {
-    const row = db
-      .select({ id: subChats.id })
-      .from(subChats)
-      .where(eq(subChats.id, subChatId))
-      .get();
-    return row ? true : null;
-  }
-  const transcript = readTranscripts(db, [subChatId]).get(subChatId);
-  return transcript ? transcript.some((message) => message.id === messageId) : null;
+  const { message } = subChatMessages;
+  // JSON functions throw on malformed JSON, so a corrupt row is skipped; only string ids match.
+  const id = sql`CASE WHEN NOT json_valid(${message}) THEN NULL
+    WHEN json_type(${message}, '$.id') = 'text' THEN json_extract(${message}, '$.id') END`;
+  if (
+    messageId &&
+    db
+      .select({ one: sql`1` })
+      .from(subChatMessages)
+      .where(and(eq(subChatMessages.subChatId, subChatId), sql`${id} = ${messageId}`))
+      .get()
+  )
+    return true;
+  const row = db.select({ id: subChats.id }).from(subChats).where(eq(subChats.id, subChatId)).get();
+  return row ? !messageId : null;
 }
 
 /** The task of the newest dispatch-stamped user row whose very next row is an assistant reply. A

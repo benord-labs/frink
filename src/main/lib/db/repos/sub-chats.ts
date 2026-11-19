@@ -43,12 +43,13 @@ export async function createSubChat(
   });
 }
 
-function readRow(db: Db, id: string): SubChat | undefined {
+/** The sub-chat row alone; its transcript is not read. */
+export function readSubChatRow(db: Db, id: string): SubChat | undefined {
   return db.select().from(subChats).where(eq(subChats.id, id)).get() as SubChat | undefined;
 }
 
 export async function getSubChatById(db: Db, id: string): Promise<SubChatHydrated | null> {
-  const row = readRow(db, id);
+  const row = readSubChatRow(db, id);
   return row ? { ...row, messages: readTranscript(db, id).messages } : null;
 }
 
@@ -89,7 +90,7 @@ function withMessagesSync(
   onWrite?: () => void,
 ): SubChatHydrated | null {
   return db.transaction(() => {
-    const row = readRow(db, subChatId);
+    const row = readSubChatRow(db, subChatId);
     if (!row) return null;
 
     const { rows, messages } = readTranscript(db, subChatId);
@@ -202,7 +203,7 @@ export async function upsertAssistantMessage(
       if (isStaleWrite(subChatId, generation)) return 'dropped';
       if (patchLastAssistantParts(db, subChatId, assistantMessageId, parts)) return 'patched';
 
-      if (!readRow(db, subChatId)) return 'missing';
+      if (!readSubChatRow(db, subChatId)) return 'missing';
 
       const { rows, messages } = readTranscript(db, subChatId);
       const { idx, messages: nextMessages } = placeAssistantMessage(
@@ -233,7 +234,7 @@ export async function finalizeAssistantMessage(
   return withSubChatLock(subChatId, async () => {
     return db.transaction(() => {
       if (isStaleWrite(subChatId, generation)) return null;
-      const row = readRow(db, subChatId);
+      const row = readSubChatRow(db, subChatId);
       if (!row) return null;
 
       const { rows, messages: existing } = readTranscript(db, subChatId);

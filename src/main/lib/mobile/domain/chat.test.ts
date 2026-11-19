@@ -187,6 +187,15 @@ describe('mobile chat actions', () => {
     await expect(readMobileChat(request)).resolves.toMatchObject({ kind: 'flow' });
   });
 
+  it('reads the transcript and the driving task once per chat read', async () => {
+    const task = { id: 'task', status: 'needs_attention' };
+    fixture.getDriving.mockResolvedValue({ task, run: null });
+    await readMobileChat({ type: 'chat', id: 'chat', subChatId: 'sub' });
+    expect(fixture.history).toHaveBeenCalledOnce();
+    expect(fixture.getDriving).toHaveBeenCalledOnce();
+    expect(fixture.questions).toHaveBeenCalledWith('chat', 'sub', null, { task });
+  });
+
   it('shows a safe failure message only for the latest inactive response', async () => {
     const failure = {
       assistantMessageId: 'failed',

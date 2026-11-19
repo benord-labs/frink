@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as schema from '../../schema';
 import { freshDb, type TestDb } from '../../test-utils/fresh-db';
@@ -8,6 +9,7 @@ import {
   latestAnsweredDispatchTaskIds,
   latestDispatchTaskIds,
   readTranscripts,
+  readTranscriptTail,
   transcriptHasMessage,
   transcriptUnchanged,
 } from './index';
@@ -38,6 +40,38 @@ describe('sub-chat transcript access', () => {
     expect(transcriptHasMessage(db, 'sub-1', 'other')).toBe(false);
     expect(transcriptHasMessage(db, 'sub-1', undefined)).toBe(true);
     expect(transcriptHasMessage(db, 'missing', undefined)).toBeNull();
+  });
+
+  it('matches a message id in a transcript that holds a corrupt row', async () => {
+    await db
+      .insert(schema.subChatMessages)
+      .values({ subChatId: 'sub-2', seq: 1, message: '{"id":"m2"}' });
+    expect(transcriptHasMessage(db, 'sub-2', 'm2')).toBe(true);
+    expect(transcriptHasMessage(db, 'sub-2', 'other')).toBe(false);
+    expect(transcriptHasMessage(db, 'missing', 'm2')).toBeNull();
+  });
+
+  it('matches only string message ids', async () => {
+    await db.insert(schema.subChatMessages).values([
+      { subChatId: 'sub-2', seq: 1, message: '{"id":{"a":1}}' },
+      { subChatId: 'sub-2', seq: 2, message: '{"id":5}' },
+    ]);
+    expect(transcriptHasMessage(db, 'sub-2', '{"a":1}')).toBe(false);
+    expect(transcriptHasMessage(db, 'sub-2', '5')).toBe(false);
+  });
+
+  it('reads the newest messages oldest first, or null when a row it reads is corrupt', async () => {
+    const rows = ['m1', 'm2', 'm3', 'm4'].map((id) => ({ id, role: 'user', parts: [] }));
+    await createSubChat(db, { id: 'sub-t', chatId: 'chat-1', messages: JSON.stringify(rows) });
+    expect(readTranscriptTail(db, 'sub-t', 2)).toEqual({ messages: rows.slice(2), hasMore: true });
+    expect(readTranscriptTail(db, 'sub-t', 4)).toEqual({ messages: rows, hasMore: false });
+    expect(readTranscriptTail(db, 'missing', 2)).toEqual({ messages: [], hasMore: false });
+    await db
+      .update(schema.subChatMessages)
+      .set({ message: '{corrupt' })
+      .where(and(eq(schema.subChatMessages.subChatId, 'sub-t'), eq(schema.subChatMessages.seq, 0)));
+    expect(readTranscriptTail(db, 'sub-t', 2)).toEqual({ messages: rows.slice(2), hasMore: true });
+    expect(readTranscriptTail(db, 'sub-t', 3)).toBeNull();
   });
 
   it('holds only while the transcript is unchanged', () => {
