@@ -123,6 +123,13 @@ async function getHighlighter(): Promise<shiki.Highlighter> {
   return highlighterPromise;
 }
 
+/** A bundled Shiki theme, resolved, loading it first if no code block has yet. */
+export async function getShikiTheme(themeId: string): Promise<shiki.ThemeRegistrationResolved> {
+  const highlighter = await getHighlighter();
+  if (!highlighter.getLoadedThemes().includes(themeId)) await loadTheme(highlighter, themeId);
+  return highlighter.getTheme(themeId);
+}
+
 /**
  * Highlight code with a Shiki bundled theme (the active palette's syntax pairing).
  * Results are cached to prevent re-highlighting when switching tabs
