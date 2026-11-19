@@ -47,6 +47,8 @@ const updateBinding = vi.fn<(input: z.infer<typeof UPDATE_INPUT>) => void>();
 const deleteBinding = vi.fn<(input: z.infer<typeof DELETE_INPUT>) => void>();
 const onPatchConfig = vi.fn<(config: FlowNode['config']) => void>();
 
+const LOCAL_PROJECTS = [{ id: 'project-1', name: 'api', path: '/code/api' }];
+
 /** A real trpc client answered in-process; each binding write is parsed with the schema the router enforces. */
 function createTestClient(bindings: StoredBinding[]) {
   return trpc.createClient({
@@ -54,8 +56,9 @@ function createTestClient(bindings: StoredBinding[]) {
       () =>
         ({ op }) =>
           observable((observer) => {
-            let data: StoredBinding[] | null = null;
+            let data: StoredBinding[] | typeof LOCAL_PROJECTS | null = null;
             if (op.path === 'triggerBindings.list') data = bindings;
+            else if (op.path === 'projects.list') data = LOCAL_PROJECTS;
             else if (op.path === 'triggerBindings.create')
               createBinding(CREATE_INPUT.parse(op.input));
             else if (op.path === 'triggerBindings.update')
@@ -213,5 +216,15 @@ describe('PostTaskTriggerConfig project-less binding warning (sc-3299)', () => {
 
     expect(await screen.findByLabelText('Automation active')).toBeInTheDocument();
     expect(screen.queryByText(NO_PROJECT_WARNING)).not.toBeInTheDocument();
+  });
+});
+
+describe('PostTaskTriggerConfig project scope', () => {
+  it('flags a project name, since a binding matches tasks by project id only', async () => {
+    renderEditor({ bindingProjectId: 'api' }, []);
+
+    expect(
+      await screen.findByText("The project “api” isn't on this computer. Pick a project."),
+    ).toBeInTheDocument();
   });
 });

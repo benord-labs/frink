@@ -10,6 +10,16 @@ import {
 } from '../../../../shared/lib/block-registry';
 import type { FlowNode } from '../../../../shared/lib/validate-flow-graph';
 import { FLOW_BLOCK_TYPES, type FlowBlockType } from '../../../../shared/types/flow';
+import {
+  classifyProjectRef,
+  ID_ONLY_PROJECT_RULES,
+  LITERAL_PROJECT_RULES,
+  type NodeProjectProblem,
+  nodeProjectProblem,
+  type ProjectRef,
+  type ProjectRefRules,
+  STEP_PROJECT_RULES,
+} from './BlockConfig/node-project-resolution';
 import { FLOW_BLOCK_LABELS } from './constants';
 import { truncateUiString } from './truncate-ui-string';
 
@@ -20,13 +30,57 @@ function readString(obj: Record<string, unknown> | undefined, key: string): stri
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
 }
 
-/** Returns true when a project is resolved — either from the node itself or the flow default. */
-function hasEffectiveProject(
-  cfg: Record<string, unknown> | undefined,
+/** Why this node's project (its own, else the flow default) won't resolve at run time, if it won't. */
+function projectProblem(
+  node: FlowNode,
   flowDefaultProjectId: string | undefined,
+  ctx: FlowNodeCanvasContext | undefined,
+): NodeProjectProblem | null {
+  const own = typeof node.config?.projectId === 'string' ? node.config.projectId : '';
+  const rules = isCustomNodeBlockType(node.blockType) ? ID_ONLY_PROJECT_RULES : STEP_PROJECT_RULES;
+  return nodeProjectProblem(own, flowDefaultProjectId, ctx?.projects ?? null, rules);
+}
+
+function hasEffectiveProject(
+  node: FlowNode,
+  flowDefaultProjectId: string | undefined,
+  ctx: FlowNodeCanvasContext | undefined,
 ): boolean {
-  const nodeProjectId = typeof cfg?.projectId === 'string' ? cfg.projectId.trim() : '';
-  return nodeProjectId !== '' || (flowDefaultProjectId?.trim() ?? '') !== '';
+  return projectProblem(node, flowDefaultProjectId, ctx) === null;
+}
+
+/** Summary copy for a project that is set but can't be found; null when missing or fine. */
+function unresolvedProjectLine(
+  node: FlowNode,
+  flowDefaultProjectId: string | undefined,
+  ctx: FlowNodeCanvasContext | undefined,
+): string | null {
+  const problem = projectProblem(node, flowDefaultProjectId, ctx);
+  if (!problem || problem.state === 'missing') return null;
+  const name = truncateUiString(problem.value, 40);
+  if (problem.state === 'ambiguous') return `More than one project is named “${name}”`;
+  if (problem.state === 'malformed') return `“${name}” isn't a valid variable`;
+  return `Project “${name}” isn't on this computer`;
+}
+
+/** A post-task binding matches tasks by project id only; an empty one falls back and is allowed. */
+function postTaskProjectGone(
+  cfg: FlowNode['config'],
+  ctx: FlowNodeCanvasContext | undefined,
+): string | null {
+  const id = readString(cfg, 'bindingProjectId');
+  if (id === undefined) return null;
+  return classifyProjectRef(id, ctx?.projects ?? null, ID_ONLY_PROJECT_RULES) === 'ok' ? null : id;
+}
+
+/** A webhook bound to an account that is no longer connected never fires. */
+function webhookAccountGone(
+  cfg: Record<string, unknown> | undefined,
+  ctx: FlowNodeCanvasContext | undefined,
+): boolean {
+  const id = readString(cfg, 'integrationId');
+  const connected = ctx?.connectedIntegrationIds;
+  return id !== undefined && connected != null && !connected.has(id);
 }
 
 /**
@@ -48,12 +102,25 @@ function takesProject(node: FlowNode): boolean {
   );
 }
 
-/**
- * True when this node's attention state is (at least partly) a missing project — used by
- * the canvas to deep-link the warning to the flow settings Project field.
- */
-export function flowNodeNeedsProject(node: FlowNode, flowDefaultProjectId?: string): boolean {
-  return takesProject(node) && !hasEffectiveProject(node.config, flowDefaultProjectId);
+/** True when the flow default is the project in use and is missing or unknown: the canvas
+ *  deep-links to flow settings. A bad project on the step itself is fixed in the step. */
+export function flowNodeNeedsProject(
+  node: FlowNode,
+  flowDefaultProjectId?: string,
+  ctx?: FlowNodeCanvasContext,
+): boolean {
+  return (
+    takesProject(node) && projectProblem(node, flowDefaultProjectId, ctx)?.fromDefault === true
+  );
+}
+
+/** How flow settings checks the default: by id only once a custom step inherits it, as the canvas does. */
+export function flowDefaultProjectRules(nodes: readonly FlowNode[]): ProjectRefRules {
+  const customInherits = nodes.some(
+    (n) =>
+      isCustomNodeBlockType(n.blockType) && takesProject(n) && !readString(n.config, 'projectId'),
+  );
+  return customInherits ? ID_ONLY_PROJECT_RULES : LITERAL_PROJECT_RULES;
 }
 
 /** A step's name and kind, as both the canvas card and the config panel title it. */
@@ -79,6 +146,10 @@ export type FlowNodeCanvasContext = {
    * When `null`/`undefined`, skip catalog checks (e.g. list still loading or unavailable).
    */
   customCatalogNames?: ReadonlySet<string> | null;
+  /** Projects on this computer; `null`/`undefined` skips the unknown-project check. */
+  projects?: readonly ProjectRef[] | null;
+  /** Connected account ids; `null`/`undefined` skips the disconnected-webhook check. */
+  connectedIntegrationIds?: ReadonlySet<string> | null;
 };
 
 export function flowNodeSummaryLine(
@@ -94,10 +165,13 @@ export function flowNodeSummaryLine(
     case 'manual_trigger':
       return 'Runs when you press Run';
     case 'webhook_trigger': {
+      if (webhookAccountGone(cfg, ctx)) return "Account isn't connected";
       const et = readString(cfg, 'eventType');
       return et ? `On ${et}` : 'Choose an event';
     }
     case 'post_task_trigger': {
+      const gone = postTaskProjectGone(cfg, ctx);
+      if (gone) return `Project “${truncateUiString(gone, 40)}” isn't on this computer`;
       const ts = cfg?.triggerStates;
       const n = Array.isArray(ts) ? ts.length : 0;
       return n > 0 ? `Watches ${n} task status${n === 1 ? '' : 'es'}` : 'Runs after a task';
@@ -107,18 +181,21 @@ export function flowNodeSummaryLine(
       return cron ? `Runs on ${truncateUiString(cron, 40)}` : 'Set a schedule';
     }
     case 'start_task':
-      return hasEffectiveProject(cfg, flowDefaultProjectId)
-        ? 'Sets up the project, worktree and branch'
-        : 'Set a project';
+      if (hasEffectiveProject(node, flowDefaultProjectId, ctx)) {
+        return 'Sets up the project, worktree and branch';
+      }
+      return unresolvedProjectLine(node, flowDefaultProjectId, ctx) ?? 'Set a project';
     case 'agent': {
       const inst = readString(cfg, 'instructions');
       if (inst) return truncateUiString(inst, 72);
       return 'Add instructions';
     }
     case 'run_command': {
+      const unresolved = unresolvedProjectLine(node, flowDefaultProjectId, ctx);
+      if (unresolved) return unresolved;
       const cmd = readString(cfg, 'command');
       if (cmd) return truncateUiString(cmd, 72);
-      if (!hasEffectiveProject(cfg, flowDefaultProjectId)) return 'Add command and project';
+      if (!hasEffectiveProject(node, flowDefaultProjectId, ctx)) return 'Add command and project';
       return 'Add command';
     }
     case 'http_request': {
@@ -171,6 +248,10 @@ export function flowNodeSummaryLine(
       return 'Terminates this branch';
     default: {
       if (isCustomNodeBlockType(node.blockType)) {
+        const unresolved = takesProject(node)
+          ? unresolvedProjectLine(node, flowDefaultProjectId, ctx)
+          : null;
+        if (unresolved) return unresolved;
         const desc = ctx?.customDescriptionByBlockType?.get(node.blockType);
         if (desc && desc.trim().length > 0) {
           return truncateUiString(desc.trim(), 72);
@@ -182,7 +263,7 @@ export function flowNodeSummaryLine(
           return truncateUiString(pluginStep.action.description ?? pluginStep.action.label, 72);
         }
         const typeLabel = node.blockType;
-        if (!hasEffectiveProject(node.config, flowDefaultProjectId)) {
+        if (!hasEffectiveProject(node, flowDefaultProjectId, ctx)) {
           return `${typeLabel} · set project`;
         }
         return truncateUiString(typeLabel, 72);
@@ -202,7 +283,7 @@ export function flowNodeNeedsAttention(
 
   switch (block) {
     case 'start_task':
-      return !hasEffectiveProject(cfg, flowDefaultProjectId);
+      return !hasEffectiveProject(node, flowDefaultProjectId, ctx);
     case 'agent':
       return !readString(cfg, 'instructions');
     case 'chat_reply':
@@ -210,7 +291,7 @@ export function flowNodeNeedsAttention(
         ? !readString(cfg, 'artifactTitleTemplate') || !readString(cfg, 'artifactBodyHtmlTemplate')
         : !readString(cfg, 'messageTemplate');
     case 'run_command':
-      return !readString(cfg, 'command') || !hasEffectiveProject(cfg, flowDefaultProjectId);
+      return !readString(cfg, 'command') || !hasEffectiveProject(node, flowDefaultProjectId, ctx);
     case 'http_request':
       return !readString(cfg, 'url');
     case 'condition': {
@@ -235,20 +316,27 @@ export function flowNodeNeedsAttention(
     case 'end':
       return false;
     case 'webhook_trigger':
-      return !readString(cfg, 'integrationId') || !readString(cfg, 'eventType');
+      return (
+        !readString(cfg, 'integrationId') ||
+        webhookAccountGone(cfg, ctx) ||
+        !readString(cfg, 'eventType')
+      );
     case 'schedule_trigger':
       return !readString(cfg, 'cronExpression');
     case 'post_task_trigger':
+      return postTaskProjectGone(cfg, ctx) !== null;
+    case 'manual_trigger':
       return false;
     default: {
       if (isCustomNodeBlockType(block)) {
-        if (takesProject(node) && !hasEffectiveProject(cfg, flowDefaultProjectId)) return true;
+        if (takesProject(node) && !hasEffectiveProject(node, flowDefaultProjectId, ctx))
+          return true;
         if (ctx?.customCatalogNames != null && !ctx.customCatalogNames.has(node.blockType)) {
           return true;
         }
         return false;
       }
-      return !hasEffectiveProject(cfg, flowDefaultProjectId);
+      return !hasEffectiveProject(node, flowDefaultProjectId, ctx);
     }
   }
 }

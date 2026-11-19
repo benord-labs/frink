@@ -4,7 +4,9 @@ import { cleanup, fireEvent, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ComponentProps, type ReactElement, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
+import { getQueryKey } from '@trpc/react-query';
+import { newTestQueryClient, renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
+import { trpc } from '@/lib/trpc';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { StoredWebhookConditions } from '../../../../../lib/flows/webhook-trigger/parse-conditions';
 import { WebhookTriggerConfig } from '.';
@@ -242,5 +244,58 @@ describe('WebhookTriggerConfig advanced filters', () => {
     await user.click(screen.getByRole('button', { name: 'Edit from outside' }));
 
     expect(screen.getByDisplayValue('Retry')).toBeInTheDocument();
+  });
+});
+
+describe('WebhookTriggerConfig account no longer connected', () => {
+  const NOTICE = "This account isn't connected on this computer. Pick one or connect it.";
+  const panel = (integrationId: string) => (
+    <WebhookTriggerConfig
+      node={{
+        id: 'trigger',
+        blockType: 'webhook_trigger',
+        config: { integrationId, eventType: 'story_assigned' },
+      }}
+      onPatchLabel={() => undefined}
+      onPatchConfig={() => undefined}
+    />
+  );
+
+  it('warns beside the account picker', async () => {
+    renderWithTrpc(panel('gone-1'), answer);
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it('warns when no accounts are left, where the picker is hidden', async () => {
+    renderWithTrpc(panel('gone-1'), ({ path }) =>
+      path === 'integrations.list' ? Promise.resolve([]) : new Promise(() => {}),
+    );
+    expect(await screen.findByText('No integrations connected yet.')).toBeInTheDocument();
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+  });
+
+  it("names the warning as the account picker's description", async () => {
+    renderWithTrpc(panel('gone-1'), answer);
+    await screen.findByText(NOTICE);
+    const picker = screen.getByRole('combobox');
+    expect(picker).toHaveAttribute('aria-invalid', 'true');
+    expect(picker).toHaveAccessibleDescription(NOTICE);
+  });
+
+  it('waits for a refresh of the account list before warning', async () => {
+    const queryClient = newTestQueryClient();
+    queryClient.setQueryData(getQueryKey(trpc.integrations.list, undefined, 'query'), [
+      { id: 'shortcut-1', provider: 'shortcut', accountIdentifier: 'acme' },
+    ]);
+    // The list is cached but stale, so mounting refetches it; that refetch never settles here.
+    renderWithTrpc(panel('gone-1'), () => new Promise(() => {}), queryClient);
+    expect(await screen.findByRole('combobox')).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it('stays quiet for a connected account', async () => {
+    renderWithTrpc(panel('shortcut-1'), answer);
+    expect(await filtersSwitch()).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).toBeNull();
   });
 });

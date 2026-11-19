@@ -110,14 +110,13 @@ export function FlowStepNodeView({
   );
   const summary = flowNodeSummaryLine(node, flowDefaultProjectId, customFlowCanvasContext);
   const showToolbar = !readOnly && (hovered || isSelected) && !isTrigger;
-  // Missing project resolves flow-wide (settings default), so the warning deep-links there
-  // instead of sending the user to fix each node individually.
+  // A missing or unknown flow default is fixed flow-wide, so the warning deep-links to settings.
   const showSetProjectCta =
     !readOnly &&
     !activeExecState &&
     !activeGhost &&
     onRequestOpenFlowSettings !== undefined &&
-    flowNodeNeedsProject(node, flowDefaultProjectId);
+    flowNodeNeedsProject(node, flowDefaultProjectId, customFlowCanvasContext);
   const openFlowSettings = (e: MouseEvent) => {
     e.stopPropagation();
     onRequestOpenFlowSettings?.();
@@ -244,7 +243,7 @@ export function FlowStepNodeView({
                   onClick={openFlowSettings}
                   className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 cursor-pointer rounded-full border-2 border-card bg-amber-600 outline-hidden focus-visible:ring-2 focus-visible:ring-ring dark:bg-amber-500"
                   aria-label="Set flow default project"
-                  title="No project — set the flow default project"
+                  title="Set the flow default project"
                 />
               ) : (
                 <span

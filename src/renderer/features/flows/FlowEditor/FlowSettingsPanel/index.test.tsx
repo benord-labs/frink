@@ -208,3 +208,49 @@ describe('FlowSettingsPanel priority queue toggle', () => {
     expect(onSettingsChange.mock.lastCall?.[0]).not.toHaveProperty('runFirst', true);
   });
 });
+
+describe('FlowSettingsPanel default project', () => {
+  const withProjects = ({ path }: { path: string }) =>
+    path === 'projects.list'
+      ? Promise.resolve([{ id: 'p-api', name: 'api', path: '/code/api' }])
+      : new Promise(() => {});
+
+  it('says when the flow default project is not on this computer', async () => {
+    renderWithTrpc(
+      <FlowSettingsPanel {...panelProps} settings={{ defaultProjectId: 'gone-id' }} />,
+      withProjects,
+    );
+    expect(
+      await screen.findByText("The project “gone-id” isn't on this computer. Pick a project."),
+    ).toBeInTheDocument();
+  });
+
+  it('checks the default by id only once a custom step inherits it, as the canvas does', async () => {
+    renderWithTrpc(
+      <FlowSettingsPanel
+        {...panelProps}
+        settings={{ defaultProjectId: 'api' }}
+        nodes={[{ id: 'c', blockType: 'greeting_generator', config: {} }]}
+      />,
+      withProjects,
+    );
+    expect(
+      await screen.findByText("The project “api” isn't on this computer. Pick a project."),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a default it cannot find in the picker, rather than its placeholder', async () => {
+    renderWithTrpc(
+      <FlowSettingsPanel {...panelProps} settings={{ defaultProjectId: 'gone-id' }} />,
+      withProjects,
+    );
+    // The picker shows its value while its list loads; check once the list has settled.
+    await screen.findByText("The project “gone-id” isn't on this computer. Pick a project.");
+    expect(screen.getByText('gone-id')).toBeInTheDocument();
+  });
+
+  it('asks for nothing when no flow default is set, since that is allowed', () => {
+    renderWithTrpc(<FlowSettingsPanel {...panelProps} />, withProjects);
+    expect(screen.queryByText('Select a project.')).toBeNull();
+  });
+});

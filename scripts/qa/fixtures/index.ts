@@ -33,7 +33,12 @@ import {
   seedTranscript,
   type SqliteDb,
 } from './base';
-import { seedInterruptedFlowFixture, seedPausedFlowFixture, seedRunningFlowFixture } from './flows';
+import {
+  seedImportedFlowFixture,
+  seedInterruptedFlowFixture,
+  seedPausedFlowFixture,
+  seedRunningFlowFixture,
+} from './flows';
 import {
   FIXTURE_FLOW_CHAT_ID,
   FIXTURE_FLOW_MESSAGES,
@@ -271,6 +276,7 @@ export function seedFixtures(db: SqliteDb, projectPath: string, claudeSourcePath
   seedPausedFlowFixture(db);
   seedRunningFlowFixture(db);
   seedInterruptedFlowFixture(db);
+  seedImportedFlowFixture(db);
   seedPluginNodeFlowFixture(db);
   seedQueuedAdmissionFixture(db);
   seedBatchGroupFixture(db);

@@ -1,6 +1,6 @@
 /**
  * The labelled Project row shared by the block configs that wrap the picker in a FieldRow
- * (Start Task, Run Command). CustomNodeConfig renders NodeProjectField bare and does not use this.
+ * (Start Task, Run Command, custom nodes).
  *
  * `nodeId` keys the field so its fixed-vs-variable mode resets when the panel is reused for
  * another node — the config forms are rendered without a key of their own.
@@ -19,6 +19,7 @@ type NodeProjectRowProps = {
   /** Rendered by FieldRow and mirrored as a ring around the picker. */
   error?: string | null;
   htmlFor?: string;
+  allowTemplate?: boolean;
 };
 
 export function NodeProjectRow({
@@ -29,6 +30,7 @@ export function NodeProjectRow({
   onOpenFlowSettings,
   error,
   htmlFor,
+  allowTemplate,
 }: NodeProjectRowProps): ReactElement {
   return (
     <FieldRow htmlFor={htmlFor} label="Project" error={error}>
@@ -39,6 +41,7 @@ export function NodeProjectRow({
           flowDefaultProjectId={flowDefaultProjectId}
           onProjectIdChange={onProjectIdChange}
           onOpenFlowSettings={onOpenFlowSettings}
+          allowTemplate={allowTemplate}
         />
       </div>
     </FieldRow>

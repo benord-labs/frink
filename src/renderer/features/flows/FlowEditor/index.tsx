@@ -75,11 +75,11 @@ import { FlowEditorHeader } from './FlowEditorHeader';
 import { FlowRunsTab } from './FlowRunsTab';
 import { FlowSettingsPanel } from './FlowSettingsPanel';
 import { useBatchTriggerSchemaSync } from './hooks/useBatchTriggerSchemaSync';
+import { useFlowCanvasContext } from './hooks/use-flow-canvas-context';
 import { useRemoteVersionSync } from './hooks/use-remote-version-sync';
 import { StaleVersionDialog } from './StaleVersionDialog';
 import { applyCreatorPick } from '../../../lib/flows/node-creator/pick';
 import { type NodeCreatorMode, NodeCreatorPanel } from './NodeCreatorPanel';
-import type { FlowNodeCanvasContext } from './nodeSummary';
 
 type FlowEditorProps = {
   flowId: string;
@@ -410,24 +410,7 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
     [customNodeSummaries],
   );
 
-  const customFlowCanvasContext = useMemo((): FlowNodeCanvasContext => {
-    if (customNodesLoading || customNodesList === undefined) {
-      return {
-        customDescriptionByBlockType: new Map(),
-        customCatalogNames: null,
-      };
-    }
-    const desc = new Map<string, string>();
-    for (const n of customNodesList) {
-      if (typeof n.description === 'string' && n.description.trim() !== '') {
-        desc.set(n.name, n.description.trim());
-      }
-    }
-    return {
-      customDescriptionByBlockType: desc,
-      customCatalogNames: new Set(customNodesList.map((n) => n.name)),
-    };
-  }, [customNodesLoading, customNodesList]);
+  const customFlowCanvasContext = useFlowCanvasContext(customNodesList, customNodesLoading);
 
   // Maps the webhook trigger's integrationId to its provider, so per-provider aliases
   // ({{trigger.story.title}}) resolve and validation can spot a deleted event id.
