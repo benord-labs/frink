@@ -3,6 +3,7 @@ import { mobilePairingLink } from '@frink/shared/types/remote/mobile';
 vi.mock('./relay/client', () => ({ relayRequest: vi.fn(), closeMobileRelay: vi.fn() }));
 import { relayRequest } from './relay/client';
 import { ApiError, pairComputer, parsePairing, requestMobile, uploadAttachment } from './api';
+import { linkLost, unreachable } from './relay/error';
 
 const pairing = {
   version: 3 as const,
@@ -74,11 +75,47 @@ describe('mobile API boundary', () => {
     );
   });
   it('does not retry a mutation when the response is lost', async () => {
-    transport.mockRejectedValue(new ApiError('It may have arrived.', 0));
+    transport.mockRejectedValue(linkLost());
     await expect(requestMobile(connection, { type: 'cancelRun', id: 'run' })).rejects.toMatchObject(
       { status: 0 },
     );
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('asks a read once more after its link closed', async () => {
+    transport
+      .mockRejectedValueOnce(linkLost())
+      .mockResolvedValueOnce(reply({ data: { messages: [] } }));
+    expect(await requestMobile(connection, { type: 'chat', id: 'chat' })).toEqual({ messages: [] });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it('does not ask again a read that timed out on a live link', async () => {
+    transport.mockRejectedValue(unreachable());
+    await expect(requestMobile(connection, { type: 'chat', id: 'chat' })).rejects.toMatchObject({
+      status: 0,
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('gives up on a read lost twice, and never asks a lost send again', async () => {
+    transport.mockRejectedValue(linkLost());
+    await expect(requestMobile(connection, { type: 'overview' })).rejects.toMatchObject({
+      status: 0,
+    });
+    expect(transport).toHaveBeenCalledTimes(2);
+    transport.mockClear();
+    const send = requestMobile(connection, {
+      type: 'sendMessage',
+      chatId: 'chat',
+      subChatId: 'sub',
+      requestId: '00000000-0000-4000-8000-000000000002',
+      text: 'hi',
+    });
+    await expect(send).rejects.toMatchObject({ status: 0 });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('waits a minute for a new chat, so a slow worktree is not sent twice', async () => {
+    transport.mockResolvedValue(reply({ data: { chatId: 'c' } }));
+    await requestMobile(connection, { type: 'createChat', projectId: 'p' });
+    expect(transport.mock.calls[0][5]).toBe(60_000);
   });
   it.each(['', 'not json'])('reports a %j reply as an unreachable Mac', async (text) => {
     transport.mockResolvedValue({ status: 200, body: new TextEncoder().encode(text) });

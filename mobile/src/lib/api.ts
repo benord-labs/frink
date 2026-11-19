@@ -17,7 +17,7 @@ import type {
 } from '@frink/shared/types/remote/notifications';
 
 import { closeMobileRelay, relayRequest, type RelayTarget } from './relay/client';
-import { ApiError, unreachable } from './relay/error';
+import { ApiError, LinkLost, unreachable } from './relay/error';
 export { ApiError } from './relay/error';
 
 export const connectionSchema = mobilePairingSchema
@@ -64,6 +64,7 @@ function jsonPost(
   body: unknown,
   token?: string,
   signal?: AbortSignal,
+  timeoutMs?: number,
 ) {
   return post(
     target,
@@ -74,6 +75,7 @@ function jsonPost(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     signal,
+    timeoutMs,
   );
 }
 
@@ -94,13 +96,33 @@ export async function pairComputer(text: string, name: string): Promise<Connecti
   return connectionSchema.parse({ ...pairing, ...result, pairedAt: Date.now() });
 }
 
+/** Requests that change nothing on the Mac, so a lost one is safe to ask again. */
+const READ_TYPES: ReadonlySet<MobileRequest['type']> = new Set([
+  'overview',
+  'flows',
+  'flow',
+  'run',
+  'chats',
+  'projects',
+  'chat',
+  'composer',
+]);
+
 export async function requestMobile<T extends MobileRequest>(
   connection: Connection,
   request: T,
   signal?: AbortSignal,
 ): Promise<MobileResponses[T['type']]> {
-  const result = await jsonPost(connection, '/api', request, connection.token, signal);
-  return result.data;
+  // Creating a worktree can take a while; a timeout here would invite a second chat.
+  const timeoutMs = request.type === 'createChat' ? 60_000 : undefined;
+  const send = () => jsonPost(connection, '/api', request, connection.token, signal, timeoutMs);
+  try {
+    return (await send()).data;
+  } catch (error) {
+    // Only a closed link is worth asking again: the retry dials a fresh one. A timeout is not.
+    if (!(error instanceof LinkLost) || !READ_TYPES.has(request.type)) throw error;
+    return (await send()).data;
+  }
 }
 
 /** Reads this iPhone's alert registration on the Mac; a `token` registers it, `null` removes it. */

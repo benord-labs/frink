@@ -1,5 +1,6 @@
 import { getRandomBytes } from 'expo-crypto';
 import nacl from 'tweetnacl';
+import type { AppStateStatic } from 'react-native';
 import { io, type Socket } from 'socket.io-client';
 import {
   decodeEnvelope,
@@ -15,7 +16,7 @@ import {
   MOBILE_ENVELOPE_PART_BYTES,
   type MobileEnvelope,
 } from '@frink/shared/types/remote/mobile-envelope';
-import { ApiError, unreachable } from './error';
+import { ApiError, linkLost, unreachable } from './error';
 
 // Metro resolves the shared channel’s tweetnacl to this same mobile dependency.
 nacl.setPRNG((target, length) => {
@@ -34,6 +35,17 @@ type Pending = {
   finish: (result?: ResponseBody, error?: Error) => void;
 };
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+/** A frame the relay has not acknowledged by then means the link is dead. */
+const FRAME_ACK_MS = 10_000;
+/** Attachment parts are large, so a slow mobile uplink gets longer before it counts as dead. */
+const UPLOAD_ACK_MS = 20_000;
+/** A retired client lets in-flight requests finish, but no longer than this. */
+const RETIRE_GRACE_MS = 15_000;
+const DEV = typeof __DEV__ !== 'undefined' && __DEV__;
+
+function devLog(message: string) {
+  if (DEV) console.log(`[relay] ${message}`);
+}
 
 function frameBytes(data: unknown): Uint8Array {
   const bytes =
@@ -72,18 +84,21 @@ class RelayClient {
       extraHeaders: { 'X-Frink-Mobile': '1' },
     });
     this.ready = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => this.close(), 15_000);
+      const timeout = setTimeout(() => this.close('handshake timed out'), 15_000);
       this.failHandshake = (error) => {
         clearTimeout(timeout);
         reject(error);
       };
       this.socket.on('connect', () => {
         void this.socket
-          .timeout(20_000)
+          .timeout(FRAME_ACK_MS)
           .emitWithAck('frame', handshake.hello)
-          .catch(() => this.close());
+          .catch(() => this.close('hello not acknowledged'));
       });
       this.socket.on('frame', (data: unknown, ack?: () => void) => {
+        // Ack on arrival, as the desktop does: the relay paces the sender on it, and a bad frame
+        // closes this client below anyway.
+        ack?.();
         try {
           const bytes = frameBytes(data);
           if (!this.session) {
@@ -96,32 +111,33 @@ class RelayClient {
             if (!plain) throw new Error('Invalid encrypted frame.');
             this.receive(mobileEnvelopeSchema.parse(decodeEnvelope(plain)));
           }
-          ack?.();
         } catch {
-          this.close();
+          this.close('invalid frame');
         }
       });
     });
     // A user may cancel while the handshake is pending; retain a rejection handler regardless.
     void this.ready.catch(() => {});
-    this.socket.on('disconnect', () => this.close());
-    this.socket.on('connect_error', () => this.close());
+    this.socket.on('disconnect', (reason) => this.close(`disconnected: ${reason}`));
+    this.socket.on('connect_error', () => this.close('relay unreachable'));
     this.socket.connect();
   }
 
-  close() {
+  close(reason = 'closed') {
     if (this.closed) return;
     this.closed = true;
-    this.failHandshake(unreachable());
+    devLog(`closed: ${reason}`);
+    this.failHandshake(linkLost());
     this.socket.disconnect();
-    for (const item of this.pending.values()) item.finish(undefined, unreachable());
+    for (const item of this.pending.values()) item.finish(undefined, linkLost());
     this.pending.clear();
   }
 
   /** Closes once in-flight requests settle, so a replaced computer's last clean-up still arrives. */
   retire() {
     this.retiring = true;
-    if (this.pending.size === 0) this.close();
+    if (this.pending.size === 0) this.close('retired');
+    else setTimeout(() => this.close('retired with requests in flight'), RETIRE_GRACE_MS);
   }
 
   private receive(part: MobileEnvelope) {
@@ -146,16 +162,16 @@ class RelayClient {
     item.finish({ status: item.status!, body });
   }
 
-  private send(part: MobileEnvelope, active: () => boolean) {
+  private send(part: MobileEnvelope, active: () => boolean, ackMs = FRAME_ACK_MS) {
     const next = this.sendQueue.then(async () => {
       if (!active()) return;
       if (this.closed || !this.session) throw unreachable();
       // Seal only as we emit, so concurrent requests cannot reorder nonce counters.
       await this.socket
-        .timeout(20_000)
+        .timeout(ackMs)
         .emitWithAck('frame', this.session.seal(encodeEnvelope(part)));
     });
-    this.sendQueue = next.catch(() => this.close());
+    this.sendQueue = next.catch(() => this.close('frame not acknowledged'));
     return next;
   }
 
@@ -172,8 +188,13 @@ class RelayClient {
     if (body.length > (path === '/api/attachments' ? 20 * 1024 * 1024 : 128 * 1024))
       return Promise.reject(new ApiError('This file or message is too large.', 413));
     const id = this.nextId++;
+    const queued = Date.now();
+    let acked = '-';
     return new Promise((resolve, reject) => {
       const finish: Pending['finish'] = (result, error) => {
+        devLog(
+          `${path} #${id}: acked ${acked} ms, done ${Date.now() - queued} ms${error ? ', failed' : ''}`,
+        );
         clearTimeout(timer);
         signal?.removeEventListener('abort', abort);
         this.pending.delete(id);
@@ -196,11 +217,14 @@ class RelayClient {
       void this.ready
         .then(async () => {
           const parts = envelopeBodyParts(body);
+          const ackMs = path === '/api/attachments' ? UPLOAD_ACK_MS : FRAME_ACK_MS;
           for (let i = 0; i < parts.length && this.pending.has(id); i++) {
             await this.send(
               { t: 'req', id, ...parts[i], ...(i === 0 ? { path, headers } : {}) },
               () => this.pending.has(id),
+              ackMs,
             );
+            if (i === 0) acked = String(Date.now() - queued);
           }
         })
         .catch(() => finish(undefined, unreachable()));
@@ -209,9 +233,24 @@ class RelayClient {
 }
 
 let cached: { identity: string; client: RelayClient } | undefined;
+/** The computer last asked, so a returning app can dial it before its first poll. */
+let lastTarget: RelayTarget | undefined;
+
 export function closeMobileRelay() {
   cached?.client.close();
   cached = undefined;
+  lastTarget = undefined;
+}
+
+function clientFor(target: RelayTarget) {
+  const identity = JSON.stringify([target.relay, target.route, target.key]);
+  if (cached?.identity !== identity || cached.client.closed) {
+    // Switching computers lets the previous one finish what is in flight, then closes it.
+    cached?.client.retire();
+    cached = { identity, client: new RelayClient(target) };
+  }
+  lastTarget = target;
+  return cached.client;
 }
 
 export function relayRequest(
@@ -222,11 +261,22 @@ export function relayRequest(
   signal?: AbortSignal,
   timeoutMs?: number,
 ) {
-  const identity = JSON.stringify([target.relay, target.route, target.key]);
-  if (cached?.identity !== identity || cached.client.closed) {
-    // Switching computers lets the previous one finish what is in flight, then closes it.
-    cached?.client.retire();
-    cached = { identity, client: new RelayClient(target) };
-  }
-  return cached.client.request(path, headers, body, signal, timeoutMs);
+  return clientFor(target).request(path, headers, body, signal, timeoutMs);
+}
+
+/** iOS suspends a backgrounded app and its socket dies silently, so the client is retired on the
+ * way out (in-flight requests still finish) and a fresh one dials as the app returns. */
+export function watchRelayLifecycle(appState: Pick<AppStateStatic, 'addEventListener'>) {
+  let away = false;
+  const subscription = appState.addEventListener('change', (state) => {
+    if (state === 'background') {
+      away = true;
+      cached?.client.retire();
+      cached = undefined;
+    } else if (state === 'active' && away) {
+      away = false;
+      if (lastTarget) clientFor(lastTarget);
+    }
+  });
+  return () => subscription.remove();
 }

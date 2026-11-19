@@ -1,3 +1,4 @@
+import type { AppStateStatus } from 'react-native';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 vi.mock('expo-crypto', () => ({
   getRandomBytes: (size: number) => crypto.getRandomValues(new Uint8Array(size)),
@@ -13,7 +14,8 @@ import {
   type ChannelSession,
 } from '@frink/shared/lib/mobile-channel';
 import { envelopeBodyParts, type MobileEnvelope } from '@frink/shared/types/remote/mobile-envelope';
-import { closeMobileRelay, relayRequest } from './client';
+import { closeMobileRelay, relayRequest, watchRelayLifecycle } from './client';
+import { LinkLost } from './error';
 
 const desktop = generateDesktopKeyPair();
 const target = {
@@ -31,6 +33,9 @@ class Socket {
   wrongKey = false;
   keyPair = desktop;
   delayAck?: Promise<void>;
+  /** Swallows application frames unacknowledged, like a link that died without closing. */
+  silent = false;
+  ackMs: number[] = [];
   disconnected = false;
   on(name: string, fn: (...args: any[]) => void) {
     this.handlers.set(name, fn);
@@ -43,11 +48,15 @@ class Socket {
     this.disconnected = true;
     this.handlers.get('disconnect')?.();
   }
-  timeout() {
+  timeout(ms: number) {
+    this.ackMs.push(ms);
     return this;
   }
   async emitWithAck(_name: string, bytes: Uint8Array) {
     this.frames.push(bytes);
+    const ackMs = this.ackMs.at(-1);
+    if (this.silent && this.session)
+      await new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ackMs));
     if (!this.session) {
       const ready = answerHandshake(
         bytes,
@@ -125,7 +134,7 @@ it('fragments uploads, waiting for each ACK before sending the next part', async
 it('disconnect fails pending work and never resends it; a later request handshakes again', async () => {
   socket.response = false;
   const result = relayRequest(target, '/api', {}, input);
-  const failed = expect(result).rejects.toMatchObject({ status: 0 });
+  const failed = expect(result).rejects.toBeInstanceOf(LinkLost);
   await vi.waitFor(() => expect(socket.parts).toHaveLength(1));
   socket.disconnect();
   await failed;
@@ -152,6 +161,13 @@ it('a request to another computer lets the previous one finish, then closes it',
   expect(previous.disconnected).toBe(true);
   expect((await next).status).toBe(200);
 });
+it('a request that times out on a live link fails without marking the link lost', async () => {
+  socket.response = false;
+  const error = await relayRequest(target, '/api', {}, input, undefined, 50).catch((e) => e);
+  expect(error).toMatchObject({ status: 0 });
+  expect(error).not.toBeInstanceOf(LinkLost);
+  expect(socket.disconnected).toBe(false);
+});
 it('cancellation drops a late response without corrupting the session', async () => {
   socket.response = false;
   const controller = new AbortController();
@@ -172,4 +188,55 @@ it('drops tampered frames and fails all pending requests', async () => {
   socket.handlers.get('frame')?.(new Uint8Array(32));
   await failed;
   expect(socket.disconnected).toBe(true);
+});
+it('fails an /api request and closes the client once its frame goes unacknowledged for 10 s', async () => {
+  vi.useFakeTimers();
+  try {
+    socket.silent = true;
+    const result = relayRequest(target, '/api', {}, input);
+    const failed = expect(result).rejects.toMatchObject({ status: 0 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await failed;
+    expect(socket.disconnected).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it('gives attachment parts 20 s to be acknowledged and other frames 10 s', async () => {
+  await relayRequest(target, '/api/attachments', {}, input);
+  await relayRequest(target, '/api', {}, input);
+  expect(socket.ackMs).toEqual([10_000, 20_000, 10_000]);
+});
+it('acks an incoming frame before reading it, then closes on one that does not decrypt', async () => {
+  await relayRequest(target, '/api', {}, input);
+  const ack = vi.fn();
+  socket.handlers.get('frame')?.(new Uint8Array(32), ack);
+  expect(ack).toHaveBeenCalledOnce();
+  expect(socket.disconnected).toBe(true);
+});
+it('retires the client in the background without failing what is in flight, and redials on return', async () => {
+  let onChange!: (state: AppStateStatus) => void;
+  const remove = vi.fn();
+  const unwatch = watchRelayLifecycle({
+    addEventListener: (_type, listener) => {
+      onChange = listener;
+      return { remove };
+    },
+  });
+  socket.response = false;
+  const inFlight = relayRequest(target, '/api', {}, input);
+  await vi.waitFor(() => expect(socket.parts).toHaveLength(1));
+  const previous = socket;
+  socket = new Socket();
+  wire.io.mockReturnValue(socket);
+  onChange('background');
+  expect(previous.disconnected).toBe(false);
+  previous.reply(0, input);
+  expect((await inFlight).status).toBe(200);
+  expect(previous.disconnected).toBe(true);
+  onChange('active');
+  expect(wire.io).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(socket.frames).toHaveLength(1));
+  unwatch();
+  expect(remove).toHaveBeenCalledOnce();
 });
