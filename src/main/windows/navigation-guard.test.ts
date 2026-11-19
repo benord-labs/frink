@@ -7,6 +7,7 @@ vi.mock('electron-log', () => ({ default: { warn: warnMock, info: vi.fn(), error
 
 import {
   attachMainWindowNavigationGuard,
+  isAccidentalReloadChord,
   isAllowedMainWindowNavigation,
   resolveRendererEntryUrl,
 } from './navigation-guard';
@@ -128,7 +129,8 @@ describe('resolveRendererEntryUrl', () => {
   });
 });
 
-type NavigateHandler = (event: { preventDefault: () => void }, url: string) => void;
+type ReloadInput = { key: string; meta: boolean; control: boolean; shift: boolean; alt: boolean };
+type NavigateHandler = (event: { preventDefault: () => void }, arg: string | ReloadInput) => void;
 
 function fakeWebContents(): { wc: WebContents; handlers: Map<string, NavigateHandler> } {
   const handlers = new Map<string, NavigateHandler>();
@@ -151,10 +153,23 @@ describe('attachMainWindowNavigationGuard', () => {
     warnMock.mockClear();
   });
 
-  it('registers will-navigate only, leaving iframe (will-frame-navigate) navigation alone', () => {
+  it('registers will-navigate and the reload guard only, leaving iframe (will-frame-navigate) navigation alone', () => {
     const { wc, handlers } = fakeWebContents();
     attachMainWindowNavigationGuard(wc, PACKAGED_ENTRY);
-    expect([...handlers.keys()]).toEqual(['will-navigate']);
+    expect([...handlers.keys()]).toEqual(['will-navigate', 'before-input-event']);
+  });
+
+  it('wires the reload guard: plain Ctrl/Cmd+R is blocked, +Alt+R reaches the renderer', () => {
+    const { wc, handlers } = fakeWebContents();
+    attachMainWindowNavigationGuard(wc, PACKAGED_ENTRY);
+    const press = (alt: boolean) => {
+      const preventDefault = vi.fn();
+      const input = { key: 'r', meta: true, control: true, shift: false, alt };
+      handlers.get('before-input-event')?.({ preventDefault }, input);
+      return preventDefault;
+    };
+    expect(press(false)).toHaveBeenCalledOnce();
+    expect(press(true)).not.toHaveBeenCalled();
   });
 
   it('prevents a stray file drop exactly once and logs only the scheme', () => {
@@ -189,5 +204,29 @@ describe('attachMainWindowNavigationGuard', () => {
     attachMainWindowNavigationGuard(dev.wc, DEV_ENTRY);
     expect(navigate(packaged.handlers.get('will-navigate'), DEV_ENTRY)).toHaveBeenCalledTimes(1);
     expect(navigate(dev.handlers.get('will-navigate'), DEV_ENTRY)).not.toHaveBeenCalled();
+  });
+});
+
+describe('isAccidentalReloadChord', () => {
+  const chord = (
+    mods: Partial<{ meta: boolean; control: boolean; shift: boolean; alt: boolean }>,
+  ) => ({
+    key: 'R',
+    meta: false,
+    control: false,
+    shift: false,
+    alt: false,
+    ...mods,
+  });
+
+  it('blocks plain Cmd+R on Mac and Ctrl+R elsewhere', () => {
+    expect(isAccidentalReloadChord(chord({ meta: true }), true)).toBe(true);
+    expect(isAccidentalReloadChord(chord({ control: true }), false)).toBe(true);
+  });
+
+  it('lets Shift+R reload and Alt+R reach the reset-pane-sizes shortcut', () => {
+    expect(isAccidentalReloadChord(chord({ control: true, shift: true }), false)).toBe(false);
+    expect(isAccidentalReloadChord(chord({ control: true, alt: true }), false)).toBe(false);
+    expect(isAccidentalReloadChord(chord({ meta: true, alt: true }), true)).toBe(false);
   });
 });

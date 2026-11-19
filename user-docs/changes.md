@@ -1,6 +1,6 @@
 # Reviewing what the agent changed
 
-The **Changes** panel shows every file the agent has changed in a chat's folder that isn't committed yet. Open it with the **View changes** button in the chat header, or **⌘D**.
+The **Changes** panel shows every file the agent has changed in a chat's folder that isn't committed yet. Open it with the **View changes** button in the chat header, or **⌘D / Ctrl+D**.
 
 The panel only shows changes. It never edits, commits or uploads anything itself. When you want something done with them, you ask the agent.
 

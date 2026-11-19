@@ -2,6 +2,7 @@
 
 // Matching
 export { type HotkeyEventLike, matchesHotkey } from './match-hotkey';
+export { isPrimaryChord, isFieldReservedChord, toPlatformHotkey } from './platform-hotkey';
 
 // Registry
 export {

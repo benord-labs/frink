@@ -1,3 +1,4 @@
+import { isPrimaryChord } from '@/lib/hotkeys';
 import { useEffect, useRef } from 'react';
 import { chatOwnsKeyboardShortcuts } from '../../../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
@@ -138,15 +139,23 @@ export function KeyboardShortcutsManager({
     if (!isActive || !isPaneActive) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!chatOwnsKeyboardShortcuts(chatRef.current)) return;
-      if (e.key === 'Enter' && e.metaKey && !e.shiftKey && hasUnapprovedPlan && !isStreaming) {
+      if (e.defaultPrevented || !chatOwnsKeyboardShortcuts(chatRef.current)) return;
+      if (
+        e.key === 'Enter' &&
+        isPrimaryChord(e) &&
+        !e.shiftKey &&
+        hasUnapprovedPlan &&
+        !isStreaming
+      ) {
+        // Capture phase + stop: the composer and other window listeners must not also act on it.
         e.preventDefault();
+        e.stopImmediatePropagation();
         handleApprovePlan();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [isActive, isPaneActive, hasUnapprovedPlan, isStreaming, handleApprovePlan]);
 
   // Cmd/Ctrl + Arrow Down to scroll to bottom (only when this pane is focused)

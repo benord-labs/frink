@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkQueueDestination } from '../../../lib/work-queue/use-work-queue-destination';
 import { useAgentsHotkeys } from './agents-hotkeys-manager';
 
@@ -62,9 +62,14 @@ function WorkQueueSidebarHarness({
   return null;
 }
 
+beforeEach(() => {
+  Object.assign(window, { desktopApi: { platform: 'darwin' } });
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  Object.assign(window, { desktopApi: undefined });
 });
 
 describe('useAgentsHotkeys destination preparation', () => {

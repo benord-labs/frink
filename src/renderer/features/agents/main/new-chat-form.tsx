@@ -1,5 +1,6 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
+import { isPrimaryChord } from '@/lib/hotkeys';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -140,7 +141,7 @@ export function NewChatForm({
     if (!localProjectPath) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.altKey || e.ctrlKey || e.code !== 'KeyJ') return;
+      if (!isPrimaryChord(e) || e.altKey || e.code !== 'KeyJ') return;
       if (e.shiftKey) return; // ⌘⇧J = mode toggle, not applicable (no sidebar in new-chat)
 
       // In split view, only the active pane responds (same atoms as subscribed UI reads)

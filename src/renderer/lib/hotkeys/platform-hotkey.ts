@@ -1,0 +1,40 @@
+import { isMacOS } from '../utils/platform';
+
+/** Registry bindings use `cmd`; on Windows/Linux the equivalent modifier is Ctrl. */
+export function toPlatformHotkey(hotkey: string, isMac: boolean): string {
+  if (isMac) return hotkey;
+  const parts = hotkey
+    .toLowerCase()
+    .split('+')
+    .map((part) => (part === 'cmd' || part === 'meta' ? 'ctrl' : part));
+  // A Win+Ctrl recording ("cmd+ctrl+k") is Ctrl+K here; one `ctrl` keeps conflict checks honest.
+  return parts.filter((part, i) => part !== 'ctrl' || parts.indexOf('ctrl') === i).join('+');
+}
+
+/** Off Mac the focused field owns some Ctrl chords: plain ones are shell keys in the terminal, and
+ * Ctrl+Shift+V is plain-text paste there and in any text field. */
+export function isFieldReservedChord(
+  platformHotkey: string,
+  target: EventTarget | null,
+  isMac: boolean,
+): boolean {
+  if (isMac || !(target instanceof HTMLElement)) return false;
+  const parts = platformHotkey.toLowerCase().split('+');
+  const modifiers = parts.slice(0, -1).sort().join('+');
+  const isPlainPaste = modifiers === 'ctrl+shift' && parts[parts.length - 1] === 'v';
+  if (target.closest('.xterm')) return modifiers === 'ctrl' || isPlainPaste;
+  return isPlainPaste && (target.matches('input, textarea') || target.isContentEditable);
+}
+
+/**
+ * For handlers hardcoded to a registry `cmd` default: Cmd on Mac, Ctrl elsewhere, never both or with Alt.
+ * Off Mac it yields field-reserved chords (see isFieldReservedChord), like the hotkeys manager.
+ */
+export function isPrimaryChord(e: KeyboardEvent, isMac = isMacOS()): boolean {
+  if (e.altKey || e.getModifierState('AltGraph')) return false;
+  if (isMac) return e.metaKey && !e.ctrlKey;
+  if (!e.ctrlKey || e.metaKey) return false;
+  const key = e.key === '+' ? 'plus' : e.key.toLowerCase();
+  const chord = `ctrl+${e.shiftKey ? 'shift+' : ''}${key}`;
+  return !isFieldReservedChord(chord, e.target, false);
+}

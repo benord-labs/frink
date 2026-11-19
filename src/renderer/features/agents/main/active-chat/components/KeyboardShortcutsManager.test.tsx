@@ -1,12 +1,18 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createRef } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KeyboardShortcutsManager } from './KeyboardShortcutsManager';
 
+const setPlatform = (platform: 'darwin' | 'win32' | undefined) => {
+  Object.assign(window, { desktopApi: platform ? { platform } : undefined });
+};
+
+beforeEach(() => setPlatform('darwin'));
 afterEach(() => {
   cleanup();
   document.body.replaceChildren();
+  setPlatform(undefined);
 });
 
 const STOP_KEYS = [
@@ -212,5 +218,101 @@ describe('KeyboardShortcutsManager', () => {
 
     expect(handleApprovePlan).toHaveBeenCalledOnce();
     expect(scrollToBottom).toHaveBeenCalledOnce();
+  });
+
+  it('approves a plan with Ctrl+Enter on Windows and Linux, not Meta+Enter', () => {
+    setPlatform('win32');
+    const handleApprovePlan = vi.fn();
+    render(
+      <KeyboardShortcutsManager
+        isActive={true}
+        isPaneActive={true}
+        isStreaming={false}
+        pendingQuestions={null}
+        hasUnapprovedPlan={true}
+        editorRef={createRef()}
+        stop={vi.fn(async () => undefined)}
+        handleQuestionsSkip={vi.fn(async () => undefined)}
+        handleApprovePlan={handleApprovePlan}
+        scrollToBottom={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    expect(handleApprovePlan).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+    expect(handleApprovePlan).toHaveBeenCalledOnce();
+  });
+
+  it('lets the approve shortcut own Ctrl+Enter typed in the composer, so the draft is not also sent', () => {
+    setPlatform('win32');
+    const handleApprovePlan = vi.fn();
+    const submit = vi.fn();
+    render(
+      <>
+        <textarea
+          aria-label="composer"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) submit();
+          }}
+        />
+        <KeyboardShortcutsManager
+          isActive={true}
+          isPaneActive={true}
+          isStreaming={false}
+          pendingQuestions={null}
+          hasUnapprovedPlan={true}
+          editorRef={createRef()}
+          stop={vi.fn(async () => undefined)}
+          handleQuestionsSkip={vi.fn(async () => undefined)}
+          handleApprovePlan={handleApprovePlan}
+          scrollToBottom={vi.fn()}
+        />
+      </>,
+    );
+
+    const composer = screen.getByLabelText('composer');
+    fireEvent.keyDown(composer, { key: 'Enter', ctrlKey: true });
+    expect(handleApprovePlan).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it('runs one action per Cmd+Enter alongside other window capture listeners', () => {
+    const handleApprovePlan = vi.fn();
+    const earlierOwner = vi.fn((e: KeyboardEvent) => e.preventDefault());
+    window.addEventListener('keydown', earlierOwner, true);
+    const view = (approve: () => void) => (
+      <KeyboardShortcutsManager
+        isActive={true}
+        isPaneActive={true}
+        isStreaming={false}
+        pendingQuestions={null}
+        hasUnapprovedPlan={true}
+        editorRef={createRef()}
+        stop={vi.fn(async () => undefined)}
+        handleQuestionsSkip={vi.fn(async () => undefined)}
+        handleApprovePlan={approve}
+        scrollToBottom={vi.fn()}
+      />
+    );
+    const { unmount } = render(view(handleApprovePlan));
+
+    // An earlier capture listener (the hotkeys manager) already owns this chord.
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    expect(handleApprovePlan).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', earlierOwner, true);
+    unmount();
+
+    // Approval registered first: a later capture listener must not also act on the chord.
+    render(view(handleApprovePlan));
+    const laterListener = vi.fn();
+    window.addEventListener('keydown', laterListener, true);
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    window.removeEventListener('keydown', laterListener, true);
+    expect(handleApprovePlan).toHaveBeenCalledOnce();
+    expect(laterListener).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ import {
 } from '../../../lib/atoms';
 import { wakeHoldAdoptedAtomFamily } from '../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../lib/trpc';
+import { isPrimaryChord } from '../../../lib/hotkeys';
 import { cn } from '../../../lib/utils';
 import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { lastSelectedModelIdAtomFamily, splitViewAtom } from '../atoms';
@@ -355,7 +356,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   isModelDropdownOpenRef.current = isModelDropdownOpen;
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key === '/') {
+      if (isPrimaryChord(e) && e.key === '/') {
         const sv = jotaiStore.get(splitViewAtom);
         if (sv.chatIds.length >= 2 && sv.chatIds[sv.activePaneIndex] !== parentChatId) {
           return;
