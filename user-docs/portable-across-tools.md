@@ -26,6 +26,7 @@ Each chat stays on the tool it started with. A new chat uses its project's accou
 | Tool limits            | Yes — enforced where the tool can, relaxed to read-only where it can't |
 | Hooks                  | Yes, from Claude to Codex — the ones Codex can run                     |
 | Tool-native plugins    | Stays per-tool                                                         |
+| Auto Mode rules        | Stays per-tool — Claude and Codex each follow their own                |
 
 When you switch which tool runs your work, Frink brings your **MCP servers**, **skills**, **commands**, and **custom agents** along, so the new tool is set up exactly like the old one. You don't re-add anything.
 
