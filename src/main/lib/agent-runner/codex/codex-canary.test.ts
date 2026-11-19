@@ -107,4 +107,8 @@ describe.runIf(BIN)('Codex setup canary', () => {
   });
 
   registerCanaryRows('codex', () => turn, TURN_MS);
+
+  it('offers the model no sub-agent tools x codex', { timeout: TURN_MS }, async () => {
+    expect((await turn).join('\n')).not.toContain('spawn_agent');
+  });
 });

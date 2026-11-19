@@ -1838,6 +1838,8 @@ describe('runCodexAgent', () => {
       '--disable',
       'multi_agent_v2',
       '--config',
+      'agents.enabled=false',
+      '--config',
       'mcp_servers.x={}',
       '--config',
       'shell_environment_policy.ignore_default_excludes=false',
@@ -1846,7 +1848,7 @@ describe('runCodexAgent', () => {
     expect(opts.args).not.toContain('--skip-git-repo-check');
   });
 
-  it('with no configArgs, spawns only the disable flags and the shell-env scrub', async () => {
+  it('with no configArgs, spawns only the locked flags and the shell-env scrub', async () => {
     const fake = startedFakeClient();
     const gen = runCodexAgent(params());
     await gen.next();
@@ -1870,6 +1872,8 @@ describe('runCodexAgent', () => {
       'multi_agent',
       '--disable',
       'multi_agent_v2',
+      '--config',
+      'agents.enabled=false',
       '--config',
       'shell_environment_policy.ignore_default_excludes=false',
     ]);

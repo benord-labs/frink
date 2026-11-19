@@ -1,7 +1,7 @@
 {
   "version": "rust-v0.162.1",
   "config": {
-    "agents": "native",
+    "agents": "frink-sets",
     "allow_login_shell": "native",
     "allow_symlinked_codex_home": "native",
     "analytics": "native",

@@ -15,7 +15,7 @@ const base = {
 };
 
 describe('buildSpawnArgs', () => {
-  const disabledFeatures = [
+  const lockedArgs = [
     '--disable',
     'computer_use',
     '--disable',
@@ -30,6 +30,8 @@ describe('buildSpawnArgs', () => {
     'multi_agent',
     '--disable',
     'multi_agent_v2',
+    '--config',
+    'agents.enabled=false',
   ];
 
   it('disables exactly the features the pinned Codex config surface routes as disabled', () => {
@@ -44,12 +46,12 @@ describe('buildSpawnArgs', () => {
 
   it('disables every unrouted execution surface before appending config args', () => {
     expect(buildSpawnArgs(['--config', 'x=1'])).toEqual([
-      ...disabledFeatures,
+      ...lockedArgs,
       '--config',
       'x=1',
       ...CODEX_SHELL_ENV_SCRUB_ARGS,
     ]);
-    expect(buildSpawnArgs()).toEqual([...disabledFeatures, ...CODEX_SHELL_ENV_SCRUB_ARGS]);
+    expect(buildSpawnArgs()).toEqual([...lockedArgs, ...CODEX_SHELL_ENV_SCRUB_ARGS]);
   });
 
   it('scrubs credentials from Codex shells last, so a caller override cannot re-enable them', () => {

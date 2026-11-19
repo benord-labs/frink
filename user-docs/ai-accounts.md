@@ -15,6 +15,8 @@ Every AI account belongs to this computer — Claude and OpenAI sign-ins and API
 
 OpenAI chats don't have Plan or Debug mode yet, so Frink doesn't offer them there.
 
+Helper agents are off for now in OpenAI chats. Frink doesn't offer them to Codex until it can check what they run.
+
 ### OpenCode (macOS and Linux)
 
 OpenCode is a free, open-source coding agent that can use many AI providers, including free models. Frink runs the OpenCode you install yourself.
