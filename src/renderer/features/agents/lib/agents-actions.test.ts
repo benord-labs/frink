@@ -1,8 +1,31 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest';
+import {
+  fileKey,
+  openFileAtom,
+  openFilesAtom,
+  pendingCloseKeysAtom,
+  updateFileContentAtom,
+} from '@/lib/code-editor/state';
+import { appStore } from '@/lib/jotai-store';
 import { executeAgentAction } from './agents-actions';
 
 describe('agents-actions', () => {
+  it('closes saved editor tabs and asks about unsaved ones for close-all-editor-files', async () => {
+    for (const name of ['clean.ts', 'dirty.ts']) {
+      appStore.set(openFileAtom, { path: name, name, projectPath: '/repo', intent: 'pinned' });
+    }
+    const dirty = fileKey('dirty.ts', '/repo');
+    appStore.set(updateFileContentAtom, { key: dirty, content: 'edited' });
+
+    await executeAgentAction('close-all-editor-files', {}, 'hotkey');
+
+    expect(appStore.get(openFilesAtom).map((f) => f.name)).toEqual(['dirty.ts']);
+    expect(appStore.get(pendingCloseKeysAtom)).toEqual([dirty]);
+    appStore.set(pendingCloseKeysAtom, null);
+    appStore.set(openFilesAtom, []);
+  });
+
   it('opens file search dialog for file-search action', async () => {
     const setFileSearchDialogOpen = vi.fn();
 

@@ -4,7 +4,9 @@
  * Actions can be triggered via hotkeys or UI buttons
  */
 
+import { requestCloseAllFilesAtom } from '../../../lib/code-editor/state';
 import { focusChatInput } from '../../../lib/focus-chat-input';
+import { appStore } from '../../../lib/jotai-store';
 import { DESTINATION_ACTIONS } from './destination-actions';
 import type {
   AgentActionContext,
@@ -219,8 +221,8 @@ const closeAllEditorFilesAction: AgentActionDefinition = {
   description: 'Close all open text files in the code editor',
   category: 'view',
   hotkey: 'cmd+shift+x',
-  handler: async (context) => {
-    context.closeAllEditorFiles?.();
+  handler: async () => {
+    appStore.set(requestCloseAllFilesAtom);
     return { success: true };
   },
 };

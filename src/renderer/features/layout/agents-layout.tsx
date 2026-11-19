@@ -55,12 +55,7 @@ import { useTaskIpcHandler } from '../agents/hooks/use-task-ipc-handler';
 import { useAgentsHotkeys } from '../agents/lib/agents-hotkeys-manager';
 import { toggleSearchAtom } from '../agents/search';
 import { useAgentSubChatStore } from '../agents/stores/sub-chat-store';
-import {
-  closeFilesOutsideProjectAtom,
-  codeEditorLayoutAtom,
-  codeEditorOpenAtom,
-  openFilesAtom,
-} from '../code-editor';
+import { codeEditorLayoutAtom, codeEditorOpenAtom, openFilesAtom } from '../code-editor';
 import { FileSearchDialog } from '../file-viewer/components/file-search-dialog';
 import { AddToChatProvider } from '@/lib/agent-chat/composer-input/add-to-chat-context';
 import { FilesSidebar } from '../files-sidebar';
@@ -209,12 +204,6 @@ export function AgentsLayout() {
   // Chat search toggle
   const toggleChatSearch = useSetAtom(toggleSearchAtom);
 
-  // Close all open editor files (for Cmd+Shift+E)
-  const closeFilesOutsideProject = useSetAtom(closeFilesOutsideProjectAtom);
-  const closeAllEditorFiles = useCallback(() => {
-    closeFilesOutsideProject(null);
-  }, [closeFilesOutsideProject]);
-
   // Cycle editor layout (top -> left -> right) for Cmd+Shift+V, only when editor is open
   const codeEditorOpen = useAtomValue(codeEditorOpenAtom);
   const openFiles = useAtomValue(openFilesAtom);
@@ -348,7 +337,6 @@ export function AgentsLayout() {
     canShowFilesSidebar: Boolean(validatedProject?.path),
     canSearchFiles: fileSearchRoots.length > 0,
     isFilesSidebarOpen: filesSidebarOpen,
-    closeAllEditorFiles,
     toggleEditorLayout,
     customHotkeysConfig,
     addEmptyPane,
