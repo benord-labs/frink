@@ -1,4 +1,6 @@
-import { Eye } from 'lucide-react';
+import { Button } from '@benord-labs/frink-primitives';
+import { Eye, Link } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { pathLabel } from '../../../../../shared/lib/mentions/parse-mention';
 import {
   isSameFolder,
@@ -7,37 +9,82 @@ import {
 } from '../../../../../shared/lib/path-normalization';
 import type { OpenFile } from '@/lib/code-editor/state';
 import { trpc } from '@/lib/trpc';
+import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 
 type OtherProjectNoticeProps = {
   /** The active tab; null when none is open */
-  file: Pick<OpenFile, 'projectPath' | 'isOtherProject'> | null;
+  file: Pick<OpenFile, 'projectPath' | 'isOtherProject' | 'sourceChatId'> | null;
+  /** The chat the editor follows, which the notice calls "this chat": single view's chat or the
+   *  active pane's. Null for a new-chat form or an empty pane, which link nothing. */
+  chatId: string | null;
 };
 
-/** Says the open file is from another project. Informs only: browsing changes no agent access. */
-export function OtherProjectNotice({ file }: OtherProjectNoticeProps) {
+/** Says the open file is from another project and whether that project is linked to the chat on
+ *  screen. When that chat opened the tab and can link the project, offers to. */
+export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
   const projectPath = file?.isOtherProject ? file.projectPath : undefined;
+  const chat = useTreeProjects(projectPath ? chatId : undefined);
   const { data, isError } = trpc.projects.list.useQuery(undefined, {
     enabled: Boolean(projectPath),
   });
-  // While the list loads, show nothing rather than the folder name in place of the project's own.
-  if (!projectPath || (!Array.isArray(data) && !isError)) return null;
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const linkStarted = useRef(false);
+  const isLinked =
+    Boolean(projectPath) && chat.extras.some((project) => isSameFolder(project.path, projectPath));
+
+  // The button goes once its link is made, so focus moves to the notice rather than the page.
+  useEffect(() => {
+    if (!linkStarted.current || (!isLinked && chat.isPending)) return;
+    linkStarted.current = false;
+    const dropped = !document.activeElement || document.activeElement === document.body;
+    if (isLinked && dropped) statusRef.current?.focus();
+  }, [isLinked, chat.isPending]);
+
+  // While the list or the chat loads, show nothing rather than a name or state that may change.
+  if (!projectPath || !chat.isLoaded || (!Array.isArray(data) && !isError)) return null;
 
   const registered = Array.isArray(data)
     ? data.find((project) => isSameFolder(project.path, projectPath))
     : undefined;
   const projectName =
     registered?.name ?? pathLabel(trimTrailingSlashes(normalizePathSlashes(projectPath)));
+  // Only the chat that opened the tab offers to link it, so the button never links a chat that the
+  // tab merely stayed open over.
+  const linkable =
+    isLinked || !chatId || file?.sourceChatId !== chatId
+      ? undefined
+      : chat.candidates.find((project) => isSameFolder(project.path, projectPath));
+  const Icon = isLinked ? Link : Eye;
 
   return (
-    <div
-      role="status"
-      className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground"
-    >
-      <Eye className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-      <p className="min-w-0 break-words">
-        You're browsing <span className="text-foreground">{projectName}</span>. Browsing doesn't
-        change what the agent can read.
+    <div className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+      <p
+        ref={statusRef}
+        role="status"
+        tabIndex={-1}
+        className="min-w-0 flex-1 break-words outline-hidden"
+      >
+        <span className="text-foreground">{projectName}</span>
+        {isLinked
+          ? ' is linked to this chat. The agent can read files here without asking.'
+          : linkable
+            ? " isn't linked to this chat. Link it to let the agent read files here without asking."
+            : " isn't linked to this chat."}
       </p>
+      {linkable && (
+        <Button
+          variant="secondary"
+          size="xs"
+          loading={chat.isPending}
+          onClick={() => {
+            linkStarted.current = true;
+            chat.add(linkable.id);
+          }}
+        >
+          Link project
+        </Button>
+      )}
     </div>
   );
 }

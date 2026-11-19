@@ -13,7 +13,7 @@ import { useFileTreeNavigation } from '../../use-file-tree-navigation';
 import { useFileTreeNodes } from '../../utils/build-file-tree';
 import { getVisiblePaths } from '../../utils/get-visible-paths';
 import { createMetaLookupFromDOM } from '../../utils/meta-lookup-from-dom';
-import { BROWSING_BADGE, FOCUS_REFRESH_MS } from '../constants';
+import { FOCUS_REFRESH_MS, LINKED_BADGE } from '../constants';
 import { ProjectRootRow } from '../ProjectRootRow';
 
 /** The branch is re-read at most this often: reading it lists every branch and worktree. */
@@ -21,8 +21,8 @@ const BRANCH_STALE_MS = 60_000;
 const doNothing = () => {};
 
 type Props = {
-  /** The other project, shown from its registered folder */
-  project: { id: string; name: string; path: string };
+  /** The linked project, shown from its registered folder; `missing` when that folder is gone */
+  project: { id: string; name: string; path: string; missing?: boolean };
   /** The chat whose tree this is; its files open as that chat's tabs */
   chatId: string;
   /** The split-view pane the tree sits in */
@@ -35,7 +35,7 @@ type Props = {
 };
 
 /**
- * Another project's files under their own root row in a chat's file tree. Nothing here can be
+ * A linked project's files under their own root row in a chat's file tree. Nothing here can be
  * created, renamed, moved, pasted or deleted, and no git watcher runs: the files are re-read when
  * the root opens, and on window focus at most every 30 seconds.
  */
@@ -57,20 +57,22 @@ export function ExtraProjectRoot({
   const selection = useMultiSelect();
   const isSearching = searchQuery.length > 0;
   const folderEntry = asEntryOfParent(project.path);
+  // A folder known to be gone is not read at all.
+  const canRead = expanded && !project.missing;
 
   const listing = trpc.files.listDirectory.useQuery(
     { projectPath: project.path, relativePath: '' },
-    { enabled: expanded && !isSearching },
+    { enabled: canRead && !isSearching },
   );
   const search = trpc.files.search.useQuery(
     { projectPath: project.path, query: searchQuery, limit: FILES_FETCH_LIMIT },
-    { enabled: expanded && isSearching },
+    { enabled: canRead && isSearching },
   );
   const shown = isSearching ? search : listing;
   // The listing and the search read a missing folder as an empty one, so an empty result asks
   // the disk, and the tree waits for that answer before it calls the folder empty.
   const isEmpty = shown.data?.length === 0;
-  const folderType = trpc.files.entryType.useQuery(folderEntry, { enabled: expanded && isEmpty });
+  const folderType = trpc.files.entryType.useQuery(folderEntry, { enabled: canRead && isEmpty });
   const cantOpen =
     shown.isError || (isEmpty && folderType.isSuccess && folderType.data !== 'folder');
   const isLoading = shown.isLoading || (isEmpty && folderType.isLoading);
@@ -78,6 +80,7 @@ export function ExtraProjectRoot({
   const branchInput = { worktreePath: project.path };
   const branch = trpc.changes.getBranches.useQuery(branchInput, {
     staleTime: BRANCH_STALE_MS,
+    enabled: !project.missing,
   }).data?.current;
   const { nodes } = useFileTreeNodes({
     rootContents: listing.data ?? [],
@@ -87,9 +90,10 @@ export function ExtraProjectRoot({
   });
 
   // Re-reads this project's listing or search, every folder open in it, and its branch once that
-  // is a minute old.
+  // is a minute old. A folder found missing is looked for again, as the chat says where it is.
   const refresh = () => {
     lastReadAt.current = Date.now();
+    if (project.missing) void utils.chats.get.invalidate({ id: chatId });
     void utils.files.listDirectory.invalidate({ projectPath: project.path });
     void utils.files.search.invalidate({ projectPath: project.path });
     void utils.files.entryType.invalidate(folderEntry);
@@ -144,24 +148,29 @@ export function ExtraProjectRoot({
         name={project.name}
         path={project.path}
         branch={branch}
-        badge={BROWSING_BADGE}
+        missing={project.missing}
+        badge={LINKED_BADGE}
         expanded={expanded}
         onExpandedChange={handleExpandedChange}
         controlsId={treeId}
-        remove={{ label: `Remove ${project.name} from this tree`, onRemove }}
+        remove={{ label: `Unlink ${project.name}`, onRemove }}
       />
       <div
         ref={containerRef}
         id={treeId}
         role="tree"
-        aria-label={`${project.name} file tree`}
+        aria-label={`${project.name} file tree, linked`}
         aria-keyshortcuts={READ_ONLY_FILE_TREE_KEY_SHORTCUTS}
         aria-busy={isLoading ? 'true' : undefined}
         tabIndex={0}
         hidden={!expanded}
         className="px-2 py-1 outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
       >
-        {cantOpen ? (
+        {project.missing ? (
+          <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
+            {`Can't find ${project.name}'s folder.`}
+          </p>
+        ) : cantOpen ? (
           <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
             {`Can't open ${project.name}'s folder. It may have moved or been deleted.`}
           </p>

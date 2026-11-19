@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   isGlobalSearchNonFileSubpage,
+  matchesMultiWordSearch,
   showsEmptyMentionList,
+  sortFilesByRelevance,
 } from '@/lib/mentions/agents-file-mention-search-helpers';
 
 describe('isGlobalSearchNonFileSubpage', () => {
@@ -86,5 +88,27 @@ describe('showsEmptyMentionList', () => {
 
   it('is false on the root view with nothing typed', () => {
     expect(showsEmptyMentionList(settledRoot)).toBe(false);
+  });
+});
+
+describe('matchesMultiWordSearch', () => {
+  it('needs every word, in any order and case', () => {
+    expect(matchesMultiWordSearch('src/Agents/sidebar.tsx', 'sidebar agents')).toBe(true);
+    expect(matchesMultiWordSearch('src/agents/sidebar.tsx', 'sidebar chat')).toBe(false);
+    expect(matchesMultiWordSearch('anything', '')).toBe(true);
+  });
+});
+
+describe('sortFilesByRelevance', () => {
+  const files = (...labels: string[]) => labels.map((label) => ({ label }));
+
+  it('puts an exact name first, then names that start with the search, shortest first', () => {
+    const sorted = sortFilesByRelevance(files('my-chat.ts', 'chat-list.ts', 'chat.tsx'), 'chat');
+    expect(sorted.map((file) => file.label)).toEqual(['chat.tsx', 'chat-list.ts', 'my-chat.ts']);
+  });
+
+  it('puts hyphenated names first when the search ends with a space', () => {
+    const sorted = sortFilesByRelevance(files('agents', 'agents-sidebar.tsx'), 'agents ');
+    expect(sorted.map((file) => file.label)).toEqual(['agents-sidebar.tsx', 'agents']);
   });
 });

@@ -34,6 +34,13 @@ vi.mock('./WorktreeIndicator', () => ({
   },
 }));
 
+// The chips read the chat over tRPC; their own suite covers them.
+vi.mock('./LinkedProjectChips', () => ({
+  LinkedProjectChips: ({ chatId, running }: { chatId: string; running: boolean }) => (
+    <div data-testid="linked-chips" data-chat-id={chatId} data-running={String(running)} />
+  ),
+}));
+
 /** The folder chip carries a Radix tooltip, which needs the provider the app shell supplies. */
 const renderBar = (ui: ReactNode) => render(ui, { wrapper: TooltipProvider });
 
@@ -286,7 +293,28 @@ describe('ChatInputContextBar', () => {
       expect(region).not.toHaveTextContent(PLACEHOLDER);
     });
 
-    it('shows the prompt-cache countdown right after the folder when an expiry is known', () => {
+    it("shows the running chat's linked projects right after the folder, then the cache countdown", () => {
+      store.set(loadingSubChatsAtom, new Map([['sub-1', 'chat-1']]));
+      renderBar(
+        <ChatInputContextBar
+          currentBranch={null}
+          workspaceFolderName="owners-web"
+          worktreePath="/tmp/owners-web"
+          chatId="chat-1"
+          promptCacheExpiresAt={Date.now() + 5 * 60_000}
+        />,
+      );
+
+      const chips = screen.getByTestId('linked-chips');
+      expect(screen.getByLabelText('Folder: owners-web').nextElementSibling).toBe(chips);
+      expect(chips).toHaveAttribute('data-chat-id', 'chat-1');
+      expect(chips).toHaveAttribute('data-running', 'true');
+      expect(chips.nextElementSibling).toBe(
+        screen.getByRole('img', { name: /^Prompt cache stays warm/ }),
+      );
+    });
+
+    it('shows no linked projects without a chat, as in the new-chat form', () => {
       renderBar(
         <ChatInputContextBar
           currentBranch={null}
@@ -298,6 +326,7 @@ describe('ChatInputContextBar', () => {
 
       const timer = screen.getByRole('img', { name: /^Prompt cache stays warm/ });
       expect(screen.getByLabelText('Folder: owners-web').nextElementSibling).toBe(timer);
+      expect(screen.queryByTestId('linked-chips')).toBeNull();
     });
 
     it('renders an empty row when there is no project context', () => {
@@ -619,6 +648,7 @@ describe('ChatInputContextBar', () => {
           worktreePath="/tmp/project"
           currentBranch="main"
           workspaceFolderName="project"
+          chatId="chat-1"
         />,
       );
 
@@ -628,6 +658,7 @@ describe('ChatInputContextBar', () => {
       const folder = screen.getByLabelText('Folder: project');
       expect(barRoot.firstElementChild).toBe(folder);
       expect(folder).toHaveClass('shrink-0', 'max-w-[50%]');
+      expect(screen.getByTestId('linked-chips')).toHaveAttribute('data-running', 'false');
       expect(screen.getByText('project')).toHaveClass('truncate');
     });
 

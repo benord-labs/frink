@@ -7,7 +7,7 @@ import { openFileAtom } from '@/lib/code-editor/state';
 import { browsedFileOpenInput } from './use-open-browsed-file';
 import { useTreeProjects } from './use-tree-projects';
 
-/** A folder quick open searches: the chat's own (`isChat`), or another project in its tree */
+/** A folder quick open searches: the chat's own (`isChat`), or a project linked to the chat */
 export type QuickOpenRoot = { path: string; name: string; isChat: boolean };
 
 type UseQuickOpenRootsInput = {
@@ -19,8 +19,9 @@ type UseQuickOpenRootsInput = {
 };
 
 /**
- * The chat's own folder first, then each project in its file tree in the order added. A file from
- * the chat's folder opens as its own tab; one from another project opens as the chat's browsed tab.
+ * The chat's own folder first, then each project linked to it, in link order; a linked folder
+ * known to be gone is left out. A file from the chat's folder opens as its own tab; one from a
+ * linked project opens as the chat's browsed tab.
  */
 export function useQuickOpenRoots({ pane, single }: UseQuickOpenRootsInput) {
   const chatId = pane ? pane.chatId : single.chatId;
@@ -35,7 +36,9 @@ export function useQuickOpenRoots({ pane, single }: UseQuickOpenRootsInput) {
   const roots: QuickOpenRoot[] = path
     ? [
         { path, name: main?.name ?? '', isChat: true },
-        ...extras.map((project) => ({ path: project.path, name: project.name, isChat: false })),
+        ...extras.flatMap((project) =>
+          project.missing ? [] : [{ path: project.path, name: project.name, isChat: false }],
+        ),
       ]
     : [];
   const paneIndex = pane?.index;

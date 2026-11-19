@@ -58,6 +58,20 @@ describe('findMentionTokens', () => {
   );
 
   it.each([
+    '/Users/me/Personal and learning/web/app/[id]/page.tsx',
+    '/Users/me/Personal and learning/web/app/[id]/My Page.tsx',
+    '/Users/me/My Sites/routes/+page@[id].svelte',
+    'C:\\My Projects\\web\\app\\[id]\\My Page.tsx',
+  ])('keeps the paired brackets of %s, in a folder with spaces, inside the token', (path) => {
+    const text = `@[file:local:${path}] see @[skill:x] and [this] note]`;
+
+    expect(findMentionTokens(text).map(({ id }) => id)).toStrictEqual([
+      `file:local:${path}`,
+      'skill:x',
+    ]);
+  });
+
+  it.each([
     ['@[file:local:notes[draft.md] summarise', ['file:local:notes[draft.md']],
     ['@[file:local:notes[draft.md] is great] ok', ['file:local:notes[draft.md']],
     ['@[file:a[b] @[file:c] d] e', ['file:a[b', 'file:c']],

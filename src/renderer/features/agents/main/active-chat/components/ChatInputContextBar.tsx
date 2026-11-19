@@ -1,6 +1,7 @@
 /**
- * Workspace context under the chat input: folder first, then worktree and branch. One line at every
- * width: once the git controls no longer fit, both move behind one ellipsis as the same pickers.
+ * Workspace context under the chat input: folder and linked projects first, then worktree and
+ * branch. One line at every width: once the git controls no longer fit, both move behind one
+ * ellipsis as the same pickers.
  */
 
 import { useAtomValue } from 'jotai';
@@ -22,6 +23,7 @@ import { WorktreePicker } from '../../../components/worktree-picker';
 import { ContextOverflowMenu, type OverflowRow } from './ContextOverflowMenu';
 import { deriveWorktreeLabel } from './derive-worktree-label';
 import { GitBranchCheckout } from './git-branch-checkout';
+import { LinkedProjectChips } from './LinkedProjectChips';
 import { WorktreeIndicator } from './WorktreeIndicator';
 
 /** Tailwind `gap-x-2`, which the overflow measurement has to account for. */
@@ -146,15 +148,22 @@ function ReadOnlyBranchChip({ branch, locked }: { branch: string; locked: boolea
 
 type ContextRowProps = {
   folder: string;
+  /** The chat whose linked projects show beside the folder; none without one */
+  chatId?: string;
+  /** The chat's agent, or work it holds, is running */
+  isLive: boolean;
   promptCacheExpiresAt: number | null;
   gitItems: OverflowRow[];
   overflow: ReturnType<typeof usePriorityOverflow>;
   className?: string;
 };
 
-/** The row itself: folder, cache timer, then the git chips inline or all behind the ellipsis. */
+/** The row itself: folder, linked projects, cache timer, then the git chips inline or all behind
+ *  the ellipsis. */
 function ContextRow({
   folder,
+  chatId,
+  isLive,
   promptCacheExpiresAt,
   gitItems,
   overflow,
@@ -169,11 +178,12 @@ function ContextRow({
       data-testid="chat-input-branch-bar"
       className={cn(
         // The composer above already ends in pb-2, so the row's own space goes below it.
-        'flex w-full min-w-0 items-center gap-x-2 overflow-hidden px-3 pt-0.5 pb-2 text-xs text-muted-foreground',
+        '@container/workspace-row flex w-full min-w-0 items-center gap-x-2 overflow-hidden px-3 pt-0.5 pb-2 text-xs text-muted-foreground',
         className,
       )}
     >
       {folder ? <FolderChip folder={folder} /> : null}
+      {chatId ? <LinkedProjectChips chatId={chatId} running={isLive} /> : null}
       <PromptCacheTimer expiresAt={promptCacheExpiresAt} />
       <div
         ref={containerRef}
@@ -239,7 +249,8 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
   );
   const currentBranch = gitStatus?.branch || recordedBranch;
 
-  const locked = useWorkspaceContextLock(chatId, useIsChatLive(chatId));
+  const isLive = useIsChatLive(chatId);
+  const locked = useWorkspaceContextLock(chatId, isLive);
 
   const folder = workspaceFolderName?.trim() ?? '';
   const branch = currentBranch?.trim() ?? '';
@@ -296,6 +307,8 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
           <>
             <ContextRow
               folder={folder}
+              chatId={chatId}
+              isLive={isLive}
               promptCacheExpiresAt={promptCacheExpiresAt}
               gitItems={gitItems}
               overflow={overflow}

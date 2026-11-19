@@ -51,7 +51,7 @@ export function notePath(path: string): string {
 }
 
 function pickedNote(paths: string[]): string {
-  return `The user @-mentioned ${paths.map(notePath).join(', ')}. File contents are not attached automatically in this session: if these are files or directories in your working directory, read them with your file tools before responding.`;
+  return `The user @-mentioned ${paths.map(notePath).join(', ')}. File contents are not attached automatically in this session: if these are files or directories in your working directory or in a project linked to this chat, read them with your file tools before responding.`;
 }
 
 function truncateSelection(text: string): string {

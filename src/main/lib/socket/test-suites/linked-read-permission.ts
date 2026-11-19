@@ -5,7 +5,7 @@ import { sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDatabase } from '../../db';
 import { linkProjectToChat, unlinkProjectFromChat } from '../../db/repos/chat-linked-projects';
-import { getProjectByPath } from '../../db/repos/projects';
+import { getProjectById, getProjectByPath } from '../../db/repos/projects';
 import * as schema from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { checkPermission } from '../../permissions/v2/check';
@@ -16,13 +16,28 @@ import { validateToolPermission } from '../streaming/pending-permission/validate
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type ActualCheck = typeof import('../../permissions/v2/check');
+type ActualProjects = typeof import('../../db/repos/projects');
 
 const CARD = { allowed: false, message: 'User denied permission' };
 const SAFETY = { allowed: false, message: expect.stringContaining('safety policy') };
 const NO_RULES = { allow: [], deny: [], ask: [] };
 
+/** Lets the gate read a linked project's name from the suite's database, as it does in the app.
+ * Returns what puts the harness's own lookup back. */
+async function readProjectNamesFromDb(): Promise<() => void> {
+  const lookup = vi.mocked(getProjectById);
+  const harness = lookup.getMockImplementation();
+  lookup.mockImplementation(
+    (await vi.importActual<ActualProjects>('../../db/repos/projects')).getProjectById,
+  );
+  return () => {
+    if (harness) lookup.mockImplementation(harness);
+  };
+}
+
 /** The gate end to end on a real database and folder tree: links and rules come from the
- * repos, and the rules are the real ones. Only the project lookup and the card stay mocked. */
+ * repos, and the rules are the real ones. Only the chat's project lookup and the card stay mocked;
+ * a linked project's name is read from the database. */
 export function registerLinkedReadPermissionTests({
   clientPermissionBridge,
 }: Pick<ExecutorPermissionHarness, 'clientPermissionBridge'>): void {
@@ -36,6 +51,7 @@ export function registerLinkedReadPermissionTests({
     let actual: ActualCheck;
     let harnessDb: (() => ReturnType<typeof getDatabase>) | undefined;
     let harnessLookup: ReturnType<typeof projectLookup.getMockImplementation>;
+    let restoreNames = () => {};
 
     const gate = (
       tool: string,
@@ -95,6 +111,7 @@ export function registerLinkedReadPermissionTests({
         () => db as unknown as ReturnType<typeof getDatabase>,
       );
       projectLookup.mockResolvedValue({ id: 'main', name: 'main', path: main() } as never);
+      restoreNames = await readProjectNamesFromDb();
       actual = await vi.importActual<ActualCheck>('../../permissions/v2/check');
       actual.setDocsLoader((req) => resolveScopes(db, req));
       vi.mocked(checkPermission).mockImplementation(actual.checkPermission);
@@ -106,6 +123,7 @@ export function registerLinkedReadPermissionTests({
       actual.resetDocsLoader();
       if (harnessDb) vi.mocked(getDatabase).mockImplementation(harnessDb);
       if (harnessLookup) projectLookup.mockImplementation(harnessLookup);
+      restoreNames();
     });
 
     it.each<[string, () => Record<string, unknown>]>([
@@ -141,7 +159,7 @@ export function registerLinkedReadPermissionTests({
             .insert(schema.projectPermissionRules)
             .values({ projectId: 'lib', ruleString: 'Read(secrets/**)', ruleType: 'deny' })
             .run(),
-        { allowed: false, message: 'Denied by project-tier rule Read(secrets/**)' },
+        { allowed: false, message: 'Denied by rule Read(secrets/**) saved on linked project lib' },
       ],
       [
         'denies by a user rule, which runs before the link',
@@ -165,6 +183,18 @@ export function registerLinkedReadPermissionTests({
     ])('%s', async (_, rel, setup, expected) => {
       setup();
       expect(await read(rel)).toEqual(expected);
+    });
+
+    it('names the linked project whose own ask rule asks, on the card', async () => {
+      db.insert(schema.projectPermissionRules)
+        .values({ projectId: 'lib', ruleString: 'Read(secrets/**)', ruleType: 'ask' })
+        .run();
+      expect(await read('secrets/x')).toEqual(CARD);
+      expect(socketClient.sendPermissionRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.objectContaining({ matchedProjectId: 'lib', matchedProjectName: 'lib' }),
+        }),
+      );
     });
 
     it.each([

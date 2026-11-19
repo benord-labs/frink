@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Eye } from 'lucide-react';
+import { Link } from 'lucide-react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,11 +16,11 @@ function Harness({ initial, onRemove }: { initial: boolean; onRemove?: () => voi
         name="api"
         path="/w/api"
         branch="feat"
-        badge={{ label: 'Browsing', icon: Eye, tone: 'browse' }}
+        badge={{ label: 'Linked', icon: Link, tone: 'linked' }}
         expanded={expanded}
         onExpandedChange={setExpanded}
         controlsId="api-files"
-        remove={onRemove && { label: 'Remove api from this tree', onRemove }}
+        remove={onRemove && { label: 'Unlink api', onRemove }}
       />
       <div id="api-files" hidden={!expanded} />
     </TooltipProvider>
@@ -60,7 +60,7 @@ describe('ProjectRootRow', () => {
     disclosure().focus();
 
     await user.tab();
-    const remove = screen.getByRole('button', { name: 'Remove api from this tree' });
+    const remove = screen.getByRole('button', { name: 'Unlink api' });
     expect(remove).toHaveFocus();
     expect(disclosure()).not.toContainElement(remove);
 
@@ -78,8 +78,8 @@ describe('ProjectRootRow', () => {
   it('names the badge and branch in words inside the row, badge first', () => {
     render(<Harness initial={false} />);
 
-    expect(disclosure()).toContainElement(screen.getByText('Browsing'));
+    expect(disclosure()).toContainElement(screen.getByText('Linked'));
     expect(disclosure()).toContainElement(screen.getByText('feat'));
-    expect(disclosure()).toHaveAccessibleName('api Browsing on branch feat');
+    expect(disclosure()).toHaveAccessibleName('api Linked on branch feat');
   });
 });

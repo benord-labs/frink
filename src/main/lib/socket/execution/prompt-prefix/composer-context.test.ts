@@ -19,7 +19,7 @@ const opened = (path: string): ComposerNote => ({
 });
 const mentioned = (paths: string): ComposerNote => ({
   kind: 'mentioned_paths',
-  text: `The user @-mentioned ${paths}. File contents are not attached automatically in this session: if these are files or directories in your working directory, read them with your file tools before responding.`,
+  text: `The user @-mentioned ${paths}. File contents are not attached automatically in this session: if these are files or directories in your working directory or in a project linked to this chat, read them with your file tools before responding.`,
 });
 const selected = (text: string): ComposerNote => ({ kind: 'selection', text });
 const quoted = (text: string) =>
@@ -104,6 +104,21 @@ describe('projectComposerContext: picked files and folders', () => {
     ).toEqual({
       text: 'compare src/a.ts with src/lib and src/a.ts',
       notes: [mentioned('src/a.ts, src/lib')],
+    });
+  });
+
+  it('keeps the full path of a file picked from a linked project', () => {
+    const linked = '/Users/me/ros-service/src/a.ts';
+    expect(
+      projectComposerContext(`read @[file:local:${linked}] and @[file:local:src/a.ts]`),
+    ).toEqual({ text: `read ${linked} and src/a.ts`, notes: [mentioned(`${linked}, src/a.ts`)] });
+  });
+
+  it('keeps the brackets of a linked path whose folder has spaces', () => {
+    const linked = '/Users/me/Personal and learning/web/app/[id]/page.tsx';
+    expect(projectComposerContext(`fix @[file:local:${linked}] [soon]`)).toEqual({
+      text: `fix ${linked} [soon]`,
+      notes: [mentioned(linked)],
     });
   });
 

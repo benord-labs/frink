@@ -124,7 +124,7 @@ describe('ProjectPicker', () => {
   });
 
   it.each([
-    ['no other project', { candidates: [] }, '', 'No other projects to add.'],
+    ['no other project', { candidates: [] }, '', 'No other projects to link.'],
     ['no project matching', {}, ' zzz ', 'No projects match “zzz”.'],
     [
       'a list still loading',

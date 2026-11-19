@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 import { MemoizedMarkdown } from '@/components/chat-markdown-renderer';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { selectedProjectAtom } from '@/features/agents/atoms';
+import { NEW_CHAT_PANE, selectedProjectAtom } from '@/features/agents/atoms';
 import { type CodeSelectionContext, createTextPreview } from '@/features/agents/lib/queue-utils';
 import { CompactPaneDigitBadge } from '@/features/agents/ui/split-view-container/pane-number-badge';
 import { triggerFileTreeRefresh } from '@/features/files-sidebar/refresh-trigger';
@@ -1896,7 +1896,10 @@ export function CodeEditorPanel() {
               canSave={isTextEditorFile}
             />
           )}
-          <OtherProjectNotice file={activeFile} />
+          <OtherProjectNotice
+            file={activeFile}
+            chatId={codeEditorActiveChatId === NEW_CHAT_PANE ? null : codeEditorActiveChatId}
+          />
 
           {/* Editor area — min-h-0 lets content scroll instead of growing over the header (isolate = stacking) */}
           <div className="isolate min-h-0 flex-1 overflow-hidden">

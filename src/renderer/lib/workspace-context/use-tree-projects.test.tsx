@@ -1,10 +1,9 @@
 // @vitest-environment happy-dom
 import { act, cleanup, waitFor } from '@testing-library/react';
 import type { Operation } from '@trpc/client';
-import { createStore, Provider } from 'jotai';
+import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
-import { chatTreeProjectIdsAtomFamily } from './tree-projects';
 import { useTreeProjects } from './use-tree-projects';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -45,11 +44,30 @@ const CHATS: Record<string, unknown> = {
 // The branch each folder has checked out now; any other folder is not a git repository.
 const CHECKED_OUT: Record<string, string> = { '/wt/app-1': 'feat-moved', '/w/app': 'main' };
 let listState: 'ready' | 'pending' | 'error' = 'ready';
+/** Each chat's linked project ids, as the database holds them; `missing` ones are gone from disk */
+let links: Record<string, string[]> = {};
+let missing: string[] = [];
+let holdChats = false;
+const linkedRow = (id: string) => ({
+  ...PROJECTS.find((project) => project.id === id)!,
+  missing: missing.includes(id),
+});
 
 async function answer(op: Operation): Promise<unknown> {
+  const { id, chatId = '', projectId = '' } = (op.input ?? {}) as Record<string, string>;
   if (op.path === 'chats.get') {
-    const { id } = op.input as { id: string };
-    return id === 'loading' ? new Promise(() => {}) : (CHATS[id] ?? null);
+    if (id === 'loading' || holdChats) return new Promise(() => {});
+    return CHATS[id] ? { ...CHATS[id], linkedProjects: (links[id] ?? []).map(linkedRow) } : null;
+  }
+  if (op.path === 'chats.linkProject') {
+    if (projectId === 'api') throw new Error("api's folder can't be found.");
+    links[chatId] = [...(links[chatId] ?? []), projectId];
+    return { success: true };
+  }
+  if (op.path === 'chats.unlinkProject') {
+    if (projectId === 'api') throw new Error('database closed');
+    links[chatId] = (links[chatId] ?? []).filter((each) => each !== projectId);
+    return { success: true };
   }
   if (op.path === 'changes.getBranches') {
     const current = CHECKED_OUT[(op.input as { worktreePath: string }).worktreePath];
@@ -71,22 +89,22 @@ function Probe({ chatId, seen }: { chatId: string; seen: Map<string, TreeProject
   return null;
 }
 
-/** Renders the hook for each chat, with `ids` already in the first chat's tree. */
-function renderTrees(chatIds: string[], ids: string[]) {
-  const store = createStore();
-  store.set(chatTreeProjectIdsAtomFamily(chatIds[0]), ids);
+/** Renders the hook for each chat, recording the operations it asks for. */
+function renderTrees(chatIds: string[]) {
   const seen = new Map<string, TreeProjects>();
+  const asked = vi.fn(answer);
   renderWithTrpc(
-    <Provider store={store}>
+    <>
       {chatIds.map((chatId) => (
         <Probe key={chatId} chatId={chatId} seen={seen} />
       ))}
-    </Provider>,
-    answer,
+    </>,
+    asked,
   );
   return {
     tree: (chatId = chatIds[0]) => seen.get(chatId)!,
-    storedIds: () => store.get(chatTreeProjectIdsAtomFamily(chatIds[0])),
+    asked: (path: string) =>
+      asked.mock.calls.filter(([op]) => op.path === path).map(([op]) => op.input),
   };
 }
 
@@ -95,6 +113,9 @@ const idsOf = (projects: Array<{ id: string }>) => projects.map((project) => pro
 afterEach(() => {
   cleanup();
   listState = 'ready';
+  links = {};
+  missing = [];
+  holdChats = false;
 });
 
 describe('useTreeProjects', () => {
@@ -104,32 +125,33 @@ describe('useTreeProjects', () => {
     ['a general chat', 'general', true],
     ['a virtual folder chat', 'virtual', true],
     ['a chat still loading', 'loading', false],
-  ])('has no main project and adds nothing for %s', async (_, chatId, isLoaded) => {
+  ])('has no main project and links nothing for %s', async (_, chatId, isLoaded) => {
     // The worktree chat lists projects only after both chats load, so this chat has loaded by then.
-    const { tree, storedIds } = renderTrees([chatId, 'worktree'], ['api']);
+    const { tree, asked } = renderTrees([chatId, 'worktree']);
     await waitFor(() => expect(tree('worktree').candidates).not.toHaveLength(0));
 
     act(() => tree().add('web'));
 
     expect(tree()).toMatchObject({ main: null, canAdd: false, extras: [], candidates: [] });
     expect(tree().isLoaded).toBe(isLoaded);
-    expect(storedIds()).toEqual(['api']);
+    expect(asked('chats.linkProject')).toEqual([]);
   });
 
-  it('keeps added projects in order and leaves out deleted, virtual, root and overlapping ones', async () => {
-    const { tree } = renderTrees(
-      ['worktree'],
-      ['web', 'gone', 'notes', 'disk', 'drive', 'inner', 'outer', 'wt', 'api'],
-    );
+  it("shows the chat's links in link order, missing ones too, and offers the other projects", async () => {
+    links = { worktree: ['web', 'api'] };
+    missing = ['api'];
+    const { tree } = renderTrees(['worktree']);
 
-    await waitFor(() => expect(idsOf(tree().extras)).toEqual(['web', 'api']));
-    expect(tree().extras[0]).toEqual({ id: 'web', name: 'web', path: '/w/web' });
-    expect(idsOf(tree().candidates)).toEqual(['docs']);
+    await waitFor(() => expect(idsOf(tree().candidates)).toEqual(['docs']));
+    expect(tree().extras).toEqual([
+      { id: 'web', name: 'web', path: '/w/web', missing: false },
+      { id: 'api', name: 'api', path: '/w/api', missing: true },
+    ]);
     expect(tree()).toMatchObject({ canAdd: true, projectsStatus: 'success', isLoaded: true });
   });
 
   it("offers a folder that is only some other chat's worktree", async () => {
-    const { tree } = renderTrees(['plain'], []);
+    const { tree } = renderTrees(['plain']);
 
     await waitFor(() => expect(idsOf(tree().candidates)).toEqual(['api', 'web', 'docs', 'wt']));
   });
@@ -149,34 +171,84 @@ describe('useTreeProjects', () => {
       'feat',
     ],
   ])('gives the main project %s', async (_, chatId, workingPath, branch) => {
-    const { tree } = renderTrees([chatId], []);
+    const { tree } = renderTrees([chatId]);
 
     await waitFor(() => expect(tree().main).toEqual({ ...app, workingPath, branch }));
   });
 
-  it('adds a project to the end of the tree and removes it again', async () => {
-    const { tree } = renderTrees(['worktree'], ['web']);
+  it('links a project, showing it before the chat is read again', async () => {
+    links = { worktree: ['web'] };
+    const { tree, asked } = renderTrees(['worktree']);
     await waitFor(() => expect(idsOf(tree().candidates)).toEqual(['api', 'docs']));
+    holdChats = true;
 
     act(() => tree().add('docs'));
-    expect(idsOf(tree().extras)).toEqual(['web', 'docs']);
+
+    await waitFor(() => expect(idsOf(tree().extras)).toEqual(['web', 'docs']));
+    expect(asked('chats.linkProject')).toEqual([{ chatId: 'worktree', projectId: 'docs' }]);
     expect(idsOf(tree().candidates)).toEqual(['api']);
+    // Still pending: it waits for the chat to be read again.
+    expect(tree().isPending).toBe(true);
+  });
+
+  it('unlinks a project, dropping it before the chat is read again', async () => {
+    links = { worktree: ['web', 'docs'] };
+    const { tree, asked } = renderTrees(['worktree']);
+    await waitFor(() => expect(tree().extras).toHaveLength(2));
+    holdChats = true;
 
     act(() => tree().remove('web'));
-    expect(idsOf(tree().extras)).toEqual(['docs']);
+
+    await waitFor(() => expect(idsOf(tree().extras)).toEqual(['docs']));
+    expect(asked('chats.unlinkProject')).toEqual([{ chatId: 'worktree', projectId: 'web' }]);
+    // Still pending: it waits for the chat to be read again.
+    expect(tree().isPending).toBe(true);
+  });
+
+  it('says why an unlink failed, tells the caller and keeps the link', async () => {
+    links = { worktree: ['web', 'api'] };
+    const toasts = toast.getHistory().length;
+    const onError = vi.fn();
+    const { tree } = renderTrees(['worktree']);
+    await waitFor(() => expect(tree().extras).toHaveLength(2));
+
+    act(() => tree().remove('api', { onError }));
+
+    await waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    expect(toast.getHistory().at(-1)).toMatchObject({ type: 'error', title: 'database closed' });
+    expect(toast.getHistory()).toHaveLength(toasts + 1);
+    expect(idsOf(tree().extras)).toEqual(['web', 'api']);
+  });
+
+  it('says why a link was refused and leaves the links as they were', async () => {
+    links = { worktree: ['web'] };
+    const toasts = toast.getHistory().length;
+    const { tree } = renderTrees(['worktree']);
+    await waitFor(() => expect(tree().candidates).toHaveLength(2));
+
+    act(() => tree().add('api'));
+
+    await waitFor(() => expect(toast.getHistory()).toHaveLength(toasts + 1));
+    expect(toast.getHistory().at(-1)).toMatchObject({
+      type: 'error',
+      title: "api's folder can't be found.",
+    });
+    expect(idsOf(tree().extras)).toEqual(['web']);
   });
 
   it.each([
     ['loads', 'pending'],
     ['fails to load', 'error'],
-  ] as const)('shows no added projects and says so while the project list %s', async (_, state) => {
-    listState = state;
-    const { tree } = renderTrees(['plain'], ['api']);
+  ] as const)(
+    "shows the chat's links but offers none while the project list %s",
+    async (_, state) => {
+      listState = state;
+      links = { plain: ['api'] };
+      const { tree } = renderTrees(['plain']);
 
-    await waitFor(() => expect(tree().main?.workingPath).toBe('/w/app'));
-    await waitFor(() => expect(tree().projectsStatus).toBe(state));
-    expect(tree()).toMatchObject({ extras: [], candidates: [], canAdd: true });
-    // A failed list is final; one still loading may yet hold the chat's extra projects.
-    expect(tree().isLoaded).toBe(state === 'error');
-  });
+      await waitFor(() => expect(idsOf(tree().extras)).toEqual(['api']));
+      await waitFor(() => expect(tree().projectsStatus).toBe(state));
+      expect(tree()).toMatchObject({ candidates: [], canAdd: true, isLoaded: true });
+    },
+  );
 });

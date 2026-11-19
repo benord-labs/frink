@@ -520,7 +520,7 @@ describe('FilesSidebar external-drop announcement', () => {
 
 describe('FilesSidebar with another project in the tree', () => {
   const api = { id: 'api', name: 'api', path: '/w/api' };
-  const thisChatRow = () => screen.getByRole('button', { name: 'proj This chat' });
+  const mainRow = () => screen.getByRole('button', { name: 'proj Main' });
   const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
 
   it("mounts it below the chat's tree with its own drag and drop, and counts both projects", () => {
@@ -534,9 +534,9 @@ describe('FilesSidebar with another project in the tree', () => {
     expect(fileTreePropsState.onMoveFile).toBeTypeOf('function');
     expect(treeState.projectCount).toBe(2);
 
-    // The shortcuts skip the chat's tree once This chat is closed.
+    // The shortcuts skip the chat's tree once Main is closed.
     expect(treeState.isMainRootHidden?.()).toBe(false);
-    fireEvent.click(thisChatRow());
+    fireEvent.click(mainRow());
     expect(treeState.isMainRootHidden?.()).toBe(true);
   });
 
@@ -547,7 +547,7 @@ describe('FilesSidebar with another project in the tree', () => {
       <FilesSidebar chatId="chat-1" getMentionTexts={() => ['Read /w/api/a.ts']} />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Add project' }));
+    await user.click(screen.getByRole('button', { name: 'Link project' }));
     await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
     expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
 
@@ -566,19 +566,19 @@ describe('FilesSidebar with another project in the tree', () => {
     expect(treeState.searchAccessory).toBeUndefined();
   });
 
-  it('opens This chat again on a switch to another chat', () => {
+  it('opens Main again on a switch to another chat', () => {
     treeState.extras = [api];
     const { rerender } = render(<FilesSidebar chatId="chat-1" />);
-    fireEvent.click(thisChatRow());
+    fireEvent.click(mainRow());
 
     rerender(<FilesSidebar chatId="chat-2" />);
 
-    expect(thisChatRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'true');
     expect(chatTree()).toBeVisible();
     expect(treeState.isMainRootHidden?.()).toBe(false);
   });
 
-  it("focuses This chat, not the hidden tree, when the files shortcut asks while it's closed", () => {
+  it("focuses Main, not the hidden tree, when the files shortcut asks while it's closed", () => {
     treeState.extras = [api];
     render(<FilesSidebar chatId="chat-1" />);
     const askForFocus = () => act(() => void window.dispatchEvent(new Event('file-tree:focus')));
@@ -586,9 +586,9 @@ describe('FilesSidebar with another project in the tree', () => {
     askForFocus();
     expect(chatTree()).toHaveFocus();
 
-    fireEvent.click(thisChatRow());
+    fireEvent.click(mainRow());
     askForFocus();
-    expect(thisChatRow()).toHaveFocus();
+    expect(mainRow()).toHaveFocus();
   });
 
   it("groups the Search tab's matches by project and opens a browsed match as a browsed tab", () => {
@@ -607,10 +607,7 @@ describe('FilesSidebar with another project in the tree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
 
     const headings = screen.getAllByRole('heading');
-    expect(headings.map((heading) => heading.textContent)).toEqual([
-      'projThis chat',
-      'apiBrowsing',
-    ]);
+    expect(headings.map((heading) => heading.textContent)).toEqual(['projMain', 'apiLinked']);
     expect(headings[0]).toHaveAttribute('title', '/tmp/proj');
     const [, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
     fireEvent.click(browsed);

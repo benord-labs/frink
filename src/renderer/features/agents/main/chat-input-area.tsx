@@ -880,6 +880,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         teamId={teamId}
         repository={repository}
         projectPath={projectPath}
+        chatId={parentChatId}
         changedFiles={changedFiles}
         // Subpage navigation state
         showingFilesList={showingFilesList}

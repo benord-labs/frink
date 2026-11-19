@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
+import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openFilesAtom } from '@/lib/code-editor/state';
 import { contentSearchOptionsAtom } from '../../atoms';
@@ -47,7 +48,12 @@ const MATCH = {
 };
 const MISSING_FOLDER = "Can't open api's folder. It may have moved or been deleted.";
 
-function renderSections(query: string, projects = [{ id: 'api', name: 'api', path: '/w/api' }]) {
+function renderSections(
+  query: string,
+  projects: ComponentProps<typeof ExtraProjectContentSearch>['project'][] = [
+    { id: 'api', name: 'api', path: '/w/api' },
+  ],
+) {
   const store = createStore();
   store.set(contentSearchOptionsAtom, OPTIONS);
   render(
@@ -130,21 +136,29 @@ describe('ExtraProjectContentSearch', () => {
       MISSING_FOLDER,
       true,
     ],
-  ])('%s, under its Browsing heading', (_, data, folderType, message, asksDisk) => {
+  ])('%s, under its Linked heading', (_, data, folderType, message, asksDisk) => {
     api.state.search = { data, isLoading: false };
     api.state.folderType = folderType;
     renderSections('use(');
 
-    expect(screen.getByRole('heading', { name: 'api Browsing' })).toHaveAttribute(
-      'title',
-      '/w/api',
-    );
+    expect(screen.getByRole('heading', { name: 'api Linked' })).toHaveAttribute('title', '/w/api');
     expect(screen.getByText(message)).toBeInTheDocument();
     // Only an empty search asks the disk whether the folder is still there.
     expect(api.entryType).toHaveBeenLastCalledWith(
       { projectPath: '/w/', relativePath: 'api' },
       { enabled: asksDisk },
     );
+  });
+
+  it("says a linked folder known to be gone can't be found, as the tree does, and searches nothing", () => {
+    renderSections('useOrders', [{ id: 'api', name: 'api', path: '/w/api', missing: true }]);
+
+    expect(screen.getByText("Can't find api's folder.")).toBeInTheDocument();
+    expect(api.searchContent).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ enabled: false }),
+    );
+    expect(api.entryType).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
   });
 
   it('asks the disk nothing when something matches', () => {
@@ -167,7 +181,7 @@ describe('ExtraProjectContentSearch', () => {
     api.state.folderType = folderType;
     renderSections('useOrders');
 
-    const section = screen.getByRole('heading', { name: 'api Browsing' }).parentElement;
+    const section = screen.getByRole('heading', { name: 'api Linked' }).parentElement;
     expect(section?.querySelector('.animate-spin')).toBeInTheDocument();
     expect(screen.queryByText(/No matches|Can't open/)).not.toBeInTheDocument();
   });
