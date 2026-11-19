@@ -16,17 +16,65 @@ export function readCache<T>(key: string): Entry<T> | undefined {
   return entries.get(key) as Entry<T> | undefined;
 }
 
-export function writeCache<T>(key: string, deviceId: string, data: T, updatedAt = Date.now()) {
+function writeCache<T>(key: string, deviceId: string, data: T, updatedAt: number) {
   entries.delete(key);
   entries.set(key, { deviceId, data, updatedAt });
   const [oldest] = entries.keys();
   if (entries.size > CACHE_LIMIT && oldest !== undefined) entries.delete(oldest);
 }
 
-/** Drops one computer's answers, or every answer when no computer is named. */
+/** Counts clears, so a request can tell whether its computer was cleared after it started. */
+let clears = 0;
+/** The clear count when each computer, or every computer (`undefined`), was last cleared. */
+const cleared = new Map<string | undefined, number>();
+
+/** A writer for a request starting now: it stores nothing once the computer is cleared meanwhile. */
+export function cacheWriter(deviceId: string) {
+  const started = clears;
+  return <T>(key: string, data: T, updatedAt = Date.now()) => {
+    if (Math.max(cleared.get(deviceId) ?? 0, cleared.get(undefined) ?? 0) > started) return;
+    writeCache(key, deviceId, data, updatedAt);
+  };
+}
+
+/** Prefetches still on their way, so a screen opened meanwhile waits for one instead of asking twice. */
+const prefetching = new Map<string, { deviceId: string; answer: Promise<unknown> }>();
+
+/** Loads an answer before its screen asks, unless it is cached or already on its way. */
+export function prefetch<T>(key: string, deviceId: string, load: () => Promise<T>) {
+  if (readCache(key) || prefetching.has(key)) return;
+  const write = cacheWriter(deviceId);
+  const answer = load();
+  prefetching.set(key, { deviceId, answer });
+  answer
+    .then((data) => {
+      if (!readCache(key)) write(key, data);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (prefetching.get(key)?.answer === answer) prefetching.delete(key);
+    });
+}
+
+/** The answer a prefetch is still waiting for; every screen asking meanwhile shares it. */
+export function prefetched<T>(key: string) {
+  // SAFETY: a key serializes its request, and only that request's answer is prefetched under it.
+  return prefetching.get(key)?.answer as Promise<T> | undefined;
+}
+
+/** Drops one computer's answers and prefetches, or all of them when no computer is named. */
 export function clearCache(deviceId?: string) {
-  for (const [key, entry] of entries)
-    if (deviceId === undefined || entry.deviceId === deviceId) entries.delete(key);
+  cleared.set(deviceId, ++clears);
+  for (const map of [entries, prefetching])
+    for (const [key, entry] of map)
+      if (deviceId === undefined || entry.deviceId === deviceId) map.delete(key);
+}
+
+/** When the cached answer is younger than `interval`, the time it was written. A time ahead of
+ *  `now` (the clock stepped back) is not fresh, so the screen reads at once. */
+export function freshSince(key: string, interval: number, now = Date.now()) {
+  const at = readCache(key)?.updatedAt;
+  return at !== undefined && at <= now && now - at < interval ? at : undefined;
 }
 
 /** A decoded relay answer: JSON, plus `undefined` for an optional field that is absent. */
@@ -68,9 +116,12 @@ function shareArray(prev: readonly Json[], next: readonly Json[]): Json {
 
 function shareRecord(prev: JsonRecord, next: JsonRecord): Json {
   const keys = Object.keys(next);
-  const values = keys.map((key) => shareValue(prev[key], next[key]));
+  // Own keys only: an inherited member such as `__proto__` is not part of the previous answer.
+  const values = keys.map((key) =>
+    shareValue(Object.hasOwn(prev, key) ? prev[key] : undefined, next[key]),
+  );
   const same =
     Object.keys(prev).length === keys.length &&
-    keys.every((key, index) => key in prev && values[index] === prev[key]);
+    keys.every((key, index) => Object.hasOwn(prev, key) && values[index] === prev[key]);
   return same ? prev : Object.fromEntries(keys.map((key, index) => [key, values[index]]));
 }
