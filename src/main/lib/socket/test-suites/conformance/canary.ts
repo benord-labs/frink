@@ -3,6 +3,9 @@ import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
+import { VENDOR_PLUGIN_PINS } from '../../../../../shared/integrations/vendor-plugin-pins';
+import { writeRepositoryCatalogue } from '../../../claude/vendor-plugin-acquire';
+import { installVendorPlugin } from '../../../claude/vendor-plugins';
 import { setGlobalMcpServer } from '../../../mcp/config';
 import {
   CANARY_GAPS,
@@ -12,8 +15,8 @@ import {
   type CanaryRowId,
 } from './baseline';
 
-// No row for commands (a /command is expanded into the prompt before the turn), plugins (only
-// catalogue-pinned vendor plugins are staged) or the sub-agent tool limit (enforced, never sent).
+// No row for commands (a /command is expanded into the prompt before the turn) or the sub-agent
+// tool limit (enforced, never sent).
 
 const hex = randomBytes(2).toString('hex');
 const mark = (name: string) => `frink_canary_${name}_${hex}`;
@@ -29,6 +32,7 @@ const MARKS = {
   memory: mark('memory'),
   hooks: mark('hooks'),
   mcp: mark('mcp'),
+  plugins: mark('plugins'),
 } satisfies Record<CanaryRow, string>;
 
 /** Newline-delimited JSON-RPC: `initialize`, one tool in `tools/list`, and `{}` for the rest. */
@@ -53,8 +57,8 @@ async function write(file: string, text: string): Promise<void> {
   await writeFile(file, text);
 }
 
-const described = (name: string, marker: string) =>
-  `---\nname: frink-canary\ndescription: ${name} ${marker}\n---\nSay done.\n`;
+const described = (name: string, marker: string, skill = 'frink-canary') =>
+  `---\nname: ${skill}\ndescription: ${name} ${marker}\n---\nSay done.\n`;
 
 /** Adds a prompt hook that prints the hooks marker; every key already in the file is kept. */
 async function mergeCanaryHook(file: string): Promise<void> {
@@ -66,6 +70,19 @@ async function mergeCanaryHook(file: string): Promise<void> {
     file,
     JSON.stringify({ ...settings, hooks: { ...settings.hooks, UserPromptSubmit: prompts } }),
   );
+}
+
+/** Stages a test package under a repository pin, as Add plugin does once it has fetched one. */
+async function stageCanaryPlugin(home: string): Promise<void> {
+  const pin = VENDOR_PLUGIN_PINS.supabase;
+  const sourceDir = path.join(home, 'frink-canary-plugin');
+  const marketplaceDir = path.join(home, 'frink-canary-marketplace');
+  const manifest = JSON.stringify({ name: pin.name, version: pin.version });
+  await write(path.join(sourceDir, '.claude-plugin', 'plugin.json'), manifest);
+  const skill = path.join(sourceDir, 'skills', 'frink-canary-plugin', 'SKILL.md');
+  await write(skill, described('Plugin skill', MARKS.plugins, 'frink-canary-plugin'));
+  writeRepositoryCatalogue(marketplaceDir, pin);
+  installVendorPlugin({ sourceDir, marketplaceDir, plugin: pin });
 }
 
 /** Plants every row in the user's own place, never at the path Frink delivers it to. */
@@ -94,6 +111,7 @@ export async function plantCanarySetup({ home, project }: { home: string; projec
     command: process.execPath,
     args: [server, hex],
   });
+  await stageCanaryPlugin(home);
 }
 
 /** One test per row, each sharing one turn, and a precondition that never takes `fails`. */
