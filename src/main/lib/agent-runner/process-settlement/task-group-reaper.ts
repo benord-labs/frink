@@ -231,21 +231,42 @@ async function writerGroups(
   const groups: GroupMembers = new Map();
   if (!agent.tasksDir) return groups;
   for (let attempt = 0; attempt < READ_TRIES; attempt++) {
-    const table = await processReaders.readProcessTable();
-    const writers = table ? await processReaders.readOutputWriters(agent.tasksDir, table) : null;
+    const before = await processReaders.readProcessTable();
+    const writers = before ? await processReaders.readOutputWriters(agent.tasksDir, before) : null;
+    const after = writers ? await processReaders.readProcessTable() : null;
     // A read cut off under load is not "no writers": try again.
-    if (!table || !writers) continue;
-    // Read again: a writer started after the first read is not in it.
-    const after = (await processReaders.readProcessTable()) ?? table;
+    if (!before || !writers || !after) continue;
     const pids = new Set(
       writers.filter((writer) => wanted(writer.path)).map((writer) => writer.pid),
     );
-    const pgids = new Set(after.filter((row) => pids.has(row.pid)).map((row) => row.pgid));
-    addMembers(groups, pgids, after, protectedPgids(after));
-    return groups;
+    const check = confirmedWriterGroups(pids, before, after);
+    mergeInto(groups, check.groups);
+    if (check.unconfirmed === 0) return groups;
   }
-  log.warn(`[Task groups] could not read what writes to ${agent.tasksDir}`);
+  log.warn(`[Task groups] could not confirm everything writing to ${agent.tasksDir}`);
   return groups;
+}
+
+type WriterCheck = { groups: GroupMembers; unconfirmed: number };
+
+/** Groups of writers whose pid names the same process in both reads. Any other pid may be a reuse,
+ * so it is never recorded; it is read again unless it already sits in a confirmed group. */
+export function confirmedWriterGroups(
+  pids: Set<number>,
+  before: ProcessRow[],
+  after: ProcessRow[],
+): WriterCheck {
+  const earlier = new Map(before.map((row) => [row.pid, row]));
+  const same = (row: ProcessRow) => {
+    const was = earlier.get(row.pid);
+    return was !== undefined && keyOf(was) === keyOf(row);
+  };
+  const writers = after.filter((row) => pids.has(row.pid));
+  const pgids = new Set(writers.filter(same).map((row) => row.pgid));
+  const groups: GroupMembers = new Map();
+  addMembers(groups, pgids, after, protectedPgids(after));
+  const unconfirmed = writers.filter((row) => !same(row) && !pgids.has(row.pgid)).length;
+  return { groups, unconfirmed };
 }
 
 async function noteOnce(teardown: boolean): Promise<void> {

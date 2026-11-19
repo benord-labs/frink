@@ -11,7 +11,7 @@ import {
   trackAgentProcess,
   trackClaudeCli,
 } from '.';
-import { groupsToSignal, processReaders } from './task-group-reaper';
+import { confirmedWriterGroups, groupsToSignal, processReaders } from './task-group-reaper';
 
 const posixOnly = process.platform === 'win32' ? describe.skip : describe;
 const row = (pid: number, pgid: number, start = 's') => ({ pid, ppid: 1, pgid, start });
@@ -21,6 +21,22 @@ describe('groupsToSignal', () => {
     const recorded = new Map([[500, new Set(['501@old'])]]);
     expect(groupsToSignal(recorded, [row(501, 500, 'new')], new Set())).toEqual([]);
     expect(groupsToSignal(recorded, [row(501, 500, 'old')], new Set())).toEqual([500]);
+  });
+
+  it('records no group a reused writer pid now names, and reads again only outside confirmed groups', () => {
+    const before = [row(10, 10, 'old'), row(11, 11, 'same')];
+    const after = [
+      row(10, 77, 'new'),
+      row(11, 11, 'same'),
+      row(14, 11, 'late'),
+      row(13, 13, 'late'),
+    ];
+
+    const { groups, unconfirmed } = confirmedWriterGroups(new Set([10, 11, 13, 14]), before, after);
+
+    expect([...groups.keys()]).toEqual([11]);
+    expect([...(groups.get(11) ?? [])]).toEqual(['11@same', '14@late']);
+    expect(unconfirmed).toBe(2);
   });
 
   it("never signals Frink's own group or pgid 1", () => {
@@ -51,6 +67,7 @@ const out = fs.openSync(dir + '/tasks/t1.output', 'w');
 spawn(process.execPath, ['-e', \`
   const { spawn } = require('child_process');
   const fs = require('fs');
+  if (fs.existsSync('\${dir}/end')) process.exit(0);
   const nested = ${nested.replaceAll('`', '\\`')};
   if (nested) fs.writeFileSync('\${dir}/nested', String(nested));
   fs.writeFileSync('\${dir}/shell', String(process.pid));
@@ -78,6 +95,7 @@ async function until(check: () => boolean, ms = 5000): Promise<void> {
 }
 
 const started: number[] = [];
+const fixtureDirs: string[] = [];
 
 async function startCli(
   nested: keyof typeof NESTED = 'child',
@@ -85,6 +103,7 @@ async function startCli(
 ): Promise<{ cli: ChildProcess; dir: string; shell: number; nested: number }> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-groups-'));
   fs.mkdirSync(path.join(dir, 'tasks'));
+  fixtureDirs.push(dir);
   const cli = spawn(process.execPath, ['-e', fakeCli(NESTED[nested])], {
     env: {
       ...process.env,
@@ -95,15 +114,30 @@ async function startCli(
     stdio: [options.exitOnEof ? 'pipe' : 'ignore', 'ignore', 'ignore'],
   });
   (options.track ?? trackClaudeCli)(cli);
-  const read = (name: string) => Number(fs.readFileSync(path.join(dir, name), 'utf8'));
-  await until(
-    () => fs.existsSync(path.join(dir, 'shell')) && fs.existsSync(path.join(dir, 'nested')),
-  );
-  started.push(cli.pid ?? 0, read('shell'), read('nested'));
-  return { cli, dir, shell: read('shell'), nested: read('nested') };
+  // Registered at once, so a start that times out is still cleaned up. Never pid 0: killing it
+  // would signal the test runner's own process group.
+  if (cli.pid !== undefined) started.push(cli.pid);
+  const pids = () => ({ shell: readPid(dir, 'shell'), nested: readPid(dir, 'nested') });
+  try {
+    await until(() => pids().shell !== undefined && pids().nested !== undefined);
+  } finally {
+    for (const pid of Object.values(pids())) if (pid !== undefined) started.push(pid);
+  }
+  const { shell, nested: nestedPid } = pids();
+  if (shell === undefined || nestedPid === undefined) throw new Error('fixture pid files vanished');
+  return { cli, dir, shell, nested: nestedPid };
+}
+
+/** The pid a fixture file holds, once fully written. */
+function readPid(dir: string, name: string): number | undefined {
+  const file = path.join(dir, name);
+  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  return /^[1-9]\d*$/.test(text) ? Number(text) : undefined;
 }
 
 afterEach(() => {
+  // A task shell that starts late sees this and exits before it starts anything.
+  for (const dir of fixtureDirs.splice(0)) fs.writeFileSync(path.join(dir, 'end'), '');
   for (const pid of started.splice(0)) {
     try {
       process.kill(pid, 'SIGKILL');
