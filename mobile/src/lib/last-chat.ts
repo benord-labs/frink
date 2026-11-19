@@ -23,3 +23,12 @@ export async function saveLastChat(store: KeyValue, deviceId: string, chat: Last
     else await store.remove(keyFor(deviceId));
   } catch {}
 }
+
+/** Applies saves in the order they were made, so a slow save never lands after a later one. */
+export function lastChatSaver(store: KeyValue) {
+  let queue = Promise.resolve();
+  return (deviceId: string, chat: LastChat | null) => {
+    queue = queue.then(() => saveLastChat(store, deviceId, chat));
+    return queue;
+  };
+}

@@ -22,11 +22,15 @@ function stack(routes: Route<string>[]): StackNavigationState<ParamListBase> {
   return { ...stackRouter.getInitialState(stackOptions), routes, index: routes.length - 1 };
 }
 
-function root(stacks: NavigationState[]): StackNavigationState<ParamListBase> {
+function root(
+  stacks: NavigationState[],
+  above: Route<string>[] = [],
+): StackNavigationState<ParamListBase> {
   const tabOptions = { ...stackOptions, routeNames: ['ChatsTab', 'FlowsTab', 'QueueTab'] };
   const tabs = TabRouter({}).getInitialState(tabOptions);
   return {
     ...stackRouter.getInitialState(rootOptions),
+    index: above.length,
     routes: [
       {
         key: 'tabs',
@@ -37,6 +41,7 @@ function root(stacks: NavigationState[]): StackNavigationState<ParamListBase> {
           routes: tabs.routes.map((route, index) => ({ ...route, state: stacks[index] })),
         },
       },
+      ...above,
     ],
   };
 }
@@ -64,6 +69,20 @@ describe('deleting a conversation', () => {
     const result = afterChatDeletion(state, 'a');
     expect(tabStacks(result)).toEqual([['chats'], ['flows', 'flows-b'], ['queue']]);
     expect(result.routes[0].state?.index).toBe(2);
+    const reset = stackRouter.getStateForAction(state, CommonActions.reset(result), rootOptions);
+    expect(reset).toEqual(result);
+  });
+
+  it('closes the chat behind an open Settings sheet and leaves the sheet on screen', () => {
+    const chats = stack([
+      { key: 'chats', name: 'Chats' },
+      { key: 'chats-a', name: 'Chat', params: { id: 'a' } },
+    ]);
+    const state = root([chats], [{ key: 'settings', name: 'Settings' }]);
+    const result = afterChatDeletion(state, 'a');
+    expect(result.routes.map((route) => route.key)).toEqual(['tabs', 'settings']);
+    expect(result.index).toBe(1);
+    expect(tabStacks(result)?.[0]).toEqual(['chats']);
     const reset = stackRouter.getStateForAction(state, CommonActions.reset(result), rootOptions);
     expect(reset).toEqual(result);
   });

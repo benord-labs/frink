@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { StatusBar } from 'react-native';
 import { useConnection } from '../lib/connection';
 import { DraftProvider } from '../lib/drafts';
-import { saveLastChat } from '../lib/last-chat';
+import { lastChatSaver } from '../lib/last-chat';
 import { LiveActivityProvider } from '../lib/live-activity';
 import { NotificationProvider } from '../lib/notifications';
 import { usePendingAlert } from '../lib/notifications/alert-open';
@@ -25,6 +25,7 @@ import type { AppRoutes } from './routes';
 import { Tabs } from './tabs';
 
 const Stack = createNativeStackNavigator<AppRoutes>();
+const saveLastChat = lastChatSaver(appStore);
 type Navigation = NavigationContainerRefWithCurrent<AppRoutes>;
 
 /** Mounted after the navigator is ready, including after a selected-computer switch. */
@@ -62,11 +63,7 @@ function rememberChat(navigation: Navigation, deviceId: string | undefined) {
   const route = navigation.getCurrentRoute();
   if (!deviceId || !route || route.name === 'Settings') return;
   const chat = route.name === 'Chat' ? route.params : undefined;
-  void saveLastChat(
-    appStore,
-    deviceId,
-    chat?.id ? { id: chat.id, subChatId: chat.subChatId } : null,
-  );
+  void saveLastChat(deviceId, chat?.id ? { id: chat.id, subChatId: chat.subChatId } : null);
 }
 
 /**
