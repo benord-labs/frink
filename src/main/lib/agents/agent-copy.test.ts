@@ -43,6 +43,15 @@ describe('crossFlavorAgentMd (shared transform — the stamp seam keeps the proj
     expect(cross).toContain('color: blue'); // unknown keys survive
   });
 
+  it.each([
+    ['write-capable', 'Read, Bash'],
+    ['unknown-tool', 'Read, SomeUnknownTool'],
+    ['unrestricted', undefined],
+  ])('never marks %s agents readonly on Cursor', (_label, tools) => {
+    const data = tools === undefined ? { name: 'a' } : { name: 'a', tools };
+    expect(crossFlavorAgentMd({ ...agent, data }, crossFlavour, false)).not.toContain('readonly');
+  });
+
   it('strips a Cursor-only readonly field when copying a Cursor agent TO Claude (symmetric)', () => {
     const cursorAgent: SourceAgent = {
       name: 'r',

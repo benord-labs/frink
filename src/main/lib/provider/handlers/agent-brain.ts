@@ -9,8 +9,8 @@ import type { CategoryHandler } from './types';
 import { frinkUserHome } from '../../platform/frink-home';
 
 /**
- * PCH-4 — project USER-GLOBAL custom-agent `.md` files across every tool's agent dir
- * (Codex gets TOML role files instead — see renderCodexRoleToml)
+ * PCH-4 — project USER-GLOBAL custom-agent `.md` files into the `.claude` and `.frink` agent dirs
+ * (Codex gets TOML role files instead — see renderCodexRoleToml; `.cursor` is read, never written)
  * so an agent authored anywhere follows the user (the `portable-across-tools` promise:
  * name + instructions always come with you). Fan-out like skills — `ctx.provider` is
  * ignored; one delivery populates all dirs. Claude additionally receives agents
@@ -57,12 +57,15 @@ const MD_EXT = /\.md$/;
  */
 export const CODEX_PROJECTED_MARKER = '# frink-projected';
 
-/** Discovery + projection targets, in the same priority order `getAllAgentsForSdk` reads. */
-function agentDirs(): AgentDir[] {
+type DeliveryDir = AgentDir & { sourceOnly?: true };
+
+/** Discovery + projection targets in `getAllAgentsForSdk` read order. `.cursor` is a source only: the
+ * Cursor editor reads `.claude/agents` itself, so a copy there would just shadow the original. */
+function agentDirs(): DeliveryDir[] {
   const home = frinkUserHome();
   return [
     { dir: path.join(home, '.claude', 'agents'), flavor: 'claude' },
-    { dir: path.join(home, '.cursor', 'agents'), flavor: 'cursor' },
+    { dir: path.join(home, '.cursor', 'agents'), flavor: 'cursor', sourceOnly: true },
     { dir: path.join(home, '.codex', 'agents'), flavor: 'codex' },
     { dir: path.join(home, '.frink', 'agents'), flavor: 'claude' },
   ];
@@ -150,11 +153,11 @@ function applyCrossFlavorRules(
     if (isDeclaredReadOnly(agent.data)) {
       data.readonly = true;
       log.warn(
-        `[provider] agent '${agent.name}': tool limits degrade to readonly on cursor (advisory)`,
+        `[provider] agent '${agent.name}': cursor copy drops its tool list and is marked readonly`,
       );
     } else {
       log.warn(
-        `[provider] agent '${agent.name}': tool limits cannot degrade on cursor (advisory only — enforced in full on claude)`,
+        `[provider] agent '${agent.name}': cursor copy drops its tool limits (cursor has no per-tool limits)`,
       );
     }
   }
@@ -256,22 +259,25 @@ async function projectAgentToDir(agent: SourceAgent, target: AgentDir): Promise<
   return writeOwnMirror(dest, crossFlavorAgentMd(agent, target, true), isMdMirror);
 }
 
-/** Codex never read the `.md` mirrors earlier releases wrote to its agents dir — delete them. */
-async function removeLegacyCodexMdMirrors(dir: string): Promise<void> {
-  const entries = await fs.readdir(dir).catch(() => [] as string[]);
-  for (const f of entries.filter((e) => MD_EXT.test(e))) {
-    await removeOwnMirror(path.join(dir, f), isMdMirror);
+/** Delete the stamped `.md` copies earlier releases wrote to the non-Claude dirs; user files stay. */
+async function removeMdMirrors(dirs: AgentDir[]): Promise<void> {
+  for (const { dir, flavor } of dirs) {
+    if (flavor === 'claude') continue;
+    const entries = await fs.readdir(dir).catch(() => [] as string[]);
+    for (const f of entries.filter((e) => MD_EXT.test(e))) {
+      await removeOwnMirror(path.join(dir, f), isMdMirror);
+    }
   }
 }
 
 export const deliverAgentBrain: CategoryHandler = async ({ mode }) => {
   const dirs = agentDirs();
-  for (const d of dirs) if (d.flavor === 'codex') await removeLegacyCodexMdMirrors(d.dir);
+  await removeMdMirrors(dirs);
   const agents = await discoverUserAgents(dirs);
   let written = 0;
   for (const agent of agents) {
     for (const target of dirs) {
-      if (target.dir === agent.from.dir) continue;
+      if (target.sourceOnly || target.dir === agent.from.dir) continue;
       try {
         if (await projectAgentToDir(agent, target)) written += 1;
       } catch (err) {

@@ -92,8 +92,8 @@ describe('skillCopyDirs (copy breadth)', () => {
 
 describe('agentCopyDirs (agent read-map ≠ skill read-map)', () => {
   it('portable = each configured tool’s native agents dir, and NEVER .agents (no agent reads it)', () => {
-    // The skills map lets Cursor read .agents; for agents there is no such dir, so portable must write
-    // .cursor (else the copy is invisible to Cursor) and must NOT write .agents (nothing would read it).
+    // The skills map lets Cursor read .agents; for agents there is no such dir, so portable writes each
+    // tool's own dir and must NOT write .agents (nothing would read it).
     expect(agentCopyDirs('portable', TOOLS)).toEqual(['.claude', '.cursor']);
   });
 
@@ -111,23 +111,17 @@ describe('agentCopyDirs (agent read-map ≠ skill read-map)', () => {
   });
 });
 
-describe('agent read-map (kind="agent") — Cursor does NOT read .claude/agents', () => {
+describe('agent read-map (kind="agent") — Cursor also reads .claude/agents', () => {
   const ap = (dir: string) => `/home/u/${dir}/agents/x.md`;
 
-  it('a .claude-only agent is readable by Claude but NOT Cursor (the skill-map would lie)', () => {
-    expect(readableBy([ap('.claude')], TOOLS, 'agent')).toEqual(['claude-code']);
-    expect(followsYouAcross([ap('.claude')], TOOLS, 'agent')).toBe(false);
-    // Contrast: as a SKILL the same .claude path WOULD be readable by both (Cursor compat).
-    expect(readableBy([ap('.claude')], TOOLS, 'skill')).toEqual(['claude-code', 'cursor']);
+  it('a .claude-only agent is readable by both, so it gets no "Only in Claude" badge', () => {
+    expect(readableBy([ap('.claude')], TOOLS, 'agent')).toEqual(['claude-code', 'cursor']);
+    expect(followsYouAcross([ap('.claude')], TOOLS, 'agent')).toBe(true);
   });
 
   it('a .cursor-only agent is readable by Cursor but not Claude', () => {
     expect(readableBy([ap('.cursor')], TOOLS, 'agent')).toEqual(['cursor']);
     expect(followsYouAcross([ap('.cursor')], TOOLS, 'agent')).toBe(false);
-  });
-
-  it('an agent in BOTH .claude and .cursor follows you', () => {
-    expect(followsYouAcross([ap('.claude'), ap('.cursor')], TOOLS, 'agent')).toBe(true);
   });
 
   it('Claude also reads .frink/agents (its internal mirror)', () => {

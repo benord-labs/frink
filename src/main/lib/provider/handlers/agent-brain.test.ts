@@ -43,28 +43,33 @@ describe('deliverAgentBrain (PCH-4)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('projects a claude agent to cursor + frink dirs — body verbatim, unknown keys kept, stamped', async () => {
+  it('projects a claude agent to the frink dir — body verbatim, unknown keys kept, stamped', async () => {
     await fs.writeFile(path.join(claudeDir(), 'auditor.md'), CLAUDE_AGENT);
     const res = await deliverAgentBrain({ mode: 'copy', ctx });
     expect(res.status).toBe('delivered');
-    for (const dir of [cursorDir(), frinkDir()]) {
-      const projected = matter(await fs.readFile(path.join(dir, 'auditor.md'), 'utf-8'));
-      expect(projected.content.trim()).toBe('Audit the code. Never edit files.');
-      expect(projected.data.name).toBe('security-auditor');
-      expect(projected.data.color).toBe('red'); // unknown key preserved (verbatim)
-      expect(projected.data.frinkProjected).toBe(true);
-    }
+    const projected = matter(await fs.readFile(path.join(frinkDir(), 'auditor.md'), 'utf-8'));
+    expect(projected.content.trim()).toBe('Audit the code. Never edit files.');
+    expect(projected.data.name).toBe('security-auditor');
+    expect(projected.data.color).toBe('red'); // unknown key preserved (verbatim)
+    expect(projected.data.frinkProjected).toBe(true);
   });
 
-  it('omits model/tools cross-family (→ cursor) but keeps them same-family (→ frink)', async () => {
+  it('reads ~/.cursor/agents as a source, writes nothing there, and deletes only its own old copies', async () => {
+    await fs.mkdir(cursorDir(), { recursive: true });
+    await fs.writeFile(
+      path.join(cursorDir(), 'helper.md'),
+      '---\nname: helper\ndescription: Helps\n---\n\nHelp out.\n',
+    );
+    await fs.writeFile(
+      path.join(cursorDir(), 'stale.md'),
+      '---\nname: stale\nfrinkProjected: true\n---\n\nOld copy.\n',
+    );
     await fs.writeFile(path.join(claudeDir(), 'auditor.md'), CLAUDE_AGENT);
     await deliverAgentBrain({ mode: 'copy', ctx });
-    const toCursor = matter(await fs.readFile(path.join(cursorDir(), 'auditor.md'), 'utf-8'));
-    expect(toCursor.data.model).toBeUndefined(); // 'opus' is not a Cursor model id
-    expect(toCursor.data.tools).toBeUndefined(); // Claude tool names don't translate
-    const toFrink = matter(await fs.readFile(path.join(frinkDir(), 'auditor.md'), 'utf-8'));
-    expect(toFrink.data.model).toBe('opus'); // .frink is Claude-flavored — kept
-    expect(toFrink.data.tools).toBe('Read, Grep');
+    expect(existsSync(path.join(claudeDir(), 'helper.md'))).toBe(true);
+    expect(existsSync(path.join(frinkDir(), 'helper.md'))).toBe(true);
+    expect(existsSync(path.join(codexDir(), 'helper.toml'))).toBe(true);
+    expect(await fs.readdir(cursorDir())).toEqual(['helper.md']);
   });
 
   describe('codex role files', () => {
@@ -169,37 +174,6 @@ describe('deliverAgentBrain (PCH-4)', () => {
     });
   });
 
-  // PCH-5: a read-only-by-declaration agent degrades to Cursor's coarse native switch.
-  it('stamps readonly:true on the cursor projection when every declared tool is read-class', async () => {
-    await fs.writeFile(path.join(claudeDir(), 'auditor.md'), CLAUDE_AGENT); // tools: Read, Grep
-    await deliverAgentBrain({ mode: 'copy', ctx });
-    const toCursor = matter(await fs.readFile(path.join(cursorDir(), 'auditor.md'), 'utf-8'));
-    expect(toCursor.data.readonly).toBe(true);
-    // Same-family targets never gain the cursor-only flag.
-    const toFrink = matter(await fs.readFile(path.join(frinkDir(), 'auditor.md'), 'utf-8'));
-    expect(toFrink.data.readonly).toBeUndefined();
-  });
-
-  it('never stamps readonly for write-capable, unknown-tool, or unrestricted agents', async () => {
-    await fs.writeFile(
-      path.join(claudeDir(), 'writer.md'),
-      '---\nname: writer\ntools: Read, Bash\n---\n\nCan run commands.\n',
-    );
-    await fs.writeFile(
-      path.join(claudeDir(), 'oddball.md'),
-      '---\nname: oddball\ntools: Read, SomeUnknownTool\n---\n\nUnknown tool listed.\n',
-    );
-    await fs.writeFile(
-      path.join(claudeDir(), 'free.md'),
-      '---\nname: free\n---\n\nNo tools field at all.\n',
-    );
-    await deliverAgentBrain({ mode: 'copy', ctx });
-    for (const f of ['writer.md', 'oddball.md', 'free.md']) {
-      const projected = matter(await fs.readFile(path.join(cursorDir(), f), 'utf-8'));
-      expect(projected.data.readonly).toBeUndefined();
-    }
-  });
-
   it('a multiline quoted description survives re-stringify parse-equivalently', async () => {
     const src = matter.stringify('Body text.\n', {
       name: 'multi',
@@ -207,7 +181,7 @@ describe('deliverAgentBrain (PCH-4)', () => {
     });
     await fs.writeFile(path.join(claudeDir(), 'multi.md'), src);
     await deliverAgentBrain({ mode: 'copy', ctx });
-    const projected = matter(await fs.readFile(path.join(cursorDir(), 'multi.md'), 'utf-8'));
+    const projected = matter(await fs.readFile(path.join(frinkDir(), 'multi.md'), 'utf-8'));
     expect(projected.data.description).toBe('Line one: with colon\nLine two "quoted" text');
     expect(projected.content.trim()).toBe('Body text.');
   });
@@ -224,21 +198,21 @@ describe('deliverAgentBrain (PCH-4)', () => {
 
   it('never clobbers a user-authored agent of the same filename at a target', async () => {
     await fs.writeFile(path.join(claudeDir(), 'auditor.md'), CLAUDE_AGENT);
-    await fs.mkdir(cursorDir(), { recursive: true });
+    await fs.mkdir(frinkDir(), { recursive: true });
     await fs.writeFile(
-      path.join(cursorDir(), 'auditor.md'),
-      '---\nname: my-own-auditor\n---\n\nMy own cursor agent.\n',
+      path.join(frinkDir(), 'auditor.md'),
+      '---\nname: my-own-auditor\n---\n\nMy own agent.\n',
     );
     await deliverAgentBrain({ mode: 'copy', ctx });
-    const kept = await fs.readFile(path.join(cursorDir(), 'auditor.md'), 'utf-8');
-    expect(kept).toContain('My own cursor agent.');
+    const kept = await fs.readFile(path.join(frinkDir(), 'auditor.md'), 'utf-8');
+    expect(kept).toContain('My own agent.');
     expect(matter(kept).data.frinkProjected).toBeUndefined();
   });
 
   it('overwrites an edited MIRROR on the next delivery (intentional mirror semantics)', async () => {
     await fs.writeFile(path.join(claudeDir(), 'auditor.md'), CLAUDE_AGENT);
     await deliverAgentBrain({ mode: 'copy', ctx });
-    const mirror = path.join(cursorDir(), 'auditor.md');
+    const mirror = path.join(frinkDir(), 'auditor.md');
     // User edits the stamped mirror (keeping the stamp) instead of the source.
     const edited = matter(await fs.readFile(mirror, 'utf-8'));
     await fs.writeFile(mirror, matter.stringify('EDITED MIRROR\n', edited.data));
@@ -249,8 +223,8 @@ describe('deliverAgentBrain (PCH-4)', () => {
   it('skips the write when the mirror is already identical (no per-spawn churn)', async () => {
     await fs.writeFile(path.join(claudeDir(), 'auditor.md'), CLAUDE_AGENT);
     const first = await deliverAgentBrain({ mode: 'copy', ctx });
-    // One claude source fans out to the three OTHER dirs: cursor + codex + frink.
-    expect(first.detail).toContain('3 write(s)');
+    // One claude source fans out to codex + frink; the cursor dir is never written.
+    expect(first.detail).toContain('2 write(s)');
     const second = await deliverAgentBrain({ mode: 'copy', ctx });
     expect(second.detail).toContain('0 write(s)');
   });

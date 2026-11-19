@@ -18,16 +18,11 @@ const SKILL_READ_DIRS: Record<SkillTool, readonly string[]> = {
   cursor: ['.cursor', '.agents', '.claude'],
 };
 
-/**
- * Per-tool AGENT read dirs — DIFFERENT from skills. Agents have NO shared `.agents`, and Cursor does NOT
- * read `.claude/agents` (each tool reads only its own native dir; `.frink` is Frink's claude-flavour mirror
- * Claude also reads). So a `.claude`-only agent is readable by Claude but NOT Cursor — whereas a `.claude`
- * skill IS readable by Cursor (compat). Using the skill map for agents would falsely mark a `.claude`-only
- * agent "Synced" and hide the "Copy across…" affordance.
- */
+/** Per-tool AGENT read dirs — no shared `.agents` as for skills. Cursor also reads `.claude/agents` (its own
+ * `.cursor` wins a name clash); only Claude reads `.frink`, Frink's claude-flavour mirror. */
 const AGENT_READ_DIRS: Record<SkillTool, readonly string[]> = {
   'claude-code': ['.claude', '.frink'],
-  cursor: ['.cursor'],
+  cursor: ['.cursor', '.claude'],
 };
 
 /** Which read-map a resource uses (agents and skills differ — see the two consts above). */
@@ -65,8 +60,8 @@ export function skillCopyDirs(
   return [...dirs];
 }
 
-/** Where each tool natively owns/reads its AGENTS. Unlike skills there is NO shared `.agents` for agents
- * (deliverAgentBrain fans only to .claude/.cursor/.frink agents dirs), so each tool needs its own dir. */
+/** Where each tool natively owns/reads its AGENTS. Unlike skills there is NO shared `.agents` for agents,
+ * so each tool needs its own dir. */
 const AGENT_NATIVE_DIR: Record<SkillTool, string> = {
   'claude-code': '.claude',
   cursor: '.cursor',
