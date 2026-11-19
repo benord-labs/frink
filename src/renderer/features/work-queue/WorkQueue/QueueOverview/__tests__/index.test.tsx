@@ -11,6 +11,7 @@ import { OtherAttentionTasks } from '../OtherAttentionTasks';
 
 /** QueueOverview renders the live queued panel by default; these tests only need its slot filled. */
 const queuedAdmissionsStub = <section aria-label="Queued to run">Queued flows</section>;
+const inboxStub = <section aria-label="Inbox, ready to start">Held runs</section>;
 
 const { toastError } = vi.hoisted(() => {
   Reflect.set(globalThis, 'electronTRPC', { onMessage: vi.fn(), sendMessage: vi.fn() });
@@ -64,16 +65,9 @@ describe('QueueOverview', () => {
       <QueueOverview
         interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
+        inbox={inboxStub}
         attentionTasks={[reviewTask, questionTask]}
         runningTasks={[makeTask()]}
-        waitingTasks={[
-          makeTask({
-            id: 'task-waiting',
-            title: 'Ready for pickup',
-            status: 'pending',
-            result: null,
-          }),
-        ]}
         queuedCount={1}
         reviewCount={2}
         runningCount={1}
@@ -124,9 +118,6 @@ describe('QueueOverview', () => {
       screen.getByRole('button', { name: 'Other tasks needing attention 1' }).closest('details')
         ?.open,
     ).toBe(false);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    expect(taskActions.onStartTask).toHaveBeenCalledWith('task-waiting', 'agent');
   });
 
   it('opens a running task through the shared Work Queue chat handler', () => {
@@ -137,9 +128,9 @@ describe('QueueOverview', () => {
       <QueueOverview
         interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
+        inbox={inboxStub}
         attentionTasks={[]}
         runningTasks={[task]}
-        waitingTasks={[]}
         queuedCount={0}
         reviewCount={0}
         runningCount={1}
@@ -183,9 +174,9 @@ describe('QueueOverview', () => {
       <QueueOverview
         interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
+        inbox={inboxStub}
         attentionTasks={attentionTasks}
         runningTasks={[]}
-        waitingTasks={[]}
         queuedCount={0}
         reviewCount={attentionTasks.length}
         runningCount={0}
@@ -221,9 +212,9 @@ describe('QueueOverview', () => {
       <QueueOverview
         interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
+        inbox={inboxStub}
         attentionTasks={[]}
         runningTasks={[task]}
-        waitingTasks={[]}
         queuedCount={0}
         reviewCount={0}
         runningCount={1}
@@ -240,20 +231,18 @@ describe('QueueOverview', () => {
 
   it('loads older rows within the selected Overview lane', () => {
     const attentionLoad = vi.fn(async () => undefined);
-    const inboxLoad = vi.fn(async () => undefined);
     const runningLoad = vi.fn(async () => undefined);
     render(
       <QueueOverview
         interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
+        inbox={inboxStub}
         attentionTasks={[makeTask({ id: 'review', status: 'plan_ready' })]}
         pagination={{
           attention: { canLoadMore: true, isLoadingMore: false, loadMore: attentionLoad },
-          inbox: { canLoadMore: true, isLoadingMore: false, loadMore: inboxLoad },
           running: { canLoadMore: true, isLoadingMore: false, loadMore: runningLoad },
         }}
         runningTasks={[makeTask()]}
-        waitingTasks={[makeTask({ id: 'waiting', status: 'pending', result: null })]}
         queuedCount={0}
         reviewCount={1}
         runningCount={1}
@@ -263,9 +252,7 @@ describe('QueueOverview', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Load older attention tasks' }));
     fireEvent.click(screen.getByRole('button', { name: 'Load older running tasks' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Load older Inbox tasks' }));
     expect(attentionLoad).toHaveBeenCalledOnce();
     expect(runningLoad).toHaveBeenCalledOnce();
-    expect(inboxLoad).toHaveBeenCalledOnce();
   });
 });

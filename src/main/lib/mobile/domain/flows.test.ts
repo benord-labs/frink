@@ -164,6 +164,24 @@ describe('mobile Flow actions', () => {
     expect(fixture.listRuns).toHaveBeenCalledWith({ flowId: 'flow', limit: 21 });
   });
 
+  it('reads a run held for Start as held in the run list and on the run screen', async () => {
+    fixture.db = freshDb();
+    const held = {
+      id: 'held-run',
+      status: 'pending',
+      admission_state: 'held',
+      created_at: 'at',
+      flow_version_id: 'version',
+      nodeRuns: [],
+    };
+    fixture.getFlow.mockResolvedValue({ id: 'flow', name: 'Flow', graph: null });
+    fixture.listRuns.mockResolvedValue([held]);
+    fixture.getRun.mockResolvedValue(held);
+    fixture.getVersion.mockResolvedValue({ flowId: 'flow' });
+    expect((await readMobileFlow({ id: 'flow' })).runs.items[0]?.status).toBe('held');
+    expect((await readMobileRun('held-run')).status).toBe('held');
+  });
+
   it('windows runs by runLimit, fetching one extra row to report more', async () => {
     fixture.db = freshDb();
     fixture.getFlow.mockResolvedValue({ id: 'flow', graph: null });

@@ -7,6 +7,7 @@ const STATUS_LABEL_MAP: Record<string, string> = {
   queued: 'Queued',
   // biome-ignore lint/style/useNamingConvention: snake_case domain status (node-run vocabulary)
   awaiting_input: 'Awaiting input',
+  held: 'Ready to start',
   paused: 'Paused',
   cancelled: 'Cancelled',
   pending: 'Pending',
@@ -22,7 +23,7 @@ export function RunStatusLabel({ status, suffix = '' }: { status: string; suffix
         status === 'failed' && 'text-destructive',
         status === 'running' && 'text-blue-500',
         status === 'queued' && 'text-blue-700 dark:text-blue-300',
-        (status === 'paused' || status === 'awaiting_input') && 'text-warning',
+        (status === 'paused' || status === 'awaiting_input' || status === 'held') && 'text-warning',
         (status === 'cancelled' || status === 'pending' || status === 'superseded') &&
           'text-muted-foreground/60',
       )}

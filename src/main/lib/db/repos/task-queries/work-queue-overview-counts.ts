@@ -1,6 +1,7 @@
 import { and, sql as drizzleSql, eq } from 'drizzle-orm';
 import type { getDatabase } from '../../index';
 import { flowRunAdmissions, flowRuns, tasks } from '../../schema';
+import { isHeldFlowRun } from '../flow-runs';
 import { isFlowRepresentative } from './flow-collapse';
 import {
   isNotQueuedForAdmission,
@@ -16,6 +17,16 @@ export type WorkQueueOverviewCounts = {
   review: number;
   running: number;
 };
+
+/** Runs held for Start, the Work Queue Inbox; counted here so no caller needs the list. */
+export async function countHeldFlowRuns(db: Db): Promise<number> {
+  const row = await db
+    .select({ count: drizzleSql<number>`count(*)` })
+    .from(flowRuns)
+    .where(isHeldFlowRun)
+    .get();
+  return Number(row?.count ?? 0);
+}
 
 /**
  * Counts the mutually exclusive states shown by the Work Queue overview.
@@ -41,18 +52,16 @@ export async function getWorkQueueOverviewCounts(db: Db): Promise<WorkQueueOverv
     .where(and(isFlowRepresentative, isNotQueuedForAdmission, isNotWaitingOnApproval))
     .groupBy(workQueueOverviewSectionExpr);
 
-  let inbox = 0;
   let review = 0;
   let running = 0;
   for (const row of taskRows) {
     const count = Number(row.count);
     if (row.section === 'attention') review += count;
-    if (row.section === 'inbox') inbox += count;
     if (row.section === 'running') running += count;
   }
 
   return {
-    inbox,
+    inbox: await countHeldFlowRuns(db),
     queued: Number(queuedRow?.count ?? 0),
     review,
     running,

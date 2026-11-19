@@ -5,9 +5,10 @@
  */
 
 import log from 'electron-log';
-import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
+import { toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import type { TaskChatReadyData } from '../../../shared/types/task-chat-ready';
+import type { TriggerStartMode } from '../../../shared/types/trigger-context';
 import { getActiveExecution } from '../socket/streaming/execution-registry';
 
 /**
@@ -100,7 +101,7 @@ function pruneSettledDispatches(nowMs: number): void {
 export function registerPendingDispatchMode(
   subChatId: string,
   taskId: string,
-  startMode: ResolvedTaskStartMode,
+  startMode: TriggerStartMode,
   payload?: TaskChatReadyData,
 ): void {
   pendingDispatchMode.set(dispatchKey(subChatId, taskId), {

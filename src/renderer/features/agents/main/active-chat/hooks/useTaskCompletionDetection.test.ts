@@ -38,7 +38,7 @@ type TaskData = {
   result?: {
     skipReview?: boolean;
     cancelled?: boolean;
-    startMode?: 'execute' | 'plan' | 'wait';
+    startMode?: 'execute' | 'plan';
     summary?: string;
     error?: string;
     agentSignal?: { state?: string; summary?: string };

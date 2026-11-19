@@ -10,11 +10,11 @@ Read consent outcomes: `permissionDenied: true` is a refusal; do not retry. A fa
 2. `frink_flows_get_run({runId, wait:true})` waits (default 2 minutes; `timeoutMs` up to 5 minutes). `waitTimedOut: true` means still running; wait again as needed within the 20-call/session budget. Paused/awaiting-input returns early with `earlyReturn: true`.
 3. Inspect `run`, `nodes`, `totalNodeRuns`, `shownNodeRuns`. Drill into full output with `{runId, nodeRunId}` (`nodeDetail`). Use `wait:false` for a snapshot.
 
-`status:"queued", runStatus:"pending"` means accepted but awaiting machine admission, not executing. A pending run has no startedAt and can be waited on.
+`status:"queued", runStatus:"pending"` means accepted but awaiting machine admission, not executing. A pending run has no startedAt and can be waited on. `status:"held"` is a pending run that starts only when the user presses Start in their Work Queue; `wait:true` returns it at once, so report it and stop.
 
 | Entity | Statuses |
 |---|---|
-| Run | pending, running, completed, failed, cancelled, paused |
+| Run | pending, held, running, completed, failed, cancelled, paused |
 | Node | pending, running, completed, failed, cancelled, timed_out, awaiting_input, blocked, skipped, superseded |
 
 Fan-out inspection summarizes `totalLanes`, `completedLanes`, `failedLanes`, `failedLaneNodeRunIds`; drill into a failed id. This summary is distinct from continuation `previous.results`, which is keyed by branch-root id per item.

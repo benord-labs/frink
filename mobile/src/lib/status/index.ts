@@ -24,6 +24,7 @@ const RUN: Record<string, Status> = {
   pending: { word: 'Starting', tone: 'live', glyph: 'live' },
   queued: { word: 'Queued', tone: 'quiet', glyph: 'queued' },
   awaiting_input: { word: 'Waiting for you', tone: 'attention', glyph: 'awaiting' },
+  held: { word: 'Ready to start', tone: 'attention', glyph: 'awaiting' },
   paused: { word: 'Paused', tone: 'quiet', glyph: 'paused' },
   failed: { word: 'Failed', tone: 'danger', glyph: 'failed' },
   cancelled: { word: 'Cancelled', tone: 'quiet', glyph: 'cancelled' },

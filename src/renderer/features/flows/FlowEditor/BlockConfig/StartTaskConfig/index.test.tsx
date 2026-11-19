@@ -55,10 +55,14 @@ describe('StartTaskConfig start mode', () => {
     expect(await screen.findByText(PLAN_UNAVAILABLE)).toBeInTheDocument();
   });
 
-  it('offers Plan on a Claude project', async () => {
+  it('offers Execute and Plan on a Claude project', async () => {
     renderStartTask('claude-code', 'plan');
     openStartModeMenu();
     expect(await screen.findByRole('option', { name: 'Plan' })).toBeInTheDocument();
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Execute',
+      'Plan',
+    ]);
     expect(screen.queryByText(PLAN_UNAVAILABLE)).toBeNull();
   });
 });

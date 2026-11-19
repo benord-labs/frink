@@ -80,6 +80,7 @@ describe('handleVerifiedWebhookEvent', () => {
     const arg = startFlowRunMock.mock.calls[0][0];
     expect(arg.flowId).toBe('flow-a');
     expect(arg.idempotencyKey).toBe('webhook:integration-1:story_assigned:d-1:flow-a');
+    expect(arg.automatic).toBe(true);
     expect(arg.triggerContext._frinkTrigger).toBe('webhook_trigger');
     // Provider-agnostic: eventType (string) for {{trigger.event}}, and fullContent
     // is the raw provider body verbatim for {{trigger.payload.*}}.

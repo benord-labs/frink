@@ -124,7 +124,6 @@ export function StartTaskConfig({
           <SelectContent>
             <SelectItem value="execute">Execute</SelectItem>
             {plan.offered ? <SelectItem value="plan">Plan</SelectItem> : null}
-            <SelectItem value="wait">Wait</SelectItem>
           </SelectContent>
         </Select>
       </FieldRow>

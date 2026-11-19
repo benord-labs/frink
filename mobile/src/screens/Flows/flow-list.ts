@@ -30,7 +30,7 @@ export function flowRunId(flow: MobileFlow): string | null {
 function sectionOf(flow: MobileFlow): SectionId | null {
   if (!flowRunId(flow)) return null;
   const status = shownStatus(flow);
-  if (status === 'awaiting_input') return 'needs_you';
+  if (status === 'awaiting_input' || status === 'held') return 'needs_you';
   if (status && RUNNING.has(status)) return 'running';
   if (status === 'paused') return 'paused';
   return 'results';
@@ -66,6 +66,7 @@ const WORDED = new Set([
   'pending',
   'queued',
   'awaiting_input',
+  'held',
   'paused',
   'failed',
   'cancelled',

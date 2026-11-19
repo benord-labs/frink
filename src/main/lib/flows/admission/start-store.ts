@@ -1,5 +1,6 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { isTriggerBlockType } from '../../../../shared/lib/block-registry';
 import {
   type FlowAdmissionIntentV1,
   isFlowAdmissionIntentV1,
@@ -11,11 +12,13 @@ import {
 } from '../../../../shared/lib/flow-admission/run-first-rule';
 import { runFirstRowSchema } from '../../../../shared/types/flow-settings-schema';
 import type { getDatabase } from '../../db';
+import { isHeldFlowRun } from '../../db/repos/flow-runs';
 import {
   type BatchStageRun,
   batchStageRuns,
   batchStages,
   type FlowRun,
+  type FlowVersion,
   flowRuns,
   flowVersions,
   type NewFlowRun,
@@ -181,6 +184,8 @@ export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueF
   const created = existing ?? createPendingRun(db, runInput);
   const isReplay = Boolean(existing);
   if (!isProvenUnstarted(created)) return { run: created, isReplay, admission: null };
+  // A held run gets its ticket only from Start, so a replay of its trigger keeps it held.
+  if (created.heldAt) return { run: created, isReplay, admission: null };
 
   const live = liveAdmissionForRun(db, created.id);
   if (
@@ -206,4 +211,67 @@ export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueF
     runFirst: startRunsFirst(db, run),
   });
   return { run, isReplay, admission };
+}
+
+// A malformed node reads as no block type rather than failing the whole graph.
+const graphNodesSchema = z.object({
+  nodes: z.array(z.object({ blockType: z.string() }).catch({ blockType: '' })),
+});
+
+function triggerBlockType(version: FlowVersion): string | undefined {
+  const nodes = graphNodesSchema.safeParse(version.graph).data?.nodes ?? [];
+  return nodes.find((node) => isTriggerBlockType(node.blockType))?.blockType;
+}
+
+/** The version Start admits a held run on: the Flow's latest, unless its trigger type changed since,
+ *  because the run's trigger details belong to the trigger it was held for. */
+export function heldRunStartVersion(db: Db, pinnedVersionId: string) {
+  const pinned = db.select().from(flowVersions).where(eq(flowVersions.id, pinnedVersionId)).get();
+  const newest =
+    pinned &&
+    db
+      .select()
+      .from(flowVersions)
+      .where(eq(flowVersions.flowId, pinned.flowId))
+      .orderBy(desc(flowVersions.versionNumber))
+      .limit(1)
+      .get();
+  if (!pinned || !newest) return { versionId: pinnedVersionId, latest: true };
+  const latest = triggerBlockType(newest) === triggerBlockType(pinned);
+  return { versionId: latest ? newest.id : pinned.id, latest };
+}
+
+const isHeldRun = (flowRunId: string) => and(eq(flowRuns.id, flowRunId), isHeldFlowRun);
+
+/** Start: moves a held run to the version Start admits and enqueues its start ticket, judging
+ *  run-first from that version. False once started or dismissed. Must run inside a transition. */
+export function releaseHeldFlowRun(db: Db, flowRunId: string): boolean {
+  const pinned = db
+    .select({ versionId: flowRuns.flowVersionId })
+    .from(flowRuns)
+    .where(eq(flowRuns.id, flowRunId))
+    .get();
+  if (!pinned) return false;
+  const { versionId } = heldRunStartVersion(db, pinned.versionId);
+  const run = db
+    .update(flowRuns)
+    .set({ heldAt: null, flowVersionId: versionId })
+    .where(isHeldRun(flowRunId))
+    .returning()
+    .get();
+  if (!run) return false;
+  const intent: FlowAdmissionIntentV1 = { version: 1, action: 'start', flow_run_id: run.id };
+  enqueueFlowAdmission(db, { intent, runFirst: startRunsFirst(db, run) });
+  return true;
+}
+
+/** Dismiss: cancels a run only while it is still held. A held run has no ticket, step or task. */
+export function cancelHeldFlowRun(db: Db, flowRunId: string, now = new Date()): boolean {
+  const cancelled = db
+    .update(flowRuns)
+    .set({ status: 'cancelled', completedAt: now })
+    .where(isHeldRun(flowRunId))
+    .returning({ id: flowRuns.id })
+    .get();
+  return cancelled !== undefined;
 }

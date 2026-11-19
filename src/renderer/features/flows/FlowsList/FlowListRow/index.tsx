@@ -184,12 +184,12 @@ export function FlowListRow<T extends FlowListItem>({
   const enabled = flow.is_enabled ?? true;
   const state = flowRunState(flow, displayStatus);
   // A switched-off flow cannot be acted on, so only a run still waiting on the user keeps colour.
-  const tone = enabled || displayStatus === 'awaiting_input' ? state.tone : 'quiet';
+  const tone = enabled || sectionId === 'needs_you' ? state.tone : 'quiet';
   const batch = batchLabel(flow);
   const updated = `Updated ${FULL_DATE.format(new Date(flow.updated_at))}`;
   const live = state.glyph === 'live';
   // A switched-off flow greys out, unless its run still waits on the user.
-  const dimmed = !enabled && displayStatus !== 'awaiting_input';
+  const dimmed = !enabled && sectionId !== 'needs_you';
 
   return (
     <li

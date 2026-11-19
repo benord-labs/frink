@@ -11,6 +11,7 @@ import type { FlowNode } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../shared/types/flow';
 import { Label } from '../../../../components/ui/label';
 import { useBriefFocusHighlight } from '../../../../hooks/use-brief-focus-highlight';
+import { flowTriggerHint } from '../../../../lib/flows/flow-run-state';
 import { trpc } from '../../../../lib/trpc';
 import { cn } from '../../../../lib/utils';
 import { ModelSelector } from '../../../agents/components/model-selector';
@@ -184,6 +185,18 @@ export function FlowSettingsPanel({
               );
             }}
           />
+
+          {flowTriggerHint(triggerBlockType ?? null) !== undefined && (
+            <SettingSwitchRow
+              id="flow-settings-ask-before-running"
+              label="Ask before running"
+              description="Each time this Flow starts on its own, it waits in your Work Queue until you press Start."
+              checked={settings?.askBeforeRunning === true}
+              onCheckedChange={(checked) =>
+                onSettingsChange(patch(settings, { askBeforeRunning: checked || undefined }))
+              }
+            />
+          )}
 
           <SettingSwitchRow
             id="flow-settings-agent-invocable"

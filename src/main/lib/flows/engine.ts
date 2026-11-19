@@ -31,6 +31,7 @@ import type { FlowRun, NodeRun } from '../db/schema';
 import { clearActiveFlowTaskForChat } from '../task-executor';
 import { loadRunContext } from './advance';
 import { settleStageAfterUnpromotedRetry } from './admission/activity';
+import { cancelHeldFlowRun, releaseHeldFlowRun } from './admission/start-store';
 import { dropStagedContinuation } from './admission/terminal-resume/continuation';
 import { abortFlowRun } from './cancel-registry';
 import { emitRunTerminal } from './event-emit';
@@ -159,6 +160,31 @@ export async function cancelFlowRun(
   );
   if (outcome?.cancelled) await releaseFlowAdmission(flowRunId, outcome.liveTicket);
   return outcome?.run ?? null;
+}
+
+/** Start on a held run, after which it runs to the end; false once it was started or dismissed. */
+export async function startHeldFlowRun(flowRunId: string): Promise<boolean> {
+  const admissionRuntime = await import('./admission/runtime');
+  const started = await admissionRuntime.transitionFlowRun(() =>
+    releaseHeldFlowRun(getDatabase(), flowRunId),
+  );
+  // The ticket is durably queued; a drain fault is retried by the drain itself.
+  if (started) {
+    await admissionRuntime.drainFlowAdmissions().catch((error) => {
+      log.warn('[FlowsEngine] drain after Start failed', { flowRunId, error });
+    });
+  }
+  return started;
+}
+
+/** Dismiss: cancels a run only while it still waits for Start; false once started or ended. */
+export async function dismissHeldFlowRun(flowRunId: string): Promise<boolean> {
+  const admissionRuntime = await import('./admission/runtime');
+  const dismissed = await admissionRuntime.transitionFlowRun(() =>
+    cancelHeldFlowRun(getDatabase(), flowRunId),
+  );
+  if (dismissed) await emitCancelledFlowRun(flowRunId);
+  return dismissed;
 }
 
 export async function cancelFlowRunForDeletion(flowRunId: string): Promise<void> {

@@ -23,6 +23,7 @@ import {
 } from './flow-upstream-session';
 import { LAUNCH_FLAGS } from '../launch-flags';
 import { conditionLoopConfigErrors, stuckConditionLoops } from './flows/graph/condition-loops';
+import { startTaskModeErrors, startTaskRunErrors } from './flows/graph/start-task-rules';
 import {
   chatReplyTemplateWarnings,
   parseChatReplyTemplateConfig,
@@ -436,6 +437,11 @@ export function validateGraph(
     );
   }
 
+  // Save-only: a stored graph with an unknown mode keeps running as Execute.
+  if (!isRunMode) {
+    for (const n of nodeById.values()) errors.push(...startTaskModeErrors(n, formatFlowNodeLabel));
+  }
+
   // Per-block config validation: only enforced at run time (mode='run').
   // In save mode these are skipped so agents can build flows incrementally.
   if (isRunMode) {
@@ -518,20 +524,7 @@ export function validateGraph(
     }
 
     for (const n of nodes as FlowNode[]) {
-      if (n.blockType !== 'start_task') continue;
-      const c = n.config ?? {};
-      const wName = formatFlowNodeLabel(n);
-      if (c.startInWorktree !== undefined && typeof c.startInWorktree !== 'boolean') {
-        errors.push(`Start Task node "${wName}" startInWorktree must be a boolean when present`);
-      }
-      if (
-        c.startInWorktree === true &&
-        c.branch !== undefined &&
-        c.branch !== null &&
-        typeof c.branch !== 'string'
-      ) {
-        errors.push(`Start Task node "${wName}" branch must be a string when present`);
-      }
+      errors.push(...startTaskRunErrors(n, formatFlowNodeLabel));
     }
 
     for (const n of nodes as FlowNode[]) {

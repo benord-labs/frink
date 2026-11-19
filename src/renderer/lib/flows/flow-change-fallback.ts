@@ -14,6 +14,7 @@ const SETTINGS_LABELS: Record<string, string> = {
   runFirst: 'Priority queue',
   runFirstWhen: 'Priority queue rule',
   pauseOnFailure: 'Failure handling',
+  askBeforeRunning: 'Ask before running',
   maxBatchConcurrency: 'Batch concurrency',
   batchTriggerSchema: 'Batch trigger inputs',
 };

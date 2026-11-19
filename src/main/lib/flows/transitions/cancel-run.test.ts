@@ -82,6 +82,8 @@ import {
   cancelFlowRunForChatDeletion,
   cancelFlowRunsForChat,
   cancelFlowRunsForChatOrThrow,
+  dismissHeldFlowRun,
+  startHeldFlowRun,
 } from '../engine';
 import { subscribeFlowEvents } from '../events';
 import { resumeFlowRun } from '../resume';
@@ -766,5 +768,35 @@ describe('removal through the Cancel command', () => {
     expect(await listNodeRunsForFlowRun(db, flowRunId)).toEqual([]);
     expect(dispatchNode).not.toHaveBeenCalled();
     expect(cancelledEvents).toHaveLength(1);
+  });
+});
+
+describe('a run held for Start', () => {
+  const hold = () =>
+    db
+      .update(flowRuns)
+      .set({ status: 'pending', startedAt: null, heldAt: new Date() })
+      .where(eq(flowRuns.id, flowRunId))
+      .run();
+  const ticket = () =>
+    db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.flowRunId, flowRunId)).get();
+
+  it('is admitted as soon as Start queues it, when a slot is free', async () => {
+    hold();
+
+    await expect(startHeldFlowRun(flowRunId)).resolves.toBe(true);
+
+    expect(ticket()?.state).not.toBe('queued');
+  });
+
+  it('is cancelled by Dismiss once, announced once', async () => {
+    hold();
+
+    await expect(dismissHeldFlowRun(flowRunId)).resolves.toBe(true);
+    await expect(dismissHeldFlowRun(flowRunId)).resolves.toBe(false);
+
+    expect(await runStatus()).toBe('cancelled');
+    expect(cancelledEvents).toHaveLength(1);
+    expect(ticket()).toBeUndefined();
   });
 });

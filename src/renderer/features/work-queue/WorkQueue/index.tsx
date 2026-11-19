@@ -1,16 +1,10 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { buttonVariants } from '@benord-labs/frink-primitives';
 import type { UIMessage } from 'ai';
-import { useSetAtom, useStore } from 'jotai';
+import { useSetAtom } from 'jotai';
 import { Loader2 } from 'lucide-react';
 import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  type ResolvedTaskStartMode,
-  resolveTaskExecutionMetadata,
-  resolveTaskStartInWorktreeFromConfig,
-  toChatMode,
-} from '../../../../shared/lib/trigger-rule-config';
 import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../shared/types/plan';
 import { AGENTS_PAGE_COLUMN_CLASS } from '../../../components/ChatAtmosphereSurface/constants';
 import {
@@ -23,11 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../../components/ui/alert-dialog';
-import {
-  chatModeAtomFamily,
-  lastSelectedModelIdAtomFamily,
-  pendingBuildPlanSubChatIdAtom,
-} from '../../../features/agents/atoms';
+import { pendingBuildPlanSubChatIdAtom } from '../../../features/agents/atoms';
 import { activeOverlayAtom } from '../../../lib/atoms';
 import { trpc, trpcClient } from '../../../lib/trpc';
 import {
@@ -50,7 +40,6 @@ import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';
 import { useWorkQueueOverviewCounts } from '../hooks/use-work-queue-overview-counts';
 import { useWorkQueueOverviewPages } from '../hooks/use-work-queue-overview-pages';
 import type { ConfirmedRecovery, Task } from '../types';
-import { buildTaskMessage, buildTaskOpening } from '../utils/build-task-message';
 import { dedupeRowsById } from '../utils/dedupe-rows-by-id';
 import { getOverviewTaskChatId } from '../utils/overview-task-groups';
 import { parseTriggerContext } from '../utils/trigger-context';
@@ -74,11 +63,6 @@ type WorkQueueProps = {
   onRequestClose: () => void;
   onNavigateToChat: (chatId: string) => void;
   sidebarTrigger?: ReactNode;
-};
-type QueuedStartMetadata = {
-  startMode: ResolvedTaskStartMode;
-  skipReview: boolean;
-  configuredModel?: string;
 };
 const HISTORY_PAGE_SIZE = 50;
 
@@ -108,11 +92,9 @@ export function WorkQueue({
   sidebarTrigger,
 }: WorkQueueProps): ReactElement {
   const utils = trpc.useUtils();
-  const store = useStore();
   const setActiveOverlay = useSetAtom(activeOverlayAtom);
   const setPendingBuildPlanSubChatId = useSetAtom(pendingBuildPlanSubChatIdAtom);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const queuedStartMetadataRef = useRef<Map<string, QueuedStartMetadata>>(new Map());
   const {
     backToOverviewButtonRef,
     historyButtonRef,
@@ -258,9 +240,6 @@ export function WorkQueue({
     },
   });
 
-  const updateTaskStatusMutation = trpc.tasks.updateStatus.useMutation({
-    onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
-  });
   // tasks.recover re-resolves the kind server-side, so a stale row label is refused, never swapped.
   const retryTaskMutation = useRecoverTaskMutation({
     onSuccess: (_data, variables) => refreshTaskViews(variables.taskId),
@@ -290,66 +269,6 @@ export function WorkQueue({
       });
     },
   });
-  const createChatMutation = trpc.chats.create.useMutation({
-    onSuccess: async (chat, variables) => {
-      if (!variables) return;
-      const fallbackStartMode = variables.mode === 'plan' ? 'plan' : 'execute';
-      const queuedStartMetadata = variables.taskId
-        ? queuedStartMetadataRef.current.get(variables.taskId)
-        : undefined;
-      if (variables.taskId) {
-        queuedStartMetadataRef.current.delete(variables.taskId);
-      }
-      const startMetadata: QueuedStartMetadata = queuedStartMetadata ?? {
-        startMode: fallbackStartMode,
-        skipReview: fallbackStartMode !== 'plan',
-      };
-
-      // Match auto-start ordering: set mode/model before selecting chat. toChatMode maps the task
-      // startMode (incl. debug) to the chat mode the executor reads.
-      store.set(chatModeAtomFamily(chat.id), toChatMode(startMetadata.startMode));
-      if (startMetadata.configuredModel) {
-        store.set(lastSelectedModelIdAtomFamily(chat.id), startMetadata.configuredModel);
-      }
-
-      if (variables.taskId) {
-        try {
-          await updateTaskStatusMutation.mutateAsync({
-            taskId: variables.taskId,
-            status: 'running',
-            result: {
-              chatId: chat.id,
-              startMode: startMetadata.startMode,
-              skipReview: startMetadata.skipReview,
-              ...(startMetadata.configuredModel
-                ? {
-                    requestedModel: startMetadata.configuredModel,
-                    activeModel: startMetadata.configuredModel,
-                  }
-                : {}),
-            },
-          });
-        } catch {
-          toast.error('Failed to update task status', {
-            description:
-              'The chat was created but the task status could not be updated. Please check the task manually.',
-          });
-        }
-      }
-
-      navigateToChatIfOwned(chat.id);
-      utils.chats.list.invalidate();
-      utils.chats.listCounts.invalidate();
-      utils.chats.listByFolder.invalidate();
-    },
-    onError: (_error, variables) => {
-      if (!variables) return;
-      if (variables.taskId) {
-        queuedStartMetadataRef.current.delete(variables.taskId);
-      }
-    },
-  });
-
   const handleCancel = (id: string) => cancelMutation.mutate(id);
   const handleDelete = (id: string) => deleteMutation.mutate(id);
 
@@ -385,8 +304,6 @@ export function WorkQueue({
   ): Promise<string | undefined> =>
     openWorkQueueTaskChat(
       {
-        taskId: task.id,
-        prompt: buildTaskMessage(task),
         chatId,
         resultSubChatId: task.result?.subChatId as string | undefined,
         ...options,
@@ -395,7 +312,6 @@ export function WorkQueue({
         ownsNavigation: ownsTaskNavigation,
         getChat: (id) => trpcClient.chats.get.query({ id }),
         getSubChat: (id) => trpcClient.chats.getSubChat.query({ id }),
-        seedUserMessageIfEmpty: (input) => trpcClient.chats.seedUserMessageIfEmpty.mutate(input),
         navigate: navigateToResolvedChat,
         isNotFoundError: isNotFoundTrpcError,
         onMissingChat: showMissingChatToast,
@@ -458,7 +374,6 @@ export function WorkQueue({
         ownsNavigation: ownsTaskNavigation,
         getChat: (id) => trpcClient.chats.get.query({ id }),
         getSubChat: (id) => trpcClient.chats.getSubChat.query({ id }),
-        seedUserMessageIfEmpty: (input) => trpcClient.chats.seedUserMessageIfEmpty.mutate(input),
         navigate: navigateToResolvedChat,
         isNotFoundError: isNotFoundTrpcError,
         onMissingChat: showMissingChatToast,
@@ -467,28 +382,6 @@ export function WorkQueue({
     );
   };
 
-  const handleStartTask = (taskId: string, mode: 'agent' | 'plan' = 'agent') => {
-    const task = allTaskRows.find((t) => t.id === taskId);
-    if (!task) return;
-
-    const triggerContext = parseTriggerContext(task.triggerContext);
-    const startMetadata = resolveTaskExecutionMetadata(triggerContext?._config, {
-      overrideMode: mode,
-    });
-    queuedStartMetadataRef.current.set(task.id, startMetadata);
-    const useWorktree = resolveTaskStartInWorktreeFromConfig(
-      triggerContext?._config,
-      task.projectId,
-    );
-
-    createChatMutation.mutate({
-      ...buildTaskOpening(task),
-      taskId: task.id,
-      projectId: task.projectId || undefined,
-      useWorktree,
-      mode,
-    });
-  };
   const handleRetryTask = (taskId: string, confirmed?: ConfirmedRecovery) => {
     const task = allTaskRows.find((t) => t.id === taskId);
     const kind = confirmed?.kind ?? task?.recoveryKind;
@@ -587,8 +480,6 @@ export function WorkQueue({
   const isMutating =
     cancelMutation.isPending ||
     deleteMutation.isPending ||
-    createChatMutation.isPending ||
-    updateTaskStatusMutation.isPending ||
     retryTaskMutation.isPending ||
     startExecutionMutation.isPending ||
     deleteMatchingMutation.isPending ||
@@ -618,15 +509,12 @@ export function WorkQueue({
   });
   const overviewAttentionRows = overviewPages.attention.rows as WorkQueueTaskRow[];
   const overviewRunningRows = overviewPages.running.rows as WorkQueueTaskRow[];
-  const overviewInboxRows = overviewPages.inbox.rows as WorkQueueTaskRow[];
   const allTaskRows = dedupeRowsById([
     ...overviewAttentionRows,
     ...overviewRunningRows,
-    ...overviewInboxRows,
     ...historyTasksRaw,
   ]);
   const displayStatus = (t: WorkQueueTaskRow): WorkQueueTaskStatus => t.effectiveStatus ?? t.status;
-  const waitingTasks = overviewInboxRows.map(mapTask);
   const overviewRunningTasks = overviewRunningRows.map(mapTask);
   const completedHistoryTasks = historyTasksRaw
     .filter((t) => displayStatus(t) === 'completed')
@@ -639,7 +527,6 @@ export function WorkQueue({
     onCancel: handleCancel,
     onDelete: handleDelete,
     onOpenChat: handleOpenChat,
-    onStartTask: handleStartTask,
     onRetryTask: handleRetryTask,
     onMarkComplete: handleMarkComplete,
     isLoading: isMutating,
@@ -653,13 +540,13 @@ export function WorkQueue({
   const completedOnlyCount = taskCounts?.completed ?? completedHistoryTasks.length;
   const cancelledCount = taskCounts?.cancelled ?? cancelledHistoryTasks.length;
   const overview = useWorkQueueOverviewCounts({
-    inbox: overviewInboxRows.length,
+    inbox: 0,
     queued: 0,
     review: overviewAttentionRows.length,
     running: overviewRunningRows.length,
   });
   const openTaskCount = overview.inbox + overview.queued + overview.running + overview.review;
-  const isEmpty = allTaskRows.length === 0 && overview.queued === 0;
+  const isEmpty = allTaskRows.length === 0 && overview.queued === 0 && overview.inbox === 0;
   return (
     <main
       className={AGENTS_PAGE_COLUMN_CLASS}
@@ -716,7 +603,6 @@ export function WorkQueue({
                   runningTasks={overviewRunningTasks}
                   runningCount={overview.running}
                   taskActions={commonTaskActions}
-                  waitingTasks={waitingTasks}
                 />
                 {isEmpty && overview.review === 0 && (
                   <EmptyState

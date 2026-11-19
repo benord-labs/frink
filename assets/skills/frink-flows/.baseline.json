@@ -1,6 +1,6 @@
 {
-  "generatedAt": "content-5965bf01c41f",
-  "version": "content-5965bf01c41f",
+  "generatedAt": "content-2949445831ec",
+  "version": "content-2949445831ec",
   "files": {
     "SKILL.md": {
       "sha256": "862a86c23fd6e128e3bcfef81f8b602bbb9ebed65d10640162efecbd5f83153b",
@@ -11,28 +11,28 @@
       "bytes": 6150
     },
     "references/blocks-actions.md": {
-      "sha256": "28e03d861d16a96ad310f1d37619e9cc26b50bbc1ed10904e09160a8e2f3a88a",
-      "bytes": 8387
+      "sha256": "44b00988f45b2ffe0a3ef7206bebbbfdaae5f848ea1b4c7fe934121ae57f0e58",
+      "bytes": 8380
     },
     "references/blocks-logic.md": {
       "sha256": "66b00338d70d72e2ac60558ba3dd2bdeb586e011eacd0cabfa7798e007ccff33",
       "bytes": 6757
     },
     "references/blocks-triggers.md": {
-      "sha256": "1eab7b8084130deec22486c9d871e705ca573da20d563f0935c7a4f975d1f1b2",
-      "bytes": 4995
+      "sha256": "bb0b6d4697715a6b053fae2010a301d7f00b49650eaa4e674027216d47d9db8c",
+      "bytes": 5337
     },
     "references/custom-nodes.md": {
       "sha256": "c2d4e976b84e26d2bc7bc56d6fae97909739274f4e29bc9f8045d1fcbc9f8c6f",
       "bytes": 5982
     },
     "references/examples.md": {
-      "sha256": "662c87d3b90b9e239f1a5ee80f4dba1060dc401c5f9af3cdb3ec9c5b872c8916",
-      "bytes": 5618
+      "sha256": "b73f1c2b5403d447177ae3648c2cb079d63abe6832cb26d43286cf27d177841d",
+      "bytes": 5547
     },
     "references/inspecting-runs.md": {
-      "sha256": "1edd31d585d9cbba89e1c3e6bd7f94adc9dbf0abd2781a59ef89aced289d70e9",
-      "bytes": 2806
+      "sha256": "11b3cffe0cfae4f105300d5b1ff3d3e136779de5ba7acf21bf129d30a1b0ccc6",
+      "bytes": 2966
     },
     "references/template-variables.md": {
       "sha256": "6a6ae3f4cbf7b998438fabed98d24ac646affb21ade0bba09f4aa8fa42ea5a9b",

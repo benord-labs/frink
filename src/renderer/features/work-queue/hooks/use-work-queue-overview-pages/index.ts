@@ -4,7 +4,7 @@ import { dedupeRowsById } from '../../utils/dedupe-rows-by-id';
 
 const OVERVIEW_PAGE_SIZE = 50;
 const OVERVIEW_POLL_MS = 5000;
-type Section = 'attention' | 'inbox' | 'running';
+type Section = 'attention' | 'running';
 type Cursor = { createdAt: string; id: string };
 type Row = { id: string };
 type Tail = { boundaryKey: string; nextCursor: Cursor | null; rows: Row[] };
@@ -86,35 +86,20 @@ function useSectionHead(section: Section, enabled: boolean) {
 export function useWorkQueueOverviewPages(enabled: boolean) {
   const attention = useSectionHead('attention', enabled);
   const runningHead = useSectionHead('running', enabled);
-  const inboxHead = useSectionHead('inbox', enabled);
   const attentionIds = new Set(attention.rows.map(rowId));
   const running = {
     ...runningHead,
     rows: runningHead.rows.filter((row) => !attentionIds.has(rowId(row))),
   };
-  const liveIds = new Set([...attentionIds, ...running.rows.map(rowId)]);
-  const inbox = {
-    ...inboxHead,
-    rows: inboxHead.rows.filter((row) => !liveIds.has(rowId(row))),
-  };
   const refresh = useCallback(async () => {
     attention.reset();
     runningHead.reset();
-    inboxHead.reset();
-    await Promise.all([attention.refetch(), runningHead.refetch(), inboxHead.refetch()]);
-  }, [
-    attention.refetch,
-    attention.reset,
-    inboxHead.refetch,
-    inboxHead.reset,
-    runningHead.refetch,
-    runningHead.reset,
-  ]);
+    await Promise.all([attention.refetch(), runningHead.refetch()]);
+  }, [attention.refetch, attention.reset, runningHead.refetch, runningHead.reset]);
 
   return {
     attention,
-    inbox,
-    isLoading: attention.isLoading || runningHead.isLoading || inboxHead.isLoading,
+    isLoading: attention.isLoading || runningHead.isLoading,
     refresh,
     running,
   };

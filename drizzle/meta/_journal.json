@@ -469,6 +469,20 @@
       "version": "6",
       "when": 1791400000000,
       "tag": "0116_chat_linked_projects",
+            "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1791500000000,
+      "tag": "0117_cancel_wait_mode_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "6",
+      "when": 1791600000000,
+      "tag": "0118_ask_before_running",
       "breakpoints": true
     }
   ]

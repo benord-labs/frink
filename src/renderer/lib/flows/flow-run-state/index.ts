@@ -36,6 +36,12 @@ const RUN_STATES = {
     label: 'Your turn: the run is waiting on you',
     word: 'Waiting for your input',
   },
+  held: {
+    glyph: 'awaiting',
+    tone: 'warn',
+    label: 'Waiting for you to press Start in the Work Queue',
+    word: 'Ready to start',
+  },
   failed: { glyph: 'failed', tone: 'fail', label: 'Last run failed', word: 'Failed' },
   paused: { glyph: 'paused', tone: 'quiet', label: 'Paused, not waiting on you', word: 'Paused' },
   completed: { glyph: 'done', tone: 'quiet', label: 'Last run succeeded' },

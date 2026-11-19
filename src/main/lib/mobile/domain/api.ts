@@ -74,7 +74,6 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return resumeMobileNode(request);
     case 'completeTask':
     case 'continueTask':
-    case 'startTask':
       return runMobileTaskAction(request);
     case 'startFlow': {
       requireExecutionReady();

@@ -113,10 +113,11 @@ export async function runScheduledTriggerTick(
       continue;
     }
 
-    if (cfg.skipIfRunning) {
-      // skipIfRunning: don't start a new run if any active run (pending /
-      // running / paused) for this flow already exists. Cloud parity.
-      const isActive = await hasActiveRunForFlow(db, flow.id).catch(() => false);
+    // skipIfRunning waits out any active run (pending / running / paused); with Ask before running
+    // on, a schedule never adds a second run while one waits for Start.
+    if (cfg.skipIfRunning || graph.settings?.askBeforeRunning === true) {
+      const heldOnly = !cfg.skipIfRunning;
+      const isActive = await hasActiveRunForFlow(db, flow.id, heldOnly).catch(() => false);
       if (isActive) {
         skipped += 1;
         continue;
@@ -133,6 +134,7 @@ export async function runScheduledTriggerTick(
           timezone: cfg.timezone,
         },
         idempotencyKey,
+        automatic: true,
       });
       fired += 1;
     } catch (err) {

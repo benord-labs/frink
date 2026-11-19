@@ -301,7 +301,9 @@
           "0113_tasks_project_status_completed_idx.sql",
           "0114_flow_admission_run_first.sql",
           "0115_drop_inactive_schedule_bindings.sql",
-          "0116_chat_linked_projects.sql"
+          "0116_chat_linked_projects.sql",
+          "0117_cancel_wait_mode_tasks.sql",
+          "0118_ask_before_running.sql"
         ]
       },
       {

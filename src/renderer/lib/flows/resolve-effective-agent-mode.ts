@@ -53,8 +53,6 @@ function findUpstreamStartTask(
 
 /** A start_task's raw `startMode` narrowed to the agent-node vocabulary. */
 function startModeToChatMode(startMode: unknown): ChatStartMode {
-  // 'wait' keeps a task queued and never executes it, so it can never be an active plan gate —
-  // it collapses into 'agent' alongside 'execute' and any unrecognised value.
   return toChatMode(startMode === 'plan' || startMode === 'debug' ? startMode : 'execute');
 }
 

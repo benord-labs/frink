@@ -7,18 +7,27 @@
  *   plan_ready / needs_attention → 'awaiting_input' (parked for user action)
  * Any non-paused status, or paused with no active task, passes through unchanged — cloud runs leave
  * `active_task_status` undefined and keep today's behavior.
- * A durable queued admission takes display precedence without changing the engine status.
+ * A durable queued admission takes display precedence without changing the engine status, and a
+ * pending run held for Start reads 'held'.
  */
 export function flowRunDisplayStatus(
   status: string,
   activeTaskStatus?: string | null,
   admissionState?: string | null,
 ): string {
-  if (admissionState === 'queued') return 'queued';
+  if (admissionState === 'queued' || admissionState === 'held') return admissionState;
   if (status !== 'paused' || !activeTaskStatus) return status;
   if (activeTaskStatus === 'running' || activeTaskStatus === 'pending') return 'running';
   if (activeTaskStatus === 'plan_ready' || activeTaskStatus === 'needs_attention') {
     return 'awaiting_input';
   }
   return status;
+}
+
+/** A run's engine status, except that a pending run held for Start reads 'held'. */
+export function runStatusWithHold(run: {
+  status: string;
+  admission_state?: string | null;
+}): string {
+  return run.admission_state === 'held' ? 'held' : run.status;
 }

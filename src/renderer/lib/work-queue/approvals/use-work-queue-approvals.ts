@@ -28,13 +28,8 @@ export type ApprovalActions = {
   pending: ReadonlyMap<string, ApprovalAction>;
 };
 
-/** Refreshes the queue, then explains a refusal: a gate gone from the refreshed list was handled elsewhere. */
-async function settleApprovalAction(
-  utils: TrpcUtils,
-  runId: string,
-  error: { message: string } | null,
-  failureTitle: string,
-): Promise<void> {
+/** Every Work Queue read that answering an approval or a held run can change. */
+export async function refreshWorkQueue(utils: TrpcUtils): Promise<void> {
   await Promise.all([
     utils.flows.invalidate(),
     utils.chats.listActiveChats.invalidate(),
@@ -42,6 +37,16 @@ async function settleApprovalAction(
     utils.tasks.workQueueOverviewCounts.invalidate(),
     utils.tasks.listCounts.invalidate(),
   ]);
+}
+
+/** Refreshes the queue, then explains a refusal: a gate gone from the refreshed list was handled elsewhere. */
+async function settleApprovalAction(
+  utils: TrpcUtils,
+  runId: string,
+  error: { message: string } | null,
+  failureTitle: string,
+): Promise<void> {
+  await refreshWorkQueue(utils);
   if (!error) return;
   if (utils.flows.workQueueApprovals.getData()?.some((gate) => gate.flowRunId === runId)) {
     toast.error(failureTitle, { description: error.message || 'Please try again.' });
@@ -52,11 +57,12 @@ async function settleApprovalAction(
   });
 }
 
-function withPending(
-  current: ReadonlyMap<string, ApprovalAction>,
+/** The per-run map of actions in flight, with `runId` set to `action` or cleared by null. */
+export function withPending<Action>(
+  current: ReadonlyMap<string, Action>,
   runId: string,
-  action: ApprovalAction | null,
-): ReadonlyMap<string, ApprovalAction> {
+  action: Action | null,
+): ReadonlyMap<string, Action> {
   const next = new Map(current);
   if (action) next.set(runId, action);
   else next.delete(runId);

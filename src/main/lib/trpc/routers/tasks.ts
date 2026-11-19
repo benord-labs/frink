@@ -13,7 +13,10 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { getDatabase } from '../../db';
-import { getWorkQueueOverviewCounts } from '../../db/repos/task-queries/work-queue-overview-counts';
+import {
+  countHeldFlowRuns,
+  getWorkQueueOverviewCounts,
+} from '../../db/repos/task-queries/work-queue-overview-counts';
 import {
   cancelAllPendingTasks,
   completeAllDoneTasks,
@@ -50,7 +53,7 @@ import {
 export { type FlowRunRecoveries, recoverTask } from './tasks-recovery';
 
 const taskSourceSchema = z.string().min(1).max(50);
-const workQueueSectionSchema = z.enum(['attention', 'inbox', 'running']);
+const workQueueSectionSchema = z.enum(['attention', 'running']);
 /** PERSISTED statuses — the only values a mutation may write to tasks.status. */
 const taskStatusSchema = z.enum([
   'pending',
@@ -274,9 +277,12 @@ export const tasksRouter = router({
 
   listCounts: publicProcedure
     .input(z.object({ collapseByFlow: z.boolean().optional() }).optional())
-    .query(async ({ input }) =>
-      getTaskCounts(getDatabase(), { collapseByFlow: input?.collapseByFlow }),
-    ),
+    .query(async ({ input }) => {
+      const db = getDatabase();
+      const counts = await getTaskCounts(db, { collapseByFlow: input?.collapseByFlow });
+      // The sidebar's Inbox badge: runs held for Start have no task row to count.
+      return { ...counts, inbox: await countHeldFlowRuns(db) };
+    }),
 
   workQueueOverviewCounts: publicProcedure.query(async () =>
     getWorkQueueOverviewCounts(getDatabase()),

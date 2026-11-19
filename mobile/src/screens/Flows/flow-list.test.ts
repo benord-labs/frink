@@ -53,6 +53,12 @@ describe('flowSections', () => {
     ]);
   });
 
+  it('lists a run held for Start under Needs you as Ready to start', () => {
+    const held = flow({ id: 'held', status: 'held' });
+    expect(titles([held])).toEqual([['Needs you', ['held']]]);
+    expect(flowTrailing(held, NOW)).toEqual({ text: 'Ready to start', tone: 'attention' });
+  });
+
   it('sorts the latest result per flow, while the library still lists every Flow', () => {
     const results = [60, 5, 20, 1, 30, 90].map((minutes) =>
       flow({ id: `${minutes}`, lastRun: lastRun('completed', minutes) }),

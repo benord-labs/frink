@@ -127,7 +127,8 @@ export async function getFlowRun(id: string) {
   if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
   const nodeRuns = await listNodeRunsForFlowRun(db, run.id);
   const version = await getVersion(db, run.flowVersionId);
-  return toDbFlowRunWithNodeRuns(run, nodeRuns, version?.graph ?? null);
+  const admission = flowRunAdmissionSnapshotsForRuns(db, [run.id]).get(run.id)?.admission ?? null;
+  return toDbFlowRunWithNodeRuns(run, nodeRuns, version?.graph ?? null, admission);
 }
 
 export async function startFlowRun(

@@ -14,7 +14,7 @@ const { queryPageMock, queryStates, useQueryMock } = vi.hoisted(() => {
   });
   return {
     queryPageMock: vi.fn(),
-    queryStates: { attention: makeState(), inbox: makeState(), running: makeState() },
+    queryStates: { attention: makeState(), running: makeState() },
     useQueryMock: vi.fn(),
   };
 });
@@ -45,9 +45,10 @@ describe('useWorkQueueOverviewPages', () => {
     );
   });
 
-  it('polls three independent server-filtered heads only while Overview is visible', () => {
+  it('polls the attention and running heads only while Overview is visible', () => {
     renderHook(() => useWorkQueueOverviewPages(true));
-    for (const section of ['attention', 'running', 'inbox']) {
+    expect(useQueryMock).toHaveBeenCalledTimes(2);
+    for (const section of ['attention', 'running']) {
       expect(useQueryMock).toHaveBeenCalledWith(
         { workQueueSection: section, limit: 50, cursor: null, collapseByFlow: true },
         { enabled: true, refetchInterval: 5000, structuralSharing: true },
@@ -69,12 +70,10 @@ describe('useWorkQueueOverviewPages', () => {
       items: [row('attention'), row('running')],
       nextCursor: null,
     };
-    queryStates.inbox.data = { items: [row('running'), row('inbox')], nextCursor: null };
     const { result, rerender } = renderHook(() => useWorkQueueOverviewPages(true));
 
     expect(result.current.attention.rows).toEqual([row('attention')]);
     expect(result.current.running.rows).toEqual([row('running')]);
-    expect(result.current.inbox.rows).toEqual([row('inbox')]);
     queryStates.attention.data = { items: [row('new-attention')], nextCursor: null };
     await act(async () => rerender());
     expect(result.current.attention.rows).toEqual([row('new-attention')]);
@@ -119,6 +118,5 @@ describe('useWorkQueueOverviewPages', () => {
     await act(async () => result.current.refresh());
     expect(queryStates.attention.refetch).toHaveBeenCalledOnce();
     expect(queryStates.running.refetch).toHaveBeenCalledOnce();
-    expect(queryStates.inbox.refetch).toHaveBeenCalledOnce();
   });
 });

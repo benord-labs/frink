@@ -73,12 +73,14 @@ export function FlowRunStatusIcon({
       />
     );
   }
-  if (status === 'awaiting_input') {
+  if (status === 'awaiting_input' || status === 'held') {
     return (
       <Clock
         className={cn(dim, 'shrink-0 text-warning')}
         aria-hidden={!labelled}
-        {...(labelled ? { 'aria-label': 'Run awaiting input' } : {})}
+        {...(labelled
+          ? { 'aria-label': status === 'held' ? 'Run ready to start' : 'Run awaiting input' }
+          : {})}
       />
     );
   }

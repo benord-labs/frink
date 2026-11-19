@@ -99,10 +99,9 @@ const overview: MobileOverview = {
       projectName: 'design-system',
       summary: 'Step 2 of 4 · Update packages',
     }),
-    item({ id: 'next', section: 'inbox', status: 'pending', summary: 'From Gmail' }),
   ],
-  counts: { attention: 4, running: 1, inbox: 1 },
-  more: { attention: false, running: false, inbox: false },
+  counts: { attention: 4, running: 1 },
+  more: { attention: false, running: false },
 };
 
 const section = (data: MobileOverview, key: string) =>
@@ -122,7 +121,6 @@ describe('queueSections', () => {
       'needsYou',
       'running',
       'review',
-      'upNext',
     ]);
     const onlyRunning = { ...overview, questions: [], permissions: [], queue: [overview.queue[4]] };
     expect(queueSections(onlyRunning).map((entry) => entry.key)).toEqual(['running']);
@@ -147,7 +145,6 @@ describe('queueSections', () => {
     });
     expect(plan.target).toEqual({ screen: 'Chat', id: 'c2', subChatId: 's2' });
     expect(failure.target).toEqual({ screen: 'Run', id: 'run-a' });
-    expect(section(overview, 'upNext')?.rows[0].target).toBeNull();
   });
 
   it('writes line two as kind, project and what is needed', () => {
@@ -160,17 +157,12 @@ describe('queueSections', () => {
       kind: 'flow',
       detail: 'Flow · design-system · Step 2 of 4',
     });
-    expect(section(overview, 'upNext')?.rows[0]).toMatchObject({
-      kind: 'inbox',
-      detail: 'From Gmail',
-    });
   });
 
   it('keeps line two to what the status word does not already say', () => {
     const [, , plan, failure] = section(overview, 'needsYou')!.rows;
     expect(plan.detail).toBe('Chat');
     expect(failure.detail).toBe('Flow · Step 3 of 5 failed: rate limit');
-    expect(section(overview, 'upNext')?.rows[0].status.word).toBe('Queued');
     expect(section(overview, 'review')?.rows[0].detail).toBe('Chat');
   });
 
@@ -187,11 +179,7 @@ describe('queueSections', () => {
   it('gives every Needs you row room for a two-line title', () => {
     const emphasis = (key: string) => section(overview, key)!.rows.map((row) => row.emphasis);
     expect(emphasis('needsYou')).toEqual([true, true, true, true]);
-    expect([...emphasis('running'), ...emphasis('review'), ...emphasis('upNext')]).toEqual([
-      false,
-      false,
-      false,
-    ]);
+    expect([...emphasis('running'), ...emphasis('review')]).toEqual([false, false]);
   });
 
   it('carries the computer’s actions onto task rows, never onto decisions', () => {
@@ -275,19 +263,18 @@ describe('queueSections', () => {
   it('counts the rows it was sent and offers more when the computer holds more', () => {
     const paged = {
       ...overview,
-      counts: { attention: 9, running: 12, inbox: 1 },
-      more: { attention: true, running: true, inbox: false },
+      counts: { attention: 9, running: 12 },
+      more: { attention: true, running: true },
     };
     // Unsent attention rows may be finished work, so Needs you counts the rows it holds.
     expect(section(paged, 'needsYou')).toMatchObject({ total: 4, hasMore: true });
     expect(section(paged, 'running')).toMatchObject({ total: 12, hasMore: true });
     expect(section(paged, 'review')).toMatchObject({ total: 1, hasMore: true });
-    expect(section(paged, 'upNext')).toMatchObject({ total: 1, hasMore: false });
   });
 });
 
 describe('expandedLimits', () => {
-  const counts = { attention: 30, running: 3, inbox: 500 };
+  const counts = { attention: 30, running: 500 };
 
   it('asks for nothing extra until a section is expanded', () => {
     expect(expandedLimits(new Set(), counts)).toEqual({});
@@ -303,9 +290,6 @@ describe('expandedLimits', () => {
   });
 
   it('follows the live count and caps at the largest page', () => {
-    expect(expandedLimits(new Set(['running', 'upNext'] as const), counts)).toEqual({
-      running: 3,
-      inbox: 200,
-    });
+    expect(expandedLimits(new Set(['running'] as const), counts)).toEqual({ running: 200 });
   });
 });

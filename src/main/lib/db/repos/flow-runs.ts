@@ -126,8 +126,12 @@ export async function getFlowRun(db: Db, id: string): Promise<FlowRun | null> {
   return row ?? null;
 }
 
-/** True if any flow_run for `flowId` is in an active status (pending/running/paused). */
-export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boolean> {
+/** A run Ask before running holds for Start: pending, with no ticket, step or task until then. */
+export const isHeldFlowRun = and(eq(flowRuns.status, 'pending'), isNotNull(flowRuns.heldAt));
+
+/** True if any flow_run for `flowId` is in an active status (pending/running/paused), or with
+ *  `heldOnly`, held for Start. */
+export async function hasActiveRunForFlow(db: Db, flowId: string, heldOnly = false) {
   const { flowVersions } = await import('../schema');
   const rows = await db
     .select({ id: flowRuns.id })
@@ -141,6 +145,7 @@ export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boole
           eq(flowRuns.status, 'running'),
           eq(flowRuns.status, 'paused'),
         ),
+        heldOnly ? isHeldFlowRun : undefined,
       ),
     )
     .limit(1);
@@ -391,6 +396,7 @@ export async function listFlowRunsForFlow(
       id: flowRuns.id,
       flowVersionId: flowRuns.flowVersionId,
       status: flowRuns.status,
+      heldAt: flowRuns.heldAt,
       triggerContext: flowRuns.triggerContext,
       idempotencyKey: flowRuns.idempotencyKey,
       batchId: flowRuns.batchId,

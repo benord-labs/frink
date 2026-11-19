@@ -161,6 +161,32 @@ describe('FlowSettingsPanel toggles', () => {
   });
 });
 
+describe('FlowSettingsPanel Ask before running', () => {
+  it('shows only for a Flow that starts on its own, and saves the setting', () => {
+    const onSettingsChange = vi.fn();
+    const props = { ...panelProps, onSettingsChange };
+    const { rerender } = renderWithTrpc(
+      <FlowSettingsPanel {...props} triggerBlockType="manual_trigger" />,
+      () => new Promise(() => {}),
+    );
+    expect(screen.queryByRole('switch', { name: 'Ask before running' })).toBeNull();
+
+    rerender(<FlowSettingsPanel {...props} triggerBlockType="webhook_trigger" />);
+    fireEvent.click(screen.getByRole('switch', { name: 'Ask before running' }));
+    expect(onSettingsChange).toHaveBeenLastCalledWith({ askBeforeRunning: true });
+
+    rerender(
+      <FlowSettingsPanel
+        {...props}
+        triggerBlockType="schedule_trigger"
+        settings={{ askBeforeRunning: true }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('switch', { name: 'Ask before running' }));
+    expect(onSettingsChange).toHaveBeenLastCalledWith({ askBeforeRunning: undefined });
+  });
+});
+
 describe('FlowSettingsPanel briefing counter', () => {
   it.each([
     [500, false],

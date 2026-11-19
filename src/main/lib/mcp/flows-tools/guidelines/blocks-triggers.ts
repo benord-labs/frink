@@ -6,6 +6,8 @@ export function getBlocksTriggersGuideline(): string {
 
 Exactly one trigger; one outgoing edge and no incoming edge. Triggers supply \`trigger.*\`, not \`previous.*\`. Batch runs bypass the trigger and use per-run \`triggerContext\` instead.
 
+Set \`graph.settings.askBeforeRunning: true\` with an \`update_settings\` patch when the user wants to confirm each automatic run: every run a webhook, schedule or post-task trigger starts is held in their Work Queue Inbox, before any step runs, until they press Start. Runs started with Run in the app or \`frink_flows_run\` start straight away.
+
 ## manual_trigger
 
 Config \`{}\`. Starts from Run in the app or an authorized MCP run. Accepts caller-defined triggerContext keys such as ticketId. Set label/customInstructions and a root batch's baseBranch as needed; dependency branch fields are injected at dispatch for dependent stages.

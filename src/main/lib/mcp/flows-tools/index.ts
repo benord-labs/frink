@@ -14,6 +14,7 @@
 import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
+import { runStatusWithHold } from '../../../../shared/lib/flows/run-display-status';
 import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-flow-graph';
 import { unreadableWebhookFilterMessage } from '../../../../shared/lib/webhook-match';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
@@ -160,7 +161,7 @@ export const GET_RUN_POLL_BACKOFF = 1.5;
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 
-const EARLY_RETURN_STATUSES = new Set(['paused', 'awaiting_input']);
+const EARLY_RETURN_STATUSES = new Set(['paused', 'awaiting_input', 'held']);
 
 const getRunArgsSchema = z.object({
   runId: localIdField('runId'),
@@ -1352,7 +1353,7 @@ async function pollUntilDone(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const run = await fetchFn(runId);
-    const done = isRunDone(run.status);
+    const done = isRunDone(runStatusWithHold(run));
     if (done === 'terminal') return { run, timedOut: false, earlyReturn: false };
     if (done === 'early') return { run, timedOut: false, earlyReturn: true };
     if (Date.now() + pollDelay >= deadline) return { run, timedOut: true, earlyReturn: false };
@@ -1458,7 +1459,7 @@ async function handleGetRun(
     return toolResult(`Failed to fetch flow run: ${message}`, true);
   }
 
-  if (wait && !isRunDone(run.status)) {
+  if (wait && !isRunDone(runStatusWithHold(run))) {
     const timeout = clampTimeout(rawTimeout);
     try {
       const result = await pollUntilDone(runId, timeout);
@@ -1467,7 +1468,7 @@ async function handleGetRun(
       if (result.timedOut) waitMeta.waitTimedOut = true;
       if (result.earlyReturn) {
         waitMeta.earlyReturn = true;
-        waitMeta.earlyReturnReason = `Run status is '${run.status}' — requires human action. Not polling further.`;
+        waitMeta.earlyReturnReason = `Run status is '${runStatusWithHold(run)}' — requires human action. Not polling further.`;
       }
       return buildGetRunResponse(run, nodeRunId, waitMeta);
     } catch (err) {

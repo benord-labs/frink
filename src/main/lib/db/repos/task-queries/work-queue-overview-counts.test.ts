@@ -101,12 +101,18 @@ describe('getWorkQueueOverviewCounts', () => {
     ).resolves.toEqual([reviewTask.id]);
   });
 
-  it('counts manual-wait Inbox tasks separately from machine admission', async () => {
-    await createTask(db, {
-      description: 'Wait for pickup',
-      source: 'manual',
-      triggerContext: { _config: { startMode: 'wait' } },
-    });
+  it('counts runs held for Start in the Inbox, and no pending task anywhere', async () => {
+    await createTask(db, { description: 'Not started yet', source: 'manual' });
+    const held = await seedFlowRun(db, GRAPH, { idempotencyKey: 'held' });
+    const dismissed = await addFlowRun(db, held.versionId, 'dismissed');
+    await db
+      .update(flowRuns)
+      .set({ status: 'pending', startedAt: null, heldAt: new Date() })
+      .where(eq(flowRuns.id, held.flowRunId));
+    await db
+      .update(flowRuns)
+      .set({ status: 'cancelled', heldAt: new Date() })
+      .where(eq(flowRuns.id, dismissed.id));
 
     await expect(getWorkQueueOverviewCounts(db)).resolves.toEqual({
       inbox: 1,

@@ -88,7 +88,8 @@ vi.mock('../../db/repos/sub-chats', () => ({
   getSubChatMode: getSubChatModeMock,
 }));
 
-vi.mock('../../db/repos/flow-runs', () => ({
+vi.mock('../../db/repos/flow-runs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../db/repos/flow-runs')>()),
   getFlowRun: getFlowRunMock,
   getActiveFlowRunForSubChat: getActiveFlowRunForSubChatMock,
 }));
@@ -1294,7 +1295,7 @@ describe('tasksRouter status schema', () => {
     getTasksWithProjectPaginatedMock.mockResolvedValueOnce(rows);
 
     await expect(
-      caller.listPaginated({ workQueueSection: 'inbox', limit: 10, cursor }),
+      caller.listPaginated({ workQueueSection: 'running', limit: 10, cursor }),
     ).resolves.toEqual({
       ...rows,
       items: [{ id: 'task-2', status: 'pending', confirmSideEffects: false }],
@@ -1302,7 +1303,7 @@ describe('tasksRouter status schema', () => {
     expect(getTasksWithProjectPaginatedMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        workQueueSection: 'inbox',
+        workQueueSection: 'running',
         limit: 10,
         cursor,
       }),
@@ -1315,7 +1316,7 @@ describe('tasksRouter status schema', () => {
 
     for (const input of [
       { status: 'pending', statuses: ['running'] },
-      { status: 'pending', workQueueSection: 'inbox' },
+      { status: 'pending', workQueueSection: 'running' },
     ]) {
       await expect(caller.listPaginated({ ...input, limit: 10 } as never)).rejects.toThrow(
         AMBIGUOUS_LIST_FILTER_ERROR_REGEX,
@@ -1355,8 +1356,18 @@ describe('tasksRouter status schema', () => {
       total: 14,
     };
     getTaskCountsMock.mockResolvedValueOnce(counts);
+    db.insert(flows).values({ id: 'flow-held', name: 'Held' }).run();
+    db.insert(flowVersions)
+      .values({ id: 'version-held', flowId: 'flow-held', versionNumber: 1, graph: {} })
+      .run();
+    db.insert(flowRuns).values({ flowVersionId: 'version-held', heldAt: new Date() }).run();
 
-    await expect(caller.listCounts()).resolves.toEqual(counts);
+    try {
+      // The sidebar's Inbox badge counts runs waiting for Start, which have no task row.
+      await expect(caller.listCounts()).resolves.toEqual({ ...counts, inbox: 1 });
+    } finally {
+      db.delete(flows).run();
+    }
     expect(getTaskCountsMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1365,7 +1376,7 @@ describe('tasksRouter status schema', () => {
     const caller = tasksRouter.createCaller({ getWindow: () => null });
     getTaskCountsMock.mockResolvedValueOnce({ pending: 0, total: 0 });
 
-    await expect(caller.listCounts()).resolves.toEqual({ pending: 0, total: 0 });
+    await expect(caller.listCounts()).resolves.toEqual({ pending: 0, total: 0, inbox: 0 });
     expect(getTaskCountsMock).toHaveBeenCalledTimes(1);
   });
 
