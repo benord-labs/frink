@@ -287,12 +287,7 @@ function clearDraftForInstance(key: string, state: StateRef, revokeBlobUrls: boo
  * flushes synchronously on every way out. Split from `useDraftManagement` so each half stays
  * readable — that one owns content, this one owns durability.
  */
-function useComposerPersistence(params: PersistenceParams): {
-  handleContentChange: (hasContent: boolean) => void;
-  clearCurrentDraft: () => void;
-  beginSend: () => void;
-  resumeDraftPersistence: () => void;
-} {
+function useComposerPersistence(params: PersistenceParams) {
   const { draftKey, editorRef, setHasContent, images, pastedTexts, attachedTask } = params;
 
   const state = useRef<PersistenceState>({
@@ -393,6 +388,7 @@ function useComposerPersistence(params: PersistenceParams): {
     clearCurrentDraft,
     beginSend,
     resumeDraftPersistence,
+    isRestored: () => state.current.restored,
   };
 }
 
@@ -437,27 +433,31 @@ export function useDraftManagement(props: Props): ReturnValue {
   const { editorRef, setHasContent, draftKey, subChatId } = props;
   const focusEditor = useCallback(() => editorRef.current?.focus(), [editorRef]);
 
-  const pasted = usePastedTextFiles(subChatId);
+  // A chip that arrives before the restore would be overwritten by it, so it goes to storage.
+  const isRestored = useRef<() => boolean>(() => false);
+  const target = { key: draftKey, newChat: true, isReady: () => isRestored.current() };
+  const pasted = usePastedTextFiles(subChatId, target);
   const fileUpload = useAgentsFileUpload(pasted.addPastedFiles);
   const taskAttachment = useTaskAttachment({ editorRef, onDrop: focusEditor });
 
-  const { images, handleAddAttachments, removeImage, clearImages, isUploading } = fileUpload;
+  const { images, handleAddAttachments, removeImage, clearImages } = fileUpload;
+  const isUploading = fileUpload.isUploading || pasted.isCopying;
   const { pastedTexts, addPastedText, removePastedText, clearPastedTexts } = pasted;
 
-  const { handleContentChange, clearCurrentDraft, beginSend, resumeDraftPersistence } =
-    useComposerPersistence({
-      draftKey,
-      editorRef,
-      setHasContent,
-      images,
-      pastedTexts,
-      attachedTask: taskAttachment.attachedTask,
-      subChatId,
-      setImagesFromDraft: fileUpload.setImagesFromDraft,
-      setPastedTextsFromDraft: pasted.setPastedTextsFromDraft,
-      setAttachedTask: taskAttachment.setAttachedTask,
-    });
-
+  const persistence = useComposerPersistence({
+    draftKey,
+    editorRef,
+    setHasContent,
+    images,
+    pastedTexts,
+    attachedTask: taskAttachment.attachedTask,
+    subChatId,
+    setImagesFromDraft: fileUpload.setImagesFromDraft,
+    setPastedTextsFromDraft: pasted.setPastedTextsFromDraft,
+    setAttachedTask: taskAttachment.setAttachedTask,
+  });
+  isRestored.current = persistence.isRestored;
+  const { handleContentChange, clearCurrentDraft, beginSend, resumeDraftPersistence } = persistence;
   const hasAttachments =
     images.length > 0 || pastedTexts.length > 0 || !!taskAttachment.attachedTask;
 

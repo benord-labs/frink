@@ -1,10 +1,18 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   PASTED_FILE_MAX_BYTES,
   PASTED_FILE_TOO_LARGE,
 } from '../../../../shared/pasted-file-limits';
 import { trpc } from '../../../lib/trpc';
+import {
+  beginPastedCopy,
+  deliverPastedChip,
+  type PastedChipSink,
+  type PastedChipTarget,
+  registerPastedChipSink,
+  usePastedCopyInFlight,
+} from '../lib/pasted-chip-delivery';
 
 export type PastedTextFile = {
   id: string;
@@ -29,11 +37,22 @@ type UsePastedTextFilesReturn = {
   clearPastedTexts: () => void;
   setPastedTextsFromDraft: (drafts: RestorablePastedText[]) => void;
   pastedTextsRef: React.RefObject<PastedTextFile[]>;
+  /** A file is still copying into this composer's slot, possibly started by a departed instance. */
+  isCopying: boolean;
 };
+
+/** Why a dropped file cannot be copied in, or null when it can. */
+function whyNotAttachable(file: File, sourcePath: string): string | null {
+  if (file.size > PASTED_FILE_MAX_BYTES) return PASTED_FILE_TOO_LARGE;
+  return sourcePath ? null : 'Save it to your computer, then drag it in or use the attach button.';
+}
 
 const newChipId = () => `pasted_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn {
+export function usePastedTextFiles(
+  subChatId: string,
+  target: PastedChipTarget | null = null,
+): UsePastedTextFilesReturn {
   const [pastedTexts, setPastedTexts] = useState<PastedTextFile[]>([]);
   const pastedTextsRef = useRef<PastedTextFile[]>([]);
 
@@ -73,29 +92,50 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
   );
 
   const attachPastedFileMutation = trpc.files.attachPastedFile.useMutation();
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const targetKey = target?.key ?? null;
+  const isCopying = usePastedCopyInFlight(targetKey);
 
-  /** Copies each file from its place on disk into the chat's pasted folder, one chip per file. */
+  const sinkRef = useRef<PastedChipSink | undefined>(undefined);
+
+  useEffect(() => {
+    if (!targetKey) return;
+    const sink: PastedChipSink = (chip) => {
+      if (targetRef.current?.isReady?.() === false) return false;
+      setPastedTexts((prev) => [...prev, chip]);
+      return true;
+    };
+    sinkRef.current = sink;
+    return registerPastedChipSink(targetKey, sink);
+  }, [targetKey]);
+
+  /** Copies each file into the chat's pasted folder, one chip per file, delivered to the slot it
+   *  was dropped into even if this composer has gone or moved to another slot meanwhile. */
   const addPastedFiles = useCallback(
     async (files: File[]) => {
+      const dropTarget = targetRef.current;
+      const origin = sinkRef.current;
+      const deliver = dropTarget
+        ? (chip: PastedTextFile) => deliverPastedChip(dropTarget, chip, subChatId, origin)
+        : (chip: PastedTextFile) => setPastedTexts((prev) => [...prev, chip]);
       for (const file of files) {
         const sourcePath = window.webUtils?.getPathForFile(file) ?? '';
-        if (file.size > PASTED_FILE_MAX_BYTES || !sourcePath) {
-          toast.error(`Couldn't attach ${file.name}`, {
-            description:
-              file.size > PASTED_FILE_MAX_BYTES
-                ? PASTED_FILE_TOO_LARGE
-                : 'Save it to your computer, then drag it in or use the attach button.',
-          });
+        const refusal = whyNotAttachable(file, sourcePath);
+        if (refusal) {
+          toast.error(`Couldn't attach ${file.name}`, { description: refusal });
           continue;
         }
+        const endCopy = beginPastedCopy(dropTarget?.key ?? null);
         try {
           const saved = await attachPastedFileMutation.mutateAsync({ subChatId, sourcePath });
-          const chip = { ...saved, id: newChipId(), preview: file.name, createdAt: new Date() };
-          setPastedTexts((prev) => [...prev, chip]);
+          deliver({ ...saved, id: newChipId(), preview: file.name, createdAt: new Date() });
         } catch (error) {
           toast.error(`Couldn't attach ${file.name}`, {
             description: error instanceof Error ? error.message : undefined,
           });
+        } finally {
+          endCopy();
         }
       }
     },
@@ -122,5 +162,6 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
     clearPastedTexts,
     setPastedTextsFromDraft,
     pastedTextsRef,
+    isCopying,
   };
 }

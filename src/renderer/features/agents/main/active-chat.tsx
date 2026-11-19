@@ -91,7 +91,7 @@ import { usePastedTextFiles } from '../hooks/use-pasted-text-files';
 import { useTextContextSelection } from '../hooks/use-text-context-selection';
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { createAgentChat } from '../lib/create-agent-chat';
-import { clearSubChatDraft, getSubChatDraftFull } from '../lib/drafts';
+import { clearSubChatDraft, getSubChatDraftFull, getSubChatDraftKey } from '../lib/drafts';
 import {
   createQueueItem,
   generateQueueId,
@@ -341,13 +341,18 @@ const ChatViewInner = memo(function ChatViewInner({
   useCacheCleanup(subChatId);
 
   // Pasted text files (large pastes and attached non-image files, saved to the chat's folder)
-  const pastedFiles = usePastedTextFiles(subChatId);
+  // Keyed by the sub-chat at drop time: switching away mid-copy must not hand its chip to another.
+  const pastedTarget = parentChatId
+    ? { key: getSubChatDraftKey(parentChatId, subChatId), newChat: false }
+    : null;
+  const pastedFiles = usePastedTextFiles(subChatId, pastedTarget);
   const { pastedTexts, addPastedText, removePastedText, clearPastedTexts, pastedTextsRef } =
     pastedFiles;
 
   // File/image upload hook: images inline, other files become pasted-file chips
-  const { images, handleAddAttachments, removeImage, clearAll, isUploading, setImagesFromDraft } =
-    useAgentsFileUpload(pastedFiles.addPastedFiles);
+  const fileUpload = useAgentsFileUpload(pastedFiles.addPastedFiles);
+  const { images, handleAddAttachments, removeImage, clearAll, setImagesFromDraft } = fileUpload;
+  const isUploading = fileUpload.isUploading || pastedFiles.isCopying;
 
   // Text context selection hook (for selecting text from assistant messages and diff)
   const {

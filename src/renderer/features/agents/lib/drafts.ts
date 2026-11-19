@@ -89,7 +89,7 @@ function saveGlobalDrafts(drafts: GlobalDraftsRaw): void {
   }
 }
 
-function getSubChatDraftKey(chatId: string, subChatId: string): string {
+export function getSubChatDraftKey(chatId: string, subChatId: string): string {
   return `${chatId}:${subChatId}`;
 }
 
@@ -398,6 +398,24 @@ export function replaceDraftText(key: string, text: string, expireStale = false)
   bumpDraftWriteCount(key);
   if (expireStale && isStaleDraft(readDraftStamp(key))) clearDraft(key);
   commitDraft(key, { ...loadGlobalDrafts()[key], text, updatedAt: Date.now() });
+}
+
+/** Adds one chip to a slot without hydrating it. `newChatSubChatId` marks the new-chat slot,
+ * which expires stale and keeps (or gains) the sub-chat id whose folder holds the file. */
+export function appendDraftPastedText(
+  key: string,
+  chip: PastedTextFile,
+  newChatSubChatId?: string,
+): void {
+  bumpDraftWriteCount(key);
+  if (newChatSubChatId && isStaleDraft(readDraftStamp(key))) clearDraft(key);
+  const current = loadGlobalDrafts()[key] ?? { text: '', updatedAt: 0 };
+  commitDraft(key, {
+    ...current,
+    updatedAt: Date.now(),
+    pastedTexts: [...(current.pastedTexts ?? []), toDraftPastedText(chip)],
+    subChatId: current.subChatId ?? newChatSubChatId,
+  });
 }
 
 export function writeSubChatDraft(chatId: string, subChatId: string, state: DraftState): void {

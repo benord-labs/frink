@@ -142,6 +142,92 @@ describe('useDraftManagement', () => {
     });
   });
 
+  describe('a file still copying when the composer goes', () => {
+    const saved = {
+      filePath: `/u/${SUB}/pasted/1a-report.pdf`,
+      filename: '1a-report.pdf',
+      size: 4,
+    };
+    const pdf = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' });
+    let finishCopy: (value: typeof saved) => void;
+
+    /** Drops the PDF and waits until the copy has started; `drop` settles once it finishes. */
+    async function dropAndLeaveCopying(view: ReturnType<typeof mountComposer>['view']) {
+      attachAsync.mockReturnValue(new Promise((resolve) => (finishCopy = resolve)));
+      window.webUtils = { getPathForFile: () => '/Users/me/report.pdf' };
+      let drop: Promise<void> = Promise.resolve();
+      await act(async () => {
+        drop = view.result.current.handleAddAttachments([pdf]);
+      });
+      expect(attachAsync).toHaveBeenCalledOnce();
+      return { drop };
+    }
+
+    beforeEach(() => {
+      attachAsync.mockReset();
+    });
+
+    it('saves the chip into the draft and restores it on return', async () => {
+      const a = mountComposer(makeEditor().ref, KEY);
+      const { drop } = await dropAndLeaveCopying(a.view);
+      act(() => a.view.unmount());
+
+      await act(async () => {
+        finishCopy(saved);
+        await drop;
+      });
+
+      expect(readDraftSubChatId(KEY)).toBe(SUB);
+      const b = mountComposer(makeEditor().ref, KEY);
+      expect(b.view.result.current.pastedTexts.map((p) => p.preview)).toEqual(['report.pdf']);
+    });
+
+    // Writing storage alone would fail here: a mounted composer never re-reads it, and its next
+    // save would write its own chip-less state back over the slot.
+    it('hands the chip to the composer that replaced it, and keeps Send blocked until then', async () => {
+      const a = mountComposer(makeEditor().ref, KEY);
+      const { drop } = await dropAndLeaveCopying(a.view);
+      act(() => a.view.unmount());
+      const editor = makeEditor();
+      const b = mountComposer(editor.ref, KEY);
+      editor.bind(b.view.result.current.handleContentChange);
+      expect(b.view.result.current.isUploading).toBe(true);
+
+      await act(async () => {
+        finishCopy(saved);
+        await drop;
+      });
+
+      expect(b.view.result.current.isUploading).toBe(false);
+      expect(b.view.result.current.pastedTexts.map((p) => p.preview)).toEqual(['report.pdf']);
+      act(() => editor.type('see the report'));
+      act(() => b.view.unmount()); // flushes the pending debounced save
+      expect(readDraft(KEY)).toMatchObject({
+        text: 'see the report',
+        pastedTexts: [{ preview: 'report.pdf' }],
+      });
+    });
+
+    // Handed to live state, the chip would be wiped by the restore that runs once the editor lands.
+    it('keeps the chip for a replacement composer whose editor has not arrived yet', async () => {
+      const a = mountComposer(makeEditor().ref, KEY);
+      const { drop } = await dropAndLeaveCopying(a.view);
+      act(() => a.view.unmount());
+      const late = makeEditor();
+      const editorRef: React.RefObject<AgentsMentionsEditorHandle | null> = { current: null };
+      const b = mountComposer(editorRef, KEY);
+
+      await act(async () => {
+        finishCopy(saved);
+        await drop;
+      });
+      editorRef.current = late.ref.current;
+      b.view.rerender();
+
+      expect(b.view.result.current.pastedTexts.map((p) => p.preview)).toEqual(['report.pdf']);
+    });
+  });
+
   it('persists on window close inside the debounce window', () => {
     const editor = makeEditor();
     const { view } = mountComposer(editor.ref, KEY);

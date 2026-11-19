@@ -2,6 +2,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getSubChatDraftKey, readDraft } from '../lib/drafts';
 import { usePastedTextFiles } from './use-pasted-text-files';
 
 const { mutateAsync, attachAsync } = vi.hoisted(() => ({
@@ -30,6 +31,7 @@ describe('usePastedTextFiles', () => {
     mutateAsync.mockReset();
     attachAsync.mockReset();
     toastError.mockReset();
+    localStorage.clear();
     window.webUtils = { getPathForFile: (file) => `/Users/me/${file.name}` };
   });
 
@@ -119,6 +121,101 @@ describe('usePastedTextFiles', () => {
 
     expect(toastError).not.toHaveBeenCalled();
     expect(attachAsync).toHaveBeenCalledOnce();
+  });
+
+  // The composer stays mounted across sub-chat switches; A's file must not be sent from B.
+  it('keeps a chip in the sub-chat it was dropped in when the user switches away mid-copy', async () => {
+    let finishCopy: (value: { filePath: string; filename: string; size: number }) => void;
+    attachAsync.mockReturnValue(new Promise((resolve) => (finishCopy = resolve)));
+    const targetFor = (sub: string) => ({ key: getSubChatDraftKey('chat-1', sub), newChat: false });
+    const { result, rerender } = renderHook(({ sub }) => usePastedTextFiles(sub, targetFor(sub)), {
+      initialProps: { sub: 'sub-a' },
+    });
+    let drop: Promise<void> = Promise.resolve();
+    act(() => {
+      drop = result.current.addPastedFiles([fileOf('notes.md', 5)]);
+    });
+    rerender({ sub: 'sub-b' });
+
+    await act(async () => {
+      finishCopy({ filePath: '/s/sub-a/pasted/n.md', filename: 'n.md', size: 5 });
+      await drop;
+    });
+
+    expect(result.current.pastedTexts).toHaveLength(0);
+    expect(readDraft(getSubChatDraftKey('chat-1', 'sub-a'))?.pastedTexts).toMatchObject([
+      { filePath: '/s/sub-a/pasted/n.md', preview: 'notes.md' },
+    ]);
+  });
+
+  describe('two panes showing the same sub-chat', () => {
+    const target = { key: getSubChatDraftKey('chat-1', 'sub-a'), newChat: false };
+    const copied = { filePath: '/s/sub-a/pasted/n.md', filename: 'n.md', size: 5 };
+    let finishCopy: (value: typeof copied) => void;
+    const mountPane = () => renderHook(() => usePastedTextFiles('sub-a', target));
+
+    beforeEach(() => {
+      attachAsync.mockReturnValue(new Promise((resolve) => (finishCopy = resolve)));
+    });
+
+    it('puts the chip in the pane it was dropped in, not the one opened later', async () => {
+      const dropped = mountPane();
+      const other = mountPane();
+      let drop: Promise<void> = Promise.resolve();
+      act(() => {
+        drop = dropped.result.current.addPastedFiles([fileOf('notes.md', 5)]);
+      });
+
+      await act(async () => {
+        finishCopy(copied);
+        await drop;
+      });
+
+      expect(dropped.result.current.pastedTexts).toHaveLength(1);
+      expect(other.result.current.pastedTexts).toHaveLength(0);
+    });
+
+    // Storage would be the wrong home: the open pane never re-reads it and its next save drops it.
+    it('gives the chip to a pane still open once the dropping pane and a later one have closed', async () => {
+      const remaining = mountPane();
+      const later = mountPane();
+      const dropped = mountPane();
+      let drop: Promise<void> = Promise.resolve();
+      act(() => {
+        drop = dropped.result.current.addPastedFiles([fileOf('notes.md', 5)]);
+      });
+      dropped.unmount();
+      later.unmount();
+
+      await act(async () => {
+        finishCopy(copied);
+        await drop;
+      });
+
+      expect(remaining.result.current.pastedTexts).toHaveLength(1);
+      expect(readDraft(target.key)).toBeNull();
+    });
+  });
+
+  // A count left raised would keep Send disabled for that chat until the app restarts.
+  it('stops counting a copy as in flight when the main process refuses it', async () => {
+    let refuse: (error: Error) => void = () => {};
+    attachAsync.mockReturnValue(new Promise((_, reject) => (refuse = reject)));
+    const target = { key: getSubChatDraftKey('chat-1', 'sub-a'), newChat: false };
+    const { result } = renderHook(() => usePastedTextFiles('sub-a', target));
+    let drop: Promise<void> = Promise.resolve();
+    act(() => {
+      drop = result.current.addPastedFiles([fileOf('src', 0)]);
+    });
+    expect(result.current.isCopying).toBe(true);
+
+    await act(async () => {
+      refuse(new Error("Folders can't be attached."));
+      await drop;
+    });
+
+    expect(result.current.isCopying).toBe(false);
+    expect(readDraft(target.key)).toBeNull();
   });
 
   it('reports a copy the main process refused, and keeps going', async () => {
