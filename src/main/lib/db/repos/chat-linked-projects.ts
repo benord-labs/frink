@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { and, eq, inArray, notLike, sql } from 'drizzle-orm';
 import { isPathWithinProject } from '../../permissions/path-check';
-import { isRootFolder } from '../../permissions/v2/linked-read/root-folder';
+import { guardedFolders, isRootFolder } from '../../permissions/v2/linked-read/root-folder';
 import type { getDatabase } from '../index';
 import { chatLinkedProjects, chats, type Project, projects } from '../schema';
 
@@ -62,7 +62,10 @@ export function listLinkedProjectRoots(
   }));
 }
 
-function linkRefusal(db: Db, chatId: string, projectId: string): LinkRefusal | null {
+type LinkingChat = { projectId: string; path: string; worktreePath: string | null };
+
+/** The chat with its own project's folder, or why it can link nothing. */
+function linkingChat(db: Db, chatId: string): LinkingChat | LinkRefusal {
   const chat = db
     .select({ projectId: chats.projectId, worktreePath: chats.worktreePath, path: projects.path })
     .from(chats)
@@ -72,14 +75,54 @@ function linkRefusal(db: Db, chatId: string, projectId: string): LinkRefusal | n
   if (!chat) return 'chat-not-found';
   if (!chat.projectId || !chat.path) return 'general-chat';
   if (isVirtual(chat.path)) return 'virtual-chat';
-  const target = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!target) return 'project-not-found';
+  return { projectId: chat.projectId, path: chat.path, worktreePath: chat.worktreePath };
+}
+
+/** Why `target` can't be linked to `chat`. `guarded` is guardedFolders(), read once for a list. */
+function targetRefusal(
+  chat: LinkingChat,
+  target: Project,
+  guarded: readonly string[],
+): LinkRefusal | null {
   if (target.id === chat.projectId) return 'main-project';
   if (isVirtual(target.path)) return 'virtual-folder';
-  if (isRootFolder(target.path)) return 'root-folder';
+  if (isRootFolder(target.path, guarded)) return 'root-folder';
   if (!fs.existsSync(target.path)) return 'folder-missing';
   if (overlapsAny(target.path, [chat.path, chat.worktreePath])) return 'overlaps-main';
   return null;
+}
+
+function linkRefusal(db: Db, chatId: string, projectId: string): LinkRefusal | null {
+  const chat = linkingChat(db, chatId);
+  if (typeof chat === 'string') return chat;
+  const target = db.select().from(projects).where(eq(projects.id, projectId)).get();
+  if (!target) return 'project-not-found';
+  return targetRefusal(chat, target, guardedFolders());
+}
+
+/** The projects linkProjectToChat would link to the chat now, leaving out those already linked:
+ * what the Link picker offers. The chat and the guarded folders are read once for the list. */
+export function listLinkableProjectIds(db: Db, chatId: string): string[] {
+  const chat = linkingChat(db, chatId);
+  if (typeof chat === 'string') return [];
+  const linked = new Set(listLinkedProjects(db, chatId).map((project) => project.id));
+  const guarded = guardedFolders();
+  return db
+    .select()
+    .from(projects)
+    .all()
+    .filter((target) => !linked.has(target.id) && targetRefusal(chat, target, guarded) === null)
+    .map(({ id }) => id);
+}
+
+/** The chats that link the project, which a delete or rename of it changes. */
+export function listChatsLinkingProject(db: Db, projectId: string): string[] {
+  return db
+    .select({ chatId: chatLinkedProjects.chatId })
+    .from(chatLinkedProjects)
+    .where(eq(chatLinkedProjects.projectId, projectId))
+    .all()
+    .map((row) => row.chatId);
 }
 
 /** Links a project's registered folder to the chat. Linking it again is a no-op. */
@@ -109,27 +152,32 @@ export function copyChatLinks(db: Db, fromChatId: string, toChatId: string): voi
 }
 
 /** Drops each link to a folder that is, holds or sits inside one of `folders`, such as the
- * worktree a chat just switched to. */
-export function dropLinksOverlapping(db: Db, chatId: string, folders: Array<string | null>): void {
+ * worktree a chat just switched to. True when a link was dropped. */
+export function dropLinksOverlapping(
+  db: Db,
+  chatId: string,
+  folders: Array<string | null>,
+): boolean {
   const dropped = listLinkedProjectRoots(db, chatId)
     .filter((link) => overlapsAny(link.path, folders))
     .map((link) => link.projectId);
-  if (dropped.length === 0) return;
+  if (dropped.length === 0) return false;
   db.delete(chatLinkedProjects)
     .where(and(ofChat(chatId), inArray(chatLinkedProjects.projectId, dropped)))
     .run();
+  return true;
 }
 
 /** Runs inside a move: a general chat or virtual folder keeps no links, and a link to the new
- * project, or to a folder that is, holds or sits inside its folder or worktree, is dropped. */
-export function settleLinksAfterMove(db: Db, chatId: string, to: MoveDestination): void {
+ * project, or to a folder that is, holds or sits inside its folder or worktree, is dropped. True
+ * when a link was dropped. */
+export function settleLinksAfterMove(db: Db, chatId: string, to: MoveDestination): boolean {
   const main = to.projectId
     ? db.select().from(projects).where(eq(projects.id, to.projectId)).get()
     : undefined;
   if (!main || isVirtual(main.path)) {
-    db.delete(chatLinkedProjects).where(ofChat(chatId)).run();
-    return;
+    return db.delete(chatLinkedProjects).where(ofChat(chatId)).run().changes > 0;
   }
-  unlinkProjectFromChat(db, chatId, main.id);
-  dropLinksOverlapping(db, chatId, [main.path, to.worktreePath]);
+  const unlinked = unlinkProjectFromChat(db, chatId, main.id);
+  return dropLinksOverlapping(db, chatId, [main.path, to.worktreePath]) || unlinked;
 }

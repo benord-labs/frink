@@ -261,7 +261,8 @@ export function pruneWorktreeHistoryEntry(
  * concurrent move can't corrupt the row.
  *
  * Returns `previousWorktreePath` so callers can invalidate the stale gitCache for the old
- * path (gitCache lives in the git layer, not here — mirrors switchWorktree).
+ * path (gitCache lives in the git layer, not here — mirrors switchWorktree), and `linksChanged`
+ * when the move dropped a linked project, so callers can tell every window.
  */
 export async function moveChatToProjectLocal(
   db: Db,
@@ -278,10 +279,10 @@ export async function moveChatToProjectLocal(
      */
     stalePrunedProjectId: string | null;
   },
-): Promise<{ updated: Chat | null; previousWorktreePath: string | null }> {
+): Promise<{ updated: Chat | null; previousWorktreePath: string | null; linksChanged: boolean }> {
   return db.transaction(() => {
     const current = db.select().from(chats).where(eq(chats.id, id)).get() as Chat | undefined;
-    if (!current) return { updated: null, previousWorktreePath: null };
+    if (!current) return { updated: null, previousWorktreePath: null, linksChanged: false };
     assertProjectNotBeingDeleted(current.projectId);
     assertProjectNotBeingDeleted(opts.projectId);
 
@@ -307,8 +308,9 @@ export async function moveChatToProjectLocal(
       .where(eq(chats.id, id))
       .returning()
       .get() as Chat | undefined;
-    settleLinksAfterMove(db, id, opts);
-    return { updated: updated ?? null, previousWorktreePath: current.worktreePath ?? null };
+    const previousWorktreePath = current.worktreePath ?? null;
+    const linksChanged = settleLinksAfterMove(db, id, opts);
+    return { updated: updated ?? null, previousWorktreePath, linksChanged };
   });
 }
 

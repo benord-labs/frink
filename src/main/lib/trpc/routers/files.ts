@@ -20,6 +20,7 @@ import type { FileStatus } from '../../../../shared/changes-types';
 import { getImageMimeType, isImagePath } from '../../../../shared/image-extensions';
 import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import { isPdfPath, MAX_PDF_BYTES } from '../../../../shared/pdf-extensions';
+import { contentSearchRegexSource } from '../../../../shared/utils/content-search-regex';
 import { escapeRegExp } from '../../../../shared/utils/escape-regexp';
 import { PathValidationError, resolvePathInWorktree } from '../../git/security/path-validation';
 import { parseGitStatus } from '../../git/utils/parse-status';
@@ -804,8 +805,7 @@ function createContentSearchMatcher(
   if (useRegex) {
     try {
       const flags = matchCase ? '' : 'i';
-      const pattern = wholeWord ? `\\b(?:${query})\\b` : query;
-      const regex = new RegExp(pattern, `${flags}g`);
+      const regex = new RegExp(contentSearchRegexSource(query, wholeWord), `${flags}g`);
       return (line: string) => {
         regex.lastIndex = 0;
         const matches: ContentSearchLineMatch[] = [];

@@ -39,6 +39,9 @@ export function usePriorityOverflow(count: number, gapPx: number, depsKey: strin
   // computation converges instead of flip-flopping between the guess and the measurement.
   const moreWidth = useRef(MORE_FALLBACK_PX);
   const [visibleFrom, setVisibleFrom] = useState(0);
+  // The content `widths` were measured for, so nothing answers from the widths of content gone.
+  const contentKey = `${count}\n${depsKey}`;
+  const measuredFor = useRef<string | null>(null);
 
   const measure = useCallback(() => {
     const container = containerRef.current;
@@ -47,6 +50,7 @@ export function usePriorityOverflow(count: number, gapPx: number, depsKey: strin
       if (el) widths.current[i] = el.offsetWidth;
     });
     if (moreRef.current) moreWidth.current = moreRef.current.offsetWidth || moreWidth.current;
+    measuredFor.current = contentKey;
     setVisibleFrom(
       computeVisibleFrom(
         widths.current.slice(0, count),
@@ -55,7 +59,7 @@ export function usePriorityOverflow(count: number, gapPx: number, depsKey: strin
         gapPx,
       ),
     );
-  }, [count, gapPx]);
+  }, [count, gapPx, contentKey]);
 
   // Content changed: a hidden item cannot be measured, so mount everything, measure, hide again.
   // Both run in layout effects, so the intermediate all-visible state never paints.
@@ -94,5 +98,19 @@ export function usePriorityOverflow(count: number, gapPx: number, depsKey: strin
     [],
   );
 
-  return { containerRef, moreRef, setItemRef, visibleFrom };
+  /** Some items go behind the "more" control at the container's width now. It reads the layout
+   *  afresh, so a neighbour can give up room before paint; false until the content is measured. */
+  const isOverflowing = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || resetPending.current || measuredFor.current !== contentKey) return false;
+    const visible = computeVisibleFrom(
+      widths.current.slice(0, count),
+      container.clientWidth,
+      moreWidth.current,
+      gapPx,
+    );
+    return visible > 0;
+  }, [count, gapPx, contentKey]);
+
+  return { containerRef, moreRef, setItemRef, visibleFrom, isOverflowing };
 }

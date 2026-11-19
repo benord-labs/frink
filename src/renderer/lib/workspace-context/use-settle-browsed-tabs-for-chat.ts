@@ -27,6 +27,6 @@ export function useSettleBrowsedTabsForChat({
   useSettleBrowsedTabs({
     chat: treeProjects.isLoaded ? chat : null,
     isSplitActive,
-    keepProjectPaths: treeProjects.extras.map((project) => project.path),
+    keepProjectPaths: treeProjects.linked.map((project) => project.path),
   });
 }

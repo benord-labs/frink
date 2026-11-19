@@ -7,7 +7,7 @@ import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
-import { AddProjectButton } from '.';
+import { LinkProjectButton } from '.';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
 vi.hoisted(() => {
@@ -40,6 +40,7 @@ let projectsReady = Promise.resolve();
 let projects = PROJECTS;
 /** The projects linked to app-chat */
 let linked: object[] = [];
+const linkedIds = () => linked.map((project) => (project as { id: string }).id);
 
 async function answer(op: Operation): Promise<unknown> {
   if (op.path === 'chats.get') {
@@ -56,6 +57,14 @@ async function answer(op: Operation): Promise<unknown> {
   }
   if (op.path === 'changes.getBranches') return { current: 'main' };
   if (op.path === 'projects.list') return projectsReady.then(() => projects);
+  if (op.path === 'chats.linkableProjects') {
+    // The server's answer: every project but the chat's own, of those not linked already.
+    const own = (CHATS[(op.input as { chatId: string }).chatId] as { project: { id: string } })
+      .project.id;
+    return projectsReady.then(() =>
+      projects.map((project) => project.id).filter((id) => id !== own && !linkedIds().includes(id)),
+    );
+  }
   throw new Error(`Unexpected test operation: ${op.path}`);
 }
 
@@ -65,7 +74,7 @@ function renderButtons(chatIds: string[], getMentionTexts?: () => string[]) {
     <Provider store={store}>
       <TooltipProvider>
         {chatIds.map((chatId) => (
-          <AddProjectButton key={chatId} chatId={chatId} getMentionTexts={getMentionTexts} />
+          <LinkProjectButton key={chatId} chatId={chatId} getMentionTexts={getMentionTexts} />
         ))}
       </TooltipProvider>
     </Provider>,
@@ -74,7 +83,7 @@ function renderButtons(chatIds: string[], getMentionTexts?: () => string[]) {
   return { store, user: userEvent.setup() };
 }
 
-const addButton = () => screen.findByRole('button', { name: 'Link project' });
+const linkButton = () => screen.findByRole('button', { name: 'Link project' });
 /** Each listed row's folder, in order */
 const rowPaths = () => screen.queryAllByRole('menuitem').map((row) => row.getAttribute('title'));
 
@@ -85,7 +94,7 @@ afterEach(() => {
   linked = [];
 });
 
-describe('AddProjectButton', () => {
+describe('LinkProjectButton', () => {
   it.each([
     ['a new-chat pane', 'empty-0'],
     ['a general chat', 'general'],
@@ -93,7 +102,7 @@ describe('AddProjectButton', () => {
   ])('shows nothing for %s', async (_, chatId) => {
     // The project chat lists projects only after both chats load, so this chat has loaded by then.
     const { user } = renderButtons([chatId, 'app-chat']);
-    await user.click(await addButton());
+    await user.click(await linkButton());
     await screen.findByRole('menuitem', { name: 'api' });
 
     expect(screen.getAllByRole('button', { name: 'Link project' })).toHaveLength(1);
@@ -102,13 +111,13 @@ describe('AddProjectButton', () => {
   it('links the picked project to the chat, offering only the other projects', async () => {
     const { user } = renderButtons(['app-chat']);
 
-    await user.click(await addButton());
+    await user.click(await linkButton());
     const rows = await screen.findAllByRole('menuitem');
     expect(rows.map((row) => row.getAttribute('title'))).toEqual(['/w/api', '/forks/app']);
     // The other 'app' shows its folder, to tell it from the chat's own project
     expect(within(rows[1]).getByText('forks')).toBeInTheDocument();
     expect(screen.getByRole('note').textContent).toBe(
-      "Linked projects are saved on this chat. The agent can read them without asking; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on app.",
+      "Linked projects are saved on this chat. The agent can read most files in them without asking, except on Codex; changes there are handled like any change outside the chat's folder. The chat's folder, branch and worktree stay on app.",
     );
     await user.click(screen.getByRole('menuitem', { name: 'api' }));
 
@@ -121,7 +130,7 @@ describe('AddProjectButton', () => {
     const getMentionTexts = vi.fn(() => ['Fixed /forks/app/src/x.ts']);
     const { user } = renderButtons(['app-chat'], getMentionTexts);
 
-    const button = await addButton();
+    const button = await linkButton();
     expect(getMentionTexts).not.toHaveBeenCalled();
     await user.click(button);
     // The projects that finish loading after the list opens are matched too.
@@ -141,9 +150,9 @@ describe('AddProjectButton', () => {
     projects = [...PROJECTS, { id: 'api-lib', name: 'lib', path: '/w/api/lib' }];
     const { user } = renderButtons(['app-chat'], () => ['Fixed /w/api/lib/x.ts']);
 
-    await user.click(await addButton());
+    await user.click(await linkButton());
     await user.click(await screen.findByRole('menuitem', { name: 'lib Mentioned in this chat' }));
-    await user.click(await addButton());
+    await user.click(await linkButton());
     await screen.findAllByRole('menuitem');
 
     // The project around it isn't marked in its place
@@ -156,13 +165,13 @@ describe('AddProjectButton', () => {
     const ui = (chatId: string) => (
       <Provider store={store}>
         <TooltipProvider>
-          <AddProjectButton
+          <LinkProjectButton
             key="pane"
             chatId={chatId}
             getMentionTexts={() => ['Fixed /forks/app/src/x.ts']}
           />
           {/* Loads the next chat first, so switching to it keeps the open list open */}
-          <AddProjectButton key="seen" chatId="api-chat" />
+          <LinkProjectButton key="seen" chatId="api-chat" />
         </TooltipProvider>
       </Provider>
     );
@@ -180,7 +189,7 @@ describe('AddProjectButton', () => {
   it('is named Link project and explains itself in a tooltip', async () => {
     renderButtons(['app-chat']);
 
-    fireEvent.focus(await addButton());
+    fireEvent.focus(await linkButton());
 
     expect(screen.getByRole('tooltip')).toHaveTextContent('Link another project to this chat');
   });

@@ -41,8 +41,10 @@ export const ProjectGroupSeparator = memo(function ProjectGroupSeparator({
     { enabled: Boolean(chatId) && !registered, staleTime: Infinity, select: chatProjectName },
   ).data;
 
+  // Full-strength muted text: the label is what tells one project's tabs from another's, and a
+  // faded one at this size falls below AA contrast.
   return (
-    <div className="flex items-center px-2 py-1.5 text-[10px] text-muted-foreground/60 font-medium uppercase tracking-wider select-none shrink-0 border-r border-border/30">
+    <div className="flex items-center px-2 py-1.5 text-[10px] text-muted-foreground font-medium uppercase tracking-wider select-none shrink-0 border-r border-border/30">
       {registered?.name ?? chatProject ?? folderName}
     </div>
   );

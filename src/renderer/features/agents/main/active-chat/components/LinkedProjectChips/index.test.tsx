@@ -60,6 +60,9 @@ async function answer(op: Operation): Promise<unknown> {
   }
   if (op.path === 'changes.getBranches') return { current: 'main' };
   if (op.path === 'projects.list') return PROJECTS;
+  if (op.path === 'chats.linkableProjects') {
+    return PROJECTS.filter((project) => project !== app).map((project) => project.id);
+  }
   throw new Error(`Unexpected test operation: ${op.path}`);
 }
 
@@ -246,7 +249,7 @@ describe('LinkedProjectChips', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Unlink api' })).toBeNull());
     expect(links).toEqual(['web']);
-    expect(screen.getByRole('button', { name: 'Link project' })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Link project' })).toHaveFocus());
   });
 
   it("keeps the chip and its focus, and shows the server's message, when unlinking fails", async () => {
@@ -370,6 +373,50 @@ describe('LinkedProjectChips', () => {
       expect(within(group).getByText('Link project')).toHaveClass(LABEL_SHOWN);
     });
 
+    // Unlinking frees room for the chips, which must not take the open list's place mid-use.
+    it('keeps the list open after an unlink from it, with focus on the row in its place', async () => {
+      links = ['api', 'web', 'docs'];
+      stubLayout({ row: 300, group: 170, name: NAME_PX });
+      const user = renderChips();
+      const group = await chipsGroup();
+
+      await user.click(await within(group).findByRole('button', { name: '+3 linked' }));
+      const more = await screen.findByRole('list', { name: 'More linked projects' });
+      await user.click(within(more).getByRole('button', { name: 'Unlink web' }));
+
+      await waitFor(() => expect(within(more).queryByText('web')).toBeNull());
+      expect(screen.getByRole('list', { name: 'More linked projects' })).toBe(more);
+      expect(within(more).getByRole('button', { name: 'Unlink docs' })).toHaveFocus();
+      expect(buttonNames(group)).toEqual(['+2 linked', 'Link project']);
+
+      // Closing it leaves the count in place, so focus goes back to it rather than to the page.
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('list')).toBeNull());
+      await waitFor(() =>
+        expect(within(group).getByRole('button', { name: '+2 linked' })).toHaveFocus(),
+      );
+      expect(buttonNames(group)).toEqual(['+2 linked', 'Link project']);
+    });
+
+    // A fit kept from a narrower row must not come back as the list opens.
+    it('opens the list with the chips and count on show, after the row widens', async () => {
+      links = ['api', 'web', 'docs', 'ui'];
+      const layout = stubLayout({ row: 300, group: 200, name: NAME_PX });
+      const user = renderChips();
+      const group = await chipsGroup();
+      await within(group).findByRole('button', { name: '+3 linked' });
+
+      layout.resize({ row: 700, group: 260, name: NAME_PX });
+      const shown = ['Unlink api', 'Unlink web', '+2 linked', 'Link project'];
+      expect(buttonNames(group)).toEqual(shown);
+      await user.click(within(group).getByRole('button', { name: '+2 linked' }));
+
+      const more = await screen.findByRole('list', { name: 'More linked projects' });
+      expect(within(more).getAllByRole('listitem')).toHaveLength(2);
+      expect(buttonNames(group)).toEqual(shown);
+      expect(within(group).getByText('Link project')).toHaveClass(LABEL_SHOWN);
+    });
+
     it('drops a chip sooner than cut its name to a letter or two', async () => {
       links = ['api', 'web'];
       const layout = stubLayout({ row: 700, group: 400, name: 20 });
@@ -381,6 +428,32 @@ describe('LinkedProjectChips', () => {
 
       layout.resize({ row: 800, group: 400, name: 50 });
       expect(buttonNames(group)).toEqual(['Unlink api', 'Unlink web', 'Link project']);
+    });
+
+    it('steps down for the git controls after it before they hide, and starts again when they change', async () => {
+      links = ['api'];
+      stubLayout({ row: 700, group: 400, name: NAME_PX });
+      // The worktree and branch fit beside the group once it shows no chip, then beside a chip too
+      let gitShrank = false;
+      const crowded = () =>
+        !gitShrank && screen.queryByRole('button', { name: 'Unlink api' }) !== null;
+      const chips = (crowdKey: string) => (
+        <TooltipProvider>
+          <LinkedProjectChips chatId="app-chat" crowded={crowded} crowdKey={crowdKey} />
+        </TooltipProvider>
+      );
+      const { rerender } = renderWithTrpc(chips('long-branch'), answer);
+      const group = await chipsGroup();
+
+      await within(group).findByRole('button', { name: '+1 linked' });
+      expect(buttonNames(group)).toEqual(['+1 linked', 'Link project']);
+      expect(within(group).getByRole('button', { name: 'Link project' })).not.toHaveClass('hidden');
+      expect(within(group).getByText('Link project')).not.toHaveClass(LABEL_SHOWN);
+
+      gitShrank = true;
+      rerender(chips('short-branch'));
+      expect(buttonNames(group)).toEqual(['Unlink api', 'Link project']);
+      expect(within(group).getByText('Link project')).toHaveClass(LABEL_SHOWN);
     });
   });
 });

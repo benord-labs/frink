@@ -6,6 +6,10 @@ import {
 } from '../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { splitViewActivePaneIndexAtom } from '../atoms';
 
+/** Controls that Enter itself activates, such as a button or a link. */
+const ENTER_ACTIVATES_SELECTOR =
+  'button, a[href], summary, [role="button"], [role="link"], [role="tab"]';
+
 export function useFocusInputOnEnter(
   editorRef: RefObject<{ focus: () => void } | null>,
   splitPaneIndex?: number,
@@ -41,6 +45,11 @@ export function useFocusInputOnEnter(
         '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper], [data-state="open"]',
       );
       if (isInsideOverlay) {
+        return;
+      }
+
+      // A focused control keeps its Enter, which clicks a button or follows a link
+      if (target.closest(ENTER_ACTIVATES_SELECTOR)) {
         return;
       }
 

@@ -2,11 +2,14 @@ import { Button } from '@benord-labs/frink-primitives';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { countOf } from '@/lib/utils/count-of';
 import { LoadingState } from '../LoadingState';
 import type { ContentSearchMatch } from '../types/content-search-match';
 
 type ContentSearchResultsProps = {
   isLoading: boolean;
+  /** The typed query has moved on from `query` and isn't searched yet, so what shows is out of date */
+  isStale?: boolean;
   query: string;
   invalidRegex: boolean;
   matches: ContentSearchMatch[];
@@ -30,6 +33,7 @@ const DEFAULT_PAGE_SIZE = 50;
 
 export function ContentSearchResults({
   isLoading,
+  isStale = false,
   query,
   invalidRegex,
   matches,
@@ -70,7 +74,14 @@ export function ContentSearchResults({
   }, [matches]);
 
   return (
-    <div className={cn('flex-1 overflow-y-auto px-2 py-2 space-y-1', className)}>
+    <div
+      className={cn(
+        'flex-1 overflow-y-auto px-2 py-2 space-y-1',
+        isStale && 'opacity-60',
+        className,
+      )}
+      aria-busy={isLoading || isStale || undefined}
+    >
       {heading}
       {isLoading ? (
         <LoadingState />
@@ -83,7 +94,7 @@ export function ContentSearchResults({
       ) : (
         <>
           <div className="px-1 pb-1 text-[11px] text-muted-foreground">
-            {`${matches.length} results in ${matchedFileCount} files`}
+            {`${countOf(matches.length, 'result')} in ${countOf(matchedFileCount, 'file')}`}
           </div>
           {groupedVisibleMatches.map((fileGroup) => (
             <section
@@ -95,7 +106,7 @@ export function ContentSearchResults({
                   {fileGroup.filePath}
                 </div>
                 <div className="text-[11px] text-muted-foreground shrink-0">
-                  {fileGroup.matches.length} {fileGroup.matches.length === 1 ? 'result' : 'results'}
+                  {countOf(fileGroup.matches.length, 'result')}
                 </div>
               </div>
               <div className="py-0.5">
@@ -112,7 +123,8 @@ export function ContentSearchResults({
                         match.endColumn,
                       )
                     }
-                    className="w-full justify-start text-left font-normal rounded-none px-2 py-1"
+                    // The file card clips anything drawn outside a row, so the focus ring sits inside it.
+                    className="w-full justify-start text-left font-normal rounded-none px-2 py-1 focus-visible:ring-inset focus-visible:ring-offset-0"
                   >
                     <div className="flex items-start gap-2">
                       <span className="text-[11px] text-muted-foreground tabular-nums min-w-[42px] text-right pt-0.5">

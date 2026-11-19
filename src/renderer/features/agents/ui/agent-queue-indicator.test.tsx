@@ -12,7 +12,9 @@ import type { AgentQueueItem } from '../lib/queue-utils';
 import { AgentQueueIndicator } from './agent-queue-indicator';
 
 vi.mock('../mentions/render-file-mentions', () => ({
-  RenderFileMentions: ({ text }: { text: string }) => <span>{text}</span>,
+  RenderFileMentions: ({ text, chatId }: { text: string; chatId?: string }) => (
+    <span data-chat-id={chatId}>{text}</span>
+  ),
 }));
 
 // The real tooltip uses Radix and requires a TooltipProvider higher in the tree. We're not
@@ -260,6 +262,13 @@ describe('AgentQueueIndicator — stacked on the composer slot', () => {
     expect(container.firstChild).toHaveAttribute('data-stacked-card');
     expect(container.firstChild).toHaveClass('rounded-t-2xl', 'border-b-0');
   });
+});
+
+// A queued file from a project linked to the chat names that project, as the sent message does.
+it("hands each queued message the chat it belongs to, for its files' linked projects", () => {
+  render(<AgentQueueIndicator queue={[baseItem]} chatId="chat-1" />);
+
+  expect(screen.getByText('first message')).toHaveAttribute('data-chat-id', 'chat-1');
 });
 
 describe('AgentQueueIndicator — header count', () => {

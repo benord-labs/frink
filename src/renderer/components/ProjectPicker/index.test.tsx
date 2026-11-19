@@ -18,9 +18,9 @@ function renderPicker(overrides: Partial<Props> = {}) {
   const onPick = vi.fn();
   render(
     <ProjectPicker
-      trigger={<button type="button">Add project</button>}
+      trigger={<button type="button">Link project</button>}
       candidates={PROJECTS}
-      footer="Only changes this tree."
+      footer="A note under the list."
       onPick={onPick}
       {...overrides}
     />,
@@ -28,7 +28,7 @@ function renderPicker(overrides: Partial<Props> = {}) {
   return { onPick, user: userEvent.setup() };
 }
 
-const trigger = () => screen.getByRole('button', { name: 'Add project' });
+const trigger = () => screen.getByRole('button', { name: 'Link project' });
 /** Each listed row's folder, in order */
 const rowPaths = () => screen.queryAllByRole('menuitem').map((row) => row.getAttribute('title'));
 
@@ -41,7 +41,7 @@ describe('ProjectPicker', () => {
     await user.click(trigger());
 
     expect(rowPaths()).toEqual(['/work/api', '/side/web', '/forks/api']);
-    expect(screen.getByRole('note')).toHaveTextContent(/^Only changes this tree\.$/);
+    expect(screen.getByRole('note')).toHaveTextContent(/^A note under the list\.$/);
   });
 
   it('shows the parent folder only beside names another project shares', async () => {

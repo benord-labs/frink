@@ -12,11 +12,12 @@ import { createChat, getChatById, moveChatToProjectLocal } from '../../db/repos/
 import { getFlowRun, setFlowRunStatus } from '../../db/repos/flow-runs';
 import * as projectsRepo from '../../db/repos/projects';
 import { createTask, getTaskById } from '../../db/repos/tasks';
-import { chats } from '../../db/schema';
+import { chatLinkedProjects, chats } from '../../db/schema';
 import { seedCompletedNodeRun, seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { gitCache } from '../../git/cache';
 import * as executorModule from '../../socket/executor';
+import * as linkedProjectsChanged from './chats/helpers/linked-projects-changed';
 import * as teardown from './chats/teardown-worktree';
 
 const { h } = vi.hoisted(() => ({ h: { db: null as unknown } }));
@@ -207,6 +208,37 @@ describe('projectsRouter.delete', () => {
     expect(result.project?.id).toBe(project.id);
     expect(result.deletedChatIds).toEqual([chat.id, 'deleted-elsewhere']);
     expect(cleanup.clearCodexSession.mock.calls).toEqual([[chat.id]]);
+  });
+
+  /** A chat in P that links Q, and a spy on what every window is told about a chat's links. */
+  async function seedLinkedProject() {
+    const broadcast = vi.spyOn(linkedProjectsChanged, 'broadcastLinkedProjectsChanged');
+    const project = await createProject(db, { name: 'P', path: '/tmp/p-links' });
+    const linked = await createProject(db, { name: 'Q', path: '/tmp/q-links' });
+    const chat = await createChat(db, { name: 'C', projectId: project.id });
+    db.insert(chatLinkedProjects).values({ chatId: chat.id, projectId: linked.id }).run();
+    return { broadcast, linked, chat };
+  }
+
+  // Its links go with it in the cascade, which no link mutation reports, so each window is told.
+  it.each([
+    ['deleting', (id: string) => caller().delete({ id })],
+    ['renaming', (id: string) => caller().rename({ id, name: 'Q2' })],
+  ])('tells the windows of each chat that links a project on %s it', async (_, change) => {
+    const { broadcast, linked, chat } = await seedLinkedProject();
+
+    await change(linked.id);
+
+    expect(broadcast.mock.calls).toEqual([[chat.id]]);
+  });
+
+  it('tells no window when the delete fails, as the links are all still there', async () => {
+    const { broadcast, linked } = await seedLinkedProject();
+    failDeleting();
+
+    await expect(caller().delete({ id: linked.id })).rejects.toThrow('database is locked');
+
+    expect(broadcast).not.toHaveBeenCalled();
   });
 
   const moveTo = (chatId: string, projectId: string | null) =>

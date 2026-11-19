@@ -52,6 +52,7 @@ describe('linkedMentionOption', () => {
       repository: 'local',
       truncatedPath: 'src',
       treePath: 'ros-service/src/a.ts',
+      project: 'ros-service',
       type: 'file',
     });
     expect(linkedMentionOption(ROS, entry('docs/api', 'folder'))).toMatchObject({

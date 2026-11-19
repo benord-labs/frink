@@ -42,6 +42,10 @@ const contentState = vi.hoisted(() => ({
   query: '',
   invalidRegex: false,
   matchesByPath: {} as Record<string, unknown[]>,
+  /** The chat's own search is loading */
+  loading: false,
+  /** The typed query is still to be searched */
+  stale: false,
 }));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
@@ -60,12 +64,12 @@ const fileTreePropsState = vi.hoisted(() => ({
   onFileClick: null as null | ((path: string) => void),
   renamingPath: null as string | null | undefined,
 }));
-// The other projects in the chat's tree, and the ones that could be added; none unless a test adds some.
+// The projects linked to the chat, and the ones it could link; none unless a test adds some.
 const treeState = vi.hoisted(() => ({
-  extras: [] as Array<{ id: string; name: string; path: string }>,
+  linked: [] as Array<{ id: string; name: string; path: string }>,
   candidates: [] as Array<{ id: string; name: string; path: string }>,
-  add: vi.fn(),
-  remove: vi.fn(),
+  link: vi.fn(),
+  unlink: vi.fn(),
 }));
 
 vi.mock('@dnd-kit/core', () => ({
@@ -154,24 +158,25 @@ vi.mock('./FileTree', () => ({
 
 vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
   useTreeProjects: (chatId?: string) => ({
-    main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: 'main' },
-    extras: treeState.extras,
+    main: chatId
+      ? { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: 'main' }
+      : null,
+    linked: treeState.linked,
     candidates: treeState.candidates,
     projectsStatus: 'success',
-    canAdd: Boolean(chatId),
-    add: treeState.add,
-    remove: treeState.remove,
+    link: treeState.link,
+    unlink: treeState.unlink,
   }),
 }));
 
-vi.mock('./tree-roots/ExtraProjectRoot', () => ({
-  ExtraProjectRoot: (props: {
+vi.mock('./tree-roots/LinkedProjectRoot', () => ({
+  LinkedProjectRoot: (props: {
     project: { name: string };
     searchQuery: string;
-    onRemove: () => void;
+    onUnlink: () => void;
   }) => (
     <section data-read-only-root aria-label={props.project.name} data-query={props.searchQuery}>
-      <button type="button" onClick={props.onRemove}>{`Remove ${props.project.name}`}</button>
+      <button type="button" onClick={props.onUnlink}>{`Unlink ${props.project.name}`}</button>
     </section>
   ),
 }));
@@ -189,7 +194,8 @@ vi.mock('./use-content-search-tab', () => ({
     setContentSearchOptions: vi.fn(),
     contentMatches: contentState.matchesByPath[projectPath] ?? [],
     contentSearchInvalidRegex: contentState.invalidRegex,
-    isLoadingContentSearch: false,
+    isLoadingContentSearch: contentState.loading,
+    isContentSearchStale: contentState.stale,
     highlightContentMatch: (line: string) => line,
   }),
   useContentSearch: ({ projectPath }: { projectPath: string }) => ({
@@ -241,6 +247,8 @@ afterEach(() => {
   contentState.query = '';
   contentState.invalidRegex = false;
   contentState.matchesByPath = {};
+  contentState.loading = false;
+  contentState.stale = false;
   directoryState.rootContents = [];
   duplicateMutateMock.mockReset();
   externalOnPasteMock.mockReset();
@@ -251,10 +259,10 @@ afterEach(() => {
   fileTreePropsState.nodes = [];
   fileTreePropsState.onFileClick = null;
   fileTreePropsState.renamingPath = null;
-  treeState.extras = [];
+  treeState.linked = [];
   treeState.candidates = [];
-  treeState.add.mockReset();
-  treeState.remove.mockReset();
+  treeState.link.mockReset();
+  treeState.unlink.mockReset();
   mutationHandlers.deleteOnSuccess = null;
   utilsInvalidate.listDirectory.mockReset();
   utilsInvalidate.search.mockReset();
@@ -858,10 +866,10 @@ describe('PaneFileTree with another project in the tree', () => {
   const api = { id: 'api', name: 'api', path: '/w/api' };
   const mainRow = () => screen.getByRole('button', { name: 'proj Main on branch main' });
   const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
-  const sectionButton = () => screen.getByRole('button', { name: 'Remove api' });
+  const sectionButton = () => screen.getByRole('button', { name: 'Unlink api' });
 
   it("shows Main and the project outside the chat's tree, counted in the footer", () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     searchState.debouncedQuery = 'src';
     render(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" isWorktree={false} />);
     const section = screen.getByRole('region', { name: 'api' });
@@ -873,13 +881,13 @@ describe('PaneFileTree with another project in the tree', () => {
     expect(screen.getByText('2 projects in this tree')).toBeInTheDocument();
 
     fireEvent.click(sectionButton());
-    expect(treeState.remove).toHaveBeenCalledExactlyOnceWith('api', {
+    expect(treeState.unlink).toHaveBeenCalledExactlyOnceWith('api', {
       onError: expect.any(Function),
     });
   });
 
   it("closes the chat's tree on Enter on Main, without renaming the selected file", async () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     mockState.primary = { path: 'src/a.ts', name: 'a.ts', type: 'file' };
     const handle = createRef<PaneFileTreeHandle>();
     render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="chat-1" />);
@@ -901,7 +909,7 @@ describe('PaneFileTree with another project in the tree', () => {
     ['act', "in the chat's tree", 1, chatTree],
     ['do nothing', "in the project's section", 0, sectionButton],
   ])('Cmd+Backspace and Cmd+Shift+N %s with focus %s', (_, __, calls, focusTarget) => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     const { actions } = renderPaneWithShortcuts();
 
     pressDeleteAndNewFile(focusTarget());
@@ -911,7 +919,7 @@ describe('PaneFileTree with another project in the tree', () => {
   });
 
   it('Cmd+Backspace and Cmd+Shift+N skip a closed Main and act once it opens again', () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     const { actions, rerenderContainer } = renderPaneWithShortcuts();
 
     // The container doesn't re-render, so it still holds the handle from before the row closed.
@@ -928,7 +936,7 @@ describe('PaneFileTree with another project in the tree', () => {
     expect(actions.onSetRootCreating).toHaveBeenCalledExactlyOnceWith('file');
   });
 
-  it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
+  it("links a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
     const user = userEvent.setup();
     treeState.candidates = [api];
     const { rerender } = render(
@@ -941,10 +949,10 @@ describe('PaneFileTree with another project in the tree', () => {
 
     await user.click(screen.getByRole('button', { name: 'Link project' }));
     await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
-    expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
+    expect(treeState.link).toHaveBeenCalledExactlyOnceWith('api');
 
     // What the real hook does once the project is in the chat's list.
-    treeState.extras = [api];
+    treeState.linked = [api];
     chatTree().focus();
     rerender(<PaneFileTree projectPath="/tmp/proj" chatId="chat-1" />);
     expect(screen.getByRole('region', { name: 'api' })).toBeInTheDocument();
@@ -952,8 +960,17 @@ describe('PaneFileTree with another project in the tree', () => {
     expect(chatTree()).toHaveFocus();
   });
 
+  it('leaves the header without a slot for Link project when the pane has no chat with a project folder', () => {
+    render(<PaneFileTree projectPath="/tmp/proj" />);
+
+    expect(screen.queryByRole('button', { name: 'Link project' })).not.toBeInTheDocument();
+    // Nothing sits beside the search field, not even an empty slot where the button would go.
+    const searchField = screen.getByPlaceholderText('Search files...');
+    expect(searchField.parentElement?.nextElementSibling).toBeNull();
+  });
+
   it('opens Main again for another chat, and once no other project is left', () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     const handle = createRef<PaneFileTreeHandle>();
     const { rerender } = render(<PaneFileTree ref={handle} projectPath="/tmp/proj" chatId="a" />);
     const showChat = (chatId: string) =>
@@ -965,9 +982,9 @@ describe('PaneFileTree with another project in the tree', () => {
     expect(handle.current?.getIsMainRootHidden?.()).toBe(false);
 
     fireEvent.click(mainRow());
-    treeState.extras = [];
+    treeState.linked = [];
     showChat('b');
-    treeState.extras = [api];
+    treeState.linked = [api];
     showChat('b');
     expect(mainRow()).toHaveAttribute('aria-expanded', 'true');
     expect(chatTree()).toBeVisible();
@@ -998,7 +1015,7 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
   };
   const searchFor = (query: string, projectPath = '/tmp/proj') => {
     contentState.query = query;
-    contentState.matchesByPath = { [projectPath]: [match('own')], '/w/api': [match('browsed')] };
+    contentState.matchesByPath = { [projectPath]: [match('own')], '/w/api': [match('linked')] };
     showSearchTab(projectPath);
   };
   const section = (heading: string) =>
@@ -1016,10 +1033,10 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
   });
 
   it.each([
-    ['no other project is in the tree', [], 'useOrders', 1],
+    ['no project is linked', [], 'useOrders', 1],
     ['nothing is typed yet', [api], '', 0],
-  ])("shows only the chat's results, with no heading, when %s", (_, extras, query, matches) => {
-    treeState.extras = extras;
+  ])("shows only the chat's results, with no heading, when %s", (_, linked, query, matches) => {
+    treeState.linked = linked;
     searchFor(query);
 
     expect(screen.queryByRole('heading')).not.toBeInTheDocument();
@@ -1027,26 +1044,24 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
   });
 
   it('groups matches under each project in tree order, opening the same path from each', () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     searchFor('useOrders');
 
     expect(screen.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
       'projMain',
       'apiLinked',
     ]);
-    const [own, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
+    const [own, linked] = screen.getAllByRole('button', { name: /useOrders/ });
     fireEvent.click(own);
     expect(openTab()).toEqual([
-      { path: '/tmp/proj/src/a.ts', projectPath: '/tmp/proj', isOtherProject: undefined },
+      { path: 'src/a.ts', projectPath: '/tmp/proj', isOtherProject: undefined },
     ]);
-    fireEvent.click(browsed);
-    expect(openTab()).toEqual([
-      { path: '/w/api/src/a.ts', projectPath: '/w/api', isOtherProject: true },
-    ]);
+    fireEvent.click(linked);
+    expect(openTab()).toEqual([{ path: 'src/a.ts', projectPath: '/w/api', isOtherProject: true }]);
   });
 
   it("names the pane's folder in Main's tooltip, the folder its matches come from", () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     searchFor('useOrders', '/tmp/proj-wt');
 
     expect(screen.getByRole('heading', { name: 'proj Main' })).toHaveAttribute(
@@ -1055,8 +1070,42 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
     );
   });
 
+  // Per section, Main then Linked: [marked busy, spinner showing, matches showing].
+  it.each([
+    [
+      "the chat's own search loads",
+      { loading: true },
+      [
+        [true, true, 0],
+        [false, false, 1],
+      ],
+    ],
+    [
+      'the typed query is still to be searched',
+      { stale: true },
+      [
+        [true, false, 1],
+        [true, false, 1],
+      ],
+    ],
+  ])('marks the sections busy while %s', (_, state, expected) => {
+    treeState.linked = [api];
+    Object.assign(contentState, state);
+    searchFor('useOrders');
+
+    const shown = ['proj Main', 'api Linked'].map((name) => {
+      const part = screen.getByRole('heading', { name }).parentElement as HTMLElement;
+      return [
+        part.getAttribute('aria-busy') === 'true',
+        part.querySelector('.animate-spin') !== null,
+        within(part).queryAllByRole('button', { name: /useOrders/ }).length,
+      ];
+    });
+    expect(shown).toEqual(expected);
+  });
+
   it('says once, with no heading, that an invalid pattern is invalid', () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     contentState.invalidRegex = true;
     searchFor('use(');
 
@@ -1065,7 +1114,7 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
   });
 
   it('counts and pages each project on its own', () => {
-    treeState.extras = [api];
+    treeState.linked = [api];
     contentState.query = 'useOrders';
     contentState.matchesByPath = {
       '/tmp/proj': matchesIn('own', 60),
@@ -1073,18 +1122,18 @@ describe('PaneFileTree Search tab with other projects in the tree', () => {
     };
     showSearchTab();
     const own = () => section('proj Main');
-    const browsed = () => section('api Linked');
+    const linked = () => section('api Linked');
     const shown = (part: ReturnType<typeof section>) =>
       part.getAllByRole('button', { name: /useOrders/ }).length;
 
     expect(own().getByText('60 results in 5 files')).toBeInTheDocument();
-    expect(browsed().getByText('55 results in 5 files')).toBeInTheDocument();
-    expect([shown(own()), shown(browsed())]).toEqual([50, 50]);
+    expect(linked().getByText('55 results in 5 files')).toBeInTheDocument();
+    expect([shown(own()), shown(linked())]).toEqual([50, 50]);
 
-    fireEvent.click(browsed().getByRole('button', { name: 'Show 5 more (5 remaining)' }));
+    fireEvent.click(linked().getByRole('button', { name: 'Show 5 more (5 remaining)' }));
 
-    expect([shown(own()), shown(browsed())]).toEqual([50, 55]);
-    expect(browsed().queryByRole('button', { name: /^Show/ })).not.toBeInTheDocument();
+    expect([shown(own()), shown(linked())]).toEqual([50, 55]);
+    expect(linked().queryByRole('button', { name: /^Show/ })).not.toBeInTheDocument();
     expect(own().getByRole('button', { name: 'Show 10 more (10 remaining)' })).toBeInTheDocument();
   });
 });

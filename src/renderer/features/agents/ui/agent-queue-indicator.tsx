@@ -47,6 +47,8 @@ type QueueItemRowProps = {
   /** Steering only exists while a turn is running AND the runtime has a live input channel.
    * Anywhere else the button still sends — it just cannot claim to steer. */
   canSteer: boolean;
+  /** The chat the queue belongs to; a file from a project linked to it names that project */
+  chatId?: string;
 };
 
 /** Claude never runs a steered command: it waits behind the live turn until that turn ends. */
@@ -66,6 +68,7 @@ const QueueItemRow = memo(function QueueItemRow({
   isEditing,
   inputHasContent,
   canSteer,
+  chatId,
 }: QueueItemRowProps) {
   // Drag is disabled on the row currently being edited.
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -181,18 +184,18 @@ const QueueItemRow = memo(function QueueItemRow({
               data-command-highlight={commandName}
             >
               <span className="sr-only">{`Command: ${commandName} — `}</span>
-              <RenderFileMentions text={commandText} focusable={false} />
+              <RenderFileMentions text={commandText} focusable={false} chatId={chatId} />
             </span>
             {commandText && cleanedText ? ' ' : null}
             {cleanedText ? (
               <span className="min-w-0 truncate">
-                <RenderFileMentions text={cleanedText} focusable={false} />
+                <RenderFileMentions text={cleanedText} focusable={false} chatId={chatId} />
               </span>
             ) : null}
           </>
         ) : (
           <span className="min-w-0 truncate">
-            <RenderFileMentions text={cleanedText ?? ''} focusable={false} />
+            <RenderFileMentions text={cleanedText ?? ''} focusable={false} chatId={chatId} />
           </span>
         )}
       </span>
@@ -306,6 +309,8 @@ type AgentQueueIndicatorProps = {
   /** Whether this chat's runtime has a live input channel to steer through. False for a provider
    * that spawns a fresh process per turn, so the button keeps its honest `Send now` wording. */
   steerSupported?: boolean;
+  /** The chat the queue belongs to; a file from a project linked to it names that project */
+  chatId?: string;
 };
 
 export const AgentQueueIndicator = memo(function AgentQueueIndicator({
@@ -318,6 +323,7 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
   inputHasContent = false,
   isStreaming = false,
   steerSupported = true,
+  chatId,
 }: AgentQueueIndicatorProps) {
   // Load expanded state from localStorage
   const [isExpanded, setIsExpanded] = useState(() => {
@@ -411,6 +417,7 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
                       isEditing={editingItemId === item.id}
                       inputHasContent={inputHasContent}
                       canSteer={isStreaming && steerSupported && !isCommandItem(item.message)}
+                      chatId={chatId}
                     />
                   ))}
                 </SortableContext>

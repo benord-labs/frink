@@ -1,5 +1,5 @@
 /** Glob/Grep checker: Read parity on the folder a search reads. In-project searches stay
- * prompt-free; anything else goes to rules, then the prompt or Auto. */
+ * prompt-free unless a rule denies or asks; anything else goes to rules, then the prompt or Auto. */
 
 import * as nodePath from 'node:path';
 import { braceSpellings } from '../../../agent-runner/env-file-reads';
@@ -58,10 +58,13 @@ export function checkSearch(
   const result = resultFromCombined(combineScopes(policy, project, user), tool, input);
   if (result.decision !== 'ask') return result;
 
-  // Same rule for every chat (general-chat-permission-parity).
-  if (searchStaysInRoot(tool, input, root) && isPathWithinProject(root, projectRoot)) {
+  // Same rule for every chat (general-chat-permission-parity). An ask rule still asks, as it does
+  // for a Read in the project.
+  const unruled = result.prompt.reason === 'no-matching-rule';
+  if (unruled && searchStaysInRoot(tool, input, root) && isPathWithinProject(root, projectRoot)) {
     return { decision: 'allow' };
   }
-  result.prompt.suggestedRules = [tool];
+  // No lasting allow on an ask rule's card: it would either lose to that rule or override it.
+  result.prompt.suggestedRules = unruled ? [tool] : [];
   return result;
 }

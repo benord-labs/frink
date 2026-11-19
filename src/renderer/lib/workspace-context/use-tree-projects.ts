@@ -3,9 +3,8 @@
  * Every surface that shows or searches those projects reads them from here.
  */
 import { toast } from 'sonner';
-import { isRootLikePath } from '../../../shared/lib/path-normalization';
 import { trpc } from '@/lib/trpc';
-import { isRealProjectPath, pathsOverlap } from './project-paths';
+import { isRealProjectPath } from './project-paths';
 
 type TreeProject = { id: string; name: string; path: string };
 
@@ -49,18 +48,14 @@ const treeChat = (chat: TreeChat) => ({
 
 const checkedOutBranch = (branches: { current: string }) => branches.current;
 
-/** A project that can sit beside `main` in the tree: a real folder that is not the whole disk and
- *  neither holds nor lies inside the chat's own project or the worktree the chat works in. */
-function canSitBeside(project: TreeProject, main: MainTreeProject): boolean {
-  return (
-    isRealProjectPath(project.path) &&
-    !isRootLikePath(project.path) &&
-    !pathsOverlap(project.path, main.path) &&
-    !pathsOverlap(project.path, main.workingPath)
-  );
-}
+type Status = 'pending' | 'error' | 'success';
 
-/** Shows a link change at once, then reads the chat again, as a worktree switch does. */
+/** One status for lists read together: failed if either failed, else loading if either is. */
+const bothStatus = (a: Status, b: Status): Status =>
+  a === 'error' || b === 'error' ? 'error' : a === 'pending' || b === 'pending' ? 'pending' : a;
+
+/** Shows a link change at once, then reads the chat, and what it can link, again, as a worktree
+ *  switch does. */
 function useLinkMutations() {
   const utils = trpc.useUtils();
   type Linked = NonNullable<ReturnType<typeof utils.chats.get.getData>>['linkedProjects'];
@@ -68,6 +63,7 @@ function useLinkMutations() {
     utils.chats.get.setData({ id: chatId }, (old) =>
       old ? { ...old, linkedProjects: change(old.linkedProjects) } : old,
     );
+    void utils.chats.linkableProjects.invalidate({ chatId });
     return utils.chats.get.invalidate({ id: chatId });
   };
   const onError = (error: { message: string }) => toast.error(error.message);
@@ -91,16 +87,21 @@ function useLinkMutations() {
 }
 
 /**
- * The chat's tree projects. `extras` are the chat's linked projects in the order they were
- * linked, each `missing` when its folder is gone. `candidates` are the projects that can still be
- * linked, and `projectsStatus` tells a list still loading or failed apart from an empty one. Only
- * a chat with a project folder of its own can link any (`canAdd`). `add` and `remove` link and
- * unlink, and a refusal shows as a toast; `remove` also tells its caller through `onError`.
+ * The chat's tree projects. `linked` are the chat's linked projects in the order they were
+ * linked, each `missing` when its folder is gone, and `readable` those whose folder is there.
+ * With `withCandidates`, `candidates` are the projects the server would link now, and
+ * `projectsStatus` tells a list still loading or failed apart from an empty one; the server checks
+ * each project's folder on disk to answer, so only a surface that offers links asks. Only a chat
+ * with a project folder of its own (`main`) can link any. `link` and `unlink` do so, and a refusal
+ * shows as a toast; `unlink` also tells its caller through `onError`.
  * `isPending` is true while either is on its way.
  */
-export function useTreeProjects(chatId: string | null | undefined) {
+export function useTreeProjects(
+  chatId: string | null | undefined,
+  { withCandidates = false }: { withCandidates?: boolean } = {},
+) {
   const key = chatId ?? '';
-  const { link, unlink } = useLinkMutations();
+  const mutations = useLinkMutations();
   const chatQuery = trpc.chats.get.useQuery(
     { id: key },
     { enabled: Boolean(chatId), select: treeChat },
@@ -117,29 +118,38 @@ export function useTreeProjects(chatId: string | null | undefined) {
     enabled: Boolean(main),
     staleTime: 300_000,
   });
+  // The answer turns on the chat's own project and folder, so a move or worktree switch asks again.
+  // Links, unlinks, a broadcast and the picker opening read it again too, hence the long staleTime.
+  const linkableQuery = trpc.chats.linkableProjects.useQuery(
+    { chatId: key, mainProjectId: main?.id, workingPath: main?.workingPath },
+    { enabled: withCandidates && Boolean(main), staleTime: 300_000 },
+  );
   const projects = projectsQuery.data ?? [];
-  const extras = chatQuery.data?.linked ?? [];
-  const candidates = main
-    ? projects.filter(
-        (project) =>
-          canSitBeside(project, main) && !extras.some((extra) => extra.id === project.id),
-      )
-    : [];
+  const linked = chatQuery.data?.linked ?? [];
+  const linkable = main ? (linkableQuery.data ?? []) : [];
+  // A link shows here before the server's list is read again, and the chat's own project never
+  // shows, even in a list read before the chat moved into it.
+  const candidates = projects.filter(
+    (project) =>
+      project.id !== main?.id &&
+      linkable.includes(project.id) &&
+      !linked.some((each) => each.id === project.id),
+  );
 
   return {
     main,
-    extras,
+    linked,
+    readable: linked.filter((project) => !project.missing),
     candidates,
-    projectsStatus: projectsQuery.status,
-    /** Whether `main` and `extras` are final: there is no chat, or it has loaded. */
+    projectsStatus: bothStatus(projectsQuery.status, linkableQuery.status),
+    /** Whether `main` and `linked` are final: there is no chat, or it has loaded. */
     isLoaded: !chatId || chatQuery.status !== 'pending',
-    canAdd: Boolean(main),
-    isPending: link.isPending || unlink.isPending,
-    add: (projectId: string) => {
-      if (main) link.mutate({ chatId: key, projectId });
+    isPending: mutations.link.isPending || mutations.unlink.isPending,
+    link: (projectId: string) => {
+      if (main) mutations.link.mutate({ chatId: key, projectId });
     },
-    remove: (projectId: string, options?: { onError?: () => void }) =>
-      unlink.mutate({ chatId: key, projectId }, options),
+    unlink: (projectId: string, options?: { onError?: () => void }) =>
+      mutations.unlink.mutate({ chatId: key, projectId }, options),
   };
 }
 

@@ -17,7 +17,8 @@ vi.hoisted(() => {
 
 const frink = { id: 'p1', name: 'frink', path: '/Users/me/code/frink' };
 const ros = { id: 'p2', name: 'ROS service', path: '/Users/me/code/ros-service' };
-const browsedTab = { projectPath: '/Users/me/code/ros-service/', isOtherProject: true };
+const ui = { id: 'p3', name: 'ui', path: '/Users/me/code/ros-service/packages/ui' };
+const otherProjectTab = { projectPath: '/Users/me/code/ros-service/', isOtherProject: true };
 const linkedRos = { ...ros, missing: false };
 /** What each chat links. frink-chat and pane-b work in frink; a general chat links nothing. */
 let linked: Record<string, object[]> = {};
@@ -35,6 +36,8 @@ function answerProjects(projects: Array<{ id: string; name: string; path: string
     const { id = '', chatId = '' } = (op.input ?? {}) as { id?: string; chatId?: string };
     if (op.path === 'projects.list') return projects;
     if (op.path === 'changes.getBranches') return { current: 'main' };
+    // The server would link either; the notice leaves out what is linked already.
+    if (op.path === 'chats.linkableProjects') return ['p2', 'p3'];
     if (op.path === 'chats.get') {
       if (holdChats) return new Promise(() => {});
       const project = ['frink-chat', 'pane-b'].includes(id) ? frink : null;
@@ -53,9 +56,16 @@ function renderNotice(ui: ReactElement, answer: (op: Operation) => Promise<unkno
   return { linkCalls: () => asked.mock.calls.filter(([op]) => op.path === 'chats.linkProject') };
 }
 
-const LINK_IT = 'Link it to let the agent read files here without asking.';
+/** Shares the notice's project list, so it shows once the notice has that list too. */
+function ListProbe() {
+  return trpc.projects.list.useQuery().data ? <span>listed</span> : null;
+}
+
+// Codex reads through commands, which linking doesn't change, so the copy says so.
+const LINK_IT = 'Link it to let the agent read most files here without asking, except on Codex.';
 const NOT_LINKED = "ROS service isn't linked to this chat.";
-const LINKED = 'ROS service is linked to this chat. The agent can read files here without asking.';
+const LINKED =
+  'ROS service is linked to this chat. The agent can read most files here without asking, except on Codex.';
 
 describe('OtherProjectNotice', () => {
   it.each([
@@ -80,7 +90,7 @@ describe('OtherProjectNotice', () => {
     async (_, sourceChatId, chatId, links, text) => {
       linked = links;
       const { linkCalls } = renderNotice(
-        <OtherProjectNotice file={{ ...browsedTab, sourceChatId }} chatId={chatId} />,
+        <OtherProjectNotice file={{ ...otherProjectTab, sourceChatId }} chatId={chatId} />,
         answerProjects([frink, ros]),
       );
 
@@ -92,10 +102,26 @@ describe('OtherProjectNotice', () => {
     },
   );
 
+  it('says a project inside a linked one is linked through it, and offers no link', async () => {
+    linked = { 'frink-chat': [linkedRos] };
+    renderNotice(
+      <OtherProjectNotice
+        file={{ projectPath: ui.path, isOtherProject: true, sourceChatId: 'frink-chat' }}
+        chatId="frink-chat"
+      />,
+      answerProjects([frink, ros, ui]),
+    );
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      /^ui is inside ROS service, which is linked to this chat\. The agent can read/,
+    );
+    expect(screen.queryByRole('button', { name: 'Link project' })).toBeNull();
+  });
+
   it("links the project to the tab's chat from its Link project button, then focuses the notice", async () => {
     const { linkCalls } = renderNotice(
       <OtherProjectNotice
-        file={{ ...browsedTab, sourceChatId: 'frink-chat' }}
+        file={{ ...otherProjectTab, sourceChatId: 'frink-chat' }}
         chatId="frink-chat"
       />,
       answerProjects([frink, ros]),
@@ -113,15 +139,11 @@ describe('OtherProjectNotice', () => {
 
   it('shows nothing until the chat on screen says what it links', async () => {
     holdChats = true;
-    // Shares the notice's project list, so it shows once the notice has that list too.
-    function ListProbe() {
-      return trpc.projects.list.useQuery().data ? <span>listed</span> : null;
-    }
     renderNotice(
       <>
         <ListProbe />
         <OtherProjectNotice
-          file={{ ...browsedTab, sourceChatId: 'frink-chat' }}
+          file={{ ...otherProjectTab, sourceChatId: 'frink-chat' }}
           chatId="frink-chat"
         />
       </>,
@@ -132,8 +154,33 @@ describe('OtherProjectNotice', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 
+  // Else a screen reader hears it twice: first without its Link project offer, then with it.
+  it('shows nothing until it knows whether the chat on screen can link the project', async () => {
+    const answer = answerProjects([frink, ros]);
+    const asked = vi.fn((op: Operation) =>
+      op.path === 'chats.linkableProjects' ? new Promise<never>(() => undefined) : answer(op),
+    );
+    renderWithTrpc(
+      <>
+        <ListProbe />
+        <OtherProjectNotice
+          file={{ ...otherProjectTab, sourceChatId: 'frink-chat' }}
+          chatId="frink-chat"
+        />
+      </>,
+      asked,
+    );
+
+    await screen.findByText('listed');
+    // Asked only once the chat has loaded.
+    await waitFor(() =>
+      expect(asked.mock.calls.some(([op]) => op.path === 'chats.linkableProjects')).toBe(true),
+    );
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
   it('falls back to the folder name for a folder no project is registered at', async () => {
-    renderNotice(<OtherProjectNotice file={browsedTab} chatId={null} />, answerProjects([]));
+    renderNotice(<OtherProjectNotice file={otherProjectTab} chatId={null} />, answerProjects([]));
 
     expect(await screen.findByRole('status')).toHaveTextContent(
       /^ros-service isn't linked to this chat\.$/,
@@ -153,7 +200,7 @@ describe('OtherProjectNotice', () => {
   });
 
   it('falls back to the folder name when the project list fails', async () => {
-    renderNotice(<OtherProjectNotice file={browsedTab} chatId={null} />, async () => {
+    renderNotice(<OtherProjectNotice file={otherProjectTab} chatId={null} />, async () => {
       throw new Error('database closed');
     });
 
@@ -162,7 +209,7 @@ describe('OtherProjectNotice', () => {
 
   it('shows nothing while the project list loads', async () => {
     const answer = vi.fn(() => new Promise<never>(() => undefined));
-    renderNotice(<OtherProjectNotice file={browsedTab} chatId={null} />, answer);
+    renderNotice(<OtherProjectNotice file={otherProjectTab} chatId={null} />, answer);
 
     await vi.waitFor(() => expect(answer).toHaveBeenCalled());
     expect(screen.queryByRole('status')).toBeNull();

@@ -2,6 +2,8 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentSendButton } from './agent-send-button';
 
@@ -35,5 +37,70 @@ describe('AgentSendButton — Stop on an adopted wake hold', () => {
     render(<AgentSendButton stopEndsBackgroundWork onClick={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
     expect(screen.getByTestId('tooltip-content')).not.toHaveTextContent(WARNING);
+  });
+});
+
+// The button turns from Send into Stop and back while the pointer rests on it. If a click left
+// focus on it, the Enter that takes you back to the message box would press the changed button.
+describe('AgentSendButton — focus after a click', () => {
+  type ButtonProps = ComponentProps<typeof AgentSendButton>;
+
+  function Composer(props: ButtonProps) {
+    return (
+      <>
+        <textarea aria-label="Message" />
+        <AgentSendButton {...props} />
+      </>
+    );
+  }
+
+  it.each([
+    {
+      change: 'queueing a message turns it into Stop',
+      before: { isStreaming: true, hasContent: true },
+      clicked: 'Add to queue',
+      after: { isStreaming: true },
+      clickRuns: 'onClick',
+      enterMustNotRun: 'onStop',
+    },
+    {
+      change: 'stopping with messages queued turns it back into Send',
+      before: { isStreaming: true },
+      clicked: 'Stop generation',
+      after: {},
+      clickRuns: 'onStop',
+      enterMustNotRun: 'onClick',
+    },
+  ] as const)(
+    'keeps focus in the message box when $change, so Enter does not press it',
+    async ({ before, clicked, after, clickRuns, enterMustNotRun }) => {
+      const user = userEvent.setup();
+      const handlers = { onClick: vi.fn(), onStop: vi.fn() };
+      const { rerender } = render(<Composer {...before} {...handlers} />);
+      const messageBox = screen.getByRole('textbox', { name: 'Message' });
+
+      await user.click(messageBox);
+      await user.click(screen.getByRole('button', { name: clicked }));
+      expect(handlers[clickRuns]).toHaveBeenCalledOnce();
+
+      rerender(<Composer {...after} {...handlers} />);
+      await user.keyboard('{Enter}');
+
+      expect(messageBox).toHaveFocus();
+      expect(handlers[enterMustNotRun]).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still takes focus from Tab, and then Enter presses it', async () => {
+    const user = userEvent.setup();
+    const onStop = vi.fn();
+    render(<Composer isStreaming onClick={vi.fn()} onStop={onStop} />);
+
+    await user.click(screen.getByRole('textbox', { name: 'Message' }));
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Stop generation' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+
+    expect(onStop).toHaveBeenCalledOnce();
   });
 });

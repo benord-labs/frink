@@ -110,6 +110,27 @@ describe('checkSearch', () => {
     expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'rule:deny', rule: 'Grep' } });
   });
 
+  it.each(['Grep', 'Glob'] as const)('honours an ask rule even inside the project: %s', (tool) => {
+    const r = checkSearch(tool, { pattern: 'x' }, userDocs({ ask: [tool] }), project);
+    expect(r).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: tool, suggestedRules: [] },
+    });
+  });
+
+  it('offers no lasting allow on an ask rule card outside the project either', () => {
+    const r = checkSearch(
+      'Grep',
+      { pattern: 'x', path: '/etc' },
+      userDocs({ ask: ['Grep'] }),
+      project,
+    );
+    expect(r).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', suggestedRules: [] },
+    });
+  });
+
   it('lets an allow rule grant outside searches', () => {
     const r = checkSearch(
       'Grep',

@@ -73,6 +73,13 @@ export async function requestFlowInvocationConsent(
   return readFlowConsentDecision(response);
 }
 
+/** The path a card shows. The Read question for a Copilot or Cursor search outside the chat's
+ * folder carries its file filter, so the card shows the files the filter names in the folder. */
+function cardPath(toolName: string, toolInput: Record<string, unknown>, file: string): string {
+  const { glob } = toolInput;
+  return toolName === 'Read' && typeof glob === 'string' && file ? path.join(file, glob) : file;
+}
+
 /**
  * Validate tool permission via the v2 dispatcher for provider hooks, MCP calls,
  * and Codex host-permission requests.
@@ -175,7 +182,7 @@ export async function validateToolPermission(
     subChatId,
     requestId,
     type: isMcp ? 'mcp_tool' : isBash ? 'bash' : 'file',
-    path: remappedPath,
+    path: cardPath(toolName, toolInput, remappedPath),
     operation: isMcp
       ? 'mcp_tool'
       : isBash

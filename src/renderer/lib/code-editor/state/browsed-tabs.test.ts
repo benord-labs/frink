@@ -43,11 +43,16 @@ describe('settleBrowsedTabs', () => {
     });
   });
 
-  it("keeps the tab, moved to the chat, when that chat's tree has its project", () => {
-    const { files, closed } = settleBrowsedTabs([browsed], forChat('chat-c', ['/ros-service/']));
+  it.each([
+    ['its project', '/ros-service', '/ros-service/', true],
+    ['a project holding its project', '/w/api/packages/ui', '/w/api', true],
+    ['only a folder whose name starts the same', '/w/api-two', '/w/api', false],
+    ['only the whole disk', '/w/api', '/', false],
+  ])("keeps the tab when that chat's tree has %s", (_, projectPath, linked, kept) => {
+    const tab = { ...browsed, projectPath };
+    const { files } = settleBrowsedTabs([tab], forChat('chat-c', [linked]));
 
-    expect(closed).toEqual([]);
-    expect(files).toEqual([{ ...browsed, sourceChatId: 'chat-c' }]);
+    expect(files).toEqual(kept ? [{ ...tab, sourceChatId: 'chat-c' }] : []);
   });
 
   it('turns the tab into an ordinary tab of a chat whose own project it is', () => {

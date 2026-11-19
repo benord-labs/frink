@@ -170,6 +170,10 @@ export function AgentSendButton({
           )}
           disabled={isDisabled}
           type="button"
+          // A click leaves focus where it was, in the message box. The button turns from Send into
+          // Stop and back under it, so a focused button would make a later Enter stop the run or
+          // send a queued message. Tab still reaches it.
+          onMouseDown={(e) => e.preventDefault()}
           onClick={handleClick}
           aria-label={getButtonAriaLabel({ ...visualState, ariaLabel })}
         >

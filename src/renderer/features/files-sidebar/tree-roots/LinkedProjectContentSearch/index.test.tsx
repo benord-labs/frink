@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openFilesAtom } from '@/lib/code-editor/state';
 import { contentSearchOptionsAtom } from '../../atoms';
 import { triggerFileTreeRefresh } from '../../refresh-trigger';
-import { ExtraProjectContentSearch } from './index';
+import { LinkedProjectContentSearch } from './index';
 
 type Query = { data?: unknown; isSuccess?: boolean; isLoading?: boolean };
 
@@ -19,6 +19,7 @@ const api = vi.hoisted(() => {
     entryType: vi.fn((_input: unknown, _options: unknown) => state.folderType),
     invalidateSearch: vi.fn(),
     invalidateEntryType: vi.fn(),
+    invalidateChat: vi.fn(),
   };
 });
 
@@ -29,6 +30,7 @@ vi.mock('@/lib/trpc', () => ({
         searchContent: { invalidate: api.invalidateSearch },
         entryType: { invalidate: api.invalidateEntryType },
       },
+      chats: { get: { invalidate: api.invalidateChat } },
     }),
     files: {
       searchContent: { useQuery: api.searchContent },
@@ -46,12 +48,12 @@ const MATCH = {
   endColumn: 12,
   lineText: 'useOrders()',
 };
-const MISSING_FOLDER = "Can't open api's folder. It may have moved or been deleted.";
+const MISSING_FOLDER = "Can't find api's folder.";
 
 function renderSections(
   query: string,
-  projects: ComponentProps<typeof ExtraProjectContentSearch>['project'][] = [
-    { id: 'api', name: 'api', path: '/w/api' },
+  projects: ComponentProps<typeof LinkedProjectContentSearch>['project'][] = [
+    { id: 'api', name: 'api', path: '/w/api', missing: false },
   ],
 ) {
   const store = createStore();
@@ -59,7 +61,7 @@ function renderSections(
   render(
     <Provider store={store}>
       {projects.map((project) => (
-        <ExtraProjectContentSearch
+        <LinkedProjectContentSearch
           key={project.id}
           project={project}
           chatId="chat-1"
@@ -86,11 +88,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('ExtraProjectContentSearch', () => {
+describe('LinkedProjectContentSearch', () => {
   it("searches each project's folder with the Search tab's trimmed query and options", () => {
     renderSections(' useOrders ', [
-      { id: 'api', name: 'api', path: '/w/api' },
-      { id: 'web', name: 'web', path: '/w/web' },
+      { id: 'api', name: 'api', path: '/w/api', missing: false },
+      { id: 'web', name: 'web', path: '/w/web', missing: false },
     ]);
 
     for (const projectPath of ['/w/api', '/w/web']) {
@@ -99,11 +101,6 @@ describe('ExtraProjectContentSearch', () => {
         expect.objectContaining({ enabled: true }),
       );
     }
-    // Earlier matches stay up while the next query loads.
-    const options = api.searchContent.mock.lastCall?.[1] as {
-      placeholderData: (p: string) => string;
-    };
-    expect(options.placeholderData('earlier')).toBe('earlier');
   });
 
   it.each(['', '   '])('sends nothing for the query %j', (query) => {
@@ -130,7 +127,7 @@ describe('ExtraProjectContentSearch', () => {
       false,
     ],
     [
-      "says the folder can't be opened when it is gone",
+      "says the folder can't be found when it is gone, and reads the chat again",
       { matches: [], invalidRegex: false },
       { data: null, isSuccess: true },
       MISSING_FOLDER,
@@ -139,7 +136,8 @@ describe('ExtraProjectContentSearch', () => {
   ])('%s, under its Linked heading', (_, data, folderType, message, asksDisk) => {
     api.state.search = { data, isLoading: false };
     api.state.folderType = folderType;
-    renderSections('use(');
+    // A valid pattern, so what shows is the search's answer.
+    renderSections('use(Orders)?');
 
     expect(screen.getByRole('heading', { name: 'api Linked' })).toHaveAttribute('title', '/w/api');
     expect(screen.getByText(message)).toBeInTheDocument();
@@ -147,6 +145,9 @@ describe('ExtraProjectContentSearch', () => {
     expect(api.entryType).toHaveBeenLastCalledWith(
       { projectPath: '/w/', relativePath: 'api' },
       { enabled: asksDisk },
+    );
+    expect(api.invalidateChat.mock.calls).toEqual(
+      message === MISSING_FOLDER ? [[{ id: 'chat-1' }]] : [],
     );
   });
 
@@ -165,7 +166,7 @@ describe('ExtraProjectContentSearch', () => {
     api.state.search = { data: { matches: [MATCH], invalidRegex: false }, isLoading: false };
     renderSections('useOrders');
 
-    expect(screen.getByText('1 results in 1 files')).toBeInTheDocument();
+    expect(screen.getByText('1 result in 1 file')).toBeInTheDocument();
     expect(api.entryType).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
   });
 
@@ -186,7 +187,7 @@ describe('ExtraProjectContentSearch', () => {
     expect(screen.queryByText(/No matches|Can't open/)).not.toBeInTheDocument();
   });
 
-  it("opens a match as the chat's browsed tab and shows its line", () => {
+  it("opens a match as the chat's preview tab and shows its line", () => {
     api.state.search = { data: { matches: [MATCH], invalidRegex: false }, isLoading: false };
     const reveals: unknown[] = [];
     const onReveal = (event: Event) => reveals.push((event as CustomEvent).detail);
@@ -198,7 +199,7 @@ describe('ExtraProjectContentSearch', () => {
 
     expect(store.get(openFilesAtom)).toEqual([
       expect.objectContaining({
-        path: '/w/api/src/orders.ts',
+        path: 'src/orders.ts',
         name: 'orders.ts',
         projectPath: '/w/api',
         isOtherProject: true,
@@ -215,8 +216,8 @@ describe('ExtraProjectContentSearch', () => {
 
   it('searches again after a file in its own folder is saved, and not after a save elsewhere', () => {
     renderSections('useOrders', [
-      { id: 'api', name: 'api', path: '/w/api' },
-      { id: 'web', name: 'web', path: '/w/web' },
+      { id: 'api', name: 'api', path: '/w/api', missing: false },
+      { id: 'web', name: 'web', path: '/w/web', missing: false },
     ]);
 
     act(() => triggerFileTreeRefresh('/tmp/proj'));

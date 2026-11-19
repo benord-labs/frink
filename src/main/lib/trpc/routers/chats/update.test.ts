@@ -14,6 +14,7 @@ const resolveTargetWorktreeMock = vi.fn();
 const listSubChatsByChatMock = vi.fn();
 const renameSubChatLocalMock = vi.fn();
 const broadcastChatNameUpdatedMock = vi.fn();
+const broadcastLinkedProjectsChangedMock = vi.fn();
 const gitCacheInvalidateStatusMock = vi.fn();
 const gitCacheInvalidateParsedDiffMock = vi.fn();
 const setChatAiAccountMock = vi.fn();
@@ -43,6 +44,9 @@ vi.mock('../../../db/repos/sub-chats', async (importOriginal) => ({
 }));
 vi.mock('./helpers/name-generation-async', () => ({
   broadcastChatNameUpdated: broadcastChatNameUpdatedMock,
+}));
+vi.mock('./helpers/linked-projects-changed', () => ({
+  broadcastLinkedProjectsChanged: broadcastLinkedProjectsChangedMock,
 }));
 vi.mock('../../../db/repos/project-ai-accounts', () => ({
   setChatAiAccount: setChatAiAccountMock,
@@ -266,6 +270,34 @@ describe('updateRouter.moveToProject', () => {
     expect(gitCacheInvalidateParsedDiffMock).toHaveBeenCalledTimes(1);
     expect(gitCacheInvalidateParsedDiffMock).toHaveBeenCalledWith('/proj/b');
   });
+
+  // A move that drops a linked project is news for every window showing the chat; one that drops
+  // none is not.
+  it.each([true, false])(
+    'tells every window when the move drops a linked project (dropped: %s)',
+    async (linksChanged) => {
+      getChatByIdMock.mockResolvedValue(
+        makeLocalChat({ id: 'c1', projectId: 'p1', worktreePath: '/proj/a' }),
+      );
+      resolveTargetWorktreeMock.mockResolvedValue({
+        worktreePath: '/proj/b',
+        branch: null,
+        baseBranch: null,
+        stalePrunedProjectId: null,
+      });
+      moveChatToProjectLocalMock.mockResolvedValue({
+        updated: makeLocalChat({ id: 'c1', projectId: 'p2', worktreePath: '/proj/b' }),
+        previousWorktreePath: '/proj/a',
+        linksChanged,
+      });
+
+      const { updateRouter } = await import('./update');
+      const caller = updateRouter.createCaller({ getWindow: () => null });
+      await caller.moveToProject({ chatId: 'c1', projectId: 'p2', projectPath: '/proj/b' });
+
+      expect(broadcastLinkedProjectsChangedMock.mock.calls).toEqual(linksChanged ? [['c1']] : []);
+    },
+  );
 
   it('returns null without touching the resolver or helper when the chat is missing', async () => {
     getChatByIdMock.mockResolvedValue(null);

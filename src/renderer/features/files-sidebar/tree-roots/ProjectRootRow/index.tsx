@@ -1,14 +1,24 @@
 import { Badge, Button } from '@benord-labs/frink-primitives';
 import { AlertTriangle, ChevronRight, GitBranch, type LucideIcon, X } from 'lucide-react';
 import type { KeyboardEvent, ReactElement } from 'react';
+import { missingFolderMessage } from '../../../../../shared/lib/missing-folder-message';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
-/** Each role's tint. The label always says the role too, so colour is never the only cue. */
+/** Each role's tint. The label, or the icon that stands in for it, says the role too, so colour is
+ *  never the only cue. */
 const BADGE_TONES = {
   main: 'bg-foreground/5 text-muted-foreground',
   linked: 'bg-primary/10 text-primary',
 };
+
+/** Under this width (container `root-row`) a badge with an icon shows only the icon, which leaves
+ *  the project's name more room. Screen readers still hear the label. */
+const LABEL_HIDDEN_WHEN_NARROW = '@max-[15rem]/root-row:sr-only';
+
+/** Under this width (container `branch`, its icon included) the branch name would show only a
+ *  clipped letter, too little for an ellipsis, so only its icon shows. Screen readers still hear it. */
+const BRANCH_HIDDEN_WHEN_NARROW = '@max-[2rem]/branch:sr-only';
 
 /** What a project is to its tree, e.g. "Linked"; `tone` tints it, neutral by default. `hint`
  *  says what the role means, in the row's tooltip. */
@@ -19,11 +29,18 @@ type RootBadgeProps = {
   hint?: string;
 };
 
-function RootBadge({ label, icon: Icon, tone = 'main' }: RootBadgeProps): ReactElement {
+function RootBadge({
+  label,
+  icon: Icon,
+  tone = 'main',
+  iconOnlyWhenNarrow = false,
+}: RootBadgeProps & { iconOnlyWhenNarrow?: boolean }): ReactElement {
   return (
     <Badge shape="tag" className={cn('shrink-0 gap-1 font-normal', BADGE_TONES[tone])}>
       {Icon && <Icon className="size-3" aria-hidden />}
-      {label}
+      <span className={Icon && iconOnlyWhenNarrow ? LABEL_HIDDEN_WHEN_NARROW : undefined}>
+        {label}
+      </span>
     </Badge>
   );
 }
@@ -62,7 +79,7 @@ type Props = {
   onExpandedChange: (expanded: boolean) => void;
   /** The id of the element the row shows and hides */
   controlsId: string;
-  /** Adds an x beside the row that takes the project out of the tree, e.g. by unlinking it */
+  /** Adds an x beside the row that unlinks the project from the chat */
   remove?: { label: string; onRemove: () => void };
 };
 
@@ -87,7 +104,7 @@ export function ProjectRootRow({
   };
 
   return (
-    <div className="flex items-center gap-0.5 pr-1">
+    <div className="@container/root-row flex items-center gap-0.5 pr-1">
       <Tooltip delayDuration={500}>
         <TooltipTrigger asChild>
           <button
@@ -111,7 +128,7 @@ export function ProjectRootRow({
               aria-hidden
             />
             <span className="truncate">{name}</span>
-            {badge && <RootBadge {...badge} />}
+            {badge && <RootBadge {...badge} iconOnlyWhenNarrow />}
             {missing ? (
               <span className="flex shrink-0 items-center text-warning">
                 <AlertTriangle className="size-3" aria-hidden />
@@ -119,18 +136,23 @@ export function ProjectRootRow({
               </span>
             ) : (
               branch && (
-                <span className="flex min-w-0 items-center gap-1 font-normal text-muted-foreground">
+                // No width of its own: it fills only the room the name leaves, down to its icon, so
+                // the name truncates only past that. The tooltip shows it whole.
+                <span className="@container/branch flex min-w-3 grow basis-0 items-center gap-1 font-normal text-muted-foreground">
                   <GitBranch className="size-3 shrink-0" aria-hidden />
                   <span className="sr-only">on branch</span>
-                  <span className="truncate">{branch}</span>
+                  <span className={cn('truncate', BRANCH_HIDDEN_WHEN_NARROW)}>{branch}</span>
                 </span>
               )
             )}
           </button>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="wrap-anywhere">
+          {/* Names the badge too, whose label a narrow row shows only as its icon */}
+          <p className="font-medium">{badge ? `${name} · ${badge.label}` : name}</p>
+          {!missing && branch && <p>{`On branch ${branch}`}</p>}
           {badge?.hint && <p>{badge.hint}</p>}
-          {missing && <p>{`Can't find ${name}'s folder.`}</p>}
+          {missing && <p>{missingFolderMessage(name)}</p>}
           <p className="font-mono">{path}</p>
         </TooltipContent>
       </Tooltip>

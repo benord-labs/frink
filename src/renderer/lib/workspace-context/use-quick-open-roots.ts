@@ -21,11 +21,11 @@ type UseQuickOpenRootsInput = {
 /**
  * The chat's own folder first, then each project linked to it, in link order; a linked folder
  * known to be gone is left out. A file from the chat's folder opens as its own tab; one from a
- * linked project opens as the chat's browsed tab.
+ * linked project opens as a preview tab of the chat.
  */
 export function useQuickOpenRoots({ pane, single }: UseQuickOpenRootsInput) {
   const chatId = pane ? pane.chatId : single.chatId;
-  const { main, extras } = useTreeProjects(chatId);
+  const { main, readable } = useTreeProjects(chatId);
   const openFile = useSetAtom(openFileAtom);
   // A split pane's chat works in its own project's folder, or its worktree.
   const path = pane ? main?.workingPath : single.path;
@@ -36,9 +36,7 @@ export function useQuickOpenRoots({ pane, single }: UseQuickOpenRootsInput) {
   const roots: QuickOpenRoot[] = path
     ? [
         { path, name: main?.name ?? '', isChat: true },
-        ...extras.flatMap((project) =>
-          project.missing ? [] : [{ path: project.path, name: project.name, isChat: false }],
-        ),
+        ...readable.map((project) => ({ path: project.path, name: project.name, isChat: false })),
       ]
     : [];
   const paneIndex = pane?.index;

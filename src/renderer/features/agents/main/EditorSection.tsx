@@ -52,6 +52,10 @@ type Props = {
   slashActiveDescendantId?: string;
   /** ID of the slash command listbox element (for aria-controls). */
   slashCommandListboxId?: string;
+  /** ID of the active option in the @ list (for aria-activedescendant). */
+  mentionActiveDescendantId?: string;
+  /** ID of the @ list element (for aria-controls). */
+  mentionListboxId?: string;
   /** Editor-context chip for the attachment strip; null when nothing from the editor is sent. */
   contextChip?: React.ReactNode;
   children?: React.ReactNode;
@@ -84,6 +88,8 @@ export function EditorSection({
   onBlur,
   slashActiveDescendantId,
   slashCommandListboxId,
+  mentionActiveDescendantId,
+  mentionListboxId,
   contextChip,
   children,
 }: Props): ReactElement {
@@ -126,6 +132,8 @@ export function EditorSection({
         onBlur={onBlur}
         slashActiveDescendantId={slashActiveDescendantId}
         slashCommandListboxId={slashCommandListboxId}
+        mentionActiveDescendantId={mentionActiveDescendantId}
+        mentionListboxId={mentionListboxId}
       />
       {children}
     </PromptInput>

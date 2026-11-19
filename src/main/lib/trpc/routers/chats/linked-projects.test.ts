@@ -1,24 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  linkProjectToChatMock,
-  unlinkProjectFromChatMock,
-  getProjectByIdMock,
-  broadcastToRendererMock,
-} = vi.hoisted(() => ({
-  linkProjectToChatMock: vi.fn(),
-  unlinkProjectFromChatMock: vi.fn(),
-  getProjectByIdMock: vi.fn(),
-  broadcastToRendererMock: vi.fn(),
-}));
+const { linkProjectToChatMock, unlinkProjectFromChatMock, getProjectByIdMock, sendMock } =
+  vi.hoisted(() => ({
+    linkProjectToChatMock: vi.fn(),
+    unlinkProjectFromChatMock: vi.fn(),
+    getProjectByIdMock: vi.fn(),
+    sendMock: vi.fn(),
+  }));
 
 vi.mock('../../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../db/repos/chat-linked-projects', () => ({
   linkProjectToChat: linkProjectToChatMock,
   unlinkProjectFromChat: unlinkProjectFromChatMock,
+  listLinkableProjectIds: () => ['p2'],
 }));
 vi.mock('../../../db/repos/projects', () => ({ getProjectById: getProjectByIdMock }));
-vi.mock('../../../socket/client', () => ({ broadcastToRenderer: broadcastToRendererMock }));
+// One open window, and one closed that must hear nothing.
+vi.mock('electron', () => ({
+  BrowserWindow: {
+    getAllWindows: () =>
+      [false, true].map((destroyed) => ({
+        isDestroyed: () => destroyed,
+        webContents: { send: sendMock },
+      })),
+  },
+}));
 
 import { linkedProjectsRouter } from './linked-projects';
 
@@ -41,7 +47,7 @@ describe('chats.linkProject', () => {
     await expect(caller().linkProject(ids)).resolves.toEqual({ success: true });
 
     expect(linkProjectToChatMock).toHaveBeenCalledWith(expect.anything(), 'c1', 'p2');
-    expect(broadcastToRendererMock.mock.calls).toEqual([CHANGED]);
+    expect(sendMock.mock.calls).toEqual([CHANGED]);
   });
 
   it.each([
@@ -67,7 +73,7 @@ describe('chats.linkProject', () => {
     linkProjectToChatMock.mockReturnValue({ ok: false, reason });
 
     await expect(caller().linkProject(ids)).rejects.toMatchObject({ code, message });
-    expect(broadcastToRendererMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -90,6 +96,15 @@ describe('chats.linkProject', () => {
   );
 });
 
+describe('chats.linkableProjects', () => {
+  it("lists the repo's linkable projects for the chat, telling no window", async () => {
+    await expect(
+      caller().linkableProjects({ chatId: 'c1', mainProjectId: 'p1', workingPath: '/w/p1' }),
+    ).resolves.toEqual(['p2']);
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('chats.unlinkProject', () => {
   it('unlinks the project and tells every window once', async () => {
     unlinkProjectFromChatMock.mockReturnValue(true);
@@ -97,14 +112,14 @@ describe('chats.unlinkProject', () => {
     await expect(caller().unlinkProject(ids)).resolves.toEqual({ success: true });
 
     expect(unlinkProjectFromChatMock).toHaveBeenCalledWith(expect.anything(), 'c1', 'p2');
-    expect(broadcastToRendererMock.mock.calls).toEqual([CHANGED]);
+    expect(sendMock.mock.calls).toEqual([CHANGED]);
   });
 
   it('does nothing and tells no window when the project was not linked', async () => {
     unlinkProjectFromChatMock.mockReturnValue(false);
 
     await expect(caller().unlinkProject(ids)).resolves.toEqual({ success: true });
-    expect(broadcastToRendererMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
   });
 });
 

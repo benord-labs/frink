@@ -40,6 +40,7 @@ export function linkedMentionOption(
     repository: 'local',
     truncatedPath: entry.path.split('/').slice(0, -1).join('/') || '/',
     treePath: `${root.name}/${entry.path}`,
+    project: root.name,
     type: entry.type,
   };
 }

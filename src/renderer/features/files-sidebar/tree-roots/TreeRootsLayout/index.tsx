@@ -3,12 +3,12 @@ import { useEffect, useId, useRef } from 'react';
 import type { TreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { RootCreateContextMenu } from '../../RootCreateContextMenu';
 import { MAIN_BADGE } from '../constants';
-import { ExtraProjectRoot } from '../ExtraProjectRoot';
+import { LinkedProjectRoot } from '../LinkedProjectRoot';
 import { ProjectRootRow } from '../ProjectRootRow';
 
 type Props = {
   /** The chat's tree projects, from useTreeProjects */
-  projects: Pick<TreeProjects, 'main' | 'extras' | 'remove'>;
+  projects: Pick<TreeProjects, 'main' | 'linked' | 'unlink'>;
   /** The chat whose tree this is */
   chatId: string;
   /** The folder the chat's own tree shows */
@@ -17,7 +17,7 @@ type Props = {
   paneIndex?: number;
   /** The tree's name filter, already debounced */
   searchQuery: string;
-  /** Gives each other project's tree its own drag and drop context, for a host without a shared one */
+  /** Gives each linked project's tree its own drag and drop context, for a host without a shared one */
   manageDnd?: boolean;
   /** Whether the chat's own files show. The host keeps it, so its shortcuts can skip a hidden tree. */
   mainExpanded: boolean;
@@ -35,7 +35,7 @@ type Props = {
  * project keeps its open folders.
  */
 export function TreeRootsLayout({
-  projects: { main, extras, remove },
+  projects: { main, linked, unlink },
   chatId,
   mainPath,
   paneIndex,
@@ -50,7 +50,7 @@ export function TreeRootsLayout({
   const layoutRef = useRef<HTMLDivElement>(null);
   /** The project the x is unlinking, kept until its row goes, the unlink fails or the chat changes */
   const removed = useRef<{ chatId: string; id: string; index: number } | null>(null);
-  const mainRow = extras.length > 0 ? main : null;
+  const mainRow = linked.length > 0 ? main : null;
 
   // Once the x has unlinked a project and its row is gone, focus moves to the next project's row,
   // else to "Main", else (no project left) to the chat's tree, rather than falling to the page.
@@ -62,7 +62,7 @@ export function TreeRootsLayout({
       removed.current = null;
       return;
     }
-    if (extras.some((project) => project.id === pending.id)) return;
+    if (linked.some((project) => project.id === pending.id)) return;
     const { index } = pending;
     removed.current = null;
     const rows = layoutRef.current?.querySelectorAll<HTMLElement>('[data-root-row]');
@@ -70,7 +70,7 @@ export function TreeRootsLayout({
     (next ?? layoutRef.current?.querySelector<HTMLElement>('[role="tree"]'))?.focus();
   });
 
-  // Without extra projects both wrappers are display: contents, so the host's layout is unchanged.
+  // Without linked projects both wrappers are display: contents, so the host's layout is unchanged.
   return (
     <div
       ref={layoutRef}
@@ -111,8 +111,8 @@ export function TreeRootsLayout({
         {children}
       </div>
       {mainRow &&
-        extras.map((project, index) => (
-          <ExtraProjectRoot
+        linked.map((project, index) => (
+          <LinkedProjectRoot
             // Another chat, or a new folder for the same project, starts a fresh section with
             // nothing selected.
             key={`${chatId}:${project.id}:${project.path}`}
@@ -121,11 +121,11 @@ export function TreeRootsLayout({
             paneIndex={paneIndex}
             searchQuery={searchQuery}
             manageDnd={manageDnd}
-            onRemove={() => {
+            onUnlink={() => {
               const pending = { chatId, id: project.id, index };
               removed.current = pending;
               // A refused unlink keeps the row, and focus stays on its x.
-              remove(project.id, {
+              unlink(project.id, {
                 onError: () => {
                   if (removed.current === pending) removed.current = null;
                 },

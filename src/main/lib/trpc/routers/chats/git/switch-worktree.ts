@@ -11,6 +11,7 @@ import {
 import { gitCache } from '../../../../git/cache';
 import { detectBaseBranch, getCurrentBranch, getDefaultBranch } from '../../../../git/worktree';
 import { publicProcedure, router } from '../../../index';
+import { broadcastLinkedProjectsChanged } from '../helpers/linked-projects-changed';
 
 /**
  * Phase 1 local-first migration: switch a chat's active worktree against local SQLite.
@@ -73,7 +74,9 @@ export const switchWorktreeRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Chat not found after update' });
       }
       // A linked project the chat now works in, or around, is no longer a separate folder.
-      dropLinksOverlapping(db, input.chatId, [input.worktreePath]);
+      if (dropLinksOverlapping(db, input.chatId, [input.worktreePath])) {
+        broadcastLinkedProjectsChanged(input.chatId);
+      }
 
       if (oldWorktreePath) {
         gitCache.invalidateStatus(oldWorktreePath);

@@ -71,6 +71,20 @@ describe('ProjectGroupSeparator', () => {
     expect(asked.mock.calls.map(([op]) => op.path)).toEqual(['projects.list']);
   });
 
+  // At this size a faded muted-foreground (/60) measures about 2.4:1, below AA's 4.5:1.
+  it('draws the name in full-strength muted text', () => {
+    renderWithTrpc(
+      <ProjectGroupSeparator
+        projectPath={undefined}
+        worktreeChatId={undefined}
+        folderName="Files"
+      />,
+      answer,
+    );
+
+    expect(screen.getByText('Files')).toHaveClass('text-muted-foreground');
+  });
+
   it('names the group of tabs from no project "Files", and asks nothing', () => {
     const asked = vi.fn(answer);
     renderWithTrpc(

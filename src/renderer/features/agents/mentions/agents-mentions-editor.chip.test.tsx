@@ -100,11 +100,19 @@ describe('composer mention chip', () => {
     { root: '/w/ros-service', path: 'src/a.ts', label: 'a.ts' },
     { root: '/w/Personal and learning/web', path: 'app/[id]/page.tsx', label: 'page.tsx' },
   ])(
-    'writes a file picked from a linked project as its full path, and reads it back the same: $root',
+    'writes a file picked from a linked project as its full path, names the project on its chip, and reads it back the same: $root',
     ({ root, path, label }) => {
       const ref = createRef<AgentsMentionsEditorHandle>();
       const { container } = render(
-        <AgentsMentionsEditor ref={ref} onTrigger={vi.fn()} onCloseTrigger={vi.fn()} />,
+        <AgentsMentionsEditor
+          ref={ref}
+          onTrigger={vi.fn()}
+          onCloseTrigger={vi.fn()}
+          linkedProjects={[
+            { path: '/w/ros', name: 'ros' },
+            { path: root, name: 'web' },
+          ]}
+        />,
       );
       const editor = container.querySelector('[contenteditable="true"]');
       if (editor) window.getSelection()?.collapse(editor, 0);
@@ -112,6 +120,9 @@ describe('composer mention chip', () => {
       ref.current?.insertMention(linkedMentionOption({ path: root, name: 'web' }, file));
       const token = `@[file:local:${root}/${path}]`;
       expect(ref.current?.getValue().trim()).toBe(token);
+      expect(container.querySelector('[data-mention-id]')?.lastElementChild).toHaveTextContent(
+        /^web$/,
+      );
 
       // A restored draft draws the chip again, with the space the editor puts after every chip.
       ref.current?.setValue(`see ${token}`);
@@ -120,8 +131,29 @@ describe('composer mention chip', () => {
       expect(chips).toHaveLength(1);
       expect(chips[0]).toHaveTextContent(label);
       expect(chips[0]).toHaveAttribute('title', `${root}/${path}`);
+      expect(chips[0]?.lastElementChild).toHaveTextContent(/^web$/);
     },
   );
+
+  it.each([
+    ['a file of the chat’s own project', 'src/a.ts'],
+    ['a file beside a linked project, in a folder its name starts', '/w/ros-service-old/a.ts'],
+  ])('names no project on a chip drawn again for %s', (_, path) => {
+    const ref = createRef<AgentsMentionsEditorHandle>();
+    const { container } = render(
+      <AgentsMentionsEditor
+        ref={ref}
+        onTrigger={vi.fn()}
+        onCloseTrigger={vi.fn()}
+        linkedProjects={[{ path: '/w/ros-service', name: 'ros-service' }]}
+      />,
+    );
+    ref.current?.setValue(`see @[file:local:${path}]`);
+
+    const chip = container.querySelector('[data-mention-id]');
+    expect(chip).toHaveTextContent(/^a\.ts$/);
+    expect(chip?.lastElementChild).not.toHaveTextContent('ros-service');
+  });
 
   it('takes the selected look while a selection covers it and drops it when cleared', async () => {
     const { editor, chip } = renderWithMention();

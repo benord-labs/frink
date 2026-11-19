@@ -75,7 +75,6 @@ import {
   consumePendingReveal,
   contextPathForTab,
   diffModePreferenceAtom,
-  editorActivePaneIndexAtom,
   editorIsSplitActiveAtom,
   fileKey,
   filterTabsToActivePaneAtom,
@@ -83,7 +82,6 @@ import {
   isImagePath,
   isMarkdownPath,
   isPdfPath,
-  lastActiveTabPerPaneAtom,
   markFileSavedAtom,
   normalizeRevealSelection,
   revealPendingOnMount,
@@ -95,7 +93,6 @@ import {
   revokePdfBlobIfPresent,
   selectionFileNameForTab,
   shouldRevealNow,
-  trackPaneTabAtom,
   updateFileContentAtom,
 } from '@/lib/code-editor/state';
 import { customHotkeysAtom } from '@/lib/atoms';
@@ -104,6 +101,7 @@ import {
   disambiguateProjectPaths,
   getEditorTabCycleDirection,
   getProjectName,
+  usePaneTabs,
 } from '@/lib/code-editor/tabs';
 import type { ShortcutActionId } from '@/lib/hotkeys';
 import { appStore } from '@/lib/jotai-store';
@@ -203,9 +201,14 @@ const FileTab = memo(function FileTab({
     onSelect(tabKey);
   }, [onSelect, tabKey]);
 
-  const handleClose = useCallback(() => {
-    onClose(tabKey);
-  }, [onClose, tabKey]);
+  // The tab's own click would select the tab again once it has closed, leaving no file shown
+  const handleClose = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      onClose(tabKey);
+    },
+    [onClose, tabKey],
+  );
 
   const handlePin = useCallback(() => {
     onPin(tabKey);
@@ -221,7 +224,8 @@ const FileTab = memo(function FileTab({
       tabIndex={0}
       onClick={handleSelect}
       onDoubleClick={handlePin}
-      onKeyDown={(e) => e.key === 'Enter' && handleSelect()}
+      // Enter on the close button closes the tab; only Enter on the tab itself selects it
+      onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && handleSelect()}
       title={previewTooltip}
       className={cn(
         'group flex items-center gap-1.5 px-3 py-1.5 text-sm border-r border-border/50 transition-colors cursor-pointer select-none shrink-0',
@@ -300,7 +304,7 @@ function ToolbarIconButton({
   className = 'p-1 rounded transition-colors',
   ariaPressed,
 }: {
-  onClick: () => void;
+  onClick: (event: React.MouseEvent) => void;
   icon: React.ReactNode;
   label: string;
   shortcutId?: ShortcutActionId;
@@ -367,9 +371,6 @@ export function CodeEditorPanel() {
 
   // Split view pane awareness
   const isSplitActive = useAtomValue(editorIsSplitActiveAtom);
-  const editorActivePaneIndex = useAtomValue(editorActivePaneIndexAtom);
-  const lastActiveTabPerPane = useAtomValue(lastActiveTabPerPaneAtom);
-  const trackPaneTab = useSetAtom(trackPaneTabAtom);
   const [filterToActivePane, setFilterToActivePane] = useAtom(filterTabsToActivePaneAtom);
 
   const [isMaximized, setIsMaximized] = useAtom(codeEditorMaximizedAtom);
@@ -422,13 +423,6 @@ export function CodeEditorPanel() {
     };
   }, []);
 
-  // Track last active tab per pane when active file changes
-  useEffect(() => {
-    if (activePath && activeFile?.sourcePaneIndex !== undefined) {
-      trackPaneTab({ paneIndex: activeFile.sourcePaneIndex, key: activePath });
-    }
-  }, [activePath, activeFile?.sourcePaneIndex, trackPaneTab]);
-
   // Sync active file to per-chat context so context stays correct when switching tabs or after project switch
   const activeContextPath = activeFile
     ? contextPathForTab(activeFile, activeFile.sourceChatId, isSplitActive).path
@@ -441,33 +435,12 @@ export function CodeEditorPanel() {
     });
   }, [activeFile?.sourceChatId, activeFile?.name, activeContextPath]);
 
-  // Auto-focus: when active pane changes in split view, switch to that pane's last active tab
-  const prevPaneIndexRef = useRef(editorActivePaneIndex);
-  useEffect(() => {
-    if (
-      !isSplitActive ||
-      editorActivePaneIndex === null ||
-      editorActivePaneIndex === prevPaneIndexRef.current
-    ) {
-      prevPaneIndexRef.current = editorActivePaneIndex;
-      return;
-    }
-    prevPaneIndexRef.current = editorActivePaneIndex;
-    const lastTab = lastActiveTabPerPane[editorActivePaneIndex];
-    if (lastTab && files.some((f) => fileKey(f.path, f.projectPath) === lastTab)) {
-      setActivePath(lastTab);
-    }
-  }, [editorActivePaneIndex, isSplitActive, lastActiveTabPerPane, files, setActivePath]);
-
-  // Compute visible (possibly filtered) files, and how the tab bar groups and orders them
-  const { visibleFiles, tabGroups, tabOrder } = useMemo(() => {
-    let visible = files;
-    if (isSplitActive && filterToActivePane && editorActivePaneIndex !== null) {
-      visible = files.filter((f) => f.sourcePaneIndex === editorActivePaneIndex);
-    }
-    const { groups, order } = arrangeTabsByProject(visible);
-    return { visibleFiles: visible, tabGroups: groups, tabOrder: order };
-  }, [files, isSplitActive, filterToActivePane, editorActivePaneIndex]);
+  // The tabs the bar shows (keeping the editor on one of them), and how it groups and orders them
+  const visibleFiles = usePaneTabs();
+  const { groups: tabGroups, order: tabOrder } = useMemo(
+    () => arrangeTabsByProject(visibleFiles),
+    [visibleFiles],
+  );
 
   // Tab-bar overflow fade indicators; re-measures on scroll/resize and when the
   // tab list or pane filter changes (both reflow the bar).
@@ -539,16 +512,6 @@ export function CodeEditorPanel() {
     editor.revealLineInCenter(clampedLine);
     return true;
   }, []);
-
-  // When filter hides the active tab, auto-switch to a visible tab
-  useEffect(() => {
-    if (!filterToActivePane || !activePath || visibleFiles.length === 0) return;
-    const activeIsVisible = visibleFiles.some((f) => fileKey(f.path, f.projectPath) === activePath);
-    if (!activeIsVisible) {
-      const first = visibleFiles[0];
-      setActivePath(fileKey(first.path, first.projectPath));
-    }
-  }, [filterToActivePane, activePath, visibleFiles, setActivePath]);
 
   // Load file content when active file changes and doesn't have content
   const activeFilePath = activeFile?.path;

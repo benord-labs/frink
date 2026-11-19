@@ -11,6 +11,7 @@ import { retireRetainedSession } from '../../../socket/claude-session-registry';
 import { releaseWakeHold } from '../../../socket/claude-wake-hold';
 import { publicProcedure, router } from '../../index';
 import { renameChatHierarchy } from './helpers';
+import { broadcastLinkedProjectsChanged } from './helpers/linked-projects-changed';
 import { mapLocalChatResponse } from './map-chat-response';
 
 /**
@@ -60,13 +61,15 @@ export const updateRouter = router({
           history,
         });
 
-        const { updated, previousWorktreePath } = await moveChatToProjectLocal(db, input.chatId, {
+        const moved = await moveChatToProjectLocal(db, input.chatId, {
           projectId: input.projectId,
           worktreePath: resolved.worktreePath,
           branch: resolved.branch,
           baseBranch: resolved.baseBranch,
           stalePrunedProjectId: resolved.stalePrunedProjectId,
         });
+        const { updated, previousWorktreePath } = moved;
+        if (moved.linksChanged) broadcastLinkedProjectsChanged(input.chatId);
 
         // Invalidate gitCache for BOTH the old and new paths — the new path may carry stale
         // cache from a prior visit (auto-restore reuses the original worktree).

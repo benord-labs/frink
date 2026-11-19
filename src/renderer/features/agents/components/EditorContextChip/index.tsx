@@ -1,4 +1,5 @@
 import { pathLabel } from '../../../../../shared/lib/mentions/parse-mention';
+import { findProjectForPath } from '@/lib/workspace-context/project-paths';
 import type { CodeSelectionContext } from '../../lib/queue-utils';
 import { AgentFileItem } from '../../ui/agent-file-item';
 
@@ -11,6 +12,8 @@ type EditorContextChipProps = {
   fileName: string | null | undefined;
   /** Full path of that open file, shown in the badge's tooltip. */
   filePath?: string | null;
+  /** The projects linked to the chat; a selection from one names it, as its mention does. */
+  linkedProjects?: ReadonlyArray<{ name: string; path: string }>;
   onRemoveSelection: () => void;
   onRemoveFile: () => void;
 };
@@ -21,6 +24,7 @@ export function EditorContextChip({
   selection,
   fileName,
   filePath,
+  linkedProjects = [],
   onRemoveSelection,
   onRemoveFile,
 }: EditorContextChipProps) {
@@ -33,6 +37,7 @@ export function EditorContextChip({
       <AgentFileItem
         filename={name}
         path={selection.filePath}
+        project={findProjectForPath(selection.filePath, linkedProjects)?.name}
         detail={`L${lines}`}
         removeLabel={`Remove code selection and file from context: ${name} lines ${lines}`}
         onRemove={() => {

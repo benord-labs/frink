@@ -438,6 +438,13 @@ function emitMoveResponse(requestId: string, approved: boolean) {
   handler({}, { requestId, approved });
 }
 
+/** What every window was told about a chat's links changing, in order. */
+function linkChanges(): unknown[] {
+  return state.windows[0].webContents.send.mock.calls
+    .filter((call) => call[0] === 'chats:linked-projects-changed')
+    .map((call) => call[1]);
+}
+
 function getLastMoveRequestPayload() {
   const sendCalls = state.windows[0].webContents.send.mock.calls;
   const moveRequestCall = [...sendCalls]
@@ -523,6 +530,7 @@ describe('dynamic-chat-server requestSwitchProject', () => {
           archivedAt: null,
         },
         previousWorktreePath: '/old/worktree',
+        linksChanged: false,
       }),
     );
     state.updateChat.mockResolvedValue({
@@ -764,6 +772,7 @@ describe('dynamic-chat-server requestSwitchProject', () => {
 
   it('allows same-project switch when requested worktree differs from current worktree', async () => {
     const executionId = setCurrentExecutionChat('chat-1', 'sub-1', '/old/path');
+    state.dropLinksOverlapping.mockReturnValue(true);
     state.getProjectByIdLocal.mockResolvedValue({
       id: 'project-1',
       name: 'Owners',
@@ -798,11 +807,14 @@ describe('dynamic-chat-server requestSwitchProject', () => {
     expect(state.dropLinksOverlapping).toHaveBeenCalledWith(expect.anything(), 'chat-1', [
       '/new/worktree',
     ]);
+    // A link the switch dropped is news for every window showing the chat.
+    expect(linkChanges()).toEqual([{ chatId: 'chat-1' }]);
     expect(state.moveChatToProjectLocal).not.toHaveBeenCalled();
   });
 
   it('allows same-project switch from worktree back to project root', async () => {
     const executionId = setCurrentExecutionChat('chat-1', 'sub-1', '/old/worktree');
+    state.dropLinksOverlapping.mockReturnValue(false);
     state.getProjectByIdLocal.mockResolvedValue({
       id: 'project-1',
       name: 'Owners',
@@ -833,8 +845,51 @@ describe('dynamic-chat-server requestSwitchProject', () => {
     expect(state.updateChat).toHaveBeenCalledWith(expect.anything(), 'chat-1', {
       worktreePath: null,
     });
+    // It dropped no link, so no window has anything to read again.
+    expect(linkChanges()).toEqual([]);
     expect(state.moveChatToProjectLocal).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [true, [{ chatId: 'chat-1' }]],
+    [false, []],
+  ])(
+    'tells every window when a move to another project drops a link (dropped: %s)',
+    async (linksChanged, told) => {
+      const executionId = setCurrentExecutionChat('chat-1', 'sub-1', '/old/path');
+      state.getProjectByIdLocal.mockImplementation(async (_db: unknown, projectId: string) => {
+        if (projectId === 'project-2')
+          return { id: 'project-2', name: 'Hackathon', path: '/new/path' };
+        if (projectId === 'project-1')
+          return { id: 'project-1', name: 'Owners', path: '/old/path' };
+        return null;
+      });
+      state.getChatById.mockResolvedValue({
+        id: 'chat-1',
+        projectId: 'project-1',
+        worktreePath: '/old/worktree',
+        branch: 'feat-old',
+        archivedAt: null,
+      });
+      const move = state.moveChatToProjectLocal.getMockImplementation();
+      state.moveChatToProjectLocal.mockImplementation(async (...args: unknown[]) => ({
+        ...(await move?.(...args)),
+        linksChanged,
+      }));
+
+      const promise = callDynamicChatToolByName(
+        'requestSwitchProject',
+        { project_id: 'project-2', worktree_path: '/worktrees/frink/feature-return' },
+        executionId,
+      );
+      await flushMicrotasks();
+      emitMoveResponse(requireMovePayload().requestId, true);
+
+      expect((await promise).isError).toBe(false);
+      expect(state.moveChatToProjectLocal).toHaveBeenCalledOnce();
+      expect(linkChanges()).toEqual(told);
+    },
+  );
 
   it('supports explicit worktree targeting via worktree_path', async () => {
     const executionId = setCurrentExecutionChat('chat-1', 'sub-1', '/old/path');

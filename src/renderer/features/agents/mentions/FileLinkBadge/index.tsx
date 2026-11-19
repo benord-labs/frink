@@ -1,7 +1,6 @@
 import { useAtomValue } from 'jotai';
 import path from 'path';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
-import { isSameFolder } from '../../../../../shared/lib/path-normalization';
 import { FileLinkBadgeContext, type FileReference } from '@/lib/file-links/file-link-badge-context';
 import {
   buildFileLinkLabels,
@@ -16,7 +15,7 @@ import {
 } from '@/lib/file-links/file-link-target';
 import { useOpenFileLink } from '@/lib/file-links/use-open-file-link';
 import { trpc } from '@/lib/trpc';
-import { isRealProjectPath } from '@/lib/workspace-context/project-paths';
+import { findProjectForPath, isRealProjectPath } from '@/lib/workspace-context/project-paths';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { splitViewChatIdsAtom } from '../../atoms';
 import {
@@ -88,10 +87,10 @@ type ChatProject = { id: string; name: string; path: string };
 type BadgeChat = { project: ChatProject | null; linkedProjects?: Array<{ path: string }> } | null;
 
 /** The chat's own project, which never opens through the other-projects fallback, and the
- *  folders of the projects linked to it. */
+ *  projects linked to it. */
 const badgeChat = (chat: BadgeChat) => ({
   project: chat?.project ?? null,
-  linkedPaths: (chat?.linkedProjects ?? []).map((linked) => linked.path),
+  linked: chat?.linkedProjects ?? [],
 });
 
 /** The chat around a badge, its own project, and the folder it works in: its worktree, else its
@@ -133,9 +132,8 @@ function TranscriptFileLinkBadge({ reference }: { reference: FileReference }) {
   };
   const input = fileLinkOpenInputAcrossProjects(reference.path, base, projects, project?.id);
   const mainFolder = !input && fileLinkOwnMainFolder(reference.path, base, projects, project?.id);
-  const linked = chat?.linkedPaths.some((linkedPath) =>
-    isSameFolder(linkedPath, input?.projectPath),
-  );
+  // A project nested in a linked folder is read through that link.
+  const linked = input && findProjectForPath(input.projectPath, chat?.linked ?? []) !== null;
   const where = input?.projectName
     ? `In ${input.projectName} · ${linked ? 'linked' : 'not linked'}`
     : mainFolder

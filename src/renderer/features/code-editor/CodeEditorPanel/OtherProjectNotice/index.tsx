@@ -9,6 +9,7 @@ import {
 } from '../../../../../shared/lib/path-normalization';
 import type { OpenFile } from '@/lib/code-editor/state';
 import { trpc } from '@/lib/trpc';
+import { findProjectForPath } from '@/lib/workspace-context/project-paths';
 import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 
 type OtherProjectNoticeProps = {
@@ -19,18 +20,24 @@ type OtherProjectNoticeProps = {
   chatId: string | null;
 };
 
-/** Says the open file is from another project and whether that project is linked to the chat on
- *  screen. When that chat opened the tab and can link the project, offers to. */
+/** Says the open file is from another project and whether that project, or one holding it, is
+ *  linked to the chat on screen. When that chat opened the tab and can link the project, offers to. */
 export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
   const projectPath = file?.isOtherProject ? file.projectPath : undefined;
-  const chat = useTreeProjects(projectPath ? chatId : undefined);
+  // Only the chat that opened the tab offers to link it, so the button never links a chat that the
+  // tab merely stayed open over.
+  const mayOffer = Boolean(chatId) && file?.sourceChatId === chatId;
+  const chat = useTreeProjects(projectPath ? chatId : undefined, { withCandidates: mayOffer });
   const { data, isError } = trpc.projects.list.useQuery(undefined, {
     enabled: Boolean(projectPath),
   });
   const statusRef = useRef<HTMLParagraphElement>(null);
   const linkStarted = useRef(false);
-  const isLinked =
-    Boolean(projectPath) && chat.extras.some((project) => isSameFolder(project.path, projectPath));
+  // The agent reads anything inside a linked folder, so a project nested in one counts as linked.
+  const holder = projectPath ? findProjectForPath(projectPath, chat.linked) : null;
+  const isLinked = holder !== null;
+  const through =
+    holder && !isSameFolder(holder.path, projectPath) ? ` is inside ${holder.name}, which` : '';
 
   // The button goes once its link is made, so focus moves to the notice rather than the page.
   useEffect(() => {
@@ -40,18 +47,21 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
     if (isLinked && dropped) statusRef.current?.focus();
   }, [isLinked, chat.isPending]);
 
-  // While the list or the chat loads, show nothing rather than a name or state that may change.
-  if (!projectPath || !chat.isLoaded || (!Array.isArray(data) && !isError)) return null;
+  // While the list or the chat loads, show nothing rather than a name or state that may change:
+  // that includes what the chat can link, while a Link project button may join the notice.
+  const offerLoading =
+    mayOffer && !isLinked && Boolean(chat.main) && chat.projectsStatus === 'pending';
+  if (!projectPath || !chat.isLoaded || (!Array.isArray(data) && !isError) || offerLoading) {
+    return null;
+  }
 
   const registered = Array.isArray(data)
     ? data.find((project) => isSameFolder(project.path, projectPath))
     : undefined;
   const projectName =
     registered?.name ?? pathLabel(trimTrailingSlashes(normalizePathSlashes(projectPath)));
-  // Only the chat that opened the tab offers to link it, so the button never links a chat that the
-  // tab merely stayed open over.
   const linkable =
-    isLinked || !chatId || file?.sourceChatId !== chatId
+    isLinked || !mayOffer
       ? undefined
       : chat.candidates.find((project) => isSameFolder(project.path, projectPath));
   const Icon = isLinked ? Link : Eye;
@@ -67,9 +77,9 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
       >
         <span className="text-foreground">{projectName}</span>
         {isLinked
-          ? ' is linked to this chat. The agent can read files here without asking.'
+          ? `${through} is linked to this chat. The agent can read most files here without asking, except on Codex.`
           : linkable
-            ? " isn't linked to this chat. Link it to let the agent read files here without asking."
+            ? " isn't linked to this chat. Link it to let the agent read most files here without asking, except on Codex."
             : " isn't linked to this chat."}
       </p>
       {linkable && (
@@ -79,7 +89,7 @@ export function OtherProjectNotice({ file, chatId }: OtherProjectNoticeProps) {
           loading={chat.isPending}
           onClick={() => {
             linkStarted.current = true;
-            chat.add(linkable.id);
+            chat.link(linkable.id);
           }}
         >
           Link project

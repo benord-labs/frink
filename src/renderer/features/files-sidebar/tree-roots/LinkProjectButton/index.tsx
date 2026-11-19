@@ -14,7 +14,7 @@ type Props = {
  * the chat's own project in its file tree. Nothing shows for a chat without a project folder of its
  * own.
  */
-export function AddProjectButton({ chatId, getMentionTexts }: Props): ReactElement | null {
+export function LinkProjectButton({ chatId, getMentionTexts }: Props): ReactElement | null {
   return (
     <LinkProjectPicker
       chatId={chatId}

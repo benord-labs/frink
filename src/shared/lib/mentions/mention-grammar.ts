@@ -48,7 +48,10 @@ export function findMentionTokens(text: string): MentionToken[] {
   }));
 }
 
-/** Whether `id` reads back as one whole `@[id]` token; some paths with brackets do not. */
+/** Whether `id` reads back as one whole `@[id]` token; some paths with brackets do not. Not so for
+ * a name with a bracket pair before a space, as in `odd dir/[x] copy.ts`, or a stray `]`: its token
+ * would end at that `]`. The grammar cannot take such names without rereading prose after stored
+ * tokens, so they are not mentioned. */
 export function isWholeMentionId(id: string): boolean {
   const tokens = findMentionTokens(`@[${id}]`);
   return tokens.length === 1 && tokens[0].id === id;

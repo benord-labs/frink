@@ -1,16 +1,26 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { getDatabase } from '../../../db';
+import { missingFolderMessage } from '../../../../../shared/lib/missing-folder-message';
 import {
   type LinkRefusal,
   linkProjectToChat,
+  listLinkableProjectIds,
   unlinkProjectFromChat,
 } from '../../../db/repos/chat-linked-projects';
 import { getProjectById } from '../../../db/repos/projects';
-import { broadcastToRenderer } from '../../../socket/client';
 import { publicProcedure, router } from '../../index';
+import { broadcastLinkedProjectsChanged } from './helpers/linked-projects-changed';
 
-const linkInput = z.object({ chatId: z.string().min(1), projectId: z.string().min(1) });
+const chatInput = z.object({ chatId: z.string().min(1) });
+const linkInput = chatInput.extend({ projectId: z.string().min(1) });
+/** The answer turns on the chat's own project and the folder it works in, which are read from the
+ * chat here. The window sends them too only so its cached answer is keyed by them, and a move or
+ * worktree switch reads the list again. */
+const linkableInput = chatInput.extend({
+  mainProjectId: z.string().optional(),
+  workingPath: z.string().optional(),
+});
 
 type BadRequest = Exclude<LinkRefusal, 'chat-not-found' | 'project-not-found'>;
 
@@ -24,7 +34,7 @@ const REFUSALS: Record<BadRequest, (name: string | undefined) => string> = {
   'virtual-folder': () => 'Virtual folders have no files to link.',
   'root-folder': (name = 'This project') =>
     `${name} is or contains your home folder, a whole drive or a protected folder like ~/.ssh, so it can't be linked.`,
-  'folder-missing': (name = 'this project') => `Can't find ${name}'s folder.`,
+  'folder-missing': (name = 'this project') => missingFolderMessage(name),
   'overlaps-main': (name = 'This project') =>
     `${name} is inside this chat's project or worktree, or contains one of them, so it can't be linked.`,
 };
@@ -40,14 +50,14 @@ async function refusalError(reason: LinkRefusal, projectId: string): Promise<TRP
   return new TRPCError({ code: 'BAD_REQUEST', message: REFUSALS[reason](name) });
 }
 
-/** Tells every window to refetch the chat; the payload is mirrored by useLinkedProjectsSync. */
-function broadcastLinkedProjectsChanged(chatId: string): void {
-  broadcastToRenderer('chats:linked-projects-changed', { chatId });
-}
-
 /** Links and unlinks projects on a chat. No agent session restarts: a link changes no spawn
  * option. */
 export const linkedProjectsRouter = router({
+  /** The ids of the projects linkProject would accept for the chat now, not yet linked to it. */
+  linkableProjects: publicProcedure
+    .input(linkableInput)
+    .query(({ input }) => listLinkableProjectIds(getDatabase(), input.chatId)),
+
   linkProject: publicProcedure.input(linkInput).mutation(async ({ input }) => {
     const result = linkProjectToChat(getDatabase(), input.chatId, input.projectId);
     if (!result.ok) throw await refusalError(result.reason, input.projectId);
