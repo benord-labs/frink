@@ -15,11 +15,18 @@ export type CompactedTemplateWarnings = {
   suppressed: number;
 };
 
-function referToList(message: string, list: string, key: string): string | undefined {
+/** Rewrites the quoted list after the placeholder, so a placeholder holding the same text stays intact. */
+function referToList(
+  { message, placeholder }: TemplateVariableWarning,
+  list: string,
+  key: string,
+): string | undefined {
+  const from = message.startsWith(placeholder) ? placeholder.length : 0;
   for (const label of LIST_LABELS) {
     const quoted = `${label}${list}`;
-    if (message.includes(quoted))
-      return message.replace(quoted, `${label}see availableFields.${key}`);
+    const at = message.indexOf(quoted, from);
+    if (at === -1) continue;
+    return `${message.slice(0, at)}${label}see availableFields.${key}${message.slice(at + quoted.length)}`;
   }
   return undefined;
 }
@@ -38,7 +45,7 @@ export function compactTemplateWarnings(
     if (!fields) return rest;
     const list = fields.join(', ');
     const key = keyByList.get(list) ?? `fields${keyByList.size + 1}`;
-    const message = referToList(rest.message, list, key);
+    const message = referToList(rest, list, key);
     if (message === undefined) return rest;
     if (!keyByList.has(list)) {
       keyByList.set(list, key);

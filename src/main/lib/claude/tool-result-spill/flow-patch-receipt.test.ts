@@ -31,6 +31,7 @@ const SUCCESS = {
   message: 'Flow "Triage" patched successfully.',
   templateWarnings: [{ nodeId: 'agent-0', variable: '{{trigger.missing}}' }],
   templateWarningsSuppressed: 4,
+  availableFields: { fields1: ['previous.title'] },
   webhookSetup: [{ nodeId: 'webhook-0', url: 'https://example.test/hook' }],
   sessions: 'Each agent runs in its own session.',
 };
@@ -110,6 +111,7 @@ describe('recoverSpilledFlowPatchChunk', () => {
         // The card counts these as warnings, exactly as it does for a result that never spilled.
         templateWarnings: SUCCESS.templateWarnings,
         templateWarningsSuppressed: 4,
+        availableFields: SUCCESS.availableFields,
         webhookSetup: SUCCESS.webhookSetup,
       },
     });

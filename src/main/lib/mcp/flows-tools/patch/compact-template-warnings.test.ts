@@ -94,6 +94,22 @@ describe('compactTemplateWarnings', () => {
     );
   });
 
+  it('rewrites the list after the placeholder even when the placeholder repeats that text', () => {
+    const fields = ['previous.title', 'previous.body'];
+    const placeholder = '{{previous.Available: previous.title, previous.body}}';
+    const warning: TemplateVariableWarning = {
+      nodeId: 'n',
+      field: 'instructions',
+      placeholder,
+      message: `${placeholder} references an unknown output field. Available: ${fields.join(', ')}. See the skill.`,
+      availableFields: fields,
+    };
+
+    expect(compactTemplateWarnings([warning]).shown[0]?.message).toBe(
+      `${placeholder} references an unknown output field. Available: see availableFields.fields1. See the skill.`,
+    );
+  });
+
   it('caps the list in graph order, counts the rest, and keeps only the lists still shown', () => {
     const warnings = [
       ...Array.from({ length: MAX_TEMPLATE_WARNINGS }, (_, i) =>
