@@ -3,6 +3,7 @@ import './monaco-loader-config';
 
 export { acquireTypes, disposeATA, initializeATA } from './auto-typings';
 export { getMonacoNavigationOptions } from './monaco-navigation-options';
+export { registerCodeNavigationOpener } from './register-editor-opener';
 export { configureMonacoForNodeScripts, limitTsDiagnosticsToSyntax } from './monaco-node-env';
 export { clearProjectTypes, loadProjectTypes } from './project-types';
 export { useMonacoTheme } from './use-monaco-theme';
