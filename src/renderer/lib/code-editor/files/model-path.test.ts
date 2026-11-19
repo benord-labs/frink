@@ -10,6 +10,11 @@ describe('model path helpers', () => {
     expect(getFullPath('/repo/worktree', '/repo/other/a.ts')).toBe('/repo/other/a.ts');
   });
 
+  it('preserves Windows absolute paths instead of joining them onto the project', () => {
+    expect(getFullPath('C:\\repo', 'C:\\outside\\a.ts')).toBe('C:\\outside\\a.ts');
+    expect(getFullPath('C:\\repo', '\\\\server\\share\\a.ts')).toBe('\\\\server\\share\\a.ts');
+  });
+
   it('encodes reserved uri characters in model path', () => {
     expect(buildFileModelPath('/repo/worktree', 'src/a #b?.ts')).toBe(
       'file:///repo/worktree/src/a%20#b?.ts',

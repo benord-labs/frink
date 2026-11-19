@@ -3,13 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
   deleteChat: vi.fn(),
+  readChat: vi.fn(),
   capture: vi.fn(),
   overview: vi.fn(),
   chats: vi.fn(),
   flow: vi.fn(),
   taskAction: vi.fn(),
 }));
-vi.mock('./chat', () => ({ deleteMobileChat: fixture.deleteChat }));
+vi.mock('./chat', () => ({
+  deleteMobileChat: fixture.deleteChat,
+  readMobileChat: fixture.readChat,
+}));
 vi.mock('./composer', () => ({}));
 vi.mock('./flows', () => ({ readMobileFlow: fixture.flow }));
 vi.mock('./tasks', () => ({ runMobileTaskAction: fixture.taskAction }));
@@ -23,7 +27,10 @@ vi.mock('./context', async () => ({
   requireExecutionReady: vi.fn(),
 }));
 vi.mock('../../sentry', () => ({ captureContained: fixture.capture }));
+import type { MobileChatDetail, MobileRequest } from '../../../../shared/types/remote/mobile';
+import type { LiveChatEvent } from '../../socket/streaming/live-stream/events';
 import { PhoneSafeRefusal } from '../../trpc/routers/task-refusals';
+import { createMobileStreamHub, type ChatEventEnvelope } from '../stream';
 import { MobileApiError } from './errors';
 import { executeMobileRequest } from './api';
 
@@ -147,6 +154,56 @@ describe('executeMobileRequest', () => {
       surface: 'mobile-api',
       stage: 'continueTask',
     });
+  });
+
+  it('watches a chat on the channel the request came over, and refuses any other', async () => {
+    vi.useFakeTimers();
+    const detail: MobileChatDetail = {
+      chat: { id: 'chat', name: 'Chat', projectId: null },
+      subChatId: 'sub-chat',
+      subChats: [],
+      messages: [],
+      hasMore: false,
+      activity: 'idle',
+      kind: 'chat',
+      error: null,
+      questions: [],
+      permissions: [],
+      pendingPlanId: null,
+    };
+    fixture.readChat.mockImplementation(async () => structuredClone(detail));
+    let broadcast: (event: LiveChatEvent) => void = () => {};
+    const streams = createMobileStreamHub((listener) => {
+      broadcast = listener;
+      return () => {};
+    });
+    const sent: ChatEventEnvelope[] = [];
+    streams.register('channel', async (envelope) => {
+      sent.push(envelope);
+    });
+    try {
+      const request: MobileRequest = { type: 'watchChat', chatId: 'chat' };
+      const watched = await executeMobileRequest(request, { streams, channelId: 'channel' });
+      expect(watched).toEqual({ sub: expect.any(String), detail });
+      expect(fixture.readChat).toHaveBeenCalledWith({ type: 'chat', id: 'chat' });
+      detail.activity = 'running';
+      broadcast({ channel: 'socket:stream-chunk', subChatId: 'sub-chat' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sent).toHaveLength(1);
+      expect(watched).toMatchObject({ sub: sent[0].sub });
+      expect(fixture.readChat).toHaveBeenLastCalledWith({
+        type: 'chat',
+        id: 'chat',
+        subChatId: 'sub-chat',
+      });
+      for (const channelId of ['unknown', undefined])
+        await expect(executeMobileRequest(request, { streams, channelId })).rejects.toMatchObject({
+          status: 400,
+        });
+    } finally {
+      streams.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('reports an unexpected fault it masks, and not an expected refusal', async () => {

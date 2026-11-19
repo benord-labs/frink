@@ -1,16 +1,10 @@
-/**
- * Universal definition provider for path aliases across all languages.
- *
- * Monaco's standalone TS worker does NOT support tsconfig `paths`
- * (upstream issue microsoft/monaco-editor#1926). This provider
- * delegates to the main process which uses TypeScript's own parser
- * and module resolver, with a filesystem fallback for non-TS assets
- * (.scss, .css, .json, .svg, etc.).
- */
+// Go to definition for imports and aliases: Monaco's TS worker only sees files loaded as models, so
+// the main process resolves the import and returns the exact declaration (file top for assets).
 
 import type * as Monaco from 'monaco-editor';
-import { encodeFileUri, extractQuotedStringAtPosition } from '@/lib/code-editor/files';
+import { encodeFileUri } from '@/lib/code-editor/files';
 import { trpcClient } from '@/lib/trpc';
+import { resolveAliasDefinition } from './resolve-alias-definition';
 
 const SUPPORTED_LANGUAGES = [
   'typescript',
@@ -26,46 +20,16 @@ const SUPPORTED_LANGUAGES = [
   'html',
 ];
 
-const TS_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
-
 export function registerAliasDefinitionProvider(
   monaco: typeof Monaco,
   projectPath: string,
 ): Monaco.IDisposable {
   return monaco.languages.registerDefinitionProvider(SUPPORTED_LANGUAGES, {
-    async provideDefinition(model, position) {
-      const word = model.getWordAtPosition(position);
-      const line = model.getLineContent(position.lineNumber);
-      const containingFile = decodeURIComponent(model.uri.path);
-      const lang = model.getLanguageId();
-      const isTS = TS_LANGUAGES.has(lang);
-
-      const quotedString = extractQuotedStringAtPosition(line, position.column);
-      const symbolName = isTS && word ? word.word : undefined;
-      // Always send the live buffer for TS/JS. A version-id cache avoided resending unchanged
-      // files but could skip content when the main-process view was stale or reset (reconnect,
-      // errors) while the editor model still matched the last cached version id.
-      const fileContent = isTS ? model.getValue() : undefined;
-
-      try {
-        const resolved = await trpcClient.files.resolveDefinition.query({
-          projectPath,
-          containingFile,
-          symbolName,
-          fileContent,
-          specifier: quotedString ?? undefined,
-        });
-
-        if (!resolved) return null;
-
-        const targetUri = monaco.Uri.parse(encodeFileUri(resolved));
-        return {
-          uri: targetUri,
-          range: new monaco.Range(1, 1, 1, 1),
-        };
-      } catch {
-        return null;
-      }
+    async provideDefinition(model, position, token) {
+      const found = await resolveAliasDefinition(model, position, token, projectPath, (input) =>
+        trpcClient.files.resolveDefinition.query(input),
+      );
+      return found && { uri: monaco.Uri.parse(encodeFileUri(found.path)), range: found.range };
     },
   });
 }

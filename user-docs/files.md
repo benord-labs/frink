@@ -56,6 +56,20 @@ A file opens when it is in this chat's folder or in one of your other projects:
 
 A file from another project shows that project's name on its badge. Its tooltip also says whether that project is linked to the chat. The file opens either way. While it's open, a note above the editor says whether the project is linked. If it isn't and the chat can link it, the note has a **Link project** button. When open files come from more than one project, the editor's tabs are grouped by project.
 
+## Closing a file with unsaved changes
+
+A tab with unsaved changes has a blue dot. If you close it with **⌘W** or its **×**, Frink asks whether to save first:
+
+- **Save** writes the file, then closes the tab. If the save fails, the tab stays open with your changes.
+- **Don't save** closes the tab and drops the changes.
+- **Cancel**, or **Esc**, keeps the tab and your changes.
+
+**Close all editor files** (⌘⇧X) closes every saved tab at once, then asks once about the unsaved ones.
+
+Moving to a chat in another project, or closing a split pane, never asks. Saved tabs close as before, and unsaved ones stay open. A tab kept this way counts as a file from another project, so it shows the same note above the editor.
+
+Quitting or reloading Frink doesn't ask yet, so save your changes first.
+
 A badge that can't open still shows the file's path when you hover over it. In a worktree chat, a file in the project's main folder stays closed, because the chat works in its own worktree; the tooltip says so.
 
 ## Link another project

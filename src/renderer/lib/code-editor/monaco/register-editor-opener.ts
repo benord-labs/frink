@@ -28,10 +28,38 @@ type MonacoEditorApi = {
   editor: { registerEditorOpener(opener: CodeNavigationOpener): Monaco.IDisposable };
 };
 
-function positionLine(selectionOrPosition?: Monaco.IRange | Monaco.IPosition): number | undefined {
-  if (!selectionOrPosition) return undefined;
-  if ('lineNumber' in selectionOrPosition) return selectionOrPosition.lineNumber;
-  return selectionOrPosition.startLineNumber;
+type RevealTarget = { lineNumber: number; startColumn: number; endColumn: number };
+
+function revealTarget(selectionOrPosition?: Monaco.IRange | Monaco.IPosition): RevealTarget | null {
+  if (!selectionOrPosition) return null;
+  if ('lineNumber' in selectionOrPosition) {
+    const { lineNumber, column } = selectionOrPosition;
+    return { lineNumber, startColumn: column, endColumn: column };
+  }
+  const { startLineNumber, endLineNumber, startColumn, endColumn } = selectionOrPosition;
+  return {
+    lineNumber: startLineNumber,
+    startColumn,
+    endColumn: endLineNumber === startLineNumber ? endColumn : startColumn,
+  };
+}
+
+function projectRelative(projectPath: string | undefined, targetPath: string): string {
+  return projectPath && targetPath.startsWith(`${projectPath}/`)
+    ? targetPath.slice(projectPath.length + 1)
+    : targetPath;
+}
+
+function revealAfterOpen(
+  targetPath: string,
+  selectionOrPosition?: Monaco.IRange | Monaco.IPosition,
+): void {
+  const target = revealTarget(selectionOrPosition);
+  if (!target) return;
+  const { lineNumber, startColumn, endColumn } = target;
+  requestAnimationFrame(() =>
+    dispatchEditorRevealLine(targetPath, lineNumber, startColumn, endColumn),
+  );
 }
 
 /**
@@ -46,13 +74,9 @@ export function registerCodeNavigationOpener(
     openCodeEditor(source, resource, selectionOrPosition) {
       const targetPath = resource.path;
       const sourceUri = source?.getModel()?.uri?.toString() ?? 'none';
-      if (!targetPath) return false;
-      if (resource.toString() === sourceUri) return false;
+      if (!targetPath || resource.toString() === sourceUri) return false;
       const projectPath = getProjectPath();
-      const relativePath =
-        projectPath && targetPath.startsWith(`${projectPath}/`)
-          ? targetPath.slice(projectPath.length + 1)
-          : targetPath;
+      const relativePath = projectRelative(projectPath, targetPath);
 
       const sourceFile = store.get(activeFileAtom);
       if (sourceFile) store.set(pinFileAtom, fileKey(sourceFile.path, sourceFile.projectPath));
@@ -66,11 +90,7 @@ export function registerCodeNavigationOpener(
         isOtherProject: sourceFile?.isOtherProject,
         intent: 'preview',
       });
-
-      const lineNumber = positionLine(selectionOrPosition);
-      if (lineNumber !== undefined) {
-        requestAnimationFrame(() => dispatchEditorRevealLine(targetPath, lineNumber));
-      }
+      revealAfterOpen(targetPath, selectionOrPosition);
       return true;
     },
   });

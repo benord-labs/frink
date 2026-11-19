@@ -461,6 +461,49 @@ describe('closeFilesOutsideProjectAtom', () => {
     expect(store.get(openFilesAtom)).toEqual([]);
     expect(store.get(codeEditorOpenAtom)).toBe(false);
   });
+
+  it("keeps an unsaved tab from a project it leaves, as another project's tab", () => {
+    const store = createStore();
+    store.set(openFileAtom, {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/a',
+      sourcePaneIndex: 0,
+    });
+    store.set(openFileAtom, {
+      path: 'src/b.ts',
+      name: 'b.ts',
+      projectPath: '/a',
+      intent: 'pinned',
+    });
+    store.set(updateFileContentAtom, { key: fileKey('src/a.ts', '/a'), content: 'edited' });
+
+    store.set(closeFilesOutsideProjectAtom, '/b');
+
+    const files = store.get(openFilesAtom);
+    expect(files.map((f) => f.path)).toEqual(['src/a.ts']);
+    expect(files[0]).toMatchObject({ content: 'edited', isDirty: true, isOtherProject: true });
+    expect(files[0]?.sourcePaneIndex).toBeUndefined();
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/a.ts', '/a'));
+  });
+
+  it('keeps unsaved tabs when project path is null', () => {
+    const store = createStore();
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/a' });
+    store.set(updateFileContentAtom, { key: fileKey('src/a.ts', '/a'), content: 'edited' });
+    store.set(openFileAtom, {
+      path: 'src/b.ts',
+      name: 'b.ts',
+      projectPath: '/a',
+      intent: 'pinned',
+    });
+
+    store.set(closeFilesOutsideProjectAtom, null);
+
+    expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/a.ts']);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/a.ts', '/a'));
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+  });
 });
 
 describe("another project's tab flag", () => {

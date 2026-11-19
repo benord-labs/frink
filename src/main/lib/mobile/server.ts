@@ -16,7 +16,7 @@ import type { MobilePairingStore } from './pairing-store';
 import { MobileApiError } from './domain/errors';
 import { captureContained } from '../sentry';
 
-export type MobileExecutor = (request: MobileRequest) => Promise<unknown>;
+export type MobileExecutor = (request: MobileRequest, channelId?: string) => Promise<unknown>;
 export type MobileUploader = (input: {
   chatId: string;
   subChatId: string;
@@ -27,6 +27,8 @@ export type MobileUploader = (input: {
 /** Raw-body attachment uploads; everything else on this server is small JSON. */
 const ATTACHMENTS_PATH = '/api/attachments';
 export const MOBILE_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+/** Set by the channel bridge alone, to the channel a request arrived on. */
+export const MOBILE_CHANNEL_HEADER = 'x-frink-channel';
 type MobileEnvironment = { Variables: { mobileToken: string } };
 const redemptionSchema = z.object({
   code: z.string().min(1).max(200),
@@ -131,7 +133,9 @@ export function createMobileApp(
     if (!store.authenticate(context.get('mobileToken'))) {
       throw new MobileApiError(401, 'Access was revoked. Pair this device again.');
     }
-    return context.json({ data: await execute(request) });
+    return context.json({
+      data: await execute(request, context.req.header(MOBILE_CHANNEL_HEADER)),
+    });
   });
   app.post(ATTACHMENTS_PATH, async (context) => {
     if (!upload) return context.json({ error: 'Not found.' }, 404);

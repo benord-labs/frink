@@ -25,12 +25,16 @@ import { approveMobilePlan } from './plan';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
 import { steerMobileMessage } from './steer';
 import { runMobileTaskAction } from './tasks';
+import { unwatchMobileChat, watchMobileChat, type MobileWatchContext } from '../stream/watch';
 import { captureContained } from '../../sentry';
 import { PhoneSafeRefusal } from '../../trpc/routers/task-refusals';
 
 // Reason: An exhaustive command switch keeps this transport boundary explicit.
 // fallow-ignore-next-line complexity
-async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileRequest['type']]> {
+async function dispatch(
+  request: MobileRequest,
+  watching: MobileWatchContext | undefined,
+): Promise<MobileResponses[MobileRequest['type']]> {
   switch (request.type) {
     case 'overview':
       return readMobileOverview(request);
@@ -90,16 +94,22 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       // The Flow engine aborts registered providers before persisting cancellation.
       await mobileCallers.flows.cancelRun({ runId: request.id });
       return { ok: true };
+    case 'watchChat':
+      return watchMobileChat(request, watching);
+    case 'unwatchChat':
+      return unwatchMobileChat(request, watching);
   }
 }
 
+/** `watching` is where live chat watches go; only requests over an encrypted channel name one. */
 export async function executeMobileRequest(
   request: MobileRequest,
+  watching?: MobileWatchContext,
 ): Promise<MobileResponses[MobileRequest['type']]> {
   const parsed = mobileRequestSchema.safeParse(request);
   if (!parsed.success) throw new MobileApiError(400, 'Invalid mobile request.');
   try {
-    return await dispatch(parsed.data);
+    return await dispatch(parsed.data, watching);
   } catch (error) {
     if (error instanceof MobileApiError) throw error;
     if (error instanceof TRPCError && error.code === 'NOT_FOUND')

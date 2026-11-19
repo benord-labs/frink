@@ -122,6 +122,9 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   }),
   // Desktop's Approve: starts building from the plan awaiting review, which must still be `planId`.
   z.object({ type: z.literal('approvePlan'), ...chatIdentity, planId: id, requestId: z.uuid() }),
+  // Live updates for one conversation, pushed as `evt` frames on the channel that asked.
+  z.object({ type: z.literal('watchChat'), chatId: id, subChatId: id.optional() }),
+  z.object({ type: z.literal('unwatchChat'), sub: z.uuid() }),
 ]);
 
 export type MobileRequest = z.infer<typeof mobileRequestSchema>;
@@ -347,6 +350,24 @@ export type MobileChatDetail = {
   /** The plan waiting for Approve or Send back; null once decided, or when a Flow run owns it. */
   pendingPlanId: string | null;
 };
+/** Everything in a chat's detail except its transcript and the conversation it is for. */
+export type MobileChatState = Omit<MobileChatDetail, 'messages' | 'subChatId'>;
+/** One change to a watched conversation, applied as `applyChatOps` in shared/lib/mobile-chat-ops
+ * does. After `append` or `parts`, `text` is the message's text parts joined by newlines. */
+export type MobileChatOp =
+  /** Replaces the message with this id in place, or adds it after the last one. */
+  | { op: 'upsert'; message: MobileMessage }
+  /** Adds `text` to the end of the text part at `partIndex`, which has no badge runs. */
+  | { op: 'append'; messageId: string; partIndex: number; text: string }
+  /** Replaces the message's parts from `from` to the end with `parts`, so the list may shrink. */
+  | { op: 'parts'; messageId: string; from: number; parts: MobileMessagePart[] }
+  /** Replaces every field of the detail except `messages` and `subChatId`. */
+  | ({ op: 'state' } & MobileChatState)
+  /** Ends the watch: read the chat again, and watch again if it is still shown. */
+  | { op: 'resync' };
+/** The JSON body of an `evt` frame; frames for one watch carry seq 1, 2, 3, ... with no gaps, but a
+ * resync may repeat the seq of a frame that failed to send, so obey a resync at any seq. */
+export type MobileChatEvent = { ops: MobileChatOp[] };
 export type MobileResponses = {
   overview: MobileOverview;
   flows: MobileFlow[];
@@ -379,6 +400,9 @@ export type MobileResponses = {
   updateComposer: MobileComposer;
   setMode: MobileComposer;
   setAccount: MobileComposer;
+  /** `detail` is what `chat` returns; events for `sub` start at seq 1 and change that detail. */
+  watchChat: { sub: string; detail: MobileChatDetail };
+  unwatchChat: { ok: true };
 };
 
 export const MOBILE_API_VERSION = 3;

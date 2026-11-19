@@ -72,6 +72,15 @@ describe('settleBrowsedTabs', () => {
     expect(closed).toEqual([browsed]);
   });
 
+  it('keeps an unsaved tab for any chat', () => {
+    const unsaved = { ...browsed, isDirty: true };
+
+    expect(settleBrowsedTabs([unsaved], forChat('chat-c'))).toEqual({
+      files: [unsaved],
+      closed: [],
+    });
+  });
+
   it('never touches ordinary tabs, whatever their project', () => {
     const elsewhere = { ...ordinary, projectPath: '/ros-service', sourceChatId: 'chat-z' };
     const result = settleBrowsedTabs([ordinary, elsewhere], forChat('chat-c'));

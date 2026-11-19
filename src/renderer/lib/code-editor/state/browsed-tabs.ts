@@ -18,15 +18,18 @@ type SettleBrowsedTabsInput = {
   keepProjectPaths: string[];
 };
 
+type SettledTabs = { files: OpenFile[]; closed: OpenFile[] };
+
 /**
  * Which of another project's tabs stay when single view shows `chatId`. A tab from the chat's own
  * project becomes an ordinary tab of that chat; one opened from this chat, or from a project in its
- * tree, stays (moved to this chat); every other one closes. Ordinary tabs are never touched.
+ * tree, stays (moved to this chat); an unsaved one stays; every other one closes. Ordinary tabs
+ * are never touched.
  */
 export function settleBrowsedTabs(
   files: OpenFile[],
   { chatId, mainProjectPath, keepProjectPaths }: SettleBrowsedTabsInput,
-): { files: OpenFile[]; closed: OpenFile[] } {
+): SettledTabs {
   const kept: OpenFile[] = [];
   const closed: OpenFile[] = [];
   for (const file of files) {
@@ -35,6 +38,8 @@ export function settleBrowsedTabs(
     } else if (isSameFolder(file.projectPath, mainProjectPath)) {
       const { isOtherProject: _, ...ordinary } = file;
       kept.push({ ...ordinary, sourceChatId: chatId });
+    } else if (file.isDirty) {
+      kept.push(file);
     } else if (
       file.sourceChatId === chatId ||
       keepProjectPaths.some((folder) => isSameFolder(file.projectPath, folder))

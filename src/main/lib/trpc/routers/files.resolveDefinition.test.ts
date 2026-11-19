@@ -63,7 +63,7 @@ describe('filesRouter.resolveDefinition', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when no specifier and no symbol/fileContent', async () => {
+  it('returns null when there is no specifier and no cursor offset', async () => {
     const { filesRouter } = await import('./files');
     const caller = filesRouter.createCaller({ getWindow: () => null });
     const result = await caller.resolveDefinition({
@@ -73,7 +73,7 @@ describe('filesRouter.resolveDefinition', () => {
     expect(result).toBeNull();
   });
 
-  it('resolves via symbol name when TS content has matching import', async () => {
+  it('returns the declaration position of the import under the cursor', async () => {
     await writeFile(
       join(projectPath, 'tsconfig.json'),
       JSON.stringify({
@@ -82,23 +82,21 @@ describe('filesRouter.resolveDefinition', () => {
     );
     const srcDir = join(projectPath, 'src');
     await mkdir(join(srcDir, 'components'), { recursive: true });
-    await writeFile(
-      join(srcDir, 'components', 'Foo.tsx'),
-      'export const Foo = () => null;',
-      'utf8',
-    );
-    await writeFile(join(srcDir, 'index.ts'), 'import "@/components/Foo";', 'utf8');
+    const fooPath = join(srcDir, 'components', 'Foo.tsx');
+    await writeFile(fooPath, 'export const Foo = () => null;', 'utf8');
+    const fileContent = "import { Foo } from '@/components/Foo';\nFoo;";
+    await writeFile(join(srcDir, 'index.ts'), fileContent, 'utf8');
 
     const { filesRouter } = await import('./files');
     const caller = filesRouter.createCaller({ getWindow: () => null });
     const result = await caller.resolveDefinition({
       projectPath,
       containingFile: join(projectPath, 'src', 'index.ts'),
-      symbolName: 'Foo',
-      fileContent: "import { Foo } from '@/components/Foo';",
+      fileContent,
+      offset: fileContent.lastIndexOf('Foo'),
     });
 
-    expect(result).toMatch(/src[\\/]components[\\/]Foo\.tsx$/);
+    expect(result).toEqual({ path: fooPath, line: 1, column: 14, endColumn: 17 });
   });
 
   it('resolves via specifier when provided (e.g. from quoted string in CSS)', async () => {
@@ -114,6 +112,6 @@ describe('filesRouter.resolveDefinition', () => {
       specifier: './styles/vars',
     });
 
-    expect(result).toMatch(/styles[\\/]vars\.scss$/);
+    expect(result?.path).toMatch(/styles[\\/]vars\.scss$/);
   });
 });

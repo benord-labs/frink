@@ -128,26 +128,30 @@ describe('registerCodeNavigationOpener', () => {
     });
   });
 
-  it('reveals the start line of a range target', () => {
+  it.each([
+    [
+      'a one-line range',
+      { startLineNumber: 42, startColumn: 14, endLineNumber: 42, endColumn: 20 },
+      { lineNumber: 42, startColumn: 14, endColumn: 20 },
+    ],
+    ['a position', { lineNumber: 7, column: 3 }, { lineNumber: 7, startColumn: 3, endColumn: 3 }],
+    [
+      'a multi-line range',
+      { startLineNumber: 5, startColumn: 9, endLineNumber: 8, endColumn: 2 },
+      { lineNumber: 5, startColumn: 9, endColumn: 9 },
+    ],
+  ])('reveals the line and columns of %s', (_label, position, expected) => {
     const { store, navigate } = setup();
     store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: PROJECT });
     const reveal = vi.fn();
     window.addEventListener('editor:reveal-line', reveal);
 
-    navigate('/repo/src/a.ts', '/repo/src/b.ts', {
-      startLineNumber: 42,
-      startColumn: 1,
-      endLineNumber: 42,
-      endColumn: 5,
-    });
+    navigate('/repo/src/a.ts', '/repo/src/b.ts', position);
 
     window.removeEventListener('editor:reveal-line', reveal);
     expect(reveal).toHaveBeenCalledTimes(1);
     // SAFETY: the listener only receives editor:reveal-line CustomEvents.
     const event = reveal.mock.calls[0]?.[0] as CustomEvent;
-    expect(event.detail).toEqual({
-      filePath: '/repo/src/b.ts',
-      lineNumber: 42,
-    });
+    expect(event.detail).toEqual({ filePath: '/repo/src/b.ts', ...expected });
   });
 });
