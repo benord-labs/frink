@@ -6,12 +6,14 @@
  * Pure function. Ticket 05 of the permissions overhaul.
  */
 
+import * as nodePath from 'node:path';
 import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
 import { type CommandSignature, generatePatternChoices } from '../command-parser';
-import { extractSignature, type SubCommand, splitCommand } from './bash-parser';
+import { extractSignature, type Signature, type SubCommand, splitCommand } from './bash-parser';
 import { expandTilde } from './check-edit';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
+import { isSessionPastedRead } from './session-read';
 import { isSystemDeniedPath } from './system-denied-patterns';
 import type { DenyReason, MatchContext, PermissionResult, PromptData } from './types';
 
@@ -308,10 +310,27 @@ function exactMatchRules(rules: string[] | undefined): string[] {
   return out;
 }
 
+/** Every scope's Bash rules for one subcommand signature, combined deny > ask > allow. */
+function evalBashScopes(docs: ScopedDocs, input: { command: string }, sig: Signature) {
+  const ctx: MatchContext = { bashCommandSignature: sig };
+  return combineScopes(
+    evalScope(docs.policy, 'Bash', input, ctx),
+    evalScope(docs.project, 'Bash', input, ctx),
+    evalScope(docs.user, 'Bash', input, ctx),
+  );
+}
+
+/** A prefix ask rule that the exact-only filter dropped, which still names this subcommand. */
+function prefixAskMatches(docs: ScopedDocs, input: { command: string }, sig: Signature) {
+  const combined = evalBashScopes(docs, input, sig);
+  return combined.decision === 'ask' && Boolean(combined.rule);
+}
+
 export function checkBash(
   input: { command: string },
   docs: ScopedDocs,
   projectRoot: string,
+  sessionDirRoot?: string,
 ): PermissionResult {
   const subs = splitCommand(input.command);
 
@@ -345,6 +364,8 @@ export function checkBash(
   // An exact-only sub that got no exact rule cannot be expressed by any rule.
   let unmintableExact = false;
   let askPrompt: PromptData | undefined;
+  // A user's own ask rule keeps prompting even for an attachment read.
+  let matchedAsk = false;
 
   for (const sub of subs) {
     // Tier-1c: bash-Read parity. Read-ish/write-ish commands + redirections
@@ -357,7 +378,6 @@ export function checkBash(
     // A metachar-hidden directory makes the denied list unevaluable, so a prefix
     // rule must not auto-allow it — same treatment `$VAR` gets.
     const sig = hasUnresolvableDirectory(sub) ? { ...base, isExactMatchOnly: true } : base;
-    const ctx: MatchContext = { bashCommandSignature: sig };
 
     // Build per-scope docs filtered to exact-match rules when sig demands it.
     // Tier-1c-deny rules still apply because filtering only removes prefix
@@ -383,10 +403,7 @@ export function checkBash(
         }
       : docs;
 
-    const policy = evalScope(docsToUse.policy, 'Bash', input, ctx);
-    const project = evalScope(docsToUse.project, 'Bash', input, ctx);
-    const user = evalScope(docsToUse.user, 'Bash', input, ctx);
-    const combined = combineScopes(policy, project, user);
+    const combined = evalBashScopes(docsToUse, input, sig);
 
     if (combined.decision === 'deny') {
       return denyResult({
@@ -398,6 +415,8 @@ export function checkBash(
       });
     }
     if (combined.decision === 'ask') {
+      matchedAsk ||=
+        Boolean(combined.rule) || (sig.isExactMatchOnly && prefixAskMatches(docs, input, sig));
       if (!sig.isExactMatchOnly) askSignatures.push(sig);
       // The matcher compares an exact rule against `fullSignature`, so a truncated
       // one (`grep foo` for `grep foo src/*/x.ts`) could never match the rule.
@@ -417,6 +436,14 @@ export function checkBash(
     // allow → nothing to collect; sub is already permitted
   }
 
+  if (
+    askPrompt &&
+    sessionDirRoot &&
+    !matchedAsk &&
+    isSessionPastedRead(subs, nodePath.join(sessionDirRoot, 'pasted'))
+  ) {
+    return { decision: 'allow' };
+  }
   if (askPrompt) {
     const rules = [...buildSuggestedRules(askSignatures), ...exactRules];
     // Empty = no rule can express the command. A lone withheld wrapper (`sudo npm i`)

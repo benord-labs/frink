@@ -151,7 +151,7 @@ function maskSingleQuoted(raw: string): string {
  * (e.g. `awk "x<<4"`) is not a redirection operator, so it must not be matched.
  * Length-preserving so opener indices map back onto the raw line verbatim.
  */
-function maskQuoted(raw: string): string {
+export function maskQuoted(raw: string): string {
   let out = '';
   let inSingle = false;
   let inDouble = false;

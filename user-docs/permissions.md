@@ -169,11 +169,19 @@ No rule you write can open up these paths. This is a static deny list, not a san
 
 `.env.example` is allowed (templates, no secrets). Symlink targets resolve through and obey the deny list — you can't sidestep it with a redirect.
 
-## Pasted text auto-allow
+## Pasted text and attached files auto-allow
 
-When you paste a large block of text into the chat, Frink writes it to a per-chat scratch file under `~/Library/Application Support/.../claude-sessions/<chatId>/pasted/`. The agent then reads that file. This Read is auto-allowed — you don't see a prompt because you already approved the content by pasting it.
+When you paste a large block of text, or attach a file, Frink copies it into a per-chat folder under `~/Library/Application Support/.../claude-sessions/<chatId>/pasted/`. The agent then reads it from there. Reading it is auto-allowed — you don't see a prompt because you already chose to share it.
 
-The auto-allow is scoped to the current chat's directory and runs after the system deny list. Other chats' pastes don't bleed across.
+This covers every agent, including ones with no file-reading tool of their own:
+
+- The agent's Read tool.
+- Read-only shell commands such as `cat`, `head`, `tail`, `wc`, `sed -n '1,200p'`, `grep`, `rg` and `pdftotext <file> -`, when every file they name is in that folder.
+- Grep and Glob searches of that folder. Cursor is the exception: it refuses any search outside its chat folder, and that includes this one.
+
+Anything that writes, uses a redirect (even `2>/dev/null`), runs another command, or names a file outside the folder still prompts. A deny rule you set, or an ask rule you set for that command or tool, still wins over the shell and search auto-allow.
+
+The auto-allow is scoped to the current chat's folder and runs after the system deny list. A read of a deny-listed file there is blocked, and a search of the folder prompts if any file inside it (a `.env`, say) is on that list. Other chats' files don't bleed across.
 
 ## Skills auto-allow
 
