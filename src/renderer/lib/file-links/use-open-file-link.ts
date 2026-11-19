@@ -22,7 +22,7 @@ export function useOpenFileLink(
   const utils = trpc.useUtils();
   const openFile = useSetAtom(openFileAtom);
   return useCallback(
-    async (input, target) => {
+    async ({ projectName, ...input }, target) => {
       const { projectPath } = input;
       const typeAt = (relativePath: string) =>
         utils.files.entryType.fetch({ projectPath, relativePath }, FRESH);
@@ -36,7 +36,7 @@ export function useOpenFileLink(
       }
       if (type === 'folder') return;
       if (!type) {
-        toast.error(`Couldn't find ${input.name} in this project`);
+        toast.error(`Couldn't find ${input.name} in ${projectName ?? 'this project'}`);
         return;
       }
       openFile({ ...input, path, sourcePaneIndex });

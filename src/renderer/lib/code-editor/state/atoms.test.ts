@@ -1,5 +1,6 @@
 import { createStore } from 'jotai';
 import { describe, expect, it } from 'vitest';
+import { getFullPath } from '../files/model-path';
 import {
   activeFilePathAtom,
   clearPaneContextAtom,
@@ -14,6 +15,15 @@ import {
   tagOpenFilesWithPaneContextAtom,
   updateFileContentAtom,
 } from './atoms';
+
+/** A file from ros-service opened from chat A, whose own project is /repo. */
+const browsedTab = {
+  path: 'src/b.ts',
+  name: 'b.ts',
+  projectPath: '/ros-service',
+  sourceChatId: 'chat-a',
+  isOtherProject: true,
+};
 
 describe('code-editor preview tabs', () => {
   it('opens files as preview tabs by default', () => {
@@ -234,6 +244,34 @@ describe('code-editor preview tabs', () => {
     expect(files[0]?.isWorktreeContext).toBe(true);
   });
 
+  // A chat in /code names the file from its own folder; a chat elsewhere names it from app's.
+  it("keeps a tab's path with its own folder when a nested project's folder opens the same file", () => {
+    const store = createStore();
+    store.set(openFileAtom, {
+      path: 'app/src/a.ts',
+      name: 'a.ts',
+      projectPath: '/code',
+      sourceChatId: 'chat-code',
+      intent: 'pinned',
+    });
+
+    store.set(openFileAtom, {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/code/app',
+      sourceChatId: 'chat-web',
+      isOtherProject: true,
+      intent: 'pinned',
+    });
+
+    const files = store.get(openFilesAtom);
+    expect(files).toHaveLength(1);
+    const [tab] = files;
+    expect(getFullPath(tab?.projectPath, tab?.path ?? '')).toBe('/code/app/src/a.ts');
+    expect(store.get(activeFilePathAtom)).toBe(fileKey(tab?.path ?? '', tab?.projectPath));
+    expect(tab).toMatchObject({ sourceChatId: 'chat-web', isOtherProject: true });
+  });
+
   it('remains idempotent under rapid mixed canonical open calls', () => {
     const store = createStore();
 
@@ -396,6 +434,91 @@ describe('closeFilesOutsideProjectAtom', () => {
     expect(store.get(openFilesAtom)).toEqual([]);
     expect(store.get(activeFilePathAtom)).toBeNull();
     expect(store.get(codeEditorOpenAtom)).toBe(false);
+  });
+
+  it("leaves another project's tabs to their chat, and still closes ordinary ones", () => {
+    const store = createStore();
+    store.set(openFileAtom, { ...browsedTab, intent: 'pinned' });
+    store.set(openFileAtom, {
+      path: 'src/c.ts',
+      name: 'c.ts',
+      projectPath: '/third',
+      intent: 'pinned',
+    });
+
+    store.set(closeFilesOutsideProjectAtom, '/repo');
+
+    expect(store.get(openFilesAtom).map((f) => f.projectPath)).toEqual(['/ros-service']);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/b.ts', '/ros-service'));
+  });
+
+  it("closes another project's tabs too when project path is null", () => {
+    const store = createStore();
+    store.set(openFileAtom, { ...browsedTab, intent: 'pinned' });
+
+    store.set(closeFilesOutsideProjectAtom, null);
+
+    expect(store.get(openFilesAtom)).toEqual([]);
+    expect(store.get(codeEditorOpenAtom)).toBe(false);
+  });
+});
+
+describe("another project's tab flag", () => {
+  it('is cleared when a chat reopens the file without it', () => {
+    const store = createStore();
+    store.set(openFileAtom, { ...browsedTab, intent: 'pinned' });
+
+    store.set(openFileAtom, { ...browsedTab, sourceChatId: 'chat-b', isOtherProject: undefined });
+
+    const [file] = store.get(openFilesAtom);
+    expect(file?.isOtherProject).toBeUndefined();
+    expect(file?.sourceChatId).toBe('chat-b');
+  });
+
+  it('is kept when an open from no chat lands on the tab', () => {
+    const store = createStore();
+    store.set(openFileAtom, { ...browsedTab, intent: 'pinned' });
+
+    store.set(openFileAtom, { path: 'src/b.ts', name: 'b.ts', projectPath: '/ros-service' });
+
+    const [file] = store.get(openFilesAtom);
+    expect(file?.isOtherProject).toBe(true);
+    expect(file?.sourceChatId).toBe('chat-a');
+  });
+
+  it('is carried by a new tab', () => {
+    const store = createStore();
+
+    store.set(openFileAtom, { ...browsedTab, intent: 'pinned' });
+
+    expect(store.get(openFilesAtom)[0]?.isOtherProject).toBe(true);
+  });
+
+  it('comes from the incoming file when a preview tab is replaced', () => {
+    const store = createStore();
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+
+    store.set(openFileAtom, browsedTab);
+    expect(store.get(openFilesAtom).map((f) => [f.path, f.isOtherProject])).toEqual([
+      ['src/b.ts', true],
+    ]);
+
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+    expect(store.get(openFilesAtom).map((f) => [f.path, f.isOtherProject])).toEqual([
+      ['src/a.ts', undefined],
+    ]);
+  });
+
+  it('keeps the tab out of pane re-tagging', () => {
+    const store = createStore();
+    store.set(openFileAtom, { ...browsedTab, intent: 'pinned' });
+    const before = store.get(openFilesAtom);
+
+    store.set(tagOpenFilesWithPaneContextAtom, [
+      { projectPath: '/ros-service', paneIndex: 1, chatId: 'chat-b' },
+    ]);
+
+    expect(store.get(openFilesAtom)).toBe(before);
   });
 });
 

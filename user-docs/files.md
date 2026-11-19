@@ -44,3 +44,16 @@ Right-click a file or folder in the tree and choose **Add to Chat**. Each one ap
 In split view, each pane's tree adds to that pane's chat. The item doesn't appear until a chat is open.
 
 > A name with square brackets that the message can't hold, such as `a]b.ts`, isn't added. Frink tells you so; type its path instead.
+
+## Files named in a reply
+
+When the agent names a file in a reply, the file shows as a badge. Click the badge, or focus it and press **Enter**, to open the file in the editor at the line the reply gives.
+
+A file opens when it is in this chat's folder or in one of your other projects:
+
+- A short path like `src/app.ts` always points into this chat's folder.
+- A full path, or one starting with `~/`, also opens from any other project you've added to Frink.
+
+A file from another project shows that project's name on its badge and in its tooltip. While it's open, a note above the editor says you're browsing that project; browsing doesn't change what the agent can read. When open files come from more than one project, the editor's tabs are grouped by project.
+
+A badge that can't open still shows the file's path when you hover over it. In a worktree chat, a file in the project's main folder stays closed, because the chat works in its own worktree; the tooltip says so.

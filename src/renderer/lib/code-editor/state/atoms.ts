@@ -45,6 +45,8 @@ export type OpenFile = {
   isWorktreeContext?: boolean;
   /** VS Code-like preview tab (italic, replaced by next preview open in same pane) */
   isPreview?: boolean;
+  /** True when the file is from a project other than its chat's own (see browsed-tabs.ts) */
+  isOtherProject?: boolean;
 };
 
 type OpenFileIntent = 'preview' | 'pinned';
@@ -64,6 +66,8 @@ type OpenFileInput = {
   sourceChatId?: string;
   /** True when opening from a worktree-scoped file context */
   isWorktreeContext?: boolean;
+  /** True when the file is from a project other than `sourceChatId`'s own */
+  isOtherProject?: boolean;
   /** Open intent: preview tabs are reused/replaced, pinned tabs persist */
   intent?: OpenFileIntent;
 };
@@ -247,7 +251,10 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
 
   if (existing) {
     const existingKey = fileKey(existing.path, existing.projectPath);
-    const mergedProjectPath = file.projectPath ?? existing.projectPath;
+    // The tab's path is relative to its own folder, so the two stay together: the same file opened
+    // through a nested project's folder must not pair that folder with the tab's path. Only a
+    // legacy tab with no folder takes the incoming one.
+    const mergedProjectPath = existing.projectPath ?? file.projectPath;
     const mergedIsWorktree = existing.isWorktreeContext || file.isWorktreeContext;
     // A tab moving into another pane's group stays a preview only if that group has none.
     const keepsPreview =
@@ -264,6 +271,9 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
             file.sourcePaneIndex !== undefined ? file.sourcePaneIndex : f.sourcePaneIndex,
           sourceChatId: file.sourceChatId ?? f.sourceChatId,
           isWorktreeContext: mergedIsWorktree,
+          // An open with a sourceChatId decides the flag (Ctrl+Click passes its origin tab's);
+          // an open with no chat keeps it.
+          isOtherProject: file.sourceChatId !== undefined ? file.isOtherProject : f.isOtherProject,
           isPreview: openIntent === 'preview' ? f.isPreview && keepsPreview : false,
         };
       }),
@@ -292,6 +302,7 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
               sourcePaneIndex: file.sourcePaneIndex,
               sourceChatId: file.sourceChatId,
               isWorktreeContext: file.isWorktreeContext,
+              isOtherProject: file.isOtherProject,
               isPreview: true,
             }
           : f,
@@ -304,6 +315,7 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
       sourcePaneIndex,
       sourceChatId,
       isWorktreeContext,
+      isOtherProject,
       intent: _,
       language: languageOverride,
       ...rest
@@ -318,6 +330,7 @@ export const openFileAtom = atom(null, (get, set, file: OpenFileInput) => {
         sourcePaneIndex,
         sourceChatId,
         isWorktreeContext,
+        isOtherProject,
         isPreview: openIntent === 'preview',
       },
     ]);
@@ -453,7 +466,8 @@ export const tagOpenFilesWithPaneContextAtom = atom(
     const files = get(openFilesAtom);
     let changed = false;
     const updated = files.map((f) => {
-      if (!f.projectPath) return f;
+      // Another project's tab stays with the chat that opened it.
+      if (!f.projectPath || f.isOtherProject) return f;
       const match = paneMap.find((p) => p.projectPath === f.projectPath);
       if (!match) return f;
       // Skip if already correctly tagged
@@ -593,9 +607,11 @@ export const closeFilesOutsideProjectAtom = atom(null, (get, set, projectPath: s
   // Files store relative paths, so compare via the projectPath metadata
   // (set when file is opened from a pane/sidebar). Falls back to the legacy
   // absolute-path prefix check for any files opened before pane awareness.
+  // Another project's tabs are left to settleBrowsedTabsAtom, which knows their chat.
   const normalizedProjectPath = normalizePathForComparison(projectPath);
   const normalizedProjectPrefix = normalizedProjectPath ? `${normalizedProjectPath}/` : '';
   const filesInProject = files.filter((f) => {
+    if (f.isOtherProject) return true;
     const normalizedFileProjectPath = normalizePathForComparison(f.projectPath);
     const normalizedFilePath = normalizePathForComparison(f.path) ?? '';
     return (

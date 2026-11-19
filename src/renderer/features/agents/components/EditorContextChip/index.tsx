@@ -1,3 +1,4 @@
+import { pathLabel } from '../../../../../shared/lib/mentions/parse-mention';
 import type { CodeSelectionContext } from '../../lib/queue-utils';
 import { AgentFileItem } from '../../ui/agent-file-item';
 
@@ -25,12 +26,15 @@ export function EditorContextChip({
 }: EditorContextChipProps) {
   if (selection) {
     const lines = `${selection.startLine}-${selection.endLine}`;
+    // A selection from another project names its file by full path; the chip shows the name,
+    // as the sent message's chip does.
+    const name = pathLabel(selection.fileName);
     return (
       <AgentFileItem
-        filename={selection.fileName}
+        filename={name}
         path={selection.filePath}
         detail={`L${lines}`}
-        removeLabel={`Remove code selection and file from context: ${selection.fileName} lines ${lines}`}
+        removeLabel={`Remove code selection and file from context: ${name} lines ${lines}`}
         onRemove={() => {
           onRemoveSelection();
           onRemoveFile();

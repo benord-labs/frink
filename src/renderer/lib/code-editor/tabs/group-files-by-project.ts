@@ -39,3 +39,17 @@ export function groupFilesByProject(files: OpenFile[]): FileProjectGroup[] {
 
   return grouped;
 }
+
+/**
+ * How the tab bar lays out its tabs: in project groups when they come from more than one project,
+ * else in one row (`groups` is null). `order` is the order the bar draws them in, which cycling
+ * through tabs from the keyboard follows.
+ */
+export function arrangeTabsByProject(files: OpenFile[]): {
+  groups: FileProjectGroup[] | null;
+  order: OpenFile[];
+} {
+  const groups = groupFilesByProject(files);
+  if (groups.length < 2) return { groups: null, order: files };
+  return { groups, order: groups.flatMap((group) => group.files) };
+}
