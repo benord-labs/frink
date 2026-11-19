@@ -135,6 +135,7 @@ export function outputPresentationRevision(part: MessagePart): string {
     templateWarningCount: Array.isArray(unwrapped.templateWarnings)
       ? unwrapped.templateWarnings.length
       : 0,
+    templateWarningsSuppressed: unwrapped.templateWarningsSuppressed,
     webhookSetupCount: Array.isArray(unwrapped.webhookSetup) ? unwrapped.webhookSetup.length : 0,
   });
 }

@@ -32,6 +32,9 @@ const spilledReceiptSchema = z.object({
   skipped: z.unknown().optional(),
   retryOps: z.unknown().optional(),
   templateWarnings: z.unknown().optional(),
+  templateWarningsSuppressed: z.number().optional(),
+  // Read-back warning messages point into this map, so the saved receipt stays self-contained.
+  availableFields: z.unknown().optional(),
   webhookSetup: z.unknown().optional(),
 });
 

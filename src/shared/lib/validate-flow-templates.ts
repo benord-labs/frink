@@ -20,6 +20,7 @@ import {
   customNodeNonFlowRootWarning,
   extractTemplatePaths,
   nonRenderedFieldWarnings,
+  pluginPreviousWarningMessage,
 } from './flows/template-field-warnings';
 import { getTemplateRenderedStrings } from './flows/template-rendered-fields';
 import {
@@ -76,6 +77,8 @@ export type TemplateVariableWarning = ShellWarningFields & {
   field: string;
   placeholder: string;
   message: string;
+  /** The valid paths `message` quotes as `paths.join(', ')`, so the MCP receipt can send each list once. */
+  availableFields?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -578,16 +581,8 @@ export function validateFlowTemplateVariables(
 // Per-root validators
 // ---------------------------------------------------------------------------
 
-/** Undeclared `{{previous.<key>}}` after a machine-owned plugin node: its `outputs` are re-derived
- *  from the catalog, so manifest/re-register advice prescribes an edit the spawner discards. */
-function pluginPreviousWarningMessage(
-  path: string,
-  key: string,
-  declared: string,
-  pluginId: string,
-  predType: string,
-): string {
-  return `{{${path}}} is not a declared output field. Declared: ${declared}. It may still resolve at runtime if ${pluginId} returns "${key}" in its response. Prefer a declared field: "${predType}" is a machine-owned ${pluginId} plugin node whose outputs come from the plugin catalog, so "${key}" cannot be added to its manifest.`;
+function listedFields(paths: string[]): Pick<TemplateVariableWarning, 'availableFields'> {
+  return paths.length > 0 ? { availableFields: paths } : {};
 }
 
 function checkPreviousPath(
@@ -608,12 +603,13 @@ function checkPreviousPath(
   const pluginId = predType === undefined ? undefined : reservedPluginIdForNodeName(predType);
   if (predType !== undefined && pluginId !== undefined) {
     if (vars.previous.some((f) => f.key === key)) return;
-    const declared = vars.previous.map((f) => `previous.${f.key}`).join(', ') || '(none)';
+    const declared = vars.previous.map((f) => `previous.${f.key}`);
     warnings.push({
       nodeId: node.id,
       field,
       placeholder: `{{${path}}}`,
       message: pluginPreviousWarningMessage(path, key, declared, pluginId, predType),
+      ...listedFields(declared),
     });
     return;
   }
@@ -645,7 +641,8 @@ function checkPreviousPath(
   const matchedField = vars.previous.find((f) => f.key === key);
   if (matchedField) return;
 
-  const available = vars.previous.map((f) => `previous.${f.key}`).join(', ');
+  const availablePaths = vars.previous.map((f) => `previous.${f.key}`);
+  const available = availablePaths.join(', ');
 
   if (isDynamic) {
     // Predecessor CAN produce dynamic fields, but this key isn't declared (see NodeVariables.singlePredecessorBlockType's doc for the attribution rule).
@@ -661,6 +658,7 @@ function checkPreviousPath(
       field,
       placeholder: `{{${path}}}`,
       message: `{{${path}}} is not a declared output field. Declared: ${available || '(none)'}. This will only resolve if the upstream command prints JSON containing "${key}" to stdout. ${actionHint}`,
+      ...listedFields(availablePaths),
     });
     return;
   }
@@ -670,6 +668,7 @@ function checkPreviousPath(
     field,
     placeholder: `{{${path}}}`,
     message: `{{${path}}} references an unknown output field. Available: ${available || '(none)'}. See the \`frink-flows\` skill (\`SKILL.md\`) for the predecessor block's output schema.`,
+    ...listedFields(availablePaths),
   });
 }
 
@@ -708,12 +707,13 @@ function checkTriggerPath(
       ),
     );
     if (triggerFields.some((f) => f.key === key) || aliasNamespaces.has(key)) return;
-    const available = triggerFields.map((f) => `trigger.${f.key}`).join(', ');
+    const availablePaths = triggerFields.map((f) => `trigger.${f.key}`);
     warnings.push({
       nodeId: node.id,
       field,
       placeholder: `{{${path}}}`,
-      message: `{{${path}}} references an unknown trigger field for webhook_trigger. Available: ${available} (+ provider fields like trigger.story.title — see Available variables).`,
+      message: `{{${path}}} references an unknown trigger field for webhook_trigger. Available: ${availablePaths.join(', ')} (+ provider fields like trigger.story.title — see Available variables).`,
+      ...listedFields(availablePaths),
     });
     return;
   }
@@ -730,12 +730,13 @@ function checkTriggerPath(
 
   const matched = triggerFields.find((f) => f.key === key);
   if (!matched) {
-    const available = triggerFields.map((f) => `trigger.${f.key}`).join(', ');
+    const availablePaths = triggerFields.map((f) => `trigger.${f.key}`);
     warnings.push({
       nodeId: node.id,
       field,
       placeholder: `{{${path}}}`,
-      message: `{{${path}}} references an unknown trigger field for ${triggerType}. Available: ${available}.`,
+      message: `{{${path}}} references an unknown trigger field for ${triggerType}. Available: ${availablePaths.join(', ')}.`,
+      ...listedFields(availablePaths),
     });
   }
 }

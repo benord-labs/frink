@@ -398,7 +398,7 @@ Recommended sequence the agent follows (you don't have to think about it — thi
 3. `frink_flows_patch` with `name` + `operations` — create the flow and add the first nodes.
 4. `frink_flows_patch` with `flowId` + `operations` — add remaining nodes and configs.
 
-The graph is saved after each patch call, even with incomplete configs. **Run-mode** checks (HTTP URL, webhook integration/event, agent instructions, and other execution requirements) are **not** applied on every patch; they run when you **start** a flow and when the **server creates batch stages** (`frink_flows_define_stages`), which validates the graph in run mode before persisting stages. Template warnings and per-node available variables (`nodeVariables`) are included in every patch response.
+The graph is saved after each patch call, even with incomplete configs. **Run-mode** checks (HTTP URL, webhook integration/event, agent instructions, and other execution requirements) are **not** applied on every patch; they run when you **start** a flow and when the **server creates batch stages** (`frink_flows_define_stages`), which validates the graph in run mode before persisting stages. A patch response lists up to 20 template warnings (notes about a partial patch or a near-limit agent prompt come on top). Each list of valid fields they mention appears once, under `availableFields`, and `templateWarningsSuppressed` counts any template warnings past the first 20. Fix those and patch again to see the rest.
 
 ### Seeing what an agent changed
 
