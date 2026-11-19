@@ -12,6 +12,11 @@ export const CODEX_SHELL_ENV_SCRUB_ARGS = [
  * Frink's gate; only [agents].enabled=false removes them. After configArgs so no override undoes it. */
 export const CODEX_SUB_AGENTS_OFF_ARGS = ['--config', 'agents.enabled=false'] as const;
 
+/** The `--config` keys Frink locks; the start check confirms Codex kept each launched value. */
+export const CODEX_LOCKED_CONFIG_KEYS: ReadonlySet<string> = new Set(
+  [CODEX_SUB_AGENTS_OFF_ARGS[1], CODEX_SHELL_ENV_SCRUB_ARGS[1]].map((arg) => arg.split('=')[0]),
+);
+
 /** Disable Codex execution surfaces that do not implement Frink host permission v1, including
  * sub-agents, and scrub credentials from the shells Codex spawns. */
 export function buildSpawnArgs(configArgs?: string[]): string[] {
