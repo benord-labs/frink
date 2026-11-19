@@ -27,12 +27,14 @@ export function isFieldReservedChord(
 }
 
 /**
- * For handlers hardcoded to a registry `cmd` default: Cmd on Mac, Ctrl elsewhere (never both).
+ * For handlers hardcoded to a registry `cmd` default: Cmd on Mac, Ctrl elsewhere, never both or with Alt.
  * Off Mac it yields field-reserved chords (see isFieldReservedChord), like the hotkeys manager.
  */
 export function isPrimaryChord(e: KeyboardEvent, isMac = isMacOS()): boolean {
+  if (e.altKey) return false;
   if (isMac) return e.metaKey && !e.ctrlKey;
-  if (!e.ctrlKey || e.metaKey || e.getModifierState('AltGraph')) return false;
-  const chord = `ctrl+${e.altKey ? 'alt+' : ''}${e.shiftKey ? 'shift+' : ''}${e.key.toLowerCase()}`;
+  if (!e.ctrlKey || e.metaKey) return false;
+  const key = e.key === '+' ? 'plus' : e.key.toLowerCase();
+  const chord = `ctrl+${e.shiftKey ? 'shift+' : ''}${key}`;
   return !isFieldReservedChord(chord, e.target, false);
 }

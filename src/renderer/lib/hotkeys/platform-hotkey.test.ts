@@ -51,11 +51,18 @@ describe('isPrimaryChord', () => {
     expect(press({ ctrlKey: true, altKey: true, modifierAltGraph: true })).toBe(false);
   });
 
+  it('never matches with Alt held, so Ctrl+Alt (and AltGr) chords pass through', () => {
+    expect(press({ ctrlKey: true, altKey: true })).toBe(false);
+    const cmdOpt = new KeyboardEvent('keydown', { key: 'j', metaKey: true, altKey: true });
+    expect(isPrimaryChord(cmdOpt, true)).toBe(false);
+  });
+
   it('yields plain Ctrl chords typed in the terminal to the shell, but not Ctrl+Shift ones', () => {
     const terminal = document.body.appendChild(document.createElement('div'));
     terminal.className = 'xterm';
     const input = terminal.appendChild(document.createElement('textarea'));
     expect(press({ ctrlKey: true }, input)).toBe(false);
+    expect(press({ ctrlKey: true, key: '+' }, input)).toBe(false);
     expect(press({ ctrlKey: true, shiftKey: true, key: 'J' }, input)).toBe(true);
     terminal.remove();
   });
