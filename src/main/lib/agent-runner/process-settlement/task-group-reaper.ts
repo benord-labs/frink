@@ -290,16 +290,35 @@ async function classifyNewChildren(index: TableIndex): Promise<void> {
 }
 
 /** A command leads its own group; a Claude Bash call's shell also writes to its task's output. */
-function unclassifiedChildren({ byPid, children }: TableIndex): Map<number, Candidate> {
+function unclassifiedChildren(index: TableIndex): Map<number, Candidate> {
   const candidates = new Map<number, Candidate>();
   for (const [agentPid, agent] of agents) {
-    if (!byPid.has(agentPid)) continue;
+    const agentRow = index.byPid.get(agentPid);
+    if (!agentRow) continue;
     const known = (key: MemberKey) => agent.leaders.has(key) || agent.notLeaders.has(key);
-    for (const row of children.get(agentPid) ?? []) {
-      if (row.pid === row.pgid && !known(keyOf(row))) candidates.set(row.pid, { agent, row });
+    for (const row of commandsUnder(agentRow, agent.kind, index)) {
+      if (!known(keyOf(row))) candidates.set(row.pid, { agent, row });
     }
   }
   return candidates;
+}
+
+/** Claude's commands are its direct children. Other agents may run behind a launcher (npx), so
+ * their commands are the first processes leading a group of their own below the agent's group. */
+function commandsUnder(
+  agentRow: ProcessRow,
+  kind: TrackedAgent['kind'],
+  { children }: TableIndex,
+): ProcessRow[] {
+  const commands: ProcessRow[] = [];
+  const queue = [agentRow.pid];
+  for (let pid = queue.pop(); pid !== undefined; pid = queue.pop()) {
+    for (const child of children.get(pid) ?? []) {
+      if (child.pid === child.pgid && child.pgid !== agentRow.pgid) commands.push(child);
+      else if (kind === 'agent' && child.pgid === agentRow.pgid) queue.push(child.pid);
+    }
+  }
+  return commands;
 }
 
 function classify({ agent, row }: Candidate, output: string): void {

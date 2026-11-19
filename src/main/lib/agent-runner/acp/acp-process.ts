@@ -5,6 +5,7 @@ import log from 'electron-log';
 import {
   adoptAgentProcess,
   killProcessTree,
+  noteTaskGroupsNow,
   processTreeGone,
   signalProcessTree,
 } from '../process-settlement';
@@ -37,6 +38,8 @@ export type AcpAgentProcess = {
 };
 
 const STDERR_TAIL_CHARS = 2000;
+/** How long a stop waits to note what the agent's commands started before signalling. */
+const PRE_STOP_NOTE_MS = 2_000;
 /** The most of the agent's last error line a person is shown; the whole tail goes to the log. */
 const SHOWN_STDERR_CHARS = 200;
 /** Time the agent gets to stop on its own before its process group is killed. */
@@ -62,6 +65,8 @@ async function stopProcessTree(
   closed: Promise<void>,
   graceMs: number,
 ): Promise<void> {
+  // A command started since the last note would otherwise end unlinked to the agent.
+  await Promise.race([noteTaskGroupsNow({ teardown: true }), sleep(PRE_STOP_NOTE_MS)]);
   signalProcessTree(child, 'SIGTERM');
   await treeGoneWithin(child, graceMs);
   killProcessTree(child);
