@@ -1813,7 +1813,7 @@ describe('runCodexAgent', () => {
   // Spawn-args contract: codex app-server REJECTS unknown args and exits (the client reads
   // it as an init timeout), and `computer_use` engages a macOS Apple-Events control prompt mid-turn.
   // getCodexAppServer is mocked, so assert on the args it received.
-  it('disables every unrouted execution surface before configArgs', async () => {
+  it('disables every unrouted execution surface before configArgs and locks sub-agents off after', async () => {
     const fake = startedFakeClient();
     const gen = runCodexAgent(params({ configArgs: ['--config', 'mcp_servers.x={}'] }));
     await gen.next(); // start
@@ -1840,13 +1840,15 @@ describe('runCodexAgent', () => {
       '--config',
       'mcp_servers.x={}',
       '--config',
+      'agents.enabled=false',
+      '--config',
       'shell_environment_policy.ignore_default_excludes=false',
     ]);
     expect(opts.args).not.toContain('--ignore-user-config');
     expect(opts.args).not.toContain('--skip-git-repo-check');
   });
 
-  it('with no configArgs, spawns only the disable flags and the shell-env scrub', async () => {
+  it('with no configArgs, spawns only the locked flags and the shell-env scrub', async () => {
     const fake = startedFakeClient();
     const gen = runCodexAgent(params());
     await gen.next();
@@ -1870,6 +1872,8 @@ describe('runCodexAgent', () => {
       'multi_agent',
       '--disable',
       'multi_agent_v2',
+      '--config',
+      'agents.enabled=false',
       '--config',
       'shell_environment_policy.ignore_default_excludes=false',
     ]);

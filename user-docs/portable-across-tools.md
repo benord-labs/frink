@@ -21,7 +21,7 @@ Each chat stays on the tool it started with. A new chat uses its project's accou
 | MCP servers            | Yes                                                                    |
 | Skills                 | Yes                                                                    |
 | Commands               | Yes                                                                    |
-| Custom agents          | Yes                                                                    |
+| Custom agents          | Yes on Claude; Codex chats run without helper agents for now           |
 | Connected integrations | Yes (delivered as MCP)                                                 |
 | Tool limits            | Yes — enforced where the tool can, relaxed to read-only where it can't |
 | Hooks                  | Yes, from Claude to Codex — the ones Codex can run                     |
@@ -60,7 +60,7 @@ Say you built an agent called **Security Auditor** and told it _"only allowed to
 
 Frink tells you what changed when you switch tools. The agent itself (its name and instructions) always comes with you. Tool-specific settings — which model it runs on, and how tightly its rules are policed — translate to the closest thing the new tool offers: model names differ between tools, so on a new tool the agent starts on that tool's default model until you pick one.
 
-**Hooks** (like _"block dangerous commands"_) you set up for Claude in your own settings, or in a project's `.claude/settings.local.json`, also run in Codex chats. Frink keeps its own copy in `~/.frink/hooks` and picks up any change you make to those files. Codex runs only command hooks, and only on the events it shares with Claude, so a hook for a Claude-only event (such as a notification) stays with Claude. A hook written for Claude's tool names may not act on Codex's (Codex calls file edits `apply_patch` and sub-agents `spawn_agent`). Hooks committed in a project stay with the project and are not copied.
+**Hooks** (like _"block dangerous commands"_) you set up for Claude in your own settings, or in a project's `.claude/settings.local.json`, also run in Codex chats. Frink keeps its own copy in `~/.frink/hooks` and picks up any change you make to those files. Codex runs only command hooks, and only on the events it shares with Claude, so a hook for a Claude-only event (such as a notification) stays with Claude. A hook written for Claude's tool names may not act on Codex's (Codex calls file edits `apply_patch`). Hooks committed in a project stay with the project and are not copied.
 
 **OpenCode** chats don't take your setup yet. MCP servers, commands, custom agents and hooks don't reach them, and Frink ignores your own OpenCode config files while it runs OpenCode, for safety. OpenCode still reads your instructions files (`AGENTS.md`, `CLAUDE.md`) and the skills in `~/.claude/skills`.
 

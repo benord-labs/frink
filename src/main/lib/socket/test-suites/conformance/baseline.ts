@@ -83,4 +83,6 @@ export const CANARY_GAPS: Partial<Record<CanaryRowId, string>> = {
   'plugins x copilot': CLAUDE_AND_CODEX_PLUGINS,
   'instructions x codex': CODEX_OWN_FILES,
   'memory x codex': CODEX_OWN_FILES,
+  'agentBrain x codex':
+    "Codex runs without sub-agents: a sub-agent's commands and edits would not ask Frink first.",
 };

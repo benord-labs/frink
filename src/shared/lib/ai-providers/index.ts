@@ -70,9 +70,9 @@ export const AI_PROVIDERS = {
         skills: 'copy',
         // The app server takes no commands; Frink expands a slash command before sending it.
         commands: 'none',
-        // Sub-agent roles load only as `.toml` files under `~/.codex/agents`.
-        agentBrain: 'copy',
-        allowlist: 'enforce',
+        // Sub-agents are off: their commands and edits would not ask Frink first.
+        agentBrain: 'none',
+        allowlist: 'none',
         // Each thread is started with the user's stored hooks.
         hooks: 'inject',
         // Staged plugins' skills are added for each launch through the app server.

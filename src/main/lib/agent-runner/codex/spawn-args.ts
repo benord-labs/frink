@@ -8,8 +8,12 @@ export const CODEX_SHELL_ENV_SCRUB_ARGS = [
   'shell_environment_policy.ignore_default_excludes=false',
 ] as const;
 
-/** Disable Codex execution surfaces that do not implement Frink host permission v1, and scrub
- * credentials from the shells Codex spawns. */
+/** Codex's model catalog turns sub-agents on despite the feature flags, and a sub-agent's calls skip
+ * Frink's gate; only [agents].enabled=false removes them. After configArgs so no override undoes it. */
+export const CODEX_SUB_AGENTS_OFF_ARGS = ['--config', 'agents.enabled=false'] as const;
+
+/** Disable Codex execution surfaces that do not implement Frink host permission v1, including
+ * sub-agents, and scrub credentials from the shells Codex spawns. */
 export function buildSpawnArgs(configArgs?: string[]): string[] {
   return [
     '--disable',
@@ -27,6 +31,7 @@ export function buildSpawnArgs(configArgs?: string[]): string[] {
     '--disable',
     'multi_agent_v2',
     ...(configArgs ?? []),
+    ...CODEX_SUB_AGENTS_OFF_ARGS,
     ...CODEX_SHELL_ENV_SCRUB_ARGS,
   ];
 }
