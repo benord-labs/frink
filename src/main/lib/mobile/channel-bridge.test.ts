@@ -90,15 +90,43 @@ describe('mobile channel bridge', () => {
     expect(fail).not.toHaveBeenCalled();
   });
 
-  it('fails a channel that opens more requests than a phone ever keeps in flight', async () => {
+  it('answers a ninth live request with 429 and keeps the channel open', () => {
     const fetch = vi.fn(() => new Promise<Response>(() => {}));
-    const { bridge, fail } = harness(fetch);
+    const { bridge, fail, response } = harness(fetch);
     for (let id = 0; id < 8; id++)
       for (const part of request(id, '/api', encode({}))) bridge.receive(part);
-    expect(fail).not.toHaveBeenCalled();
     for (const part of request(8, '/api', encode({}))) bridge.receive(part);
+    expect(response(8).status).toBe(429);
     expect(fetch).toHaveBeenCalledTimes(8);
-    expect(fail).toHaveBeenCalledTimes(1);
+    // A cancelled request frees its live slot even while the app is still running it.
+    bridge.receive({ t: 'cancel', id: 0 });
+    for (const part of request(9, '/api', encode({}))) bridge.receive(part);
+    expect(fetch).toHaveBeenCalledTimes(9);
+    expect(fail).not.toHaveBeenCalled();
+  });
+
+  it('caps cancelled requests the app is still running at 8, also with 429', () => {
+    const fetch = vi.fn(() => new Promise<Response>(() => {}));
+    const { bridge, fail, response } = harness(fetch);
+    for (let id = 0; id < 8; id++) {
+      for (const part of request(id, '/api', encode({}))) bridge.receive(part);
+      bridge.receive({ t: 'cancel', id });
+    }
+    for (const part of request(8, '/api', encode({}))) bridge.receive(part);
+    expect(response(8).status).toBe(429);
+    expect(fetch).toHaveBeenCalledTimes(8);
+    expect(fail).not.toHaveBeenCalled();
+  });
+
+  it('leaves the live cap to running requests, whatever refusals are still being swallowed', () => {
+    const fetch = vi.fn(() => new Promise<Response>(() => {}));
+    const { bridge, response } = harness(fetch);
+    const oversized = new Uint8Array(MOBILE_ENVELOPE_PART_BYTES * 2 + 1);
+    for (const part of request(0, '/api', oversized).slice(0, 2)) bridge.receive(part);
+    expect(response(0).status).toBe(413);
+    for (let id = 1; id <= 8; id++)
+      for (const part of request(id, '/api', encode({}))) bridge.receive(part);
+    expect(fetch).toHaveBeenCalledTimes(8);
   });
 
   it('bounds unfinished oversized uploads instead of remembering every id', () => {

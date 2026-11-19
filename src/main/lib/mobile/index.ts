@@ -19,6 +19,17 @@ let stopNotifications: (() => void) | null = null;
 let liveActivity: ReturnType<typeof startMobileLiveActivity> | null = null;
 const lifecycle = new Mutex();
 const identityPath = () => join(app.getPath('userData'), 'mobile-identity.json');
+/** The relay drops a socket silent for this long, so a longer sleep has already cost the link. */
+const RELAY_HEARTBEAT_MS = 15_000;
+let suspendedAt = 0;
+const noteSuspend = () => {
+  suspendedAt = Date.now();
+};
+/** Redials after a long sleep instead of waiting out a heartbeat. A short one keeps a live socket,
+ * and redialling it would cut off phones mid-request. */
+const reconnectAfterSleep = () => {
+  if (Date.now() - suspendedAt >= RELAY_HEARTBEAT_MS) host?.channel.reconnect();
+};
 
 function getStore(): Promise<MobilePairingStore> {
   storePromise ??= (async () => {
@@ -72,6 +83,7 @@ async function startHost(store: MobilePairingStore): Promise<void> {
       authenticate: (token) => store.authenticate(token),
     });
     host = { relay, identity, channel };
+    powerMonitor.on('suspend', noteSuspend).on('resume', reconnectAfterSleep);
     hostError = null;
   } catch (error) {
     // Nothing half-started survives a failed start.
@@ -84,6 +96,7 @@ async function startHost(store: MobilePairingStore): Promise<void> {
 }
 
 function stopHost(): void {
+  powerMonitor.off('suspend', noteSuspend).off('resume', reconnectAfterSleep);
   stopNotifications?.();
   stopNotifications = null;
   host?.channel.close();

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRelay, type Relay } from './index.js';
+import { createRelay, MOBILE_PING, type Relay } from './index.js';
 
 let relay: Relay | undefined;
 const clients: Socket[] = [];
@@ -65,6 +65,11 @@ describe('mobile relay', () => {
         data: Buffer.from('opaque-from-desktop'),
       }),
     ).toBe(true);
+  });
+
+  it('drops a silent connection after the short mobile heartbeat', () => {
+    relay = createRelay();
+    expect(relay.io.engine.opts).toMatchObject(MOBILE_PING);
   });
 
   it('refuses missing desktops and replaces a stale host on a new ownership proof', async () => {

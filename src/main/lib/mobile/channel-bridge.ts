@@ -5,7 +5,8 @@ import {
 } from '../../../shared/types/remote/mobile-envelope';
 import { MOBILE_UPLOAD_MAX_BYTES } from './server';
 
-/** Requests one phone may have open at once over a channel; the phone's polling needs a handful. */
+/** Requests one phone may have open at once over a channel; the phone's polling needs a handful.
+ * Cancelled requests the app still runs get a separate cap of the same size. */
 const MAX_IN_FLIGHT = 8;
 const JSON_BODY_MAX_BYTES = 128 * 1024;
 const ATTACHMENTS_PATH = '/api/attachments';
@@ -122,10 +123,17 @@ class Bridge implements ChannelBridge {
     this.cancelled.clear();
   }
 
-  /** Whether a first part may open request `id`: a new id, within what a phone keeps in flight. */
+  /** Whether `id` is new, and refused requests still being swallowed stay bounded. */
   private admits(id: number): boolean {
     if (this.running.has(id) || this.refused.has(id)) return false;
-    return this.assembling.size + this.running.size + this.refused.size < MAX_IN_FLIGHT;
+    return this.refused.size < MAX_IN_FLIGHT;
+  }
+
+  /** Whether a new request would exceed what one phone may have in flight. Refused ids hold no body
+   * or app work, and `admits` bounds them on its own. */
+  private busy(): boolean {
+    const live = this.assembling.size + this.running.size - this.cancelled.size;
+    return live >= MAX_IN_FLIGHT || this.cancelled.size >= MAX_IN_FLIGHT;
   }
 
   /** Whether the request may make this desktop hold a body; remembers a token that authenticates,
@@ -140,9 +148,13 @@ class Bridge implements ChannelBridge {
   /** The first part of a request: its path and headers, checked before any body is held. */
   private begin(envelope: RequestPart): Assembly | null {
     const { id, path, headers } = envelope;
-    // A broken or hostile client: phones always open with a path and never exceed the cap.
+    // A broken or hostile client: phones always open with a path and a new id.
     if (!path || !headers || !this.admits(id)) {
       this.options.fail();
+      return null;
+    }
+    if (this.busy()) {
+      this.refuse(envelope, 429, 'Too many requests. Try again in a moment.');
       return null;
     }
     if (!this.authorized(path, headers)) {

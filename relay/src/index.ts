@@ -18,6 +18,9 @@ import { Server as SocketServer, type Socket } from 'socket.io';
 
 const HEX_32_BYTES = /^[0-9a-f]{64}$/;
 const FRAME_BYTES = 256 * 1024;
+/** Drops a silent phone or desktop in about 15 s rather than the default 45 s, so a dead link is
+ * noticed by both ends quickly. */
+export const MOBILE_PING = { pingInterval: 10_000, pingTimeout: 5_000 };
 const UNAVAILABLE = 'Mobile connection unavailable.';
 const DEFAULT_LIMITS = {
   sockets: 4096,
@@ -364,7 +367,7 @@ export function createRelay(
   app.use(helmet());
 
   const httpServer = createServer(app);
-  const io = new SocketServer(httpServer, { maxHttpBufferSize: FRAME_BYTES });
+  const io = new SocketServer(httpServer, { maxHttpBufferSize: FRAME_BYTES, ...MOBILE_PING });
   const stopMobile = attachMobileRelay(
     io,
     (handshake) => originOf(handshake, proxyHops),

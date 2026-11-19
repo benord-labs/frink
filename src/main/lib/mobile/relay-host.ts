@@ -42,6 +42,8 @@ export type RelayHost = {
   /** Closes every channel whose bearer token `revoked` rejects, at once. */
   sever(revoked: (token: string) => boolean): void;
   connected(): boolean;
+  /** Redials the relay at once, for a socket that may have died while the Mac slept. */
+  reconnect(): void;
   close(): void;
 };
 
@@ -66,20 +68,27 @@ export function startRelayHost(options: {
     peers.get(peerId)?.bridge.close();
     peers.delete(peerId);
   };
-  const drop = (peerId: string) => {
+  const forgetAll = () => {
+    for (const peerId of [...deadlines.keys(), ...peers.keys()]) forget(peerId);
+  };
+  const drop = (peerId: string, reason: string) => {
+    log.debug(`[Mobile] Dropped phone channel: ${reason}`);
     forget(peerId);
     socket.emit('disconnect-peer', peerId);
   };
   /** A late failure from an earlier channel must not drop a newer one under the same id. */
   const dropIfCurrent = (peerId: string, peer: Peer) => {
-    if (peers.get(peerId) === peer) drop(peerId);
+    if (peers.get(peerId) === peer) drop(peerId, 'frame not acknowledged');
   };
   /** Drops `peerId` after `ms` unless `kept()` says it has earned its slot by then. */
   const deadline = (peerId: string, ms: number, kept: () => boolean) => {
     clearTimeout(deadlines.get(peerId));
     deadlines.set(
       peerId,
-      setTimeout(() => (kept() ? deadlines.delete(peerId) : drop(peerId)), ms),
+      setTimeout(
+        () => (kept() ? deadlines.delete(peerId) : drop(peerId, 'no hello or auth in time')),
+        ms,
+      ),
     );
   };
   const authenticated = (peer: Peer) => [...peer.bridge.tokens()].some(options.authenticate);
@@ -91,7 +100,7 @@ export function startRelayHost(options: {
       return !peer || !authenticated(peer);
     });
     const excess = unproven.length - MAX_UNPROVEN + 1;
-    for (const id of unproven.slice(0, Math.max(0, excess))) drop(id);
+    for (const id of unproven.slice(0, Math.max(0, excess))) drop(id, 'unproven cap');
     deadline(peerId, HELLO_DEADLINE_MS, () => peers.has(peerId));
   };
 
@@ -100,7 +109,7 @@ export function startRelayHost(options: {
 
   const handshake = (peerId: string, hello: Uint8Array) => {
     const answer = peers.size < MAX_PEERS && answerHandshake(hello, options.identity.keyPair);
-    if (!answer) return drop(peerId);
+    if (!answer) return drop(peerId, 'handshake refused');
     const peer: Peer = {
       session: answer.session,
       sending: emit(peerId, answer.ready).catch(() => dropIfCurrent(peerId, peer)),
@@ -113,13 +122,13 @@ export function startRelayHost(options: {
           try {
             frame = peer.session.seal(encodeEnvelope(envelope));
           } catch {
-            return drop(peerId);
+            return drop(peerId, 'seal failed');
           }
           peer.sending = peer.sending
             .then(() => peers.get(peerId) === peer && emit(peerId, frame))
             .catch(() => dropIfCurrent(peerId, peer));
         },
-        fail: () => drop(peerId),
+        fail: () => drop(peerId, 'protocol violation'),
         authenticate: options.authenticate,
         budget,
       }),
@@ -133,7 +142,7 @@ export function startRelayHost(options: {
     if (!peer) return handshake(peerId, data);
     const plain = peer.session.open(data);
     const envelope = plain && mobileEnvelopeSchema.safeParse(decodeEnvelope(plain));
-    if (!envelope?.success) return drop(peerId);
+    if (!envelope?.success) return drop(peerId, 'invalid frame');
     peer.bridge.receive(envelope.data);
   };
 
@@ -157,7 +166,7 @@ export function startRelayHost(options: {
     reclaim = setTimeout(() => !closed && socket.connect(), RECLAIM_DELAY_MS);
   };
   socket.on('disconnect', () => {
-    for (const peerId of [...deadlines.keys(), ...peers.keys()]) forget(peerId);
+    forgetAll();
     retry();
   });
   socket.on('connect_error', (error) => {
@@ -168,14 +177,22 @@ export function startRelayHost(options: {
   return {
     sever(revoked) {
       for (const [peerId, peer] of peers) {
-        if ([...peer.bridge.tokens()].some(revoked)) drop(peerId);
+        if ([...peer.bridge.tokens()].some(revoked)) drop(peerId, 'revoked');
       }
     },
     connected: () => socket.connected,
+    reconnect() {
+      if (closed) return;
+      forgetAll();
+      socket.disconnect();
+      // The disconnect schedules a delayed reclaim; this one dials now instead.
+      clearTimeout(reclaim);
+      socket.connect();
+    },
     close() {
       closed = true;
       clearTimeout(reclaim);
-      for (const peerId of [...deadlines.keys(), ...peers.keys()]) forget(peerId);
+      forgetAll();
       socket.close();
     },
   };
