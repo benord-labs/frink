@@ -13,6 +13,28 @@ export function listen(server: http.Server | net.Server): Promise<number> {
   });
 }
 
+/** A server on 127.0.0.1 that hands `answer` each request's path and whole body. */
+export async function serveScripted(
+  answer: (url: string, body: string, res: http.ServerResponse) => void,
+): Promise<{ server: http.Server; port: number }> {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (part) => (body += part));
+    req.on('end', () => answer(req.url ?? '', body, res));
+  });
+  return { server, port: await listen(server) };
+}
+
+/** Streams named server-sent events, the framing of the Anthropic and Responses APIs. */
+export function streamEvents<Event extends { type: string }>(
+  res: http.ServerResponse,
+  events: Event[],
+): void {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  for (const event of events) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  res.end();
+}
+
 function sse(res: http.ServerResponse, deltas: object[]) {
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   deltas.forEach((delta, index) => {
@@ -53,13 +75,8 @@ export async function startScriptedModel() {
     if (!step) return sse(res, [{ role: 'assistant', content: 'done' }]);
     return sse(res, [{ role: 'assistant', tool_calls: [toolCall(step, done + 1)] }, {}]);
   };
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (part) => (body += part));
-    req.on('end', () => answer(body, res));
-  });
-  const url = `http://127.0.0.1:${await listen(server)}/v1`;
-  return { url, scripts, requests, server };
+  const { server, port } = await serveScripted((_url, body, res) => answer(body, res));
+  return { url: `http://127.0.0.1:${port}/v1`, scripts, requests, server };
 }
 
 /** A tool module that leaves a marker when anything loads it. */
