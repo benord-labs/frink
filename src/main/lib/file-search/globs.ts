@@ -39,12 +39,12 @@ export function splitGlobList(text: string): string[] {
 /** One typed pattern as the globs it means: `*.ts` matches at any depth, `src` also
  * matches everything under a `src` folder, and `.\src\x` reads as `src/x`. */
 function expandPattern(pattern: string): string[] {
-  // `.` and `./` both name the project root, so neither filters anything.
   let glob = pattern
     .replaceAll('\\', '/')
     .replace(/^\.(\/|$)/, '')
     .replace(/\/+$/, '');
-  if (glob === '') return [];
+  // `.` and `./` name the project root: every path, so `src, .` includes everything.
+  if (glob === '') return pattern.trim().startsWith('.') ? ['**'] : [];
   if (glob.startsWith('/')) glob = glob.slice(1);
   else if (!glob.includes('/')) glob = `**/${glob}`;
   return [glob, `${glob}/**`];

@@ -43,9 +43,9 @@ describe('compileGlobs', () => {
     expect(matches('gen, {tmp, docs', 'docs/a.md')).toBe(true);
   });
 
-  it('reads `.` like `./`: the project root, so no filter', () => {
-    expect(compileGlobs('.')).toEqual([]);
-    expect(compileGlobs('./')).toEqual([]);
+  it('reads `.` and `./` as the project root, so they match every path', () => {
+    expect(matches('.', 'a/b.ts')).toBe(true);
+    expect(matches('src, ./', 'docs/a.md')).toBe(true);
   });
 
   it('compiles an empty list to no filters', () => {

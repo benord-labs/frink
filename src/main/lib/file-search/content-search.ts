@@ -129,14 +129,24 @@ function matchLines(walk: Walk, content: string, filePath: string): FileContentM
   return batch;
 }
 
-/** The path to read for a file row, or null to skip it. A link is read only when its
- * target is a file inside the project, so a cloned repo's link to ~ is never searched. */
+/** Whether a link's target, inside the project, sits where the walk would also search: not in an
+ * ignored folder, not an ignored file, not excluded. */
+function targetSearchable(walk: Walk, target: string): boolean {
+  const relativeTarget = toPosix(relative(walk.realRoot, target));
+  const parts = relativeTarget.split('/');
+  if (parts.slice(0, -1).some(isIgnoredDirectory)) return false;
+  if (isIgnoredFileByName(parts.at(-1) ?? '')) return false;
+  return !walk.job.exclude.some((re) => re.test(relativeTarget));
+}
+
+/** The path to read for a file row, or null to skip it. A link is read only when its target is
+ * a file inside the project that the walk would search, so a link to ~ or to `dist` is not. */
 async function readablePath(walk: Walk, entry: Dirent, fullPath: string): Promise<string | null> {
   if (entry.isFile()) return fullPath;
   if (!entry.isSymbolicLink()) return null;
   try {
     const target = await realpath(fullPath);
-    if (!isUnder(walk.realRoot, target)) return null;
+    if (!isUnder(walk.realRoot, target) || !targetSearchable(walk, target)) return null;
     return (await stat(target)).isFile() ? target : null;
   } catch {
     return null;

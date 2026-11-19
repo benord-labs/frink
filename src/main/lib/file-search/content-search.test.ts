@@ -363,6 +363,24 @@ describe('searchContents', () => {
     },
   );
 
+  // Windows needs Developer Mode for file links.
+  it.skipIf(process.platform === 'win32')(
+    'does not read a link whose target is in an excluded or ignored folder',
+    async () => {
+      await mkdir(join(projectPath, 'dist'));
+      await mkdir(join(projectPath, 'node_modules'));
+      await mkdir(join(projectPath, 'src'));
+      await writeFile(join(projectPath, 'dist', 'built.ts'), 'needle', 'utf8');
+      await writeFile(join(projectPath, 'node_modules', 'dep.ts'), 'needle', 'utf8');
+      await symlink(join('..', 'dist', 'built.ts'), join(projectPath, 'src', 'built.ts'));
+      await symlink(join('..', 'node_modules', 'dep.ts'), join(projectPath, 'src', 'dep.ts'));
+
+      const result = await search({ projectPath, ...needle, exclude: compileGlobs('dist') });
+
+      expect(result.matches).toEqual([]);
+    },
+  );
+
   it('keeps only included files and skips excluded folders', async () => {
     await mkdir(join(projectPath, 'src', 'gen'), { recursive: true });
     await writeFile(join(projectPath, 'src', 'a.ts'), 'needle', 'utf8');
