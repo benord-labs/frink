@@ -22,7 +22,9 @@ export function useSaveOpenFile(
 
   return useCallback(
     async (key: string) => {
-      const file = store.get(openFilesAtom).find((f) => fileKey(f.path, f.projectPath) === key);
+      const find = () =>
+        store.get(openFilesAtom).find((f) => fileKey(f.path, f.projectPath) === key);
+      const file = find();
       if (file?.content === undefined) return false;
       // A kept tab from another project never borrows the selected project's folder.
       const projectPath =
@@ -40,7 +42,9 @@ export function useSaveOpenFile(
         toast.error('Failed to save file');
         return false;
       }
-      markFileSaved(key);
+      // An edit typed while the write ran is not on disk yet, so the tab stays unsaved.
+      const unchanged = find()?.content === file.content;
+      if (unchanged) markFileSaved(key);
       utils.files.listDirectory.invalidate();
       utils.files.symlinkEscape.invalidate();
       // Git status is worktree-scoped — a file outside any project has none to refresh.
@@ -51,7 +55,7 @@ export function useSaveOpenFile(
         utils.changes.getOriginalContent.invalidate(target);
         onSavedInProject(projectPath);
       }
-      return true;
+      return unchanged;
     },
     [store, fallbackProjectPath, onSavedInProject, markFileSaved, utils],
   );

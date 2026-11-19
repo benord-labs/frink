@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -94,6 +94,21 @@ describe('UnsavedChangesDialog', () => {
 
     expect(store.get(openFilesAtom)).toEqual([]);
     expect(saveOpenFile).not.toHaveBeenCalled();
+  });
+
+  it('leaves a newer prompt up when a save from a dismissed one finishes', async () => {
+    let finishWrite = (_saved: boolean) => {};
+    const { store, unmount } = renderPrompt(
+      vi.fn(() => new Promise<boolean>((resolve) => (finishWrite = resolve))),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    unmount();
+    const newer = ['src/b.ts'];
+    store.set(pendingCloseKeysAtom, newer);
+
+    await act(async () => finishWrite(true));
+
+    expect(store.get(pendingCloseKeysAtom)).toBe(newer);
   });
 
   it('answers Cancel when the editor unmounts with the prompt open, so later closes still work', () => {

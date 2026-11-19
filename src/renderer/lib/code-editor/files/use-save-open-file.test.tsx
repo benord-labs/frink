@@ -6,7 +6,7 @@ import { createStore, Provider } from 'jotai';
 import { Toaster } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithTrpc } from '../../test-utils/render-with-trpc';
-import { fileKey, type OpenFile, openFilesAtom } from '../state/atoms';
+import { fileKey, type OpenFile, openFilesAtom, updateFileContentAtom } from '../state/atoms';
 import { type SaveOpenFile, useSaveOpenFile } from './use-save-open-file';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -18,11 +18,16 @@ vi.hoisted(() => {
 
 afterEach(cleanup);
 
+type Store = ReturnType<typeof createStore>;
+
 /** Saves `file` through the hook, with /selected as the selected project; `answer` plays main. */
-async function save(file: OpenFile, answer: (op: Operation) => Promise<null> = async () => null) {
+async function save(
+  file: OpenFile,
+  answer: (op: Operation, store: Store) => Promise<null> = async () => null,
+) {
   const store = createStore();
   store.set(openFilesAtom, [{ ...file, content: 'edited', isDirty: true }]);
-  const asked = vi.fn(answer);
+  const asked = vi.fn((op: Operation) => answer(op, store));
   const onSavedInProject = vi.fn();
   let saveOpenFile: SaveOpenFile | undefined;
   function Probe() {
@@ -73,6 +78,22 @@ describe('useSaveOpenFile', () => {
     expect(saved).toBe(false);
     expect(store.get(openFilesAtom)[0]).toMatchObject({ content: 'edited', isDirty: true });
     expect(await screen.findByText('Failed to save file')).toBeInTheDocument();
+  });
+
+  it('keeps the tab unsaved when it is edited while the write runs', async () => {
+    const key = fileKey('src/a.ts', '/repo');
+    const { saved, store } = await save(
+      { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' },
+      async (op, store) => {
+        if (op.path === 'files.writeFile') {
+          store.set(updateFileContentAtom, { key, content: 'edited again' });
+        }
+        return null;
+      },
+    );
+
+    expect(saved).toBe(false);
+    expect(store.get(openFilesAtom)[0]).toMatchObject({ content: 'edited again', isDirty: true });
   });
 
   it('never writes a kept tab with no folder into the selected project', async () => {

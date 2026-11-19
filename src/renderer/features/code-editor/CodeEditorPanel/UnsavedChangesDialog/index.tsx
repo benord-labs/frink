@@ -44,11 +44,15 @@ export function UnsavedChangesDialog({ saveOpenFile, onCloseAutoFocus }: Props):
 
   const saveAndClose = async () => {
     setSaving(true);
-    for (const key of keys) {
-      if (await saveOpenFile(key)) closeFile(key);
+    try {
+      for (const key of keys) {
+        if (await saveOpenFile(key)) closeFile(key);
+      }
+    } finally {
+      setSaving(false);
+      // A prompt opened while this save ran (after this one was dismissed) stays up.
+      setPendingKeys((current) => (current === pendingKeys ? null : current));
     }
-    setSaving(false);
-    setPendingKeys(null);
   };
 
   const discardAndClose = () => {
