@@ -30,7 +30,12 @@ afterEach(async () => {
 
 type McpPage = { data: { name: string }[]; nextCursor: string | null };
 type SkillsList = { data: { cwd: string; skills: { name: string; path: string }[] }[] };
-type Replies = { mcp?: (cursor?: string) => McpPage; skills?: SkillsList; fail?: Error };
+type Replies = {
+  mcp?: (cursor?: string) => McpPage;
+  skills?: SkillsList;
+  fail?: Error;
+  rootsRejected?: boolean;
+};
 
 const servers = (...names: string[]): McpPage => ({
   data: names.map((name) => ({ name })),
@@ -38,13 +43,16 @@ const servers = (...names: string[]): McpPage => ({
 });
 
 /** An app-server answering the two list calls, or failing every request. */
-function appServer({ mcp = () => servers(), skills = { data: [] }, fail }: Replies) {
+function appServer({ mcp = () => servers(), skills = { data: [] }, fail, rootsRejected }: Replies) {
   const sendRequest = vi.fn(async (method: string, params?: { cursor?: string }) => {
     if (fail) throw fail;
     return method === 'skills/list' ? skills : mcp(params?.cursor);
   });
   // SAFETY: the check calls only sendRequest, and parses every reply it gets.
-  const client = { sendRequest } as Pick<CodexAppServerClient, 'sendRequest'>;
+  const client = { sendRequest, skillRootsRegistered: !rootsRejected } as Pick<
+    CodexAppServerClient,
+    'sendRequest' | 'skillRootsRegistered'
+  >;
   return { client, sendRequest };
 }
 
@@ -151,13 +159,24 @@ describe('checkCodexThreadLoaded', () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
-  it('sends nothing when nothing is staged, or registering the skill roots failed', async () => {
+  it('sends nothing when nothing is staged, or this app-server refused its skill roots', async () => {
     await writeSkill('alpha');
-    const { client, sendRequest } = appServer({});
-    await checkCodexThreadLoaded(client, 'th1', staged());
-    recordCodexSkillRootsRpcOutcome({ ok: false, error: 'unsupported' });
+    const quiet = appServer({});
+    await checkCodexThreadLoaded(quiet.client, 'th1', staged());
+    const refused = appServer({ rootsRejected: true });
+    await checkCodexThreadLoaded(refused.client, 'th1', staged({ skillRoots: [skillRoot] }));
+    expect([...quiet.sendRequest.mock.calls, ...refused.sendRequest.mock.calls]).toEqual([]);
+  });
+
+  it("still compares skills when only another app-server's roots were refused", async () => {
+    await writeSkill('alpha');
+    const capture = vi.spyOn(sentry, 'captureMainMessage');
+    recordCodexSkillRootsRpcOutcome({ ok: false, error: 'other server disposed' });
+    const { client } = appServer({ skills: listing() });
     await checkCodexThreadLoaded(client, 'th1', staged({ skillRoots: [skillRoot] }));
-    expect(sendRequest).not.toHaveBeenCalled();
+    expect(capture.mock.calls).toEqual([
+      reportOf('codex loaded less than Frink staged (skills: alpha)'),
+    ]);
   });
 
   it('captures a failed check once without throwing, unless the app-server went away', async () => {

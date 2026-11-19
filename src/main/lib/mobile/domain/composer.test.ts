@@ -255,6 +255,24 @@ describe('phone composer', () => {
   });
 
   it.each([
+    ['moves a saved Debug to Agent on an OpenAI chat, so its next send runs', 'codex', 'agent'],
+    ['keeps a saved Debug on a Claude chat', 'claude-code', 'debug'],
+  ] as const)('%s', async (_name, type, shown) => {
+    fixture.requireChat.mockResolvedValue({
+      chat: { id: 'chat', projectId: 'project' },
+      subChat: { id: 'sub', mode: 'debug' },
+    });
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type });
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.mode).toBe(shown);
+    expect(fixture.updateSubChatMode.mock.calls).toEqual(
+      shown === 'agent' ? [[{ id: 'sub', mode: 'agent' }]] : [],
+    );
+  });
+
+  it.each([
     ['plan', 'Plan'],
     ['debug', 'Debug'],
   ] as const)('refuses %s on an OpenAI chat and keeps its mode', async (mode, name) => {

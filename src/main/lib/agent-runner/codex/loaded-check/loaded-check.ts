@@ -9,7 +9,6 @@ import {
 } from '../../../provider/staged-vs-loaded';
 import { captureMainException } from '../../../sentry/init';
 import type { CodexAppServerClient } from '../app-server-client';
-import { getCodexSkillRootsRpcOutcome } from '../skill-roots';
 
 // Not compared: hooks, as hooks/list leaves out the hooks a thread is started with.
 
@@ -22,7 +21,7 @@ const SkillsList = z.object({
 });
 const MAX_PAGES = 10;
 
-type Client = Pick<CodexAppServerClient, 'sendRequest'>;
+type Client = Pick<CodexAppServerClient, 'sendRequest' | 'skillRootsRegistered'>;
 /** What a fresh thread was handed: Frink's MCP server names and the vendor skill roots. */
 export type CodexStaged = {
   subChatId: string;
@@ -76,7 +75,7 @@ export function checkCodexThreadLoaded(
   staged: CodexStaged,
 ): Promise<void> {
   // A failed roots RPC is already captured where it is sent.
-  const skills = staged.skillRoots.length > 0 && getCodexSkillRootsRpcOutcome()?.ok !== false;
+  const skills = staged.skillRoots.length > 0 && client.skillRootsRegistered;
   const servers = staged.mcpServers.length > 0;
   if (!servers && !skills) return Promise.resolve();
   return Promise.all([

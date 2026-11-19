@@ -12,7 +12,7 @@ import {
 import { AGENT_RUNTIMES, AI_PROVIDER_IDS } from '../../src/shared/lib/ai-providers/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const BASELINE = 'eslint/baselines/provider-branches.json';
+const BASELINE = 'eslint-suppressions.json';
 
 const readJson = (file) => JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
 
@@ -97,7 +97,8 @@ describe('no-provider-branch wiring', () => {
       expect(existsSync(join(ROOT, file)), `${file}: run --prune-suppressions`).toBe(true);
     }
     const script = readJson('package.json').scripts['lint:structure'];
-    expect(script).toContain(`--suppressions-location ${BASELINE}`);
+    // ESLint reads eslint-suppressions.json by default, so every run (CI, hooks, editors) applies it.
+    expect(script).not.toContain('--suppressions-location');
     expect(script.split(' ')).toContain('mobile');
     expect(script).not.toContain('--pass-on-unpruned-suppressions');
   });
