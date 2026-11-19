@@ -474,6 +474,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     } as Awaited<ReturnType<typeof getTaskById>>);
 
     let settlement: Promise<void> | undefined;
+    let settledWhileParked: boolean | undefined;
     flowQuestionParkMock.mockImplementationOnce(
       async (params: { waitForSettlement: () => Promise<void> }) => {
         settlement = params.waitForSettlement();
@@ -482,7 +483,7 @@ describe('local-only dispatch with unresolved machineId', () => {
           settledEarly = true;
         });
         await Promise.resolve();
-        expect(settledEarly).toBe(false);
+        settledWhileParked = settledEarly;
         return { behavior: 'deny', message: 'test question handled' };
       },
     );
@@ -508,6 +509,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     await handleRemoteExecute({ ...basePayload, message: 'ask before proceeding' });
 
     expect(flowQuestionParkMock).toHaveBeenCalledOnce();
+    expect(settledWhileParked).toBe(false);
     await expect(settlement).resolves.toBeUndefined();
   });
 
