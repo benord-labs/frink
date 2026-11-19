@@ -8,4 +8,3 @@
 
 export { awaitBounded } from './await-bounded';
 export { project } from './project';
-export type { ProviderType } from './types';

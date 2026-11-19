@@ -323,7 +323,11 @@ function spyEditorWindow() {
 type TurnOptions = TurnScript & TurnSetup & { mode?: ChatMode; sessionId?: string };
 
 /** One sub-chat on `runtime` with a spied editor window: run its turns in order, then read them. */
-export function startRow<R extends AgentRuntime>(h: GridHarness, runtime: R) {
+export function startRow<R extends AgentRuntime>(
+  h: GridHarness,
+  runtime: R,
+  provider = PROVIDER_FOR[runtime],
+) {
   const subChatId = randomUUID();
   restoreSuiteMocksAfterTest();
   const send = spyEditorWindow();
@@ -335,7 +339,6 @@ export function startRow<R extends AgentRuntime>(h: GridHarness, runtime: R) {
     claudeTurns: [],
     stop,
   };
-  const provider = PROVIDER_FOR[runtime];
   const execute = async (overrides: ExecuteOverrides, payload: TurnOptions = {}) => {
     if (provider) vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(credential(provider));
     seedChat(h.basePayload.chatId, payload);

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { Settings } from '@anthropic-ai/claude-agent-sdk';
-import type { ProviderType } from '../../types';
+import type { AiProviderId } from '../../../../../shared/lib/ai-providers';
 import { type StoredHookSource, syncHookStore } from './store';
 
 type Hooks = NonNullable<Settings['hooks']>;
@@ -18,9 +18,9 @@ const HOOK_ADAPTERS = {
   'claude-code': { scopes: new Set(['user']) },
   // Codex reads none of Claude's files, so it is handed the project's uncommitted hooks too.
   codex: { scopes: new Set(['user', 'project']) },
-} satisfies Partial<Record<ProviderType, HookAdapter>>;
+} satisfies Partial<Record<AiProviderId, HookAdapter>>;
 
-function hookAdapter(provider: ProviderType): HookAdapter | undefined {
+function hookAdapter(provider: AiProviderId): HookAdapter | undefined {
   // SAFETY: the `in` guard proves provider is a key of the literal HOOK_ADAPTERS.
   return provider in HOOK_ADAPTERS
     ? HOOK_ADAPTERS[provider as keyof typeof HOOK_ADAPTERS]
@@ -41,7 +41,7 @@ function appliesTo(source: StoredHookSource, adapter: HookAdapter, projectRoot: 
 /** The user's stored hooks this provider must be handed at launch, after bringing the store up to
  * date with the native files. User hooks come first, then the project's, as Claude orders them. */
 export async function hooksForLaunch(
-  provider: ProviderType,
+  provider: AiProviderId,
   projectRoot: string | null,
 ): Promise<LaunchHooks> {
   const store = await syncHookStore(projectRoot);

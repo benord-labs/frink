@@ -4,8 +4,7 @@ import * as path from 'node:path';
 import matter from 'gray-matter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { vendorPluginPinByName } from '../../../../shared/integrations/vendor-plugin-pins';
-import { CAPABILITY_MAP } from '../capabilities';
-import type { ProviderType } from '../types';
+import { AI_PROVIDER_IDS, AI_PROVIDERS } from '../../../../shared/lib/ai-providers';
 import { deliverCommands } from './commands';
 
 // Mutable home so os.homedir() (used by the handler + listCommands/getCommandContent)
@@ -60,23 +59,11 @@ describe('deliverCommands (PCH-2b)', () => {
     expect(commit.content.trim()).toBe('Make a commit');
   });
 
-  it('routes cursor to the cursor machine-local dir', async () => {
-    await deliverCommands({
-      mode: 'copy',
-      ctx: { projectId: 'p', projectPath: tmp, provider: 'cursor' },
-    });
-    const f = matter(
-      await fs.readFile(path.join(tmp, '.cursor', 'commands', 'deploy.md'), 'utf-8'),
+  it("is a noop for every provider whose row says commands 'none'", async () => {
+    const none = AI_PROVIDER_IDS.filter(
+      (provider) => AI_PROVIDERS[provider].capabilities.delivery.commands === 'none',
     );
-    expect(f.data.frinkProjected).toBe(true);
-  });
-
-  it('is a noop for every provider whose descriptor says commands `none` (sc-2800)', async () => {
-    // SAFETY: CAPABILITY_MAP is Record<ProviderType, _>, so its keys are exactly ProviderType.
-    const none = (Object.keys(CAPABILITY_MAP) as ProviderType[]).filter(
-      (provider) => CAPABILITY_MAP[provider].commands === 'none',
-    );
-    expect(none).toContain('codex');
+    expect(none).toEqual(expect.arrayContaining(['codex', 'cursor']));
     for (const provider of none) {
       const res = await deliverCommands({
         mode: 'copy',
@@ -84,8 +71,9 @@ describe('deliverCommands (PCH-2b)', () => {
       });
       expect(res.status).toBe('noop');
     }
-    // codex reads no commands dir; the old copy into ~/.codex/commands was a dead write.
+    // Codex reads no commands dir, and Cursor runs in a Frink-owned home, so neither gets one.
     await expect(fs.access(path.join(tmp, '.codex'))).rejects.toThrow();
+    await expect(fs.access(path.join(tmp, '.cursor'))).rejects.toThrow();
   });
 
   it('never writes into the committed project dir', async () => {

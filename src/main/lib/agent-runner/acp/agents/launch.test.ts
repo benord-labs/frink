@@ -2,6 +2,8 @@ import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from '
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AI_PROVIDERS } from '../../../../../shared/lib/ai-providers';
+import type { Delivery } from '../../../../../shared/lib/ai-providers/capabilities';
 import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../../../platform/login-shell-env';
 import type { AcpAgentLaunch } from '../acp-process';
 import { findAcpAgent, locateAcpAgent, resolveAcpLaunch } from '../index';
@@ -227,6 +229,20 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     await mkdir(path.join(home, '.agents', 'skills'), { recursive: true });
     expect(configOf(await launched()).skills).toEqual({
       paths: [path.join(home, '.agents', 'skills')],
+    });
+  });
+
+  it('carries the instructions and skills its capability row says OpenCode gets', async () => {
+    await writeFile(path.join(project, 'AGENTS.md'), 'project agents');
+    await mkdir(path.join(home, '.agents', 'skills'), { recursive: true });
+    const config = configOf(await launched());
+    const delivery: Delivery = AI_PROVIDERS.opencode.capabilities.delivery;
+    expect({
+      instructions: config.instructions.length > 0,
+      skills: config.skills.paths.length > 0,
+    }).toEqual({
+      instructions: delivery.instructions !== 'none',
+      skills: delivery.skills !== 'none',
     });
   });
 
