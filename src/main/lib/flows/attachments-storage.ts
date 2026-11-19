@@ -109,10 +109,16 @@ export async function copyAttachment(
   return { url: buildAttachmentUrl(runId, filename), filename, byteLength: size, path: target };
 }
 
-/** The on-disk path of a `frink-attachment://` URL, or null for any other URL. */
+/** The on-disk path of a `frink-attachment://` URL, or null for any other URL or one that would
+ *  leave the attachments folder (`..` passes the name check). */
 export function attachmentFilePath(url: string, root: string = attachmentsRoot()): string | null {
   const parsed = parseAttachmentUrl(url);
-  return parsed ? getAttachmentPath(parsed.runId, parsed.filename, root) : null;
+  if (!parsed) return null;
+  try {
+    return getAttachmentPath(parsed.runId, parsed.filename, root);
+  } catch {
+    return null;
+  }
 }
 
 export async function readAttachment(

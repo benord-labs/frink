@@ -145,7 +145,7 @@ export function RunAttachmentsSection({
       filename: file.name,
       mimeType,
     });
-    return { url: result.url, type: mimeType, label: file.name, mimeType };
+    return result.attachment;
   }
 
   async function sendFileByPath(sourcePath: string): Promise<RunAttachment> {

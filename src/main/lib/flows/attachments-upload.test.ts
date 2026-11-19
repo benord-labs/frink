@@ -376,7 +376,7 @@ describe('attachFileToStageRun', () => {
   it('hands an image over 5MB to the agent as a file', async () => {
     const runId = await seedRun();
     const png = new Uint8Array(MAX_IMAGE_BYTES + 1);
-    png.set([0x89, 0x50, 0x4e, 0x47]);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
     const { attachment } = await attach(runId, sourceFile('retina.png', png));
 
@@ -398,6 +398,32 @@ describe('attachFileToStageRun', () => {
     await expect(attach(runId, join(source, 'gone.csv'))).rejects.toThrow(
       "couldn't open this file",
     );
+  });
+
+  it('removes the copy and explains when the stored copy cannot be read back', async () => {
+    const runId = await seedRun();
+    const deleted: string[] = [];
+
+    const unreadable = attachFileToStageRun(
+      { flowId: 'f', runId, sourcePath: sourceFile('notes.txt', 'hi') },
+      {
+        db,
+        writeAttachment,
+        copyAttachment: async (_r, filename) => ({
+          url: `frink-attachment://${runId}/${filename}`,
+          filename,
+          byteLength: 2,
+          path: join(root, runId, 'never-written.txt'),
+        }),
+        deleteAttachmentFile: async (_r, f) => {
+          deleted.push(f);
+        },
+      },
+    );
+
+    await expect(unreadable).rejects.toThrow("couldn't open this file");
+    expect(deleted).toHaveLength(1);
+    expect(await storedAttachments(runId)).toEqual([]);
   });
 
   it('removes a copy that came out over 20MB because the file grew meanwhile', async () => {
@@ -456,5 +482,31 @@ describe('attachFileToStageRun', () => {
       code: 'CONFLICT',
     });
     expect(existsSync(join(root, runId))).toBe(false);
+  });
+});
+
+// The declared type is the browser's guess from the name; the stored kind comes from the bytes.
+describe('uploadAttachmentToStageRun — kind from the bytes', () => {
+  it('stores text declared as a png as a file the agent reads by path', async () => {
+    const runId = await seedRun();
+
+    const result = await upload(
+      runId,
+      'scan.png',
+      'image/png',
+      Buffer.from('a,b\n1,2').toString('base64'),
+    );
+
+    expect(result.attachment).toMatchObject({ type: 'file', label: 'scan.png' });
+    expect((await storedAttachments(runId))[0]?.type).toBe('file');
+  });
+
+  it('keeps a real png declared as a jpeg inline, as the png it is', async () => {
+    const runId = await seedRun();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+
+    const result = await upload(runId, 'photo.jpg', 'image/jpeg', png.toString('base64'));
+
+    expect(result.attachment).toMatchObject({ type: 'image/png', mimeType: 'image/png' });
   });
 });

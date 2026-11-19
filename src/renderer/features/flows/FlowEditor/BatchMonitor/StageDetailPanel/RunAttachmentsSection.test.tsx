@@ -92,6 +92,11 @@ describe('RunAttachmentsSection', () => {
     trpcMocks.uploadMutateAsync.mockResolvedValue({
       url: 'https://cdn.example.com/upload.png',
       filename: 'upload.png',
+      attachment: {
+        url: 'https://cdn.example.com/upload.png',
+        type: 'image/png',
+        label: 'upload.png',
+      },
       run: { id: RUN_ID, trigger_context: {} },
     });
     trpcMocks.attachFileMutateAsync.mockReset();
@@ -146,6 +151,11 @@ describe('RunAttachmentsSection', () => {
         return {
           url: 'frink-attachment://run/edge.png',
           filename: 'edge.png',
+          attachment: {
+            url: 'frink-attachment://run/edge.png',
+            type: 'image/png',
+            label: 'edge.png',
+          },
           run: { id: RUN_ID },
         };
       });
@@ -436,6 +446,7 @@ describe('RunAttachmentsSection', () => {
       trpcMocks.uploadMutateAsync.mockResolvedValueOnce({
         url: uploaded.url,
         filename: '3.png',
+        attachment: uploaded,
         run: { id: RUN_ID, trigger_context: {} },
       });
       function StatefulParent() {
@@ -470,6 +481,7 @@ describe('RunAttachmentsSection', () => {
       trpcMocks.uploadMutateAsync.mockResolvedValueOnce({
         url: att(1).url,
         filename: '1.png',
+        attachment: att(1),
         run: { id: RUN_ID, trigger_context: {} },
       });
       const { onAttachmentsChange, fileInput } = renderSection([att(1)]);

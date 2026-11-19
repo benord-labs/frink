@@ -67,6 +67,8 @@ type UploadInput = {
 type UploadResult = {
   url: string;
   filename: string;
+  /** What was stored; `type` is the file kind read from the bytes, not the declared type. */
+  attachment: RunAttachment;
   run: { id: string; trigger_context: StageRunTriggerContext };
 };
 
@@ -180,20 +182,22 @@ export async function uploadAttachmentToStageRun(
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Attachment URL too long' });
   }
 
-  const attachment: RunAttachment = {
-    url: written.url,
-    type: input.mimeType,
-    label: input.filename,
-    mimeType: input.mimeType,
-  };
+  // The bytes decide, not the declared type: anything that is not a real image is read by path.
+  const head = Buffer.from(input.data.slice(0, BASE64_HEAD_CHARS), 'base64');
+  const kind = kindFromImageType(detectImage(head));
+  const attachment: RunAttachment = { url: written.url, label: input.filename, ...kind };
   // A crash before this commit leaves an unreferenced file for the startup sweep.
   const triggerContext = await appendOrRollback(deps.db, input.runId, attachment, rollback);
   return {
     url: written.url,
     filename: written.filename,
+    attachment,
     run: { id: input.runId, trigger_context: triggerContext },
   };
 }
+
+/** Base64 characters that decode to the bytes every image signature needs (4 chars per 3 bytes). */
+const BASE64_HEAD_CHARS = Math.ceil(IMAGE_SIGNATURE_BYTES / 3) * 4;
 
 const badFile = (message: string) => new TRPCError({ code: 'BAD_REQUEST', message });
 const UNREADABLE_FILE = "Frink couldn't open this file. Check it still exists and try again.";
@@ -221,11 +225,16 @@ async function imageTypeOf(path: string): Promise<string | null> {
   }
 }
 
-/** A real image small enough to send inline keeps going inline; anything else is read by path. */
-async function kindOf(path: string, size: number): Promise<Omit<RunAttachment, 'url' | 'label'>> {
-  const image = size <= MAX_IMAGE_BYTES ? await imageTypeOf(path) : null;
+type AttachmentKind = Omit<RunAttachment, 'url' | 'label'>;
+
+function kindFromImageType(image: string | null): AttachmentKind {
   if (image && isAllowedMime(image)) return { type: image, mimeType: image };
   return { type: RUN_ATTACHMENT_FILE_TYPE };
+}
+
+/** A real image small enough to send inline keeps going inline; anything else is read by path. */
+async function kindOf(path: string, size: number): Promise<AttachmentKind> {
+  return kindFromImageType(size <= MAX_IMAGE_BYTES ? await imageTypeOf(path) : null);
 }
 
 type AttachFileInput = { flowId: string; runId: string; sourcePath: string };
@@ -253,7 +262,10 @@ export async function attachFileToStageRun(
   }
 
   // Judged from the stored copy, so a file changed during the copy is classified as stored.
-  const kind = await kindOf(written.path, written.byteLength);
+  const kind = await kindOf(written.path, written.byteLength).catch(async () => {
+    await rollback();
+    throw badFile(UNREADABLE_FILE);
+  });
   const attachment: RunAttachment = { url: written.url, label, ...kind };
   const triggerContext = await appendOrRollback(deps.db, input.runId, attachment, rollback);
   return { attachment, run: { id: input.runId, trigger_context: triggerContext } };

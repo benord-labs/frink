@@ -9,7 +9,10 @@ import {
   recoveryKindSchema,
   resumeRunInputSchema,
 } from '../../../../../shared/types/flow-run/resume';
-import { MAX_ATTACHMENT_URL_LENGTH } from '../../../../../shared/types/run-attachment';
+import {
+  MAX_ATTACHMENT_URL_LENGTH,
+  type RunAttachment,
+} from '../../../../../shared/types/run-attachment';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
   BatchStageDetail,
@@ -493,6 +496,7 @@ export const flowsRouter = router({
       }): Promise<{
         url: string;
         filename: string;
+        attachment: RunAttachment;
         run: { id: string; trigger_context: Record<string, unknown> };
       }> => {
         const { uploadAttachmentToStageRun } = await import('../../../flows/attachments-upload');

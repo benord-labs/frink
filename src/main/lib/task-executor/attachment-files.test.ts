@@ -100,6 +100,34 @@ describe('attachmentFileNotes', () => {
     ]);
   });
 
+  // `..` passes the URL's name check, then resolves outside the run folder.
+  it('warns about a path that leaves the run folder and still delivers the other files', async () => {
+    const warnings: string[] = [];
+    const url = await stored('a1b2c3d4-report.csv', 'a,b');
+
+    const notes = await notesFor(
+      [
+        { url: 'frink-attachment://stage-run/..', type: 'file', label: 'escape' },
+        { url, type: 'file', label: 'report.csv' },
+      ],
+      warnings,
+    );
+
+    expect(notes).toContain('a1b2c3d4-report.csv');
+    expect(warnings).toEqual([
+      '⚠️ Attached file "escape" was not sent: it is not a file uploaded to the run.',
+    ]);
+  });
+
+  it('warns about a file entry with no address instead of dropping it silently', async () => {
+    const warnings: string[] = [];
+
+    expect(await notesFor([{ type: 'file', label: 'lost.csv' }], warnings)).toBe('');
+    expect(warnings).toEqual([
+      '⚠️ An attached file was not sent: its entry in the run is unreadable.',
+    ]);
+  });
+
   it('leaves images to the inline path', async () => {
     const warnings: string[] = [];
     const image = { url: 'frink-attachment://stage-run/a.png', type: 'image/png' };

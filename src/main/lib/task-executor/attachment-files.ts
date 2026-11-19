@@ -7,21 +7,29 @@ import type { TaskResultRecord } from '../../../shared/types/task-result';
 import { attachedFileNote, placeInPasted, safeAttachmentName } from '../claude/pasted-files';
 import { attachmentFilePath } from '../flows/attachments-storage';
 
-const fileEntrySchema = z.object({
+const fileTypeSchema = z.object({ type: z.literal(RUN_ATTACHMENT_FILE_TYPE) });
+const fileEntrySchema = fileTypeSchema.extend({
   url: z.string(),
-  type: z.literal(RUN_ATTACHMENT_FILE_TYPE),
-  label: z.string().min(1).optional(),
+  label: z.string().min(1).optional().catch(undefined),
 });
 type FileEntry = z.infer<typeof fileEntrySchema>;
 
 const attachmentListSchema = z.object({ attachments: z.array(z.json()).catch([]) });
+const UNREADABLE_ENTRY = '⚠️ An attached file was not sent: its entry in the run is unreadable.';
 
-function fileEntries(triggerContext: TaskResultRecord | undefined): FileEntry[] {
+/** The run's file entries; a file entry too broken to name a file adds a warning instead. */
+function fileEntries(
+  triggerContext: TaskResultRecord | undefined,
+  promptWarnings: string[],
+): FileEntry[] {
   const list = attachmentListSchema.safeParse(triggerContext);
   if (!list.success) return [];
   return list.data.attachments.flatMap((item) => {
+    if (!fileTypeSchema.safeParse(item).success) return [];
     const entry = fileEntrySchema.safeParse(item);
-    return entry.success ? [entry.data] : [];
+    if (entry.success) return [entry.data];
+    promptWarnings.push(UNREADABLE_ENTRY);
+    return [];
   });
 }
 
@@ -67,7 +75,7 @@ export async function attachmentFileNotes(
   dirs: DeliveryDirs = {},
 ): Promise<string> {
   const deliveries = await Promise.all(
-    fileEntries(triggerContext).map((entry) => deliverOne(entry, subChatId, dirs)),
+    fileEntries(triggerContext, promptWarnings).map((entry) => deliverOne(entry, subChatId, dirs)),
   );
   const notes: string[] = [];
   for (const delivery of deliveries) {
