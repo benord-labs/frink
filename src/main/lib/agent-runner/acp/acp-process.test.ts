@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
+import { noteTaskGroupsNow } from '../process-settlement';
 import { startAcpAgentProcess } from './acp-process';
 import { collectChunks, TEST_RULES, textOf } from './acp-test-fixtures';
 import { disposeAllAcpAgents, runAcpAgent } from './index';
@@ -209,6 +210,27 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     await agent.closed;
     expect(agent.describeExit()).toContain('could not start');
     await agent.dispose();
+  });
+
+  it('ends what a command started in a group of its own once the agent is stopped', async () => {
+    const agent = startAcpAgentProcess(
+      launch(`
+        import { spawn } from 'node:child_process';
+        const command = spawn(process.execPath, ['--eval', 'setInterval(() => {}, 1000)'], {
+          stdio: 'ignore',
+          detached: true,
+        });
+        process.stderr.write(String(command.pid));
+        setInterval(() => {}, 1000);
+      `),
+    );
+    await expect.poll(() => agent.describeExit(), SETTLE).toMatch(/^\d+$/);
+    const command = Number(agent.describeExit());
+    await noteTaskGroupsNow();
+
+    await agent.dispose(0);
+
+    await expect.poll(() => isAlive(command), SETTLE).toBe(false);
   });
 });
 

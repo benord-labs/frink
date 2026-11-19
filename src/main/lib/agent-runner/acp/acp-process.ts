@@ -2,8 +2,12 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import log from 'electron-log';
-import { lowerChildPriority } from '../../platform/lower-child-priority';
-import { killProcessTree, processTreeGone, signalProcessTree } from '../process-settlement';
+import {
+  adoptAgentProcess,
+  killProcessTree,
+  processTreeGone,
+  signalProcessTree,
+} from '../process-settlement';
 import type { AcpAgentRules } from './acp-permissions';
 
 /** How to start one agent in ACP mode. The caller supplies it; nothing here knows any agent. */
@@ -76,7 +80,8 @@ export function startAcpAgentProcess(launch: AcpAgentLaunch): AcpAgentProcess {
     detached: process.platform !== 'win32',
     windowsHide: true,
   });
-  lowerChildPriority(child.pid);
+  // Stopping the agent's group misses commands it started in groups of their own.
+  adoptAgentProcess(child);
   let stderrTail = '';
   let ending = '';
   let stopped: Promise<void> | undefined;

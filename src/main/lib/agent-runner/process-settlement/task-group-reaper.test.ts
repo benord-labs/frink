@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { noteTaskGroupsNow, reapAllTaskGroupsSync, reapStoppedTaskGroups, trackClaudeCli } from '.';
+import {
+  noteTaskGroupsNow,
+  reapAllTaskGroupsSync,
+  reapStoppedTaskGroups,
+  trackAgentProcess,
+  trackClaudeCli,
+} from '.';
 import { groupsToSignal, processReaders } from './task-group-reaper';
 
 const posixOnly = process.platform === 'win32' ? describe.skip : describe;
@@ -75,7 +81,7 @@ const started: number[] = [];
 
 async function startCli(
   nested: keyof typeof NESTED = 'child',
-  options: { exitOnEof?: boolean } = {},
+  options: { exitOnEof?: boolean; track?: typeof trackClaudeCli } = {},
 ): Promise<{ cli: ChildProcess; dir: string; shell: number; nested: number }> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-groups-'));
   fs.mkdirSync(path.join(dir, 'tasks'));
@@ -88,7 +94,7 @@ async function startCli(
     },
     stdio: [options.exitOnEof ? 'pipe' : 'ignore', 'ignore', 'ignore'],
   });
-  trackClaudeCli(cli);
+  (options.track ?? trackClaudeCli)(cli);
   const read = (name: string) => Number(fs.readFileSync(path.join(dir, name), 'utf8'));
   await until(
     () => fs.existsSync(path.join(dir, 'shell')) && fs.existsSync(path.join(dir, 'nested')),
@@ -196,6 +202,15 @@ posixOnly('task group reaping', () => {
     await reapStoppedTaskGroups('t1');
 
     expect(alive(nested)).toBe(false);
+  });
+
+  it('ends what a running command of a Codex, ACP or Cursor agent started once the agent exits', async () => {
+    const { cli, shell, nested } = await startCli('child', { track: trackAgentProcess });
+    await noteTaskGroupsNow();
+
+    cli.kill('SIGKILL');
+
+    await until(() => !alive(nested) && !alive(shell));
   });
 
   it('keeps a stopped task’s groups for the quit sweep while no process table can be read', async () => {

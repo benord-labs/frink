@@ -11,6 +11,7 @@ import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import { ChunkQueue } from '../codex/chunk-queue';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks';
+import { trackAgentProcess } from '../process-settlement';
 import {
   type CursorModel,
   type CursorSdkMessage,
@@ -139,6 +140,8 @@ export const forkUtilityHost: ForkHost = ({ hostPath, sdkEntry, env, cwd }, even
   });
   child.on('message', events.message);
   child.once('exit', events.exit);
+  // What the turn's commands left in groups of their own is ended once the host exits.
+  child.once('spawn', () => trackAgentProcess(child));
   return { send: (request) => child.postMessage(request, []), kill: () => child.kill() };
 };
 

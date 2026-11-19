@@ -1,7 +1,9 @@
-// Ends what a Claude CLI's Bash tasks left in other process groups; the CLI kills only the shell's.
+// Ends what an agent's commands left in process groups of their own once they are stopped or the
+// agent exits: agents end only a command's own group, or nothing at all when they are killed.
 
-import type { ChildProcess } from 'node:child_process';
+import type { Writable } from 'node:stream';
 import log from 'electron-log';
+import { lowerChildPriority } from '../../platform/lower-child-priority';
 import {
   type ProcessRow,
   readOutputWriters,
@@ -15,8 +17,11 @@ type MemberKey = string;
 /** pgid → the processes seen in it while its task still ran. */
 type GroupMembers = Map<number, Set<MemberKey>>;
 
-type TaskLeader = { pid: number; taskId: string; groups: GroupMembers };
-type TrackedCli = {
+/** A running command: its shell or process, leading its own process group under the agent. */
+type TaskLeader = { pid: number; taskId?: string; groups: GroupMembers };
+type TrackedAgent = {
+  /** `claude`: commands are known by their tasks/<id>.output stdout. `agent`: any own-group child. */
+  kind: 'claude' | 'agent';
   /** Task shells still running. */
   leaders: Map<MemberKey, TaskLeader>;
   /** Shells seen ended, by task id, kept briefly for a stop whose shell died before it reaped. */
@@ -42,7 +47,7 @@ const ENDED_KEEP_MS = 30_000;
 const READ_TRIES = 3;
 const TASK_OUTPUT = /^(.*\/tasks)\/([^/]+)\.output$/;
 
-const clis = new Map<number, TrackedCli>();
+const agents = new Map<number, TrackedAgent>();
 /** Groups between SIGTERM and SIGKILL, so app quit can finish them. */
 const terminating = new Set<GroupMembers>();
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -59,11 +64,35 @@ export const processReaders = {
   readStdoutPaths,
 };
 
+/** A spawned agent process: a ChildProcess or an Electron utility process. */
+export type TrackedChild = {
+  pid?: number;
+  stdin?: Pick<Writable, 'once'> | null;
+  once(event: 'exit', listener: () => void): void;
+};
+
 /** Notes a spawned Claude CLI's Bash tasks until it exits, then ends what they left running. */
-export function trackClaudeCli(child: Pick<ChildProcess, 'pid' | 'stdin' | 'once'>): void {
+export function trackClaudeCli(child: TrackedChild): void {
+  track(child, 'claude');
+}
+
+/** Codex's app-server, an ACP agent or a Cursor host: each command is a child of the agent leading
+ * its own process group. What those still running started is ended when the agent exits. */
+export function trackAgentProcess(child: TrackedChild): void {
+  track(child, 'agent');
+}
+
+/** A spawned agent runs below Frink's CPU priority, and what its commands leave ends with it. */
+export function adoptAgentProcess(child: TrackedChild): void {
+  lowerChildPriority(child.pid);
+  trackAgentProcess(child);
+}
+
+function track(child: TrackedChild, kind: TrackedAgent['kind']): void {
   const pid = child.pid;
   if (pid === undefined || process.platform === 'win32') return;
-  clis.set(pid, {
+  agents.set(pid, {
+    kind,
     leaders: new Map(),
     ended: new Map(),
     notLeaders: new Set(),
@@ -76,13 +105,13 @@ export function trackClaudeCli(child: Pick<ChildProcess, 'pid' | 'stdin' | 'once
   }
   pollTimer ??= setInterval(() => void noteTaskGroupsNow(), POLL_MS);
   pollTimer.unref?.();
-  // Closing stdin is how a session ends: note once more before the CLI acts on it.
+  // Closing stdin is how a session ends: note once more before the agent acts on it.
   child.stdin?.once('close', () => void noteTaskGroupsNow({ teardown: true }));
   child.once('exit', () => void settleExit(pid));
 }
 
-/** Re-reads every tracked CLI's tasks. A teardown note also finds what writes to the session's task
- * outputs, and keeps tasks that look ended, since the CLI may be killing them as it reads. */
+/** Re-reads every tracked agent's commands. A teardown note also finds what writes to a Claude
+ * session's task outputs, and keeps commands that look ended: the agent may be killing them. */
 export function noteTaskGroupsNow(options: { teardown?: boolean } = {}): Promise<void> {
   if (options.teardown) return enqueueNote(true);
   pendingPoll ??= enqueueNote(false).finally(() => {
@@ -99,21 +128,21 @@ export async function reapStoppedTaskGroups(taskId: string): Promise<void> {
   const stopped: GroupMembers = new Map();
   // Registered before reading writers, so an app quit meanwhile still ends what is known.
   terminating.add(stopped);
-  const outputs = new Map<TrackedCli, string>();
-  for (const cli of clis.values()) {
-    cli.stoppedTasks.add(taskId);
-    const matching = [...cli.leaders].filter(([, leader]) => leader.taskId === taskId);
+  const outputs = new Map<TrackedAgent, string>();
+  for (const agent of agents.values()) {
+    agent.stoppedTasks.add(taskId);
+    const matching = [...agent.leaders].filter(([, leader]) => leader.taskId === taskId);
     for (const [key, leader] of matching) {
       mergeInto(stopped, leader.groups);
-      cli.leaders.delete(key);
+      agent.leaders.delete(key);
     }
-    const ended = cli.ended.get(taskId);
+    const ended = agent.ended.get(taskId);
     if (ended) mergeInto(stopped, ended.leader.groups);
-    cli.ended.delete(taskId);
-    if (cli.tasksDir) outputs.set(cli, `${cli.tasksDir}/${taskId}.output`);
+    agent.ended.delete(taskId);
+    if (agent.tasksDir) outputs.set(agent, `${agent.tasksDir}/${taskId}.output`);
   }
-  for (const [cli, output] of outputs) {
-    mergeInto(stopped, await writerGroups(cli, (path) => path === output));
+  for (const [agent, output] of outputs) {
+    mergeInto(stopped, await writerGroups(agent, (path) => path === output));
   }
   await reapGroups(stopped, `task ${taskId} stopped`);
 }
@@ -122,7 +151,7 @@ export async function reapStoppedTaskGroups(taskId: string): Promise<void> {
 export function reapAllTaskGroupsSync(): void {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
-  if (clis.size === 0 && terminating.size === 0) return;
+  if (agents.size === 0 && terminating.size === 0) return;
   let table: ProcessRow[] | null = null;
   for (let attempt = 0; attempt < 2 && !table; attempt++) {
     table = processReaders.readProcessTableSync();
@@ -134,8 +163,8 @@ export function reapAllTaskGroupsSync(): void {
   }
   recordGroups(indexTable(table), true);
   const protectedGroups = protectedPgids(table);
-  const groups = mergeGroups([...[...clis.values()].flatMap(sessionGroupsOf), ...terminating]);
-  clis.clear();
+  const groups = mergeGroups([...[...agents.values()].flatMap(sessionGroupsOf), ...terminating]);
+  agents.clear();
   terminating.clear();
   for (const pgid of groupsToSignal(groups, table, protectedGroups)) signalGroup(pgid, 'SIGKILL');
 }
@@ -159,9 +188,9 @@ export function groupsToSignal(
   });
 }
 
-/** Frink's own group and every tracked CLI's: a CLI shares Frink's, and neither may be signalled. */
+/** Frink's own group and every tracked agent's: most share Frink's, and none may be signalled. */
 function protectedPgids(table: ProcessRow[]): Set<number> {
-  const owners = new Set([process.pid, ...clis.keys()]);
+  const owners = new Set([process.pid, ...agents.keys()]);
   return new Set(table.filter((row) => owners.has(row.pid)).map((row) => row.pgid));
 }
 
@@ -173,37 +202,37 @@ function enqueueNote(teardown: boolean): Promise<void> {
 }
 
 async function settleExit(pid: number): Promise<void> {
-  // A teardown note may still be adding this CLI's groups.
+  // A teardown note may still be adding this agent's groups.
   await notes;
-  const cli = clis.get(pid);
-  if (!cli) return;
-  // No fresh walk: the CLI just killed its task shells. Output writers are read again (stdin may not
-  // have closed); the CLI stays tracked until handed to the reap, so a quit meanwhile still ends it.
-  const writers = await writerGroups(cli, () => true);
-  const groups = mergeGroups([...sessionGroupsOf(cli), writers]);
-  clis.delete(pid);
-  if (clis.size === 0 && pollTimer) {
+  const agent = agents.get(pid);
+  if (!agent) return;
+  // No fresh walk: the agent may just have killed its commands. Output writers are read again (stdin
+  // may not have closed); it stays tracked until handed to the reap, so a quit still ends them.
+  const writers = await writerGroups(agent, () => true);
+  const groups = mergeGroups([...sessionGroupsOf(agent), writers]);
+  agents.delete(pid);
+  if (agents.size === 0 && pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
-  await reapGroups(groups, `cli ${pid} exited`);
+  await reapGroups(groups, `agent ${pid} exited`);
 }
 
 /** A session's live tasks' groups and what wrote to its task outputs. */
-function sessionGroupsOf(cli: TrackedCli): GroupMembers[] {
-  return [...[...cli.leaders.values()].map((leader) => leader.groups), cli.sessionGroups];
+function sessionGroupsOf(agent: TrackedAgent): GroupMembers[] {
+  return [...[...agent.leaders.values()].map((leader) => leader.groups), agent.sessionGroups];
 }
 
 /** The groups of processes writing to this session's outputs that `wanted` picks. */
 async function writerGroups(
-  cli: TrackedCli,
+  agent: TrackedAgent,
   wanted: (path: string) => boolean,
 ): Promise<GroupMembers> {
   const groups: GroupMembers = new Map();
-  if (!cli.tasksDir) return groups;
+  if (!agent.tasksDir) return groups;
   for (let attempt = 0; attempt < READ_TRIES; attempt++) {
     const table = await processReaders.readProcessTable();
-    const writers = table ? await processReaders.readOutputWriters(cli.tasksDir, table) : null;
+    const writers = table ? await processReaders.readOutputWriters(agent.tasksDir, table) : null;
     // A read cut off under load is not "no writers": try again.
     if (!table || !writers) continue;
     // Read again: a writer started after the first read is not in it.
@@ -215,7 +244,7 @@ async function writerGroups(
     addMembers(groups, pgids, after, protectedPgids(after));
     return groups;
   }
-  log.warn(`[Task groups] could not read what writes to ${cli.tasksDir}`);
+  log.warn(`[Task groups] could not read what writes to ${agent.tasksDir}`);
   return groups;
 }
 
@@ -227,8 +256,8 @@ async function noteOnce(teardown: boolean): Promise<void> {
   await classifyNewChildren(index);
   recordGroups(index, teardown);
   if (!teardown) return;
-  for (const cli of clis.values()) {
-    cli.sessionGroups = mergeGroups([cli.sessionGroups, await writerGroups(cli, () => true)]);
+  for (const agent of agents.values()) {
+    agent.sessionGroups = mergeGroups([agent.sessionGroups, await writerGroups(agent, () => true)]);
   }
 }
 
@@ -242,10 +271,16 @@ function indexTable(table: ProcessRow[]): TableIndex {
   return { table, byPid: new Map(table.map((row) => [row.pid, row])), children };
 }
 
-type Candidate = { cli: TrackedCli; row: ProcessRow };
+type Candidate = { agent: TrackedAgent; row: ProcessRow };
 
 async function classifyNewChildren(index: TableIndex): Promise<void> {
   const candidates = unclassifiedChildren(index);
+  for (const [pid, { agent, row }] of candidates) {
+    if (agent.kind !== 'agent') continue;
+    agent.leaders.set(keyOf(row), { pid: row.pid, groups: new Map() });
+    candidates.delete(pid);
+  }
+  if (candidates.size === 0) return;
   const stdout = await processReaders.readStdoutPaths([...candidates.keys()]);
   for (const [pid, candidate] of candidates) {
     const output = stdout.get(pid);
@@ -254,55 +289,55 @@ async function classifyNewChildren(index: TableIndex): Promise<void> {
   }
 }
 
-/** Each Bash call runs as a shell leading its own group, writing to its task's output file. */
+/** A command leads its own group; a Claude Bash call's shell also writes to its task's output. */
 function unclassifiedChildren({ byPid, children }: TableIndex): Map<number, Candidate> {
   const candidates = new Map<number, Candidate>();
-  for (const [cliPid, cli] of clis) {
-    if (!byPid.has(cliPid)) continue;
-    const known = (key: MemberKey) => cli.leaders.has(key) || cli.notLeaders.has(key);
-    for (const row of children.get(cliPid) ?? []) {
-      if (row.pid === row.pgid && !known(keyOf(row))) candidates.set(row.pid, { cli, row });
+  for (const [agentPid, agent] of agents) {
+    if (!byPid.has(agentPid)) continue;
+    const known = (key: MemberKey) => agent.leaders.has(key) || agent.notLeaders.has(key);
+    for (const row of children.get(agentPid) ?? []) {
+      if (row.pid === row.pgid && !known(keyOf(row))) candidates.set(row.pid, { agent, row });
     }
   }
   return candidates;
 }
 
-function classify({ cli, row }: Candidate, output: string): void {
+function classify({ agent, row }: Candidate, output: string): void {
   const [, tasksDir, taskId] = output.match(TASK_OUTPUT) ?? [];
   // Not cached when there is no task id: a shell read mid-spawn still shows the CLI's own stdout.
   if (!taskId) return;
-  if (cli.stoppedTasks.has(taskId)) {
-    cli.notLeaders.add(keyOf(row));
+  if (agent.stoppedTasks.has(taskId)) {
+    agent.notLeaders.add(keyOf(row));
     return;
   }
-  cli.tasksDir ??= tasksDir;
-  cli.leaders.set(keyOf(row), { pid: row.pid, taskId, groups: new Map() });
+  agent.tasksDir ??= tasksDir;
+  agent.leaders.set(keyOf(row), { pid: row.pid, taskId, groups: new Map() });
 }
 
 function recordGroups(index: TableIndex, keepEnded: boolean): void {
   const protectedGroups = protectedPgids(index.table);
   const now = Date.now();
-  for (const [cliPid, cli] of clis) {
-    if (!index.byPid.has(cliPid) && !keepEnded) continue;
-    forgetGone(cli, index.byPid, now);
-    for (const [key, leader] of cli.leaders) {
+  for (const [agentPid, agent] of agents) {
+    if (!index.byPid.has(agentPid) && !keepEnded) continue;
+    forgetGone(agent, index.byPid, now);
+    for (const [key, leader] of agent.leaders) {
       if (isLive(key, index.byPid)) {
         const pgids = new Set(descendantGroups(leader.pid, index));
         addMembers(leader.groups, pgids, index.table, protectedGroups);
       } else if (!keepEnded) {
         // A task that ended on its own keeps what it started detached: a daemon may be the point.
-        cli.leaders.delete(key);
-        cli.ended.set(leader.taskId, { leader, at: now });
+        agent.leaders.delete(key);
+        if (leader.taskId) agent.ended.set(leader.taskId, { leader, at: now });
       }
     }
   }
 }
 
 /** Drops classifications of exited processes and ended tasks past the keep window. */
-function forgetGone(cli: TrackedCli, byPid: Map<number, ProcessRow>, now: number): void {
-  for (const key of cli.notLeaders) if (!isLive(key, byPid)) cli.notLeaders.delete(key);
-  for (const [taskId, ended] of cli.ended) {
-    if (now - ended.at > ENDED_KEEP_MS) cli.ended.delete(taskId);
+function forgetGone(agent: TrackedAgent, byPid: Map<number, ProcessRow>, now: number): void {
+  for (const key of agent.notLeaders) if (!isLive(key, byPid)) agent.notLeaders.delete(key);
+  for (const [taskId, ended] of agent.ended) {
+    if (now - ended.at > ENDED_KEEP_MS) agent.ended.delete(taskId);
   }
 }
 
@@ -311,7 +346,7 @@ function isLive(key: MemberKey, byPid: Map<number, ProcessRow>): boolean {
   return row !== undefined && keyOf(row) === key;
 }
 
-/** Every group under the task shell. */
+/** Every group under the command. */
 function descendantGroups(leaderPid: number, { children }: TableIndex): number[] {
   const pgids = new Set<number>([leaderPid]);
   const queue = [leaderPid];
