@@ -14,6 +14,7 @@ import htmlWorker from 'monaco-editor/language/html/html.worker?worker';
 import jsonWorker from 'monaco-editor/language/json/json.worker?worker';
 import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { configureMonacoForNodeScripts, limitTsDiagnosticsToSyntax } from './monaco-node-env';
+import { registerShikiTokenizers } from './shiki/register';
 
 const getWorker = (_id: string, label: string): Worker => {
   switch (label) {
@@ -45,3 +46,4 @@ loader.config({ monaco });
 // Limit TS/JS diagnostics to syntax errors before any model is created
 limitTsDiagnosticsToSyntax(monaco as Parameters<typeof limitTsDiagnosticsToSyntax>[0]);
 configureMonacoForNodeScripts(monaco);
+registerShikiTokenizers(monaco);

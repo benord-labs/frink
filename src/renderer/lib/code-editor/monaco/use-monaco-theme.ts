@@ -6,6 +6,7 @@ import type { ActivePalette } from '@/lib/themes/palette/apply';
 import type { Appearance, Palette } from '@/lib/themes/palette/roles';
 import { activePaletteAtom } from '@/lib/themes/palette/theme-atoms';
 import { getShikiTheme } from '@/lib/themes/shiki-theme-loader';
+import { setEditorSyntax } from './shiki/tokens-provider';
 import { type MonacoTokenRule, shikiThemeToMonacoRules } from './shiki-theme-to-monaco';
 
 /** The vs/vs-dark chrome Monaco filled in while the theme inherited its base, pinned unchanged. */
@@ -129,7 +130,9 @@ export function useMonacoTheme({
       try {
         const rules = shikiThemeToMonacoRules(await loadTheme(palette.syntax));
         rulesBySyntax.set(palette.syntax, rules);
-        if (!cancelled) apply(rules);
+        if (cancelled) return;
+        setEditorSyntax(palette.syntax);
+        apply(rules);
       } catch (error) {
         if (reportedFailures.has(palette.syntax)) return;
         reportedFailures.add(palette.syntax);
@@ -137,6 +140,8 @@ export function useMonacoTheme({
       }
     };
     const cached = rulesBySyntax.get(palette.syntax);
+    // The tokenizer paints with the code theme only once rules for its colours are defined.
+    if (cached) setEditorSyntax(palette.syntax);
     // Chrome first, so no editor waits on the code theme's first load in plain 'vs'.
     apply(cached ?? []);
     if (!cached) void loadRules();

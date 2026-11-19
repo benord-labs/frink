@@ -2,30 +2,11 @@ import type { ThemeRegistrationResolved } from 'shiki';
 
 export type MonacoTokenRule = { token: string; foreground?: string; fontStyle?: string };
 
-/**
- * Monarch token names, each coloured as chat colours its first TextMate scope (the theme's text
- * colour when no rule styles it).
- */
-const MONARCH_ALIASES: Array<[token: string, scopes: string[]]> = [
-  ['comment', ['comment.line.double-slash']],
-  ['comment.doc', ['comment.block.documentation']],
-  ['string', ['string.quoted.double']],
-  ['keyword', ['keyword.control']],
-  ['number', ['constant.numeric']],
-  ['type', ['entity.name.type', 'support.type', 'storage.type']],
-  ['delimiter', ['punctuation']],
-  ['string.key.json', ['support.type.property-name.json']],
-  ['string.value.json', ['string.quoted.double.json']],
-  ['keyword.json', ['constant.language.json']],
-  ['regexp', ['string.regexp']],
-  ['tag', ['entity.name.tag']],
-  ['attribute.name', ['entity.other.attribute-name']],
-  ['attribute.value', ['string.quoted']],
-  ['variable.predefined', ['variable.language', 'support.variable']],
-];
+// TextMate's FontStyle bits, in the order Monaco's fontStyle string names them.
+const FONT_STYLES = ['italic', 'bold', 'underline', 'strikethrough'] as const;
 
 // normalizeColor and the scope-to-rule loop are adapted from Shiki's @shikijs/monaco (MIT).
-function normalizeColor(color: string | undefined, theme: ThemeRegistrationResolved) {
+export function normalizeColor(color: string | undefined, theme: ThemeRegistrationResolved) {
   const replaced = color && (theme.colorReplacements?.[color.toLowerCase()] ?? color);
   // Shiki swaps colours that are not hex (names, CSS vars) for placeholders; Monaco can't paint them.
   if (!replaced?.startsWith('#')) return undefined;
@@ -34,29 +15,56 @@ function normalizeColor(color: string | undefined, theme: ThemeRegistrationResol
   return `#${hex.length === 3 || hex.length === 4 ? [...hex].map((c) => c + c).join('') : hex}`;
 }
 
+/**
+ * The Monaco token the Shiki tokenizer emits for a colour (from normalizeColor) and TextMate
+ * font-style bits. The theme rules below paint it, so editor colours are chat's own.
+ */
+export function colourToken(colour: string | undefined, fontStyle = 0) {
+  const base = colour ? `shiki-${colour.slice(1)}` : 'shiki';
+  return fontStyle ? `${base}.f${fontStyle}` : base;
+}
+
+function fontStyleBits(fontStyle: string) {
+  return FONT_STYLES.reduce(
+    (bits, style, i) => (fontStyle.includes(style) ? bits | (1 << i) : bits),
+    0,
+  );
+}
+
+function fontStyleName(bits: number) {
+  return FONT_STYLES.filter((_, i) => bits & (1 << i)).join(' ');
+}
+
 function selectorsOf(scope: string | string[] | undefined): string[] {
   const parts = (Array.isArray(scope) ? scope : (scope?.split(',') ?? [])).map((s) => s.trim());
   // Monaco matches one dotted token, so descendant selectors ("a b") can't be expressed.
   return parts.filter((s) => s && !s.includes(' '));
 }
 
-/** The value of `property` from the longest selector prefixing `scope`; TextMate resolves each property alone. */
-function resolveScope(
-  rules: MonacoTokenRule[],
-  scope: string,
-  property: 'foreground' | 'fontStyle',
-): string | undefined {
-  let best: MonacoTokenRule | undefined;
-  for (const rule of rules) {
-    const matches = scope === rule.token || scope.startsWith(`${rule.token}.`);
-    if (matches && rule[property] !== undefined && rule.token.length >= (best?.token.length ?? 0)) {
-      best = rule;
-    }
+/** A rule per theme colour, and per colour and font style the theme uses, for the Shiki tokenizer. */
+function colourTokenRules(theme: ThemeRegistrationResolved): MonacoTokenRule[] {
+  const colours = new Set<string>();
+  const styles = new Set<number>();
+  for (const { settings = {} } of [...theme.settings, { settings: { foreground: theme.fg } }]) {
+    const colour = normalizeColor(settings.foreground, theme);
+    if (colour) colours.add(colour);
+    const bits = fontStyleBits(settings.fontStyle ?? '');
+    if (bits) styles.add(bits);
   }
-  return best?.[property];
+  return [...colours].flatMap((foreground) => [
+    { token: colourToken(foreground), foreground },
+    ...[...styles].map((bits) => ({
+      token: colourToken(foreground, bits),
+      foreground,
+      fontStyle: fontStyleName(bits),
+    })),
+  ]);
 }
 
-/** Monaco token rules that paint Monarch tokens with a Shiki theme's colours. */
+/**
+ * Monaco token rules for a Shiki theme: its TextMate scopes, which colour the languages Monaco
+ * still tokenizes itself, and the colour tokens the Shiki tokenizer emits.
+ */
 export function shikiThemeToMonacoRules(theme: ThemeRegistrationResolved): MonacoTokenRule[] {
   const rules: MonacoTokenRule[] = [];
   // Some bundled themes (vesper) carry an entry with a scope and no settings.
@@ -75,13 +83,6 @@ export function shikiThemeToMonacoRules(theme: ThemeRegistrationResolved): Monac
   }
 
   const fg = normalizeColor(theme.fg, theme);
-  const aliases = MONARCH_ALIASES.flatMap(([token, scopes]) => {
-    const scope = scopes.find((s) => resolveScope(rules, s, 'foreground')) ?? scopes[0];
-    const foreground = resolveScope(rules, scope, 'foreground') ?? fg;
-    const fontStyle = resolveScope(rules, scope, 'fontStyle');
-    return foreground ? [{ token, foreground, ...(fontStyle !== undefined && { fontStyle }) }] : [];
-  });
-
   // Plain text takes the theme's foreground, as in chat code blocks, not the editor chrome's text.
-  return [...rules, ...aliases, ...(fg ? [{ token: '', foreground: fg }] : [])];
+  return [...rules, ...colourTokenRules(theme), ...(fg ? [{ token: '', foreground: fg }] : [])];
 }

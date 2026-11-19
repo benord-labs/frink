@@ -17,8 +17,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivePalette } from '@/lib/themes/palette/apply';
 import { derivePalette } from '@/lib/themes/palette/derive';
 import { activePaletteAtom } from '@/lib/themes/palette/theme-atoms';
+import { getShikiTheme as loadShikiTheme, loadLanguage } from '@/lib/themes/shiki-theme-loader';
+import { createShikiTokensProvider, setEditorSyntax } from './shiki/tokens-provider';
 import { type MonacoTokenRule, shikiThemeToMonacoRules } from './shiki-theme-to-monaco';
 import { monacoThemeData, useMonacoTheme } from './use-monaco-theme';
+
+// Function names, properties, parameters and JSX are what Monaco's own TS tokenizer left plain.
+const PARITY_SAMPLES = [
+  [
+    'tsx',
+    [
+      '// note',
+      "import { useState } from 'react';",
+      'export function Counter({ start }: { start: number }) {',
+      '  const [count, setCount] = useState(start);',
+      '  const total = items.map((item) => item.price * 2).length;',
+      '  return <button className="x" onClick={() => setCount(count + 1)}>{count}</button>;',
+      '}',
+    ].join('\n'),
+  ],
+  ['python', 'def area(r: float) -> float:\n    """Doc."""\n    return math.pi * r ** 2  # done'],
+  ['json', '{"name": "frink", "count": 3, "ok": true, "list": [null]}'],
+] as const;
 
 const getShikiTheme = vi.fn<(id: string) => Promise<ThemeRegistrationResolved>>();
 const captureException = vi.fn();
@@ -110,34 +130,33 @@ describe('monacoThemeData', () => {
   });
 
   it.each(['github-dark', 'github-light', 'one-dark-pro', 'horizon', 'min-light'] as const)(
-    'resolves editor tokens in %s to the colours a chat code block gives the same code',
+    'paints every editor token in %s with the colour and font style chat gives it',
     async (id) => {
-      const resolve = await editorTokensFor(id);
-      const json = '{"name": "frink", "count": 3, "ok": true}';
-      const ts = '// note\nclass Foo {}\nconst s = "hi" + 42 + 0xff;\nif (s) return;';
-      const samples = [
-        ['json', json, 'string.key.json', 'name'],
-        ['json', json, 'string.value.json', 'frink'],
-        ['json', json, 'number.json', '3'],
-        ['json', json, 'keyword.json', 'true'],
-        ['typescript', ts, 'comment.ts', '// note'],
-        ['typescript', ts, 'type.identifier.ts', 'Foo'],
-        ['typescript', ts, 'keyword.ts', 'const'],
-        ['typescript', ts, 'keyword.ts', 'return'],
-        ['typescript', ts, 'string.ts', 'hi'],
-        ['typescript', ts, 'number.ts', '42'],
-        ['typescript', ts, 'number.hex.ts', '0xff'],
-      ] as const;
+      const theme = await loadShikiTheme(id);
+      const palette: ActivePalette = { ...stockDark, appearance: theme.type, syntax: id };
+      const resolve = editorTokens(monacoThemeData(palette, shikiThemeToMonacoRules(theme)));
+      setEditorSyntax(id);
 
-      for (const [lang, code, token, text] of samples) {
-        const { tokens } = await codeToTokens(code, { lang, theme: id });
-        const chat = tokens
-          .flat()
-          .find((t) => t.content.includes(text))
-          ?.color?.toLowerCase()
-          // Monaco paints token colours opaque, so only the RGB part can match.
-          .slice(0, 7);
-        expect(resolve(token).colour, `${token} (${text})`).toBe(chat);
+      for (const [lang, code] of PARITY_SAMPLES) {
+        const highlighter = await loadLanguage(lang);
+        const provider = createShikiTokensProvider(highlighter, highlighter.getLanguage(lang));
+        const { tokens: chat } = await codeToTokens(code, { lang, theme: id });
+        let state = provider.getInitialState();
+        code.split('\n').forEach((line, row) => {
+          const { tokens, endState } = provider.tokenize(line, state);
+          state = endState;
+          let column = 0;
+          for (const token of chat[row]) {
+            const start = column;
+            column += token.content.length;
+            if (!token.content.trim()) continue;
+            const editor = resolve(tokens.findLast((t) => t.startIndex <= start)?.scopes ?? '');
+            const where = `${lang} ${JSON.stringify(token.content)}`;
+            // Monaco paints token colours opaque, so only the RGB part can match.
+            expect(editor.colour, where).toBe(token.color?.toLowerCase().slice(0, 7));
+            expect(editor.fontStyle, where).toBe(Math.max(token.fontStyle ?? 0, 0));
+          }
+        });
       }
     },
   );
@@ -158,8 +177,6 @@ describe('monacoThemeData', () => {
 
     expect(resolve('comment.doc.ts').fontStyle).toBe(1);
     expect(resolve('comment.line').fontStyle).toBe(0);
-    // Monarch's `comment` token stands for `//` comments, which the reset un-italicises in chat.
-    expect(resolve('comment.ts').fontStyle).toBe(0);
   });
 
   it("keeps stock Frink's own editor chrome at contrast 100", () => {
@@ -315,6 +332,28 @@ describe('useMonacoTheme', () => {
     await waitFor(() =>
       expect(lastRules()).toContainEqual({ token: 'keyword', foreground: '#ff0000' }),
     );
+  });
+
+  it('points the editor tokenizer at the committed code theme, never at a stale load', async () => {
+    const highlighter = await loadLanguage('tsx');
+    const provider = createShikiTokensProvider(highlighter, highlighter.getLanguage('tsx'));
+    const keyword = () => provider.tokenize('const', provider.getInitialState()).tokens[0].scopes;
+    const [nord, monokai] = await Promise.all([loadShikiTheme('nord'), loadShikiTheme('monokai')]);
+    const slow = deferred();
+    getShikiTheme.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(monokai);
+    const store = createStore();
+    renderTheme(store);
+
+    act(() => store.set(activePaletteAtom, { ...stockDark, syntax: 'nord' }));
+    act(() => store.set(activePaletteAtom, { ...stockDark, syntax: 'monokai' }));
+    await waitFor(() => expect(keyword()).toBe('shiki-66d9ef.f1'));
+    slow.resolve(nord);
+    await act(() => slow.promise);
+    expect(keyword()).toBe('shiki-66d9ef.f1');
+
+    // Back to a code theme whose rules are cached: no load, so the tokenizer must switch at once.
+    act(() => store.set(activePaletteAtom, { ...stockDark, syntax: 'nord' }));
+    expect(keyword()).toBe('shiki-81a1c1');
   });
 
   it('reports a code theme that keeps failing once, while still retrying it', async () => {
