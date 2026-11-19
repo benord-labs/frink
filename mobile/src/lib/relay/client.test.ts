@@ -85,6 +85,24 @@ class Socket {
   }
 }
 let socket: Socket;
+function watchLifecycle() {
+  let onChange!: (state: AppStateStatus) => void;
+  const remove = vi.fn();
+  const unwatch = watchRelayLifecycle({
+    addEventListener: (_type, listener) => {
+      onChange = listener;
+      return { remove };
+    },
+  });
+  return { onChange: (state: AppStateStatus) => onChange(state), unwatch, remove };
+}
+/** Later dials get a fresh socket; returns the one in use so far. */
+function swapSocket() {
+  const previous = socket;
+  socket = new Socket();
+  wire.io.mockReturnValue(socket);
+  return previous;
+}
 beforeEach(() => {
   socket = new Socket();
   wire.io.mockReturnValue(socket);
@@ -189,12 +207,12 @@ it('drops tampered frames and fails all pending requests', async () => {
   await failed;
   expect(socket.disconnected).toBe(true);
 });
-it('fails an /api request and closes the client once its frame goes unacknowledged for 10 s', async () => {
+it('fails an /api request as a lost link and closes the client once its frame goes unacknowledged for 10 s', async () => {
   vi.useFakeTimers();
   try {
     socket.silent = true;
     const result = relayRequest(target, '/api', {}, input);
-    const failed = expect(result).rejects.toMatchObject({ status: 0 });
+    const failed = expect(result).rejects.toBeInstanceOf(LinkLost);
     await vi.advanceTimersByTimeAsync(10_000);
     await failed;
     expect(socket.disconnected).toBe(true);
@@ -214,21 +232,47 @@ it('acks an incoming frame before reading it, then closes on one that does not d
   expect(ack).toHaveBeenCalledOnce();
   expect(socket.disconnected).toBe(true);
 });
+it('a deliberate close fails what is in flight without marking the link lost', async () => {
+  socket.response = false;
+  const error = relayRequest(target, '/api', {}, input).catch((e) => e);
+  await vi.waitFor(() => expect(socket.parts).toHaveLength(1));
+  closeMobileRelay();
+  expect(await error).toMatchObject({ status: 0 });
+  expect(await error).not.toBeInstanceOf(LinkLost);
+});
+it('returning to the foreground redials even when a request dialled while away', async () => {
+  const { onChange } = watchLifecycle();
+  onChange('background');
+  await relayRequest(target, '/api', {}, input);
+  const dialledAway = swapSocket();
+  onChange('active');
+  expect(wire.io).toHaveBeenCalledTimes(2);
+  expect(dialledAway.disconnected).toBe(true);
+});
+it('a retired client lets a slow request run to its own timeout', async () => {
+  vi.useFakeTimers();
+  try {
+    const { onChange } = watchLifecycle();
+    socket.response = false;
+    const created = relayRequest(target, '/api', {}, input, undefined, 60_000).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(socket.parts).toHaveLength(1);
+    onChange('background');
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(socket.disconnected).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await created).toMatchObject({ status: 0 });
+    expect(socket.disconnected).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it('retires the client in the background without failing what is in flight, and redials on return', async () => {
-  let onChange!: (state: AppStateStatus) => void;
-  const remove = vi.fn();
-  const unwatch = watchRelayLifecycle({
-    addEventListener: (_type, listener) => {
-      onChange = listener;
-      return { remove };
-    },
-  });
+  const { onChange, unwatch, remove } = watchLifecycle();
   socket.response = false;
   const inFlight = relayRequest(target, '/api', {}, input);
   await vi.waitFor(() => expect(socket.parts).toHaveLength(1));
-  const previous = socket;
-  socket = new Socket();
-  wire.io.mockReturnValue(socket);
+  const previous = swapSocket();
   onChange('background');
   expect(previous.disconnected).toBe(false);
   previous.reply(0, input);

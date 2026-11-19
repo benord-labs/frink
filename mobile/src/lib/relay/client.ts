@@ -39,8 +39,6 @@ const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const FRAME_ACK_MS = 10_000;
 /** Attachment parts are large, so a slow mobile uplink gets longer before it counts as dead. */
 const UPLOAD_ACK_MS = 20_000;
-/** A retired client lets in-flight requests finish, but no longer than this. */
-const RETIRE_GRACE_MS = 15_000;
 const DEV = typeof __DEV__ !== 'undefined' && __DEV__;
 
 function devLog(message: string) {
@@ -123,21 +121,21 @@ class RelayClient {
     this.socket.connect();
   }
 
-  close(reason = 'closed') {
+  /** `failure` is what in-flight requests get: a lost link by default, so reads may ask again. */
+  close(reason = 'closed', failure: () => ApiError = linkLost) {
     if (this.closed) return;
     this.closed = true;
     devLog(`closed: ${reason}`);
-    this.failHandshake(linkLost());
+    this.failHandshake(failure());
     this.socket.disconnect();
-    for (const item of this.pending.values()) item.finish(undefined, linkLost());
+    for (const item of this.pending.values()) item.finish(undefined, failure());
     this.pending.clear();
   }
 
-  /** Closes once in-flight requests settle, so a replaced computer's last clean-up still arrives. */
+  /** Closes once in-flight requests settle; each is bounded by its own timeout. */
   retire() {
     this.retiring = true;
     if (this.pending.size === 0) this.close('retired');
-    else setTimeout(() => this.close('retired with requests in flight'), RETIRE_GRACE_MS);
   }
 
   private receive(part: MobileEnvelope) {
@@ -167,11 +165,13 @@ class RelayClient {
       if (!active()) return;
       if (this.closed || !this.session) throw unreachable();
       // Seal only as we emit, so concurrent requests cannot reorder nonce counters.
+      // A missing ack closes the client here, so every pending request fails as a lost link.
       await this.socket
         .timeout(ackMs)
-        .emitWithAck('frame', this.session.seal(encodeEnvelope(part)));
+        .emitWithAck('frame', this.session.seal(encodeEnvelope(part)))
+        .catch(() => this.close('frame not acknowledged'));
     });
-    this.sendQueue = next.catch(() => this.close('frame not acknowledged'));
+    this.sendQueue = next.catch(() => {});
     return next;
   }
 
@@ -236,8 +236,9 @@ let cached: { identity: string; client: RelayClient } | undefined;
 /** The computer last asked, so a returning app can dial it before its first poll. */
 let lastTarget: RelayTarget | undefined;
 
+/** A deliberate close: in-flight reads fail outright rather than redialling the computer left. */
 export function closeMobileRelay() {
-  cached?.client.close();
+  cached?.client.close('closed', unreachable);
   cached = undefined;
   lastTarget = undefined;
 }
@@ -264,17 +265,23 @@ export function relayRequest(
   return clientFor(target).request(path, headers, body, signal, timeoutMs);
 }
 
+function retireCached() {
+  cached?.client.retire();
+  cached = undefined;
+}
+
 /** iOS suspends a backgrounded app and its socket dies silently, so the client is retired on the
- * way out (in-flight requests still finish) and a fresh one dials as the app returns. */
+ * way out and again on return (in-flight requests still finish), then a fresh one dials. */
 export function watchRelayLifecycle(appState: Pick<AppStateStatic, 'addEventListener'>) {
   let away = false;
   const subscription = appState.addEventListener('change', (state) => {
     if (state === 'background') {
       away = true;
-      cached?.client.retire();
-      cached = undefined;
+      retireCached();
     } else if (state === 'active' && away) {
       away = false;
+      // A client dialled while away may sit on a suspended socket.
+      retireCached();
       if (lastTarget) clientFor(lastTarget);
     }
   });
