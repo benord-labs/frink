@@ -1,5 +1,5 @@
 import { decodeUriPath } from '../path-normalization';
-import { MENTION_PREFIXES, OPEN_EDITOR_FILE_SOURCE } from './mention-grammar';
+import { MENTION_PREFIXES, OPEN_EDITOR_FILE_SOURCE, PICKED_PATH_SOURCE } from './mention-grammar';
 import { decodeFromMentionToken } from './mention-token-codec';
 
 export type ParsedMention = {
@@ -147,4 +147,15 @@ export function parseMention(id: string): ParsedMention | null {
 /** The file open in the editor, attached without the user picking it. */
 export function isOpenEditorFile(mention: ParsedMention): boolean {
   return mention.type === 'file' && mention.repository === OPEN_EDITOR_FILE_SOURCE;
+}
+
+/** The mention for a file or folder the user picked, as the @ menu and the file tree insert it. */
+export function pickedPathMention(type: 'file' | 'folder', path: string) {
+  return {
+    id: `${type}:${PICKED_PATH_SOURCE}:${path}`,
+    label: pathLabel(path),
+    path,
+    repository: PICKED_PATH_SOURCE,
+    type,
+  };
 }

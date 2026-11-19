@@ -20,6 +20,7 @@ import {
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
   registerFlowRunEndedTests,
+  registerLinkedReadPermissionTests,
   registerOperatorReminderDeliveryTests,
   registerTurnUsageStampTests,
   registerUndeliveredMessageTests,
@@ -216,6 +217,12 @@ vi.mock('../db/repos/chats', () => ({
   getChatWithProjectAccount: vi.fn(),
 }));
 
+// The conformance grid and the warm-session suite seed a chat's links here; the rest stays real.
+vi.mock('../db/repos/chat-linked-projects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../db/repos/chat-linked-projects')>()),
+  listLinkedProjects: vi.fn(() => []),
+}));
+
 // Phase 1.5: bash perm reads/writes go through local SQLite repo + getDatabase().
 // Tests mock-stubbed cloud-client functions but production calls localPerms.* —
 // without these mocks, getDatabase() tries to spin up a real SQLite at /mock/userData/data
@@ -282,7 +289,9 @@ vi.mock('../permissions/v2/check', () => ({
   checkPermission: vi.fn(),
 }));
 
-vi.mock('../permissions/v2/store-local', () => ({
+// Rule reads stay real, so a linked project's saved rules reach the gate (linked-read-permission).
+vi.mock('../permissions/v2/store-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../permissions/v2/store-local')>()),
   addProjectRule: vi.fn(async () => undefined),
 }));
 
@@ -8067,3 +8076,4 @@ describe('Debug-mode + worktree-backed chat (log path follows worktree)', () => 
 });
 
 registerValidateToolPermissionTests({ clientPermissionBridge });
+registerLinkedReadPermissionTests({ clientPermissionBridge });

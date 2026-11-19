@@ -8,6 +8,7 @@ This guide explains how rules are shaped, how they're scoped, and how to write y
 
 - The agent asks before doing anything new. You see a prompt with Deny / Allow once / Allow {tool} for {project}.
 - Click "Allow Read for frink" once and the agent can read files inside frink from now on. Other projects on your machine are unaffected.
+- Claude, OpenCode, Copilot and Cursor read and search a project linked to the chat without asking, except that Cursor can only list its file names, not search the text in its files. The built-in deny list, your deny rules and that project's own deny rules still apply to reads, but a search can still show lines from some files on the deny list. Changes there are handled like any change outside the chat's folder. See [Linked projects](#linked-projects).
 - Open Settings → Permissions to see, edit, or hand-craft rules. Power-user grammar like `Bash(npm:*)` or `Edit(src/**)` lives here.
 - A built-in deny list covers credential paths (`.env`, `.ssh/`, `.aws/`, `~/.gnupg`, etc.) on the surfaces Frink gates; no rule you write can override it. It is a static check, not a sandbox — [What's always blocked](#whats-always-blocked-system-deny-list) states its exact coverage and current limits.
 
@@ -105,7 +106,7 @@ When the agent tries a tool with no matching rule, you'll see a prompt. The shap
 > `src/main/index.ts`
 > [Deny] [Allow once] [Allow Read for frink]
 
-Click "Allow Read for frink" and Frink stores a tool-wide rule `Read` at this project's scope. The agent can read any file inside the project going forward. Reads in other projects still prompt.
+Click "Allow Read for frink" and Frink stores a tool-wide rule `Read` at this project's scope. The agent can read any file inside the project going forward. Reads in other projects still prompt, unless that project is [linked to the chat](#linked-projects).
 
 If the file is outside the current project (e.g. `~/Desktop/other-project/foo.ts`), the "Allow Read for frink" button disappears — only Deny / Allow once. Project-scope rules wouldn't apply outside the project anyway.
 
@@ -122,6 +123,16 @@ A command Frink cannot describe with a reusable rule — one built from a shell 
 The card names the flow and summarises what it will execute, because a flow's name is chosen by the agent that wrote it. "Allow once" runs it a single time and stores nothing. "Always allow this Flow" turns on that flow's **"Allow agents to run this flow"** setting — it is a property of the flow, not a permission rule, so it will **not** appear under Settings → Permissions. Turn it back off in the Flow's own settings panel.
 
 Starting a batch shows the same card with the number of runs it will start, so a single click can never authorise more work than you were shown.
+
+## Linked projects
+
+When you link a project to a chat (see [Linked projects](./projects.md#linked-projects)), Claude, OpenCode, GitHub Copilot and Cursor can read and search its files without a card. Cursor can list a linked project's file names, but a search of the text in its files is refused.
+
+- Everything else is checked first: the built-in deny list, your policy, project and user rules, and the linked project's own deny and ask rules. A rule that denies or asks still does. A card from the linked project's own ask rule names that project and offers only Allow this time.
+- Only reading and searching change. An edit, a new file or a command in a linked project is handled like any change outside the chat's folder.
+- Linking and unlinking apply from the agent's next step. With each message you send, Frink tells the agent which projects are linked. It isn't told when you unlink one: that project is simply missing from the next list, and when no project is left linked, no list is sent.
+- A search with no file filter can still show lines from a file on the deny list that the search doesn't skip, such as `credentials.json`, as it can in the chat's own folder. So can a search whose file filter reaches a deny-list name only through a wildcard, such as `*.ke[y]`.
+- Codex reads files by running commands, and linking doesn't change how those are checked: a command that reads a linked project is handled like any command outside the chat's folder. Linking tells Codex where the project is.
 
 ## Writing rules by hand
 
@@ -194,6 +205,7 @@ Auto changes who reviews an eligible request; it does not remove the surrounding
 - One exception: letting an agent **run** a Flow is a decision about that Flow, not about a tool, so it always asks you. With Auto on the card still appears and the run does not start until you answer — the agent is told the approval is pending rather than being left waiting. Turning on “Allow agents to run this flow” in Flow settings, or choosing “Always allow this Flow” on the card, stops it asking again.
 - A reviewer decision is per request. Auto does not create lasting Frink permission rules.
 - The provider reviewer can make mistakes, and it does not see every request: changes inside the folder the chat is working in are allowed without review, and only work outside that folder is reviewed. In a project chat that folder is the project. In a **general chat it is your whole home folder**, so Auto there can change files belonging to other projects without asking. Treat Auto as a convenience for work you trust, not as a guarantee against malicious instructions. The [system deny list](#whats-always-blocked-system-deny-list) still applies either way.
+- A [linked project](#linked-projects) is not a folder the chat works in, so with Auto on Claude's reviewer still reviews changes there. Reads and searches in a linked project are allowed by Frink first, like a call your allow rules allow.
 
 Claude Auto is available only on Claude Sonnet and Opus models that Frink reports as supported. Codex uses its native auto-review while retaining the `workspace-write` sandbox and `on-request` approval policy.
 
@@ -209,6 +221,7 @@ OpenCode chats (macOS and Linux) use the same cards and the same rules as any ot
 
 - **OpenCode asks Frink before every command, file change, web fetch or web search**, and before it touches anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and OpenCode carries on.
 - **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. Searching the folder doesn't ask, so a search can still show lines from a `.env` file.
+- **Reading and searching a [linked project](#linked-projects) doesn't ask either**, and works as it does in the chat's folder: a `.env` file is refused by name, and a search can still show lines from one.
 - **Frink also holds every command until its check has allowed it**, so no command runs that Frink didn't allow.
 - **If OpenCode ever finishes an action without asking, Frink stops the chat.**
 - **Frink ignores your OpenCode config files while it runs OpenCode, for safety**, and won't start OpenCode at all when an organisation, company sign-in or administrator sends it settings.
@@ -220,6 +233,7 @@ GitHub Copilot chats (macOS and Linux) use the same cards and the same rules as 
 
 - **Copilot asks Frink before every command, file change, web fetch or web search**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Copilot carries on. Helper agents that Copilot starts inside a chat ask the same way.
 - **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. Listing file names doesn't ask. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file.
+- **Reading and searching a [linked project](#linked-projects) doesn't ask either**, with the same `.env` checks as in the chat's folder.
 - **Some of Copilot's own bookkeeping doesn't ask**: its notes for the chat, checking on a command it started, and handing work to its helper agents. None of these change your files.
 - **Copilot's plan file usually doesn't ask.** Copilot saves its plan in Frink's own Copilot folder, not in your project, and Frink lets only that one file through without a question, in any mode. You may still see a card when Copilot first writes or reads it.
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Copilot is told and usually tries another way.
@@ -233,8 +247,9 @@ Cursor chats (macOS and Linux) use the same cards and the same rules as any othe
 
 - **Cursor asks Frink before every command and file change**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Cursor carries on.
 - **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. In a general chat, a search of your whole home folder is refused, because it holds your Cursor sign-in; search a folder inside it instead. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. Listing file names doesn't ask. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file.
+- **Reading files in a [linked project](#linked-projects) doesn't ask either**, with the same `.env` checks as in the chat's folder.
 - **Some of Cursor's own bookkeeping doesn't ask**: files it keeps for the chat in Frink's own Cursor folder, such as an image you paste, and its to-do list. None of these change your files.
-- **Cursor only searches for text inside the chat's folder.** A text search of a folder outside it is refused. When a text search would follow a link that leads outside the folder, Frink asks about each place the link leads, and refuses the search if it can't work that out in time.
+- **Cursor only searches for text inside the chat's folder.** A text search of a folder outside it, a linked project included, is refused. When a text search would follow a link that leads outside the folder, Frink asks about each place the link leads, and refuses the search if it can't work that out in time.
 - **Cursor's file and search tools never read or change Cursor's own settings folder or your Cursor sign-in.** A command that touches them asks like any other command. A path Cursor would rewrite before opening it, such as one starting with `~` or `file:`, is refused too.
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Web fetch, web search and helper agents aren't offered to Cursor at all for now.
 - **If Cursor ever finishes an action without asking, or doesn't load Frink's check, Frink stops the chat.**
@@ -280,7 +295,7 @@ On **Codex** there is no per-tool allowlist either, and Frink never hands Codex 
 | Symptom | Likely cause |
 |---|---|
 | Agent prompts on a file you've already allowed | Your rule was `Read(src/x.ts)`; agent asked for `Read(src/y.ts)`. Use a glob (`Read(src/**)`) or a tool-wide grant (`Read`). |
-| "Allow {tool} for {project}" button disabled | File is outside the current project. Use Allow once, or open the file's owning project's chat. |
+| "Allow {tool} for {project}" button disabled | File is outside the current project. Use Allow once, or open the file's owning project's chat. To let the agent read that project without asking, link it to the chat. |
 | Rule shows in Settings but never fires | Tool name wrong (typo or case). Delete + re-add — validator will catch it now. |
 | Paste-file Read prompts every time | The paste was written under a different chat ID than the active chat. Restart the chat. |
 | Want to grant something machine-wide | Add via Settings → User card. Note: rules at user scope apply across **every** project on the machine. |

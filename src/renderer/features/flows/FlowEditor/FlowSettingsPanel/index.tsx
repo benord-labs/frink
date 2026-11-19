@@ -16,6 +16,7 @@ import { cn } from '../../../../lib/utils';
 import { ModelSelector } from '../../../agents/components/model-selector';
 import { FlowProjectField } from '../BlockConfig/FlowProjectField';
 import { flowModelVariant, useFlowDefaultModelPicker } from '../hooks/flow-picker-models';
+import { flowDefaultProjectRules } from '../nodeSummary';
 import { BatchTriggerVariables } from './BatchTriggerVariables';
 import { BriefingStashControls } from './BriefingStashControls';
 import { FlowSpeedSettings } from './FlowSpeedSettings';
@@ -256,6 +257,7 @@ export function FlowSettingsPanel({
           <Label className="text-xs font-medium">Project</Label>
           <FlowProjectField
             projectId={projectId}
+            rules={flowDefaultProjectRules(nodes)}
             onProjectIdChange={(id) =>
               onSettingsChange(patch(settings, { defaultProjectId: id || undefined }))
             }

@@ -90,6 +90,7 @@ import {
   type IdeWatcherPaneContext,
   useIdeConfigWatcher,
 } from '../../../hooks/use-ide-config-watcher';
+import { useSettleBrowsedTabsForChat } from '../../../lib/workspace-context/use-settle-browsed-tabs-for-chat';
 import {
   clearPaneContextAtom,
   closeFilesOutsideProjectAtom,
@@ -545,6 +546,17 @@ export function AgentsContent() {
     prevSelectedChatIdRef.current = selectedChatId;
   }, [selectedChatId, setPreviousChatId]);
 
+  // Single view: another project's tabs stay only with the chat that opened them or one whose file
+  // tree has their project, even when the project id is unchanged (the project sync below skips
+  // that case). Settling waits for that tree's project list, so a tab isn't closed before its
+  // project shows up.
+  useSettleBrowsedTabsForChat({ chatId: selectedChatId, chat: chatData, isSplitActive });
+
+  const chatWorktreePath =
+    chatData && 'worktreePath' in chatData
+      ? (chatData.worktreePath as string | undefined)
+      : undefined;
+
   // Sync selectedProjectAtom when chat changes (single-pane mode only).
   // In split view, each pane manages its own project context via PaneFileTree.
   useEffect(() => {
@@ -605,10 +617,7 @@ export function AgentsContent() {
     // (skip on split→single transition to preserve multi-project tabs)
     if (!justExitedSplit) {
       const effectiveProjectPath = resolveEffectiveProjectPath({
-        worktreePath:
-          chatData && 'worktreePath' in chatData
-            ? (chatData.worktreePath as string | undefined)
-            : undefined,
+        worktreePath: chatWorktreePath,
         selectedProjectPath: decision.project.path,
       });
       closeFilesOutsideProject(effectiveProjectPath ?? null);
@@ -691,12 +700,7 @@ export function AgentsContent() {
   // Note: Cmd+E archive hotkey is handled in AgentsSidebar to share undo stack
 
   // The diff and terminal views both read the worktree (desktop only).
-  const worktreePath = resolveEffectiveProjectPath({
-    worktreePath:
-      chatData && 'worktreePath' in chatData
-        ? (chatData.worktreePath as string | undefined)
-        : undefined,
-  });
+  const worktreePath = resolveEffectiveProjectPath({ worktreePath: chatWorktreePath });
   const canShowDiff = !!worktreePath;
   const canShowTerminal = !!worktreePath;
 

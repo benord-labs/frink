@@ -27,6 +27,7 @@ import {
   sendPermissionRequest,
 } from '../../client';
 import { getActiveExecution } from '../execution-registry';
+import { linkedProjectName, loadLinkedRoots } from './linked-roots';
 import { createPendingPermissionRequestBroker, generatePermissionRequestId } from './request';
 
 const permissionRequests = createPendingPermissionRequestBroker({
@@ -109,9 +110,11 @@ export async function validateToolPermission(
   //
   // This read runs before checkPermission's own rule-store guard, so it carries the
   // same posture: a DB we cannot read denies instead of throwing past the gate.
+  let db: ReturnType<typeof getDatabase>;
   let project: Awaited<ReturnType<typeof getProjectByPath>>;
   try {
-    project = await getProjectByPath(getDatabase(), projectPath);
+    db = getDatabase();
+    project = await getProjectByPath(db, projectPath);
   } catch (err) {
     log.error('[executor] Could not read project for permission check — denying', err);
     return { allowed: false, message: formatDenyReason({ kind: 'db:unavailable' }) };
@@ -139,12 +142,18 @@ export async function validateToolPermission(
     projectPath,
     sessionDirRoot,
     planDirRoot,
+    // Read fresh on every call; links that cannot be read give none, so those reads ask.
+    linkedRoots: await loadLinkedRoots(db, chatId, projectPath),
     trustedFrinkOwnedMcp,
     mcpIdentity,
   });
   if (result.decision === 'allow') return { allowed: true };
   if (result.decision === 'deny') {
-    return { allowed: false, message: formatDenyReason(result.reason) };
+    const linked = result.reason.kind === 'rule:deny' ? result.reason.projectId : undefined;
+    return {
+      allowed: false,
+      message: formatDenyReason(result.reason, await linkedProjectName(db, linked)),
+    };
   }
 
   // Provider Auto Mode reviews the remaining `ask` bucket, uniformly across every tool
@@ -160,6 +169,7 @@ export async function validateToolPermission(
   // Apply worktree FILE-path override here only — for prompt rendering + rule.
   const remappedPath = permissionPathOverride ?? fallbackPath;
   const requestId = generatePermissionRequestId();
+  const matchedProjectName = await linkedProjectName(db, result.prompt.matchedProjectId);
   const payload: PermissionRequestPayload = {
     chatId,
     subChatId,
@@ -172,7 +182,11 @@ export async function validateToolPermission(
         ? 'bash'
         : (getOperationFromToolName(toolName) ?? 'read'),
     reason: reason ?? `Tool: ${toolName}`,
-    prompt: presentation ? { ...result.prompt, presentation } : result.prompt,
+    prompt: {
+      ...result.prompt,
+      ...(presentation && { presentation }),
+      ...(matchedProjectName && { matchedProjectName }),
+    },
     // projectPath enables the "Allow for project" button in FourButtonView
     // (`hasProject = !!request.projectPath`). Omitted when no project row
     // matches (general chat / virtual folder, where projectPath is the home

@@ -34,6 +34,7 @@ const getVersionMock = vi.fn();
 const createBatchPlanTemplateMock = vi.fn();
 const updateStageRunLocalMock = vi.fn();
 const uploadAttachmentToStageRunMock = vi.fn();
+const attachFileToStageRunMock = vi.fn();
 const removeAttachmentFromStageRunMock = vi.spyOn(flowsBatch, 'removeAttachmentFromStageRun');
 const resolveAttachmentToDataUrlMock = vi.fn();
 const parkFlowTaskForSubChatMock = vi.fn();
@@ -161,6 +162,7 @@ vi.mock('../../flows/batch-mutations', () => ({
 
 vi.mock('../../flows/attachments-upload', () => ({
   uploadAttachmentToStageRun: (...args: unknown[]) => uploadAttachmentToStageRunMock(...args),
+  attachFileToStageRun: (...args: unknown[]) => attachFileToStageRunMock(...args),
 }));
 
 vi.mock('../../flows/attachments-data-url', () => ({
@@ -212,6 +214,7 @@ describe('flowsRouter (local)', () => {
     createBatchPlanTemplateMock.mockReset();
     updateStageRunLocalMock.mockReset();
     uploadAttachmentToStageRunMock.mockReset();
+    attachFileToStageRunMock.mockReset();
     removeAttachmentFromStageRunMock.mockReset();
     resolveAttachmentToDataUrlMock.mockReset();
     parkFlowTaskForSubChatMock.mockReset();
@@ -1448,6 +1451,26 @@ describe('flowsRouter (local)', () => {
           mimeType: 'image/png',
         }),
       ).rejects.toThrow('upload failed');
+    });
+  });
+
+  // The renderer reads `attachment` off the reply; snake_case output must not rename it.
+  describe('attachFileToRun', () => {
+    it('hands the file path to the run and returns what was stored', async () => {
+      const stored = {
+        attachment: {
+          url: 'frink-attachment://run/a1-report.csv',
+          type: 'file',
+          label: 'report.csv',
+        },
+        run: { id: 'run-1', trigger_context: {} },
+      };
+      attachFileToStageRunMock.mockResolvedValueOnce(stored);
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      const input = { flowId: 'flow-1', runId: 'run-1', sourcePath: '/Users/me/report.csv' };
+
+      await expect(caller.attachFileToRun(input)).resolves.toEqual(stored);
+      expect(attachFileToStageRunMock).toHaveBeenCalledWith(input);
     });
   });
 

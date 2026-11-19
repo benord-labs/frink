@@ -64,6 +64,31 @@ describe('EditorContextChip', () => {
     expect(onRemoveFile).toHaveBeenCalledOnce();
   });
 
+  it("shows only the file name of a selection from another project's file", () => {
+    render(
+      <TooltipProvider>
+        <EditorContextChip
+          selection={{
+            ...selection,
+            fileName: '/Users/me/ros-service/src/send.ts',
+            filePath: '/Users/me/ros-service/src/send.ts',
+          }}
+          fileName={null}
+          onRemoveSelection={vi.fn()}
+          onRemoveFile={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    fireEvent.focus(screen.getByText('send.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/Users/me/ros-service/src/send.ts');
+    expect(
+      screen.getByRole('button', {
+        name: 'Remove code selection and file from context: send.ts lines 279-282',
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the open file's full path in its tooltip", () => {
     render(
       <TooltipProvider>

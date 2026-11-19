@@ -193,7 +193,17 @@ describe('detectCodexAccount', () => {
     const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
-    expect(result.hint).toMatch(/re-run `codex login`/i);
+    expect(result.hint).toBe("Frink found a ChatGPT login it can't read. Sign in again here.");
+  });
+
+  it('does not point Windows at an in-app sign-in it cannot offer when the login is unreadable', async () => {
+    setPlatform('win32');
+    setCodexHome(JSON.stringify({ last_refresh: '2026-01-01' }));
+
+    const result = await detectCodexAccount();
+
+    expect(result.available).toBe(false);
+    expect(result.hint).toBe("Frink found a ChatGPT login it can't read.");
   });
 
   it('returns a safe failure hint (no detail leak) when auth.json cannot be read', async () => {
@@ -260,7 +270,7 @@ describe('detectCodexAccount', () => {
     const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
-    expect(result.hint).toMatch(/codex login/i);
+    expect(result.hint).toBe("Frink didn't find a ChatGPT login on this computer.");
   });
 
   it('refuses a malformed auth.json even when a keychain login also exists, without probing it', async () => {
@@ -272,7 +282,7 @@ describe('detectCodexAccount', () => {
     const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
-    expect(result.hint).toMatch(/re-run `codex login`/i);
+    expect(result.hint).toBe("Frink found a ChatGPT login it can't read. Sign in again here.");
     expect(securityMock).not.toHaveBeenCalled();
   });
 
@@ -283,7 +293,7 @@ describe('detectCodexAccount', () => {
     const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
-    expect(result.hint).toMatch(/codex login/i);
+    expect(result.hint).toBe("Frink didn't find a ChatGPT login on this computer.");
     // Linux without a file must not shell out to the macOS `security` tool.
     expect(securityMock).not.toHaveBeenCalled();
     expect(execFileSyncMock).not.toHaveBeenCalled();

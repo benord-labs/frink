@@ -78,6 +78,15 @@ describe.each<Mode>(['streaming', 'static'])('mention tokens in %s markdown', (m
   });
 
   it.each([
+    '/Users/me/Personal and learning/web/app/[id]/page.tsx',
+    '/Users/me/Personal and learning/web/app/[id]/My Page.tsx',
+  ])('keeps the paired brackets of %s, in a folder with spaces, in one chip', (path) => {
+    const host = renderMarkdown(`fix @[file:local:${path}] and [this] note] now`, mode);
+    expect(chipIds(host)).toEqual([`file:local:${path}`]);
+    expect(host.textContent).toBe('fix chip and [this] note] now');
+  });
+
+  it.each([
     ['sum @[file:local:notes[draft.md] up', 'sum chip up'],
     ['sum @[file:local:notes[draft.md] is great] ok', 'sum chip is great] ok'],
   ])('ends an id with an unpaired bracket at the first closing bracket: %j', (markdown, text) => {

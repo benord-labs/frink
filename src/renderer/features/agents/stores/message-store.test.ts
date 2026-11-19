@@ -21,10 +21,12 @@ import {
   perSubChatMessageIdsAtomFamily,
   perSubChatStatusAtomFamily,
   prependOlderMessagesAtom,
+  readLoadedChatTexts,
   setRollbackFilter,
   syncMessagesWithStatusAtom,
   userMessageIdsForSubChatAtomFamily,
 } from './message-store';
+import { useAgentSubChatStore } from './sub-chat-store';
 
 describe('hasUnapprovedPlanAtom', () => {
   beforeEach(() => {
@@ -998,5 +1000,64 @@ describe('isStreamingForSubChatAtomFamily — derivation and split-pane isolatio
     expect(isStreamingForSubChatAtomFamily(OTHER)).toBe(otherBefore.isStreaming);
     expect(appStore.get(isStreamingForSubChatAtomFamily(OTHER))).toBe(true);
     expect(appStore.get(perSubChatMainMessageIdsAtomFamily(OTHER))).toEqual(['o1']);
+  });
+});
+
+describe('readLoadedChatTexts', () => {
+  const sync = (subChatId: string, messages: unknown[]) =>
+    appStore.set(syncMessagesWithStatusAtom, {
+      messages: messages as import('ai').UIMessage[],
+      status: 'ready',
+      subChatId,
+      isActive: false,
+    });
+
+  beforeEach(() => useAgentSubChatStore.getState().reset());
+
+  it("reads the text parts and tool inputs of this chat's sub-chats only", () => {
+    const { setSubChatsForChat } = useAgentSubChatStore.getState();
+    setSubChatsForChat('chat-a', [
+      { id: 'texts-a1', name: 'One' },
+      { id: 'texts-a2', name: 'Two' },
+    ]);
+    setSubChatsForChat('chat-b', [{ id: 'texts-b1', name: 'Other' }]);
+    sync('texts-a1', [
+      { id: 'ta1-u', role: 'user', parts: [{ type: 'text', text: 'Look at /a/app' }] },
+      {
+        id: 'ta1-a',
+        role: 'assistant',
+        parts: [
+          // Neither text nor a tool input: skipped
+          { type: 'reasoning', text: 'Thinking' },
+          { type: 'tool-Read', toolCallId: 't1', input: { file_path: '/a/app/x.ts' } },
+          { type: 'text', text: '' },
+        ],
+      },
+    ]);
+    sync('texts-a2', [{ id: 'ta2-a', role: 'assistant', parts: [{ type: 'text', text: 'Done' }] }]);
+    sync('texts-b1', [{ id: 'tb1-a', role: 'assistant', parts: [{ type: 'text', text: '/b/x' }] }]);
+
+    expect(readLoadedChatTexts('chat-a')).toEqual([
+      'Look at /a/app',
+      '{"file_path":"/a/app/x.ts"}',
+      'Done',
+    ]);
+    expect(readLoadedChatTexts('chat-c')).toEqual([]);
+  });
+
+  it('skips a sub-chat whose messages were cleared, without making its atoms again', () => {
+    useAgentSubChatStore.getState().setSubChatsForChat('chat-a', [
+      { id: 'texts-open', name: 'Open' },
+      { id: 'texts-closed', name: 'Closed' },
+    ]);
+    const text = (id: string, value: string) => [
+      { id, role: 'assistant', parts: [{ type: 'text', text: value }] },
+    ];
+    sync('texts-open', text('to-a', 'On screen'));
+    sync('texts-closed', text('tc-a', 'Closed'));
+    clearSubChatCaches('texts-closed');
+
+    expect(readLoadedChatTexts('chat-a')).toEqual(['On screen']);
+    expect([...perSubChatMessageIdsAtomFamily.getParams()]).not.toContain('texts-closed');
   });
 });

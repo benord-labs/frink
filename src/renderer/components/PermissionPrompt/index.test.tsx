@@ -288,6 +288,40 @@ describe('PermissionPrompt — DenyReasonBanner', () => {
     expect(screen.queryByRole('button', { name: 'On this machine' })).toBeNull();
   });
 
+  it("omits the persist options for a search a linked project's own rule asks about", () => {
+    const req: PermissionRequest = {
+      requestId: 'glob-1',
+      scope: { type: 'folder', folderId: '' },
+      path: '/linked/lib',
+      operation: 'read',
+      projectPath: '/proj',
+      projectName: 'frink',
+      chatId: 'c',
+      subChatId: 's',
+      prompt: {
+        tool: 'Glob',
+        input: { pattern: '**/*.ts', path: '/linked/lib' },
+        reason: 'rule:ask',
+        matchedRule: 'Glob',
+        matchedTier: 'project',
+        matchedProjectId: 'lib',
+        matchedProjectName: 'lib',
+        suggestedRules: [],
+        pathLocation: 'outside',
+      },
+    };
+    const { container } = render(
+      <PermissionPrompt request={req} onApprove={vi.fn()} onDeny={vi.fn()} />,
+    );
+    expect(container.textContent).toContain(
+      'Asking because of rule Glob saved on linked project lib.',
+    );
+    expect(screen.getByRole('button', { name: 'Allow this time' })).toBeTruthy();
+    expect(screen.queryByText('Always allow')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'In this project' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'On this machine' })).toBeNull();
+  });
+
   it('renders over-50-subcommands banner', () => {
     const req = makeBashRequest({
       prompt: {

@@ -6,6 +6,10 @@ import { SidePanelDockHost } from '@/components/SidePanelDock';
 import { ThemeEditorHost } from '@/components/ThemeEditor';
 import { activeFileAtom, getNextCodeEditorLayout } from '@/lib/code-editor/state';
 import { useThemeEditorYield } from '@/lib/themes/editor/use-theme-editor-dock';
+import {
+  type QuickOpenRoot,
+  useQuickOpenRoots,
+} from '@/lib/workspace-context/use-quick-open-roots';
 import { ResizableSidebar } from '../../components/ui/resizable-sidebar';
 import { TooltipProvider } from '../../components/ui/tooltip';
 import { UpdateBanner } from '../../components/update-banner';
@@ -33,9 +37,10 @@ import { appStore } from '../../lib/jotai-store';
 import { trpc, trpcClient } from '../../lib/trpc';
 import { focusedChatOwnsShortcuts } from '../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { useWorkQueueDestination } from '../../lib/work-queue/use-work-queue-destination';
-import { useAgentRequestMoveChat } from '../agents';
+import { readLoadedChatTexts, useAgentRequestMoveChat } from '../agents';
 import {
   fileSearchDialogOpenAtom,
+  isFillablePane,
   newChatWorktreePathAtom,
   recentlyOpenedFilesAtom,
   selectedAgentChatIdAtom,
@@ -54,10 +59,10 @@ import {
   closeFilesOutsideProjectAtom,
   codeEditorLayoutAtom,
   codeEditorOpenAtom,
-  openFileAtom,
   openFilesAtom,
 } from '../code-editor';
 import { FileSearchDialog } from '../file-viewer/components/file-search-dialog';
+import { AddToChatProvider } from '@/lib/agent-chat/composer-input/add-to-chat-context';
 import { FilesSidebar } from '../files-sidebar';
 import {
   filesSidebarOpenAtom,
@@ -125,13 +130,28 @@ export function AgentsLayout() {
   });
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom);
   const [recentlyOpenedFiles, setRecentlyOpenedFiles] = useAtom(recentlyOpenedFilesAtom);
-  const openFile = useSetAtom(openFileAtom);
 
   // Split view: granular atoms so layout-only updates (cycleLayout) do not re-render this tree.
   const chatIds = useAtomValue(splitViewChatIdsAtom);
   const activePaneIndex = useAtomValue(splitViewActivePaneIndexAtom);
   const isSplitActive = chatIds.length >= 2;
   const paneCount = chatIds.length;
+  // Quick open searches every project in the tree of the active pane's chat, or the selected chat.
+  // A pane holding a new-chat form or nothing yet has no chat.
+  const activePaneChatId = chatIds[activePaneIndex] ?? null;
+  const { roots: fileSearchRoots, open: openFileSearchResult } = useQuickOpenRoots({
+    pane: isSplitActive
+      ? {
+          index: activePaneIndex,
+          chatId: isFillablePane(activePaneChatId) ? null : activePaneChatId,
+        }
+      : undefined,
+    single: {
+      chatId: selectedChatId,
+      path: fileSearchProjectPath,
+      worktreePath: selectedChatWorktreePath,
+    },
+  });
 
   const {
     addEmptyPane,
@@ -326,6 +346,7 @@ export function AgentsLayout() {
     activateActivePaneFileSearch,
     toggleChatSearch,
     canShowFilesSidebar: Boolean(validatedProject?.path),
+    canSearchFiles: fileSearchRoots.length > 0,
     isFilesSidebarOpen: filesSidebarOpen,
     closeAllEditorFiles,
     toggleEditorLayout,
@@ -356,30 +377,13 @@ export function AgentsLayout() {
   }, [setSidebarOpen]);
 
   const handleFileSearchSelectFile = useCallback(
-    (absoluteFilePath: string) => {
-      const fileName = absoluteFilePath.split('/').pop() ?? absoluteFilePath;
-      openFile({
-        path: absoluteFilePath,
-        name: fileName,
-        projectPath: fileSearchProjectPath,
-        sourcePaneIndex: isSplitActive ? activePaneIndex : undefined,
-        sourceChatId: selectedChatId ?? undefined,
-        isWorktreeContext: Boolean(selectedChatWorktreePath),
-        intent: 'preview',
-      });
+    (absoluteFilePath: string, root: QuickOpenRoot) => {
+      openFileSearchResult(absoluteFilePath, root);
       setRecentlyOpenedFiles((prev) =>
         [absoluteFilePath, ...prev.filter((p) => p !== absoluteFilePath)].slice(0, 50),
       );
     },
-    [
-      activePaneIndex,
-      isSplitActive,
-      openFile,
-      selectedChatId,
-      selectedChatWorktreePath,
-      setRecentlyOpenedFiles,
-      fileSearchProjectPath,
-    ],
+    [openFileSearchResult, setRecentlyOpenedFiles],
   );
 
   useWindowEvent('file-viewer:open-in-editor', () => {
@@ -424,10 +428,13 @@ export function AgentsLayout() {
               </ResizableSidebar>
               {viewPolicy.showFilesSidebar && (
                 <div className={editorYield.files}>
-                  <FilesSidebar
-                    chatId={selectedChatId ?? undefined}
-                    worktreePath={selectedChatWorktreePath}
-                  />
+                  <AddToChatProvider chatId={selectedChatId}>
+                    <FilesSidebar
+                      chatId={selectedChatId ?? undefined}
+                      worktreePath={selectedChatWorktreePath}
+                      getMentionTexts={() => readLoadedChatTexts(selectedChatId ?? '')}
+                    />
+                  </AddToChatProvider>
                 </div>
               )}
             </>
@@ -458,11 +465,12 @@ export function AgentsLayout() {
         </SidebarMainPaneLayout>
 
         <UpdateBanner />
-        {fileSearchProjectPath && viewPolicy.showFileSearch && (
+        {/* Mounted even with nothing to search, so the dialog can drop an open it can't show. */}
+        {viewPolicy.showFileSearch && (
           <FileSearchDialog
             open={fileSearchDialogOpen}
             onOpenChange={setFileSearchDialogOpen}
-            projectPath={fileSearchProjectPath}
+            roots={fileSearchRoots}
             onSelectFile={handleFileSearchSelectFile}
             activePaneIndex={isSplitActive ? activePaneIndex : undefined}
           />

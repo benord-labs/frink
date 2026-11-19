@@ -1,4 +1,5 @@
 import path from 'path';
+import { findProjectForPath } from '@/lib/workspace-context/project-paths';
 import { buildOpenWorktreeFileInput } from '@/lib/worktree/open-worktree-file-in-editor';
 import { decodeUriPath } from '../../../shared/lib/path-normalization';
 
@@ -129,20 +130,71 @@ type FileLinkBase = {
   chatId: string | null;
 };
 
+/** A registered project a file link may open in. */
+type LinkProject = { id: string; name: string; path: string };
+
+// A `~/` path starts at the home folder, so it waits for one; any other loses its `./` parts.
+function linkedFilePath(file: string, home: string | undefined): string | undefined {
+  return file.startsWith('~/') ? home && path.join(home, file.slice(2)) : path.normalize(file);
+}
+
 /** What opens a referenced file in the editor; null when it lies outside the chat's working folder. */
 export function fileLinkOpenInput(
   file: string,
   { home, root, isWorktreeContext, chatId }: FileLinkBase,
 ) {
-  // A `~/` path starts at the home folder, so it waits for one; any other loses its `./` parts.
-  const filePath = file.startsWith('~/')
-    ? home && path.join(home, file.slice(2))
-    : path.normalize(file);
+  const filePath = linkedFilePath(file, home);
   if (!chatId || !filePath) return null;
   return buildOpenWorktreeFileInput({ filePath, worktreePath: root, isWorktreeContext, chatId });
 }
 
-export type FileLinkOpenInput = NonNullable<ReturnType<typeof fileLinkOpenInput>>;
+/** What opens a referenced file, and the other project it is from when it is from one. */
+export type FileLinkOpenInput = NonNullable<ReturnType<typeof fileLinkOpenInput>> & {
+  isOtherProject?: true;
+  projectName?: string;
+};
+
+/** The registered project a full or `~/` path lies in; a relative path names none. */
+export function fileLinkProject<T extends { path: string }>(
+  file: string,
+  home: string | undefined,
+  projects: readonly T[],
+): T | null {
+  if (!file.startsWith('/') && !file.startsWith('~/')) return null;
+  const filePath = linkedFilePath(file, home);
+  return filePath ? findProjectForPath(filePath, projects) : null;
+}
+
+/** A worktree chat's own project, when a full or `~/` path lies anywhere in that project's main
+ *  folder, which the chat doesn't work in. Another project registered inside that folder counts
+ *  as the main folder too. */
+export function fileLinkOwnMainFolder<T extends LinkProject>(
+  file: string,
+  { home, isWorktreeContext }: Pick<FileLinkBase, 'home' | 'isWorktreeContext'>,
+  projects: readonly T[],
+  chatProjectId: string | null | undefined,
+): T | null {
+  const own = isWorktreeContext && projects.find((project) => project.id === chatProjectId);
+  return own ? fileLinkProject(file, home, [own]) : null;
+}
+
+/** As fileLinkOpenInput, then a full or `~/` path in another registered project opens there.
+ *  The chat's own project never opens this way, so a worktree chat's link into its main folder
+ *  stays shut. */
+export function fileLinkOpenInputAcrossProjects(
+  file: string,
+  base: FileLinkBase,
+  projects: readonly LinkProject[],
+  chatProjectId: string | null | undefined,
+): FileLinkOpenInput | null {
+  const own = fileLinkOpenInput(file, base);
+  if (own) return own;
+  if (fileLinkOwnMainFolder(file, base, projects, chatProjectId)) return null;
+  const project = fileLinkProject(file, base.home, projects);
+  if (!project || project.id === chatProjectId) return null;
+  const input = fileLinkOpenInput(file, { ...base, root: project.path, isWorktreeContext: false });
+  return input && { ...input, isOtherProject: true, projectName: project.name };
+}
 
 /** True for a path written with no `/`, `~/`, `./` or `../` in front: the only kind that may be shortened. */
 export function isBareRelativePath(file: string): boolean {

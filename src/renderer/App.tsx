@@ -25,6 +25,7 @@ import { useFlowExecutionEvents } from './hooks/use-flow-execution-events';
 import { useMcpBackgroundPrefetch } from './hooks/use-mcp-background-prefetch';
 import { useMcpImportInvalidation } from './hooks/use-mcp-import-invalidation';
 import { useComposerSettingsSync } from './hooks/use-composer-settings-sync';
+import { useLinkedProjectsSync } from './hooks/use-linked-projects-sync';
 import { useSubChatModeSync } from './hooks/use-sub-chat-mode-sync';
 import { pendingAccountAuthAtom } from './lib/atoms';
 import { appStore } from './lib/jotai-store';
@@ -200,6 +201,7 @@ function GlobalEventListeners() {
   useFlowChatReplySync();
   useSubChatModeSync();
   useComposerSettingsSync();
+  useLinkedProjectsSync();
   useWakeHoldSync(announceTurnEnd);
   useSubagentTaskSync();
   useMcpBackgroundPrefetch();

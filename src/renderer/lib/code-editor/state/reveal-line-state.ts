@@ -84,3 +84,14 @@ export function consumePendingReveal(
   if (!shouldRevealNow(pending, activeAbsoluteFilePath, isTextEditorFile)) return null;
   return pending;
 }
+
+/** Applies a reveal queued before the editor mounted, only in the file it was asked for.
+ * Returns the reveal still waiting: a different file's stays queued for when that file shows. */
+export function revealPendingOnMount(
+  pending: RevealLineDetail | null,
+  activeAbsoluteFilePath: string | null,
+  reveal: (detail: RevealLineDetail) => boolean,
+): RevealLineDetail | null {
+  const detail = consumePendingReveal(pending, activeAbsoluteFilePath, true);
+  return detail && reveal(detail) ? null : pending;
+}

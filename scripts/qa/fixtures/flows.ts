@@ -384,3 +384,44 @@ export function seedRunningFlowFixture(db: SqliteDb): void {
     updatedAt: T2,
   });
 }
+
+// A flow as an import leaves it on a computer without the source project: its Start task step
+// keeps the project NAME ("mobile"), which matches nothing here, so the editor flags that step.
+export const FIXTURE_IMPORTED_FLOW = {
+  flowId: 'qa-fixture-flow-imported',
+  versionId: 'qa-fixture-flow-imported-version',
+  name: 'Imported release flow',
+};
+
+export function seedImportedFlowFixture(db: SqliteDb): void {
+  db.insert(schema.flows)
+    .values({
+      id: FIXTURE_IMPORTED_FLOW.flowId,
+      projectId: null,
+      name: FIXTURE_IMPORTED_FLOW.name,
+      createdAt: T0,
+      updatedAt: T0,
+    })
+    .run();
+  db.insert(schema.flowVersions)
+    .values({
+      id: FIXTURE_IMPORTED_FLOW.versionId,
+      flowId: FIXTURE_IMPORTED_FLOW.flowId,
+      versionNumber: 1,
+      graph: {
+        nodes: [
+          { id: 'trigger-1', blockType: 'manual_trigger', label: 'Run manually', config: {} },
+          {
+            id: 'start-1',
+            blockType: 'start_task',
+            label: 'Set up the release branch',
+            config: { projectId: 'mobile' },
+          },
+        ],
+        edges: [{ id: 'e-trigger-start', source: 'trigger-1', target: 'start-1' }],
+        settings: {},
+      },
+      createdAt: T0,
+    })
+    .run();
+}

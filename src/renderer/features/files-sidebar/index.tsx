@@ -8,6 +8,8 @@ import { ResizableSidebar } from '@/components/ui/resizable-sidebar';
 import { openFileAtom } from '@/lib/code-editor/state';
 import { trpc } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
+import { useMainRootOpen } from '@/lib/workspace-context/use-main-root-open';
+import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { recentlyOpenedFilesAtom, selectedProjectAtom } from '../agents/atoms';
 import { SidebarHeaderWithSearch } from '../sidebar/components/SidebarHeaderWithSearch';
 import {
@@ -17,7 +19,6 @@ import {
   filesSidebarWidthAtom,
 } from './atoms';
 import { ContentSearchOptionsRow } from './ContentSearchOptionsRow';
-import { ContentSearchResults } from './ContentSearchResults';
 import { FILES_SIDEBAR_SEARCH_INPUT_CLASS, filesSidebarTabButtonClass } from './chrome';
 import {
   FILE_TREE_KEY_SHORTCUTS,
@@ -39,6 +40,9 @@ import {
   triggerFileTreeReveal,
   useFileTreeRefreshListeners,
 } from './refresh-trigger';
+import { AddProjectButton } from './tree-roots/AddProjectButton';
+import { SearchRootsLayout } from './tree-roots/SearchRootsLayout';
+import { focusChatTree, TreeRootsLayout } from './tree-roots/TreeRootsLayout';
 import { useChatContextFile } from './use-chat-context-file';
 import { useContentSearchTab } from './use-content-search-tab';
 import { useExternalFileDrop } from './use-external-file-drop';
@@ -68,9 +72,16 @@ type Props = {
   chatId?: string;
   /** Current chat worktree path (when chat is running in a worktree). */
   worktreePath?: string;
+  /** The chat's loaded message texts, for listing the projects they name first in Link project */
+  getMentionTexts?: () => string[];
 };
 
-export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): ReactElement | null {
+export function FilesSidebar({
+  onFileSelect,
+  chatId,
+  worktreePath,
+  getMentionTexts,
+}: Props): ReactElement | null {
   const [isOpen, setIsOpen] = useAtom(filesSidebarOpenAtom);
   const [activeTab, setActiveTab] = useAtom(filesSidebarActiveTabAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
@@ -98,6 +109,9 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
   });
   // Single derived gate for all queries, effects, and rendering that need a local project path.
   const canAccessFiles = isOpen && !!effectiveProjectPath;
+  const treeProjects = useTreeProjects(chatId);
+  const hasExtraRoots = treeProjects.extras.length > 0;
+  const mainRoot = useMainRootOpen(chatId, hasExtraRoots);
 
   // Files tree name search
   const {
@@ -500,11 +514,10 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
   // Lazily compute visible paths from the DOM (called inside keyboard handler)
   const getVisiblePathsCallback = useCallback(() => getVisiblePaths(treeContainerRef.current), []);
 
-  // Focus the tree when requested by the toggle-files shortcut (Cmd+Shift+F opening)
+  // Focus the tree when requested by the toggle-files shortcut (Cmd+Shift+F opening), or its
+  // "Main" row while that row has the tree closed
   useEffect(() => {
-    const handleFocusTree = () => {
-      treeContainerRef.current?.focus();
-    };
+    const handleFocusTree = () => focusChatTree(treeContainerRef.current);
     window.addEventListener('file-tree:focus', handleFocusTree);
     return () => window.removeEventListener('file-tree:focus', handleFocusTree);
   }, []);
@@ -566,6 +579,7 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
     treeContainerRef,
     onBatchDelete: handleBatchDelete,
     getSelectedPaths,
+    isMainRootHidden: mainRoot.isHidden,
   });
 
   // Extend selection for Shift+Arrow
@@ -678,7 +692,13 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
             closeTooltipLabel="Close files"
             closeShortcutId="toggle-files"
             showClearInInput
+            searchAccessory={
+              treeProjects.canAdd ? (
+                <AddProjectButton chatId={chatId} getMentionTexts={getMentionTexts} />
+              ) : undefined
+            }
             searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
+            className="@container/files-header"
           />
           <div className="flex items-center gap-1.5 border-b border-border/25 px-3 pb-2">
             {renderTabButton('files', 'Files')}
@@ -701,84 +721,101 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
           </div>
 
           {activeTab === 'files' ? (
-            <RootCreateContextMenu onCreate={setRootCreating}>
-              {/* role="tree" + tabIndex makes the container focusable for keyboard shortcuts */}
-              <div
-                ref={treeContainerRef}
-                role="tree"
-                aria-label={`${selectedProject.name} file tree`}
-                aria-multiselectable="true"
-                aria-keyshortcuts={FILE_TREE_KEY_SHORTCUTS}
-                aria-busy={isLoading ? 'true' : undefined}
-                tabIndex={0}
-                data-drop-target="root"
-                className={cn(
-                  'flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5 scrollbar-thin outline-hidden transition-colors',
-                  'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40',
-                  externalFileDrop.isDragOver && 'bg-primary/5 ring-1 ring-inset ring-primary/30',
-                )}
-                onDragOver={externalFileDrop.onDragOver}
-                onDragLeave={externalFileDrop.onDragLeave}
-                onDrop={externalFileDrop.onDrop}
-                onPaste={handlePasteEvent}
-              >
-                {/* Announces drop acceptance to screen readers during external file drag-over */}
-                <span className="sr-only" role="status" aria-live="polite">
-                  {externalFileDrop.isDragOver
-                    ? `Drop files to copy into ${selectedProject.name} file tree`
-                    : ''}
-                </span>
-                {/* Inline input for root-level creation (from empty-space context menu) */}
-                {rootCreating && (
-                  <div className="mb-0.5">
-                    <InlineInput
-                      type={rootCreating}
-                      level={0}
-                      onConfirm={(name) => handleRootCreateConfirm(rootCreating, name)}
-                      onCancel={() => setRootCreating(null)}
-                    />
-                  </div>
-                )}
-                {isLoading ? (
-                  <LoadingState />
-                ) : (
-                  <ModifiedFilterContext.Provider value={showModifiedOnly && !isSearching}>
-                    <RefreshContext.Provider value={refreshTrigger}>
-                      <FileTree
-                        key={`${effectiveProjectPath}-${isSearching ? 'search' : 'browse'}`}
-                        nodes={nodes}
-                        projectPath={effectiveProjectPath}
-                        onFileClick={handleFileClick}
-                        searchQuery={fileDebouncedQuery}
-                        onMoveFile={isSearching ? undefined : handleMoveFile}
-                        onBatchMoveFiles={isSearching ? undefined : handleBatchMoveFiles}
-                        onCreateFile={isSearching ? undefined : handleCreateFile}
-                        onCreateFolder={isSearching ? undefined : handleCreateFolder}
-                        onDeleteFile={isSearching ? undefined : handleDeleteFile}
-                        onSelect={isSearching ? undefined : handleSelect}
-                        renamingPath={isSearching ? undefined : renamingPath}
-                        onRenameConfirm={isSearching ? undefined : handleRenameConfirm}
-                        onRenameCancel={isSearching ? undefined : handleRenameCancel}
-                        onStartRename={isSearching ? undefined : setRenamingPath}
-                        onCopyItem={isSearching ? undefined : handleInternalCopy}
-                        onPasteIntoFolder={isSearching ? undefined : handlePaste}
-                        hasCopiedItem={isSearching ? undefined : hasCopiedItem}
-                        selectionStore={isSearching ? undefined : multiSelect.selectionStore}
-                        onModifiedClick={isSearching ? undefined : handleModifiedClick}
-                        onBatchDelete={isSearching ? undefined : handleBatchDelete}
-                        deselectDescendants={
-                          isSearching ? undefined : multiSelect.deselectDescendants
-                        }
-                        onBatchDragComplete={multiSelect.clearSelection}
-                        pathToExpandAfterDrop={isSearching ? undefined : pathToExpandAfterDrop}
+            <TreeRootsLayout
+              projects={treeProjects}
+              chatId={chatId ?? ''}
+              mainPath={effectiveProjectPath}
+              searchQuery={fileDebouncedQuery}
+              manageDnd
+              mainExpanded={mainRoot.open}
+              onMainExpandedChange={mainRoot.setOpen}
+              onCreateInMain={setRootCreating}
+            >
+              <RootCreateContextMenu onCreate={setRootCreating}>
+                {/* role="tree" + tabIndex makes the container focusable for keyboard shortcuts */}
+                <div
+                  ref={treeContainerRef}
+                  role="tree"
+                  aria-label={`${selectedProject.name} file tree`}
+                  aria-multiselectable="true"
+                  aria-keyshortcuts={FILE_TREE_KEY_SHORTCUTS}
+                  aria-busy={isLoading ? 'true' : undefined}
+                  tabIndex={0}
+                  data-drop-target="root"
+                  className={cn(
+                    // With other projects in the tree, the layout around it scrolls them all together.
+                    hasExtraRoots
+                      ? 'px-2 py-1.5 outline-hidden transition-colors'
+                      : 'flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5 scrollbar-thin outline-hidden transition-colors',
+                    'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40',
+                    externalFileDrop.isDragOver && 'bg-primary/5 ring-1 ring-inset ring-primary/30',
+                  )}
+                  onDragOver={externalFileDrop.onDragOver}
+                  onDragLeave={externalFileDrop.onDragLeave}
+                  onDrop={externalFileDrop.onDrop}
+                  onPaste={handlePasteEvent}
+                >
+                  {/* Announces drop acceptance to screen readers during external file drag-over */}
+                  <span className="sr-only" role="status" aria-live="polite">
+                    {externalFileDrop.isDragOver
+                      ? `Drop files to copy into ${selectedProject.name} file tree`
+                      : ''}
+                  </span>
+                  {/* Inline input for root-level creation (from empty-space context menu) */}
+                  {rootCreating && (
+                    <div className="mb-0.5">
+                      <InlineInput
+                        type={rootCreating}
+                        level={0}
+                        onConfirm={(name) => handleRootCreateConfirm(rootCreating, name)}
+                        onCancel={() => setRootCreating(null)}
                       />
-                    </RefreshContext.Provider>
-                  </ModifiedFilterContext.Provider>
-                )}
-              </div>
-            </RootCreateContextMenu>
+                    </div>
+                  )}
+                  {isLoading ? (
+                    <LoadingState />
+                  ) : (
+                    <ModifiedFilterContext.Provider value={showModifiedOnly && !isSearching}>
+                      <RefreshContext.Provider value={refreshTrigger}>
+                        <FileTree
+                          key={`${effectiveProjectPath}-${isSearching ? 'search' : 'browse'}`}
+                          nodes={nodes}
+                          projectPath={effectiveProjectPath}
+                          onFileClick={handleFileClick}
+                          searchQuery={fileDebouncedQuery}
+                          onMoveFile={isSearching ? undefined : handleMoveFile}
+                          onBatchMoveFiles={isSearching ? undefined : handleBatchMoveFiles}
+                          onCreateFile={isSearching ? undefined : handleCreateFile}
+                          onCreateFolder={isSearching ? undefined : handleCreateFolder}
+                          onDeleteFile={isSearching ? undefined : handleDeleteFile}
+                          onSelect={isSearching ? undefined : handleSelect}
+                          renamingPath={isSearching ? undefined : renamingPath}
+                          onRenameConfirm={isSearching ? undefined : handleRenameConfirm}
+                          onRenameCancel={isSearching ? undefined : handleRenameCancel}
+                          onStartRename={isSearching ? undefined : setRenamingPath}
+                          onCopyItem={isSearching ? undefined : handleInternalCopy}
+                          onPasteIntoFolder={isSearching ? undefined : handlePaste}
+                          hasCopiedItem={isSearching ? undefined : hasCopiedItem}
+                          selectionStore={isSearching ? undefined : multiSelect.selectionStore}
+                          onModifiedClick={isSearching ? undefined : handleModifiedClick}
+                          onBatchDelete={isSearching ? undefined : handleBatchDelete}
+                          deselectDescendants={
+                            isSearching ? undefined : multiSelect.deselectDescendants
+                          }
+                          onBatchDragComplete={multiSelect.clearSelection}
+                          pathToExpandAfterDrop={isSearching ? undefined : pathToExpandAfterDrop}
+                        />
+                      </RefreshContext.Provider>
+                    </ModifiedFilterContext.Provider>
+                  )}
+                </div>
+              </RootCreateContextMenu>
+            </TreeRootsLayout>
           ) : (
-            <ContentSearchResults
+            <SearchRootsLayout
+              projects={treeProjects}
+              chatId={chatId ?? ''}
+              mainPath={effectiveProjectPath}
               isLoading={isLoading}
               query={contentDebouncedQuery}
               invalidRegex={contentSearchInvalidRegex}
@@ -793,6 +830,7 @@ export function FilesSidebar({ onFileSelect, chatId, worktreePath }: Props): Rea
             projectPath={effectiveProjectPath}
             worktreePath={activeWorktreePath}
             selectedCount={multiSelect.count}
+            projectCount={treeProjects.extras.length + 1}
           />
         </div>
       </div>

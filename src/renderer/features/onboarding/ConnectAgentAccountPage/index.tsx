@@ -3,6 +3,8 @@ import { Loader2 } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { aiProviderMark } from '@/components/AiProviderMark';
 import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
+import { type InAppSignIn, useInAppSignIn } from '@/lib/ai-providers/use-in-app-sign-in';
+import { isWindows } from '@/lib/utils/platform';
 import {
   AI_PROVIDERS,
   type AiProviderId,
@@ -18,6 +20,7 @@ import {
   PRIMARY_CTA,
   TerminalCommand,
 } from '../connect-account-shell';
+import { SignInWaitingCard } from '../SignInWaitingCard';
 
 /** Why an agent can't connect: not installed and how to install it, or the launch's own reason. */
 function agentNotFound(
@@ -77,6 +80,33 @@ function CursorSignIn({ label, onSignedIn }: { label: string; onSignedIn: () => 
   );
 }
 
+/** No OpenAI login: sign in to ChatGPT here, except on Windows, where main refuses it. */
+function chatGptNotFound(signIn: InAppSignIn) {
+  if (isWindows()) {
+    return {
+      title: 'Sign in to ChatGPT',
+      detail: (
+        <>
+          Signing in to ChatGPT from Frink needs macOS or Linux. On Windows, run{' '}
+          <TerminalCommand>codex login</TerminalCommand> in Terminal, then choose Check again.
+        </>
+      ),
+    };
+  }
+  return {
+    title: 'Sign in to ChatGPT',
+    action: (
+      <SignInWaitingCard
+        name="ChatGPT"
+        state={signIn.state}
+        onStart={signIn.start}
+        onCancel={signIn.cancel}
+        onReopen={signIn.reopen}
+      />
+    ),
+  };
+}
+
 /** The page's promise about where the sign-in lives. */
 function signInSource(row: { runtime: string; name: string }, isAgent: boolean): string {
   if (row.runtime === 'cursor') return 'Uses your own Cursor sign-in.';
@@ -97,9 +127,19 @@ export function ConnectAgentAccountPage({
   const row = AI_PROVIDERS[provider];
   const isAgent = isInstalledAgent(row);
   const Mark = aiProviderMark(provider);
+  // Typed up front: its callbacks read the query and flow declared below it.
+  const signIn: InAppSignIn = useInAppSignIn({
+    type: provider,
+    recheck: async () => {
+      const { data } = await detectionQuery.refetch();
+      return data?.available ? data : null;
+    },
+    connect: (login) => flow.handleConnect(login),
+  });
   const detectionQuery = trpc.agentAccounts.detect.useQuery(
     { type: provider },
-    { refetchOnWindowFocus: true },
+    // A sign-in still in progress is left alone.
+    { refetchOnWindowFocus: !signIn.waiting },
   );
   const connectMutation = trpc.agentAccounts.connect.useMutation();
 
@@ -126,20 +166,20 @@ export function ConnectAgentAccountPage({
       providerIconBgClassName={isAgent ? 'bg-muted' : 'bg-foreground'}
       providerName={row.name}
       providerTag={<ProviderPreviewTag provider={provider} />}
-      authCommand={isAgent ? row.signInHint : 'codex login'}
       headerDescription={`${signInSource(row, isAgent)} No token is stored in Frink.`}
       foundTitle={found?.version ? `${row.name} ${found.version} found.` : undefined}
       loginFoundNote={isAgent ? agentLoginNote(row) : undefined}
       notFound={
-        isAgent && missed
-          ? agentNotFound(
+        isAgent
+          ? missed &&
+            agentNotFound(
               row,
               missed,
               missed.signedOut ? (
                 <CursorSignIn label={row.signInHint} onSignedIn={refetch} />
               ) : undefined,
             )
-          : undefined
+          : chatGptNotFound(signIn)
       }
       detectionAvailable={Boolean(found)}
       detectionEmail={found?.email}

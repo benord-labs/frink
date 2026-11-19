@@ -36,7 +36,9 @@ export function triggerFileTreeReveal(projectPath: string, folderPath: string): 
   );
 }
 
-/** Shared impl for invalidating list + search and bumping refresh trigger (used by FilesSidebar and PaneFileTree). */
+/** FilesSidebar's refresh after it moves, creates, deletes, renames or copies files: invalidates
+ * list + search and bumps the refresh trigger. Unscoped, so it re-reads the listings of the other
+ * projects in the tree as well. */
 export function invalidateFileTreeQueries(
   utils: {
     files: { listDirectory: { invalidate: () => void }; search: { invalidate: () => void } };
@@ -87,9 +89,10 @@ export function useFileTreeRefreshListeners({
 
     const cleanup = window.desktopApi.onGitStatusChanged((data) => {
       if (data.worktreePath === projectPath) {
-        utils.files.listDirectory.invalidate();
-        utils.files.search.invalidate();
-        utils.files.searchContent.invalidate();
+        // Only this folder's queries: another project shown in the same tree re-reads on its own.
+        utils.files.listDirectory.invalidate({ projectPath });
+        utils.files.search.invalidate({ projectPath });
+        utils.files.searchContent.invalidate({ projectPath });
         // Trigger tree nodes to refetch their children
         setRefreshTrigger((prev) => prev + 1);
       }
@@ -118,9 +121,9 @@ export function useFileTreeRefreshListeners({
           return;
         }
         lastRefetchTime.current = now;
-        utils.files.listDirectory.invalidate();
-        utils.files.search.invalidate();
-        utils.files.searchContent.invalidate();
+        utils.files.listDirectory.invalidate({ projectPath });
+        utils.files.search.invalidate({ projectPath });
+        utils.files.searchContent.invalidate({ projectPath });
         // Trigger tree nodes to refetch their children
         setRefreshTrigger((prev) => prev + 1);
       }

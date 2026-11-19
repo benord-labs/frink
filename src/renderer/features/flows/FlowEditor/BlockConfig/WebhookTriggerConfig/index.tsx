@@ -105,13 +105,30 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
     setSettingsOpen(true);
   }, [setActiveSettingsTab, setSettingsOpen]);
 
-  const { data: integrations, isLoading: integrationsLoading } = trpc.integrations.list.useQuery();
+  const {
+    data: integrations,
+    isLoading: integrationsLoading,
+    isFetching: integrationsFetching,
+    isError: integrationsError,
+  } = trpc.integrations.list.useQuery();
 
   const selected = useMemo(
     () => integrations?.find((i) => i.id === integrationId),
     [integrations, integrationId],
   );
 
+  // integrations.list returns active accounts only, the same set the runtime matches against.
+  const accountGone =
+    integrationId !== '' &&
+    integrations !== undefined &&
+    !integrationsFetching &&
+    !integrationsError &&
+    !selected;
+  const accountGoneNotice = accountGone ? (
+    <p id="flow-webhook-integration-error" role="alert" className="text-sm text-destructive">
+      This account isn't connected on this computer. Pick one or connect it.
+    </p>
+  ) : null;
   const supportedProvider: IntegrationProvider | undefined = selected?.provider;
   const providerMeta = getProviderById(supportedProvider ?? '');
   // Every catalog row carries its event registry + condition filters; a row with one event
@@ -281,6 +298,7 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
       {!integrations?.length && !integrationsLoading ? (
         <div className="rounded-md border border-dashed border-border/80 p-3 space-y-2">
           <p className="text-xs text-muted-foreground">No integrations connected yet.</p>
+          {accountGoneNotice}
           <Button type="button" size="sm" variant="secondary" onClick={handleManageConnections}>
             Connect an integration
           </Button>
@@ -292,7 +310,11 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
             onValueChange={onIntegrationSelect}
             disabled={integrationsLoading}
           >
-            <SelectTrigger id="flow-webhook-integration">
+            <SelectTrigger
+              id="flow-webhook-integration"
+              aria-invalid={accountGone || undefined}
+              aria-describedby={accountGone ? 'flow-webhook-integration-error' : undefined}
+            >
               <SelectValue placeholder="Select integration…" />
             </SelectTrigger>
             <SelectContent>
@@ -304,6 +326,7 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
               ))}
             </SelectContent>
           </Select>
+          {accountGoneNotice}
           <Button
             type="button"
             variant="link"

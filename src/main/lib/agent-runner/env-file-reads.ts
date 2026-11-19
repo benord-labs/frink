@@ -28,7 +28,7 @@ const GLOB_TOKEN = /\*+|\[[!^]?\]?(?:\[:[a-z]+:\]|[^\]])*\]|./gsu;
 const ONE_CHAR = { dot: true, nocase: true };
 
 /** Every brace-free glob a glob spells, or undefined when there are too many to check. */
-function spellings(glob: string): string[] | undefined {
+export function braceSpellings(glob: string): string[] | undefined {
   let globs = [glob];
   while (globs.some((each) => BRACE_GROUP.test(each))) {
     globs = globs.flatMap((each) => {
@@ -95,6 +95,6 @@ function spellingAsks(glob: string): boolean {
 export function envGlobAsks(glob: string): boolean {
   // Extended groups and classes inside braces are not modelled, so they count as reaching one.
   if (/[()]|\{[^}]*\[/.test(glob) || glob.length > MAX_GLOB) return true;
-  const options = spellings(glob);
+  const options = braceSpellings(glob);
   return !options || options.some(spellingAsks);
 }

@@ -43,6 +43,7 @@ const state = vi.hoisted(() => {
     getChatById: vi.fn(),
     moveChatToProjectLocal: vi.fn(),
     updateChat: vi.fn(),
+    dropLinksOverlapping: vi.fn(),
     invalidateStatus: vi.fn(),
     invalidateParsedDiff: vi.fn(),
     resolveTargetWorktreeForMove: vi.fn(),
@@ -133,6 +134,10 @@ vi.mock('../db/repos/chats', async (importOriginal) => {
     moveChatToProjectLocal: state.moveChatToProjectLocal,
   };
 });
+
+vi.mock('../db/repos/chat-linked-projects', () => ({
+  dropLinksOverlapping: state.dropLinksOverlapping,
+}));
 
 // Local projects repo — `frink_navigation_context` resolves project names locally first
 // (chats are local-first). Default null forces the cloud fallback that most tests already
@@ -469,6 +474,7 @@ describe('dynamic-chat-server requestSwitchProject', () => {
     state.getChatById.mockReset();
     state.moveChatToProjectLocal.mockReset();
     state.updateChat.mockReset();
+    state.dropLinksOverlapping.mockReset();
     state.findChatByWorktree.mockReset();
     state.getChatsPageForProjects.mockReset();
     state.getSubChatsForChat.mockReset();
@@ -789,6 +795,9 @@ describe('dynamic-chat-server requestSwitchProject', () => {
     expect(state.updateChat).toHaveBeenCalledWith(expect.anything(), 'chat-1', {
       worktreePath: '/new/worktree',
     });
+    expect(state.dropLinksOverlapping).toHaveBeenCalledWith(expect.anything(), 'chat-1', [
+      '/new/worktree',
+    ]);
     expect(state.moveChatToProjectLocal).not.toHaveBeenCalled();
   });
 

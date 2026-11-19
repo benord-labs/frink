@@ -5,7 +5,7 @@ import { createStore, Provider } from 'jotai';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chatContextFileAtomFamily } from '@/lib/code-editor/state';
-import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
+import { pendingComposerInputAtomFamily } from '@/lib/agent-chat/composer-input/pending-input';
 import { ChatInputSection } from './ChatInputSection';
 
 vi.mock('../../chat-input-area', () => ({
@@ -78,10 +78,9 @@ function createProps(): ComponentProps<typeof ChatInputSection> {
 describe('ChatInputSection', () => {
   it("takes its chat's terminal output as a chip", () => {
     const store = createStore();
-    store.set(pendingTerminalOutputAtomFamily('chat-1'), {
-      text: 'FAIL',
-      label: 'Terminal 1 output',
-    });
+    store.set(pendingComposerInputAtomFamily('chat-1'), [
+      { kind: 'text', text: 'FAIL', label: 'Terminal 1 output' },
+    ]);
     const props = createProps();
 
     render(
@@ -94,6 +93,32 @@ describe('ChatInputSection', () => {
       label: 'Terminal 1 output',
       kind: 'terminal',
     });
+  });
+
+  it('adds files sent while the account card showed once the composer appears', () => {
+    const store = createStore();
+    store.set(pendingComposerInputAtomFamily('chat-1'), [
+      { kind: 'paths', items: [{ path: 'src/a.ts', type: 'file' }] },
+    ]);
+    const props = createProps();
+    props.isResolvedExecutionAccountReady = false;
+    const { rerender } = render(
+      <Provider store={store}>
+        <ChatInputSection {...props} />
+      </Provider>,
+    );
+    const editor = { focus: vi.fn(), getValue: () => '', insertMention: vi.fn() };
+    Object.assign(props.editorRef, { current: editor });
+
+    rerender(
+      <Provider store={store}>
+        <ChatInputSection {...props} isResolvedExecutionAccountReady />
+      </Provider>,
+    );
+
+    expect(editor.insertMention).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'file:local:src/a.ts' }),
+    );
   });
 
   it('renders the input area', () => {

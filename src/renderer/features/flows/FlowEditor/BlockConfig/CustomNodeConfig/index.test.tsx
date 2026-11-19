@@ -57,7 +57,9 @@ vi.mock('../../../../../lib/trpc', () => ({
     external: {
       openInFinder: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
-    projects: { list: { useQuery: () => ({ data: [] }) } },
+    projects: {
+      list: { useQuery: () => ({ data: [{ id: 'p-api', name: 'api', path: '/api' }] }) },
+    },
     integrations: {
       list: {
         useQuery: () => ({
@@ -202,5 +204,22 @@ describe('CustomNodeConfig node shapes', () => {
     expect(screen.getByRole('button', { name: 'Sync to cloud' })).toBeInTheDocument();
     expect(screen.getByTestId('node-project-field')).toBeInTheDocument();
     expect(screen.queryByTestId('plugin-connection-field')).toBeNull();
+  });
+});
+
+describe('CustomNodeConfig project', () => {
+  it('flags a project name, since a custom node finds its project by id only', () => {
+    render(
+      <TooltipProvider>
+        <CustomNodeConfig
+          node={{ id: 'custom-1', blockType: 'example', config: { projectId: 'api' } }}
+          onPatchLabel={vi.fn()}
+          onConfigPatch={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+    expect(
+      screen.getByText("The project “api” isn't on this computer. Pick a project."),
+    ).toBeInTheDocument();
   });
 });

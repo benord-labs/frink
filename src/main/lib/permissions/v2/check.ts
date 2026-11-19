@@ -22,6 +22,7 @@ import {
   resultFromCombined,
   type ScopedDocs,
 } from './eval-rules';
+import { applyLinkedRead } from './linked-read';
 import { checkSearch, type SearchInput } from './search';
 import type { PermissionRequest, PermissionResult } from './types';
 
@@ -57,7 +58,7 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
   }
 
   if (PATH_TOOLS.has(req.tool)) {
-    return checkEdit(
+    const result = checkEdit(
       req.input as FileOpInput,
       docs,
       req.projectPath,
@@ -65,6 +66,10 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
       req.sessionDirRoot,
       req.planDirRoot,
     );
+    // Linked projects grant reads only, after every rule above has had its say.
+    return req.tool === 'Read' && req.linkedRoots?.length
+      ? applyLinkedRead(result, req, docs)
+      : result;
   }
 
   if (req.tool.startsWith('mcp__')) {
@@ -88,7 +93,8 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
   }
 
   if (req.tool === 'Glob' || req.tool === 'Grep') {
-    return checkSearch(req.tool, req.input as SearchInput, docs, req.projectPath);
+    const result = checkSearch(req.tool, req.input as SearchInput, docs, req.projectPath);
+    return req.linkedRoots?.length ? applyLinkedRead(result, req, docs) : result;
   }
 
   // Generic: rules-only, no tier-1c.

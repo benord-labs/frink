@@ -1,16 +1,6 @@
-const BACKSLASH_REGEX = /\\/g;
-const TRAILING_SLASHES_REGEX = /\/+$/;
-const WINDOWS_DRIVE_PATH_REGEX = /^[a-z]:\//i;
+import { normalizePathForComparison } from '../../../../shared/lib/path-normalization';
 
-export function normalizePathForComparison(value: string | null | undefined): string | null {
-  const normalized =
-    value?.replace(BACKSLASH_REGEX, '/').replace(TRAILING_SLASHES_REGEX, '') ?? null;
-  // Windows paths are case-insensitive; normalize drive/casing for robust comparisons.
-  if (normalized && WINDOWS_DRIVE_PATH_REGEX.test(normalized)) {
-    return normalized.toLowerCase();
-  }
-  return normalized;
-}
+export { normalizePathForComparison };
 
 export function resolveScopedChatWorktreePath(params: {
   activeChatId?: string | null;

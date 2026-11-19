@@ -64,7 +64,7 @@ describe('NodeProjectField', () => {
     expect(screen.getByText('inherited')).toBeInTheDocument();
   });
 
-  it('falls back to a truncated id label when the inherited project is unknown', () => {
+  it('shows an unknown inherited project in full, so the error beside it is readable', () => {
     render(
       <NodeProjectField
         projectId=""
@@ -72,7 +72,15 @@ describe('NodeProjectField', () => {
         onProjectIdChange={() => {}}
       />,
     );
-    expect(screen.getByText('01234567…')).toBeInTheDocument();
+    expect(screen.getByText('0123456789abcdef')).toBeInTheDocument();
+  });
+
+  it('shows an imported project name as the one local project it resolves to', () => {
+    snap.projects = [{ id: 'p-api', name: 'api', path: '/code/api' }];
+    render(
+      <NodeProjectField projectId="" flowDefaultProjectId="api" onProjectIdChange={() => {}} />,
+    );
+    expect(screen.getByText('api')).toBeInTheDocument();
   });
 
   it('hides the CTA when the node has its own override', () => {

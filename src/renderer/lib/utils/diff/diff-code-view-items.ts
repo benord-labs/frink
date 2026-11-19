@@ -37,6 +37,19 @@ export function parseRenderableDiffFiles(files: readonly ParsedDiffFile[]) {
   return { renderable, unrenderableCount: files.length - renderable.length };
 }
 
+/** The new-file line of the file's first change, past the hunk's leading context. Null when the
+ * file is deleted or has no hunks, since there is no new file to reveal a line in. */
+export function getFirstChangedLine(fileDiff: FileDiffMetadata): number | null {
+  const hunk = fileDiff.hunks[0];
+  if (fileDiff.type === 'deleted' || !hunk) return null;
+  let line = hunk.additionStart;
+  for (const content of hunk.hunkContent) {
+    if (content.type === 'change') break;
+    line += content.lines;
+  }
+  return Math.max(1, line);
+}
+
 /** Paths the panel is narrowed to: an explicit file list wins over a sub-chat's files. */
 export function resolveDiffScopePaths(
   filteredPaths: readonly string[] | null,

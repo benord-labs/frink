@@ -13,14 +13,17 @@
  *   the resolved absolute path stays under the attachments root.
  */
 
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { app } from 'electron';
+import { IMAGE_SIGNATURE_BYTES, detectImage } from '../claude/pasted-files/image-signature';
 
 export const ATTACHMENT_PROTOCOL = 'frink-attachment';
 
 const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 const LEADING_SLASH_RE = /^\//;
+/** `.` and `..` pass the name check but name a folder, never an uploaded file. */
+const DOTS_ONLY_RE = /^\.+$/;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const MIME_BY_EXT = new Map([
@@ -94,6 +97,28 @@ export async function writeAttachment(
   return { url: buildAttachmentUrl(runId, filename), filename, byteLength: buffer.byteLength };
 }
 
+/** Copies a file from disk into the run's folder; the bytes never cross IPC. `path` is the copy. */
+export async function copyAttachment(
+  runId: string,
+  filename: string,
+  sourcePath: string,
+  root: string = attachmentsRoot(),
+): Promise<WriteAttachmentResult & { path: string }> {
+  const target = getAttachmentPath(runId, filename, root);
+  await mkdir(join(root, runId), { recursive: true });
+  await copyFile(sourcePath, target);
+  const { size } = await stat(target);
+  return { url: buildAttachmentUrl(runId, filename), filename, byteLength: size, path: target };
+}
+
+/** The on-disk path of a `frink-attachment://` URL, or null for any other URL or one naming a
+ *  folder (`.` and `..` pass the name check). */
+export function attachmentFilePath(url: string, root: string = attachmentsRoot()): string | null {
+  const parsed = parseAttachmentUrl(url);
+  if (!parsed || DOTS_ONLY_RE.test(parsed.runId) || DOTS_ONLY_RE.test(parsed.filename)) return null;
+  return getAttachmentPath(parsed.runId, parsed.filename, root);
+}
+
 export async function readAttachment(
   runId: string,
   filename: string,
@@ -148,7 +173,10 @@ export async function readAttachmentImage(
   if (buffer.byteLength > MAX_IMAGE_BYTES) {
     return { ok: false, message: 'This image is bigger than the 5MB limit' };
   }
-  return { ok: true, mime: attachmentMimeType(filename), base64: buffer.toString('base64') };
+  // The bytes win over the name: a file attached by path keeps whatever extension it had.
+  const mime =
+    detectImage(buffer.subarray(0, IMAGE_SIGNATURE_BYTES)) ?? attachmentMimeType(filename);
+  return { ok: true, mime, base64: buffer.toString('base64') };
 }
 
 /**

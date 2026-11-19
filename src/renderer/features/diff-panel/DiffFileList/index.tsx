@@ -17,9 +17,9 @@ import { useFocusedDiffFile } from '@/lib/hooks/diff-panel/use-focused-diff-file
 import { useCodeTheme, useIsLightCode } from '@/lib/hooks/use-code-theme';
 import { trpcClient } from '@/lib/trpc';
 import { type RenderableDiffFile, toCodeViewItems } from '@/lib/utils/diff/diff-code-view-items';
+import { openDiffFileInEditor } from '@/lib/utils/diff/open-diff-file-in-editor';
 import { getCodeViewFilePathFromEvent } from '@/lib/utils/diff-file-path';
 import { getRevealLabel } from '@/lib/utils/platform';
-import { buildOpenWorktreeFileInput } from '@/lib/worktree/open-worktree-file-in-editor';
 import { openFileAtom } from '../../code-editor';
 
 const HEADER_HEIGHT = 32;
@@ -138,10 +138,8 @@ export function DiffFileList({
   );
   useFocusedDiffFile(chatId, files, onExpand, scrollToFile);
 
-  const openInEditor = (filePath: string) => {
-    const input = buildOpenWorktreeFileInput({ filePath, worktreePath, chatId });
-    if (input) openFile(input);
-  };
+  const openInEditor = (filePath: string) =>
+    openDiffFileInEditor({ filePath, files, worktreePath, chatId, openFile });
 
   const copy = async (text: string) => {
     await navigator.clipboard.writeText(text);

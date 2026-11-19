@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useAtomValue } from 'jotai';
 import { memo } from 'react';
 import { chatContextFileAtomFamily } from '@/lib/code-editor/state';
-import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
+import { usePendingInputIntake } from '@/lib/agent-chat/composer-input/use-pending-input-intake';
 import { NoAccountsEmptyState } from '../../../components/no-accounts-empty-state';
 import type { PastedTextFile, PastedTextOptions } from '../../../hooks/use-pasted-text-files';
 import type { CodeSelectionContext, DiffTextContext } from '../../../lib/queue-utils';
@@ -85,7 +85,12 @@ export const ChatInputSection = memo(function ChatInputSection({
   onRetryResolvedAccount,
   unauthAccount = null,
 }: Props): ReactNode {
-  useTerminalOutputIntake({ chatId: parentChatId, addPastedText: onAddPastedText, editorRef });
+  usePendingInputIntake({
+    chatId: parentChatId,
+    addPastedText: onAddPastedText,
+    editorRef,
+    composerShown: isLoadingResolvedAccount || isResolvedExecutionAccountReady,
+  });
   const activeFilePath = useAtomValue(chatContextFileAtomFamily(parentChatId))?.path ?? null;
 
   // Full composer width, like NoAccountsEmptyState's compact card: the transcript scrolls under it.

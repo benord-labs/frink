@@ -62,3 +62,28 @@ describe('StartTaskConfig start mode', () => {
     expect(screen.queryByText(PLAN_UNAVAILABLE)).toBeNull();
   });
 });
+
+describe('StartTaskConfig project stored as a name', () => {
+  it('looks the account up by the project id the name resolves to', async () => {
+    const asked: unknown[] = [];
+    renderWithTrpc(
+      <TooltipProvider>
+        <StartTaskConfig
+          node={{ id: 'start-1', blockType: 'start_task', config: { projectId: 'api' } }}
+          onPatchLabel={() => {}}
+          onConfigPatch={() => {}}
+        />
+      </TooltipProvider>,
+      ({ path, input }) => {
+        if (path === 'projects.list') {
+          return Promise.resolve([{ id: 'p-api', name: 'api', path: '/code/api' }]);
+        }
+        if (path === 'claudeCode.getResolvedAccount') asked.push(input);
+        return new Promise(() => {});
+      },
+    );
+
+    // Before the project list loads the raw value is all there is; once it loads, the id is used.
+    await waitFor(() => expect(asked.at(-1)).toEqual({ projectId: 'p-api' }));
+  });
+});

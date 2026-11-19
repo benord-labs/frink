@@ -4,6 +4,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 import type { AiProviderId, PassthroughSource } from '../../../../shared/lib/ai-providers';
 import { CODEX_SPEEDS } from '../../../../shared/types/execution';
 import { createId } from '../utils';
+import { defineChatLinkedProjects } from './chat-linked-projects';
 import { defineFlowRunAdmissions } from './flow-run-admissions';
 import { defineSubChatMessages } from './sub-chat-messages';
 // ============ PROJECTS ============
@@ -99,6 +100,13 @@ export const chatsRelations = relations(chats, ({ one, many }) => ({
     references: [projects.id],
   }),
   subChats: many(subChats),
+  linkedProjects: many(chatLinkedProjects),
+}));
+
+export const chatLinkedProjects = defineChatLinkedProjects(chats, projects);
+export const chatLinkedProjectsRelations = relations(chatLinkedProjects, ({ one }) => ({
+  chat: one(chats, { fields: [chatLinkedProjects.chatId], references: [chats.id] }),
+  project: one(projects, { fields: [chatLinkedProjects.projectId], references: [projects.id] }),
 }));
 
 // ============ SUB-CHATS ============

@@ -3,6 +3,7 @@ import type { ParsedDiffFile } from '../../../../shared/changes-types';
 import {
   filterDiffFilesByPath,
   findDiffFileByPath,
+  getFirstChangedLine,
   getDiffPanelNotice,
   getDiffReadError,
   getPrHandoffState,
@@ -128,6 +129,40 @@ describe('findDiffFileByPath', () => {
 
   it('does not match a path that only shares a file name', () => {
     expect(findDiffFileByPath(files, '/repo/wt/other/a.ts')).toBeUndefined();
+  });
+});
+
+describe('getFirstChangedLine', () => {
+  const firstChangedLine = (path: string, hunk: string[], header: string[] = []) => {
+    const diffText = [
+      `diff --git a/${path} b/${path}`,
+      ...header,
+      `--- a/${path}`,
+      header.length ? '+++ /dev/null' : `+++ b/${path}`,
+      ...hunk,
+      '',
+    ].join('\n');
+    const [file] = parseRenderableDiffFiles([diffFile(path, { diffText })]).renderable;
+    return getFirstChangedLine(file.fileDiff);
+  };
+
+  it('skips the context lines the hunk opens with', () => {
+    const hunk = ['@@ -10,7 +10,8 @@', ' a', ' b', ' c', '+new', ' d', ' e', ' f', ' g'];
+    expect(firstChangedLine('a.ts', hunk)).toBe(13);
+  });
+
+  it('points a pure deletion at the new-file line where the removed lines sat', () => {
+    const hunk = ['@@ -5,5 +5,4 @@', ' a', ' b', ' c', '-gone', ' d'];
+    expect(firstChangedLine('a.ts', hunk)).toBe(8);
+  });
+
+  it('never returns a line before the first, even when the file was emptied', () => {
+    expect(firstChangedLine('a.ts', ['@@ -1,1 +0,0 @@', '-only'])).toBe(1);
+  });
+
+  it('has no line to reveal in a deleted file', () => {
+    const hunk = ['@@ -1,2 +0,0 @@', '-a', '-b'];
+    expect(firstChangedLine('a.ts', hunk, ['deleted file mode 100644'])).toBeNull();
   });
 });
 

@@ -25,6 +25,9 @@ export type AgentActionContext = {
   /** True when a local project is selected and the Browse files sidebar can be shown */
   canShowFilesSidebar?: boolean;
 
+  /** True when Search files has a folder to search: the selected chat's, or the active pane's */
+  canSearchFiles?: boolean;
+
   /** Whether the files sidebar is currently open */
   isFilesSidebarOpen?: boolean;
 

@@ -14,8 +14,9 @@ import {
 } from '../../../../../components/ui/select';
 import { AvailableVariables } from '../AvailableVariables';
 import { NodeProjectRow } from '../NodeProjectRow';
-import { getEffectiveNodeProjectId } from '../node-project-resolution';
+import { STEP_PROJECT_RULES } from '../node-project-resolution';
 import { cfg, FieldRow, type ProjectNodeConfigProps } from '../shared';
+import { useNodeProject } from '../../hooks/use-node-project-error';
 
 function expectedOutputsToText(c: Record<string, unknown>): string {
   const eo = c.expectedOutputs;
@@ -63,8 +64,6 @@ export function RunCommandConfig({
       : 'project_root';
   const customPath = typeof c.customPath === 'string' ? c.customPath : '';
 
-  const effectiveProjectId = getEffectiveNodeProjectId(projectId, flowSettings?.defaultProjectId);
-
   const expectedOutputsTextFromNode = useMemo(() => expectedOutputsToText(c), [c.expectedOutputs]);
   const [expectedOutputsText, setExpectedOutputsText] = useState(() => expectedOutputsToText(c));
   const [expectedOutputsError, setExpectedOutputsError] = useState<string | null>(null);
@@ -111,7 +110,11 @@ export function RunCommandConfig({
   };
 
   const cmdErr = command.trim() === '' ? 'Command is required.' : null;
-  const projErr = (effectiveProjectId?.trim() ?? '') === '' ? 'Select a project.' : null;
+  const { error: projErr } = useNodeProject(
+    projectId,
+    flowSettings?.defaultProjectId,
+    STEP_PROJECT_RULES,
+  );
   const customPathErr =
     workingDirectory === 'custom' && customPath.trim() === '' ? 'Custom path is required.' : null;
 

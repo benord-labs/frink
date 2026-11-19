@@ -6,8 +6,10 @@ import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeVersionSupportsUltra } from '../../claude';
 import { getClaudeCodeTokenById } from '../../credentials';
+import { listLinkedProjects } from '../../db/repos/chat-linked-projects';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
 import { getFlowBriefingForSubChat } from '../../db/repos/tasks';
+import type { Project } from '../../db/schema';
 import { getMultiProjectContext } from '../../multi-project-prompt';
 import * as toolValidation from '../../permissions/tool-validation';
 import {
@@ -19,6 +21,7 @@ import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
 import { abortActiveExecutionsForSubChats } from '../executor';
 import * as runtimeGate from '../runtime-gate';
+import { userPromptSubmitReminder } from '../test-utils';
 import { mockQuery, never } from './claude-query-fake';
 import { flowDriven, RUNNING_TASK, TURN_END } from './claude-turn-bindings';
 import { answeringCli, replies } from './claude-warm-session';
@@ -77,6 +80,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
     registerPlanApprovalReuseTests(claudeQueryMock, send);
     registerAutoMemorySpawnTests(claudeQueryMock, send);
     registerBriefingRecreateTests(claudeQueryMock, send);
+    registerLinkChangeTest(claudeQueryMock, send);
 
     it('Ultra spawns with the ultracode setting at any effort, and toggling it applies live', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
@@ -309,6 +313,38 @@ function registerPlanApprovalReuseTests(
 }
 
 type Send = (message: string, overrides?: Partial<Payload>) => Promise<void>;
+
+/** Links are not spawn options: a link change keeps the warm CLI, and only the turn's note says so. */
+function registerLinkChangeTest(
+  claudeQueryMock: WarmSessionGuardHarness['claudeQueryMock'],
+  send: Send,
+): void {
+  it('a new link runs on the same CLI, and the next turn is told of it', async () => {
+    const told: Array<string | undefined> = [];
+    mockQuery(claudeQueryMock, async function* ({ prompt, options }) {
+      for (let n = 1; !(await prompt.next()).done; n += 1) {
+        told.push(await userPromptSubmitReminder({ options }));
+        yield { chunks: [{ type: 'text-delta', id: `t${n}`, delta: `reply ${n}` }] };
+        yield* TURN_END;
+      }
+    });
+    // SAFETY: the executor reads only the chat's id, task, worktree and branch, and its account.
+    const chat = { chat: { id: payload.chatId }, account: null } as never;
+    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce(chat).mockResolvedValueOnce(chat);
+    // SAFETY: the chat's workspace reads only each linked project's name and path.
+    const lib = { name: 'lib', path: '/workspace/lib' } as Project;
+    vi.mocked(listLinkedProjects).mockReturnValueOnce([]).mockReturnValueOnce([lib]);
+
+    await send('first');
+    await send('second', { sessionId: 'sess-held' });
+
+    expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
+    expect(claudeQueryMock).toHaveBeenCalledOnce();
+    expect(told[0] ?? '').not.toContain('Projects linked to this chat');
+    expect(told[1]).toContain('Projects linked to this chat (');
+    expect(told[1]).toContain('lib — /workspace/lib.');
+  });
+}
 
 /** One turn from a new chat running in `cwd`; returns its CLI's spawn options. */
 async function sendFromChatIn(

@@ -6,7 +6,7 @@ Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via C
 
 ### Use your Claude Code or Codex sign-in (recommended)
 
-1. For OpenAI, sign in once in your terminal with `codex login`. Claude needs nothing first: if you aren't signed in, the Claude page offers **Sign in with Claude**, which opens your browser and connects by itself when you're done (macOS and Linux).
+1. Nothing to do first. If you aren't signed in, the Claude page offers **Sign in with Claude** and the OpenAI page offers **Sign in with ChatGPT**. Each opens your browser and connects by itself when you're done (macOS and Linux).
 2. In Frink, open a new chat and click **Connect Claude** or **Connect OpenAI**, or go to Settings → AI providers → **Add an account** → **Sign in with Claude** / **Sign in with OpenAI**. Frink names the account after the sign-in's email; rename it any time from the account's ⋯ menu. A Codex sign-in kept in the macOS keychain is named "OpenAI" instead: Frink only checks that it exists and never reads it, so it can't see the email.
 
 That's it. **Frink never reads or stores your token.** It only checks that the sign-in exists; the `claude` or `codex` program Frink launches reads its own credential and refreshes it itself, exactly as it does in your terminal.
@@ -99,7 +99,7 @@ You can have **as many API-key accounts as you want** — useful for separating 
 These are the things people notice and wonder about:
 
 - **Frink always runs as whoever is signed in right now.** If you switch accounts in your terminal (or with an account switcher), your next chat simply runs as the new account. Nothing to reconnect. The account's name in Frink stays whatever you called it (a Claude account also shows the email it last ran as, which updates with you).
-- **Signed out? Chats pause until you sign back in.** A new chat shows **Sign back in to keep chatting** (an open chat shows _your account_ **was signed out**) and re-checks every few seconds. Click **Sign in again**, then **Sign in with Claude** to finish in your browser. For OpenAI, run `codex login` and it clears on its own. Your other AIs are offered as a switch.
+- **Signed out? Chats pause until you sign back in.** A new chat shows **Sign back in to keep chatting** (an open chat shows _your account_ **was signed out**) and re-checks every few seconds. Click **Sign in again**, then **Sign in with Claude** or **Sign in with ChatGPT** to finish in your browser. Your other AIs are offered as a switch.
 - **Removing an account never moves its chats.** A chat keeps the account and provider it started with. If you remove that account, the chat stops with **This chat's login was removed** and offers **Retry with** another account of the same provider, or to add one.
 - **Rotation can't interrupt a running agent.** The agent holds the credential itself and refreshes it mid-run under the same lock your terminal uses. Earlier versions handed the agent a copy of the token taken at start time, so anything that rotated your credential — another terminal, another app — revoked that copy and every in-flight agent failed at once with a 401. That whole class of failure is gone.
 - **One sign-in per provider per machine.** This mirrors how `claude` and `codex` themselves work: one sign-in per user, not one per project. For Claude it has to be the main sign-in — `claude` also creates project-scoped sub-credentials when used inside specific folders, and Frink can't use those. If Frink reports no sign-in found, click **Sign in with Claude** on the Claude page. To use a second Anthropic identity in the same Frink, add an API-key account.
@@ -157,7 +157,7 @@ Below that, the same tab shows how much of your Claude and OpenAI (ChatGPT) plan
 
 ## When things go wrong
 
-- **"Sign back in to keep chatting"** (or **"… was signed out"** in an open chat) — the account exists but its sign-in is missing. Click **Sign in again**, then **Sign in with Claude**. For OpenAI, run `codex login` in your terminal — Frink re-checks every few seconds and recovers on its own. For an API-key account, paste a fresh key under Settings → AI providers.
+- **"Sign back in to keep chatting"** (or **"… was signed out"** in an open chat) — the account exists but its sign-in is missing. Click **Sign in again**, then **Sign in with Claude** or **Sign in with ChatGPT**. For an API-key account, paste a fresh key under Settings → AI providers.
 - **"macOS blocked Frink from your Claude login"** — click **Sign in with Claude** on the same page to sign in again. You'll only ever be asked about the one main entry, and only while connecting.
 - **"An account named X already exists"** when adding a new account — pick a different name, or disconnect the existing one first. Same-name accounts would collide unpredictably.
 - **Linux without a keyring** — Frink won't store a key or token it can't encrypt, so adding the account shows an error instead. Install GNOME Keyring or KWallet, relaunch Frink, then add the account again.

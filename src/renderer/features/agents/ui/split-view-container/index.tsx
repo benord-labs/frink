@@ -240,6 +240,13 @@ export function SplitViewContainer({
     [],
   );
 
+  // Read at each key press. A pane collapsing its own tree doesn't re-render this container, so
+  // activeHandleRef can hold an older handle; the pane's getter reads the live value either way.
+  const shortcutIsMainRootHidden = useCallback(
+    () => activeHandleRef.current?.getIsMainRootHidden?.() ?? false,
+    [],
+  );
+
   useFileTreeHotkeys({
     projectPath: activePane?.projectPath,
     isOpen: activeFileTreeOpen,
@@ -251,6 +258,7 @@ export function SplitViewContainer({
     treeContainerRef: dummyTreeRef,
     onBatchDelete: shortcutBatchDelete,
     getSelectedPaths: shortcutGetSelectedPaths,
+    isMainRootHidden: shortcutIsMainRootHidden,
   });
 
   // ---- Shared DndContext for cross-project drag-and-drop ----

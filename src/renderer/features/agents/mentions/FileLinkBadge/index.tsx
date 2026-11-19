@@ -1,6 +1,7 @@
 import { useAtomValue } from 'jotai';
 import path from 'path';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { isSameFolder } from '../../../../../shared/lib/path-normalization';
 import { FileLinkBadgeContext, type FileReference } from '@/lib/file-links/file-link-badge-context';
 import {
   buildFileLinkLabels,
@@ -8,12 +9,14 @@ import {
   FileLinkScopeContext,
 } from '@/lib/file-links/file-link-scope';
 import {
-  fileLinkOpenInput,
+  fileLinkOpenInputAcrossProjects,
+  fileLinkOwnMainFolder,
   isBareFileName,
   isFileNameLabel,
 } from '@/lib/file-links/file-link-target';
 import { useOpenFileLink } from '@/lib/file-links/use-open-file-link';
 import { trpc } from '@/lib/trpc';
+import { isRealProjectPath } from '@/lib/workspace-context/project-paths';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { splitViewChatIdsAtom } from '../../atoms';
 import {
@@ -26,6 +29,10 @@ type FileLinkBadgeProps = {
   reference: FileReference;
   /** Opens the file in the editor; without it the badge only tells where the file is. */
   onOpen?: () => void;
+  /** The other project the file is from, named on the badge. */
+  projectName?: string;
+  /** Where the file lies, said on a line of its own above its path in the tooltip. */
+  where?: string;
 };
 
 /** What follows the file's name: the folders that tell it from a same-name file, then its line. */
@@ -34,7 +41,7 @@ function badgeDetail({ suffix, line }: FileReference): string | undefined {
 }
 
 /** A file named in chat markdown as a mention badge, with its path in the tooltip. */
-export function FileLinkBadge({ reference, onOpen }: FileLinkBadgeProps) {
+export function FileLinkBadge({ reference, onOpen, projectName, where }: FileLinkBadgeProps) {
   const { label } = reference;
   const isName = isFileNameLabel(label, reference);
   // `relative` anchors the absolutely positioned stand-in here: inside a capped scroller (a plan
@@ -58,6 +65,7 @@ export function FileLinkBadge({ reference, onOpen }: FileLinkBadgeProps) {
         <TooltipTrigger asChild>
           <AgentFileItem
             filename={path.basename(reference.path)}
+            project={projectName}
             detail={badgeDetail(reference)}
             className={isName ? undefined : 'ml-1'}
             tabIndex={0}
@@ -67,48 +75,81 @@ export function FileLinkBadge({ reference, onOpen }: FileLinkBadgeProps) {
             data-search-skip
           />
         </TooltipTrigger>
-        <TooltipContent side="top" className="font-mono wrap-anywhere">
-          {path.normalize(reference.path)}
+        <TooltipContent side="top">
+          {where && <p>{where}</p>}
+          <p className="font-mono wrap-anywhere">{path.normalize(reference.path)}</p>
         </TooltipContent>
       </Tooltip>
     </span>
   );
 }
 
-/** The folder of a chat's project; a `virtual://` project only groups chats and has none. */
-function projectFolder(chat: { project: { path: string } | null } | null): string | undefined {
-  const folder = chat?.project?.path;
-  return folder?.startsWith('virtual://') ? undefined : folder;
-}
+type ChatProject = { id: string; name: string; path: string };
+type BadgeChat = { project: ChatProject | null; linkedProjects?: Array<{ path: string }> } | null;
 
-/** The chat around a badge and the folder it works in: its worktree, else its project's folder. */
+/** The chat's own project, which never opens through the other-projects fallback, and the
+ *  folders of the projects linked to it. */
+const badgeChat = (chat: BadgeChat) => ({
+  project: chat?.project ?? null,
+  linkedPaths: (chat?.linkedProjects ?? []).map((linked) => linked.path),
+});
+
+/** The chat around a badge, its own project, and the folder it works in: its worktree, else its
+ *  project's folder. */
 function useChatFileRoot() {
   const chatId = useCurrentChatId();
   const worktreePath = useCurrentChatWorktree();
-  // The chat view keeps the project answer fresh.
-  const projectPath = trpc.chats.get.useQuery(
+  // The chat view keeps the chat fresh. A chat with no worktree works in its project's folder.
+  const chat = trpc.chats.get.useQuery(
     { id: chatId ?? '' },
-    { enabled: Boolean(chatId) && !worktreePath, staleTime: Infinity, select: projectFolder },
+    { enabled: Boolean(chatId), staleTime: Infinity, select: badgeChat },
   ).data;
-  return { chatId, worktreePath, root: worktreePath ?? projectPath };
+  const project = chat?.project;
+  const root = worktreePath ?? (isRealProjectPath(project?.path) ? project?.path : undefined);
+  return { chatId, worktreePath, chat, project, root };
 }
 
-/** A badge in a chat's transcript, which opens its file when that lies in the folder the chat works in. */
+/** A badge in a chat's transcript, which opens its file when that lies in the folder the chat
+ *  works in, or in full or `~/` form in another registered project. */
 function TranscriptFileLinkBadge({ reference }: { reference: FileReference }) {
-  const { chatId, worktreePath, root } = useChatFileRoot();
+  const { chatId, worktreePath, chat, project, root } = useChatFileRoot();
   const paneChatIds = useAtomValue(splitViewChatIdsAtom);
   const home = trpc.external.getHomePath.useQuery(undefined, { staleTime: 300_000 }).data;
+  const rawProjects = trpc.projects.list.useQuery(undefined, {
+    enabled: Boolean(chatId),
+    staleTime: 300_000,
+  }).data;
+  // Guards: during tRPC client hydration on dev start (~1-2% of the time), data can
+  // briefly be a non-undefined non-array value. See commit a6d57596.
+  const projects = Array.isArray(rawProjects) ? rawProjects : [];
   // The tab belongs to the split-view pane the chat sits in; single view has no panes.
   const paneIndex = chatId && paneChatIds.length > 1 ? paneChatIds.indexOf(chatId) : -1;
   const open = useOpenFileLink(paneIndex < 0 ? undefined : paneIndex);
-  const input = fileLinkOpenInput(reference.path, {
+  const base = {
     home,
     root,
     isWorktreeContext: worktreePath !== null,
     chatId,
-  });
+  };
+  const input = fileLinkOpenInputAcrossProjects(reference.path, base, projects, project?.id);
+  const mainFolder = !input && fileLinkOwnMainFolder(reference.path, base, projects, project?.id);
+  const linked = chat?.linkedPaths.some((linkedPath) =>
+    isSameFolder(linkedPath, input?.projectPath),
+  );
+  const where = input?.projectName
+    ? `In ${input.projectName} · ${linked ? 'linked' : 'not linked'}`
+    : mainFolder
+      ? `In ${mainFolder.name}'s main folder, not this chat's worktree`
+      : undefined;
   const onOpen = input ? () => void open(input, reference) : undefined;
-  return <FileLinkBadge reference={reference} onOpen={onOpen} />;
+  return (
+    <FileLinkBadge
+      reference={reference}
+      onOpen={onOpen}
+      projectName={input?.projectName}
+      where={where}
+    />
+  );
 }
 
 function renderFileLinkBadge(reference: FileReference): ReactNode {

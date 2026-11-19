@@ -64,6 +64,14 @@ describe('buildMultiProjectToolsBlock', () => {
     expect(prompt).toContain('frink_navigation_context()');
   });
 
+  it('says to read a linked project in place rather than switch to it', () => {
+    const prompt = buildMultiProjectToolsBlock([makeProject('a', null), makeProject('b', null)]);
+
+    expect(prompt).toContain(
+      'If a project is linked to this chat, read its files in place by full path instead of calling requestSwitchProject.',
+    );
+  });
+
   it('summarizes descriptions and avoids full long text in prompt', () => {
     const longDescription =
       'This is a very long project description that should be truncated for prompt safety and to keep context usage low while still giving enough meaning to route investigations correctly across project boundaries.';

@@ -10,6 +10,7 @@ import {
   type ParsedMention,
   parseMention,
 } from '../../../../../shared/lib/mentions/parse-mention';
+import { attachedFileNote } from '../../../claude/pasted-files';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { MessageDelivery } from '../message-provenance/origin';
 
@@ -24,7 +25,8 @@ type NoteKind =
   | 'attached_file'
   | 'skill'
   | 'agent'
-  | 'tool';
+  | 'tool'
+  | 'linked_projects';
 
 /** A sentence for the model. A selection's body is text the user picked, which Frink cannot vouch for. */
 export type ComposerNote = { kind: NoteKind; text: string };
@@ -44,12 +46,12 @@ function isPicked(mention: ParsedMention): boolean {
 }
 
 /** Claude Code escapes a path in a note, so the path cannot close the note's tag. */
-function notePath(path: string): string {
+export function notePath(path: string): string {
   return path.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function pickedNote(paths: string[]): string {
-  return `The user @-mentioned ${paths.map(notePath).join(', ')}. File contents are not attached automatically in this session: if these are files or directories in your working directory, read them with your file tools before responding.`;
+  return `The user @-mentioned ${paths.map(notePath).join(', ')}. File contents are not attached automatically in this session: if these are files or directories in your working directory or in a project linked to this chat, read them with your file tools before responding.`;
 }
 
 function truncateSelection(text: string): string {
@@ -103,9 +105,8 @@ function toolNote(id: string): string {
 function pathAttachment({ type, path, label }: ParsedMention): Projection | null {
   if (!path) return null;
   if (type === 'pasted') {
-    const text = `The user attached the file \`${notePath(path)}\`. Its contents are not in this message: read it with your file tools before responding.`;
     // In backticks, so a path cannot start a slash command and its spaces stay one path.
-    return { text: `\`${path}\``, note: { kind: 'attached_file', text } };
+    return { text: `\`${path}\``, note: { kind: 'attached_file', text: attachedFileNote(path) } };
   }
   if (type === 'tool') return { text: label || path, note: { kind: 'tool', text: toolNote(path) } };
   return null;
@@ -233,6 +234,7 @@ const CODEX_TRUST = {
   skill: 'application',
   agent: 'application',
   tool: 'application',
+  linked_projects: 'application',
 } satisfies Record<NoteKind, CodexContextEntry['kind']>;
 
 /** The notes as Codex host context. One entry each: Codex cuts every value at 1,000 tokens. */

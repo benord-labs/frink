@@ -146,6 +146,9 @@ export async function copyFlow(db: Db, input: { sourceFlowId: string }): Promise
         .all();
       const copiedScopes = new Set<string>();
       for (const binding of sourceBindings) {
+        // The schedule tick creates an active row once the copy is turned on; a copied
+        // inactive row would be returned by that lookup and block the schedule forever.
+        if (binding.triggerType === 'schedule_trigger') continue;
         const scopeKey = bindingScopeKey(binding);
         if (copiedScopes.has(scopeKey)) continue;
         copiedScopes.add(scopeKey);

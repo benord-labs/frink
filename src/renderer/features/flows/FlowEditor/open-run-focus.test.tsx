@@ -36,25 +36,38 @@ const flow = {
   version_created_at: null,
 };
 
+/** Version 1 is past the earlier tests' draft baseline, so the editor shows this saved graph. */
+const flowWithSteps = {
+  ...flow,
+  version_number: 1,
+  graph: {
+    nodes: [
+      { id: 't', blockType: 'manual_trigger', config: {} },
+      { id: 's', blockType: 'start_task', config: { projectId: 'gone' } },
+    ],
+    edges: [{ source: 't', target: 's' }],
+  },
+};
+
 /** A saved Flow with no runs; every other read answers empty. */
-function createTestClient() {
+function createTestClient(saved: typeof flow | typeof flowWithSteps = flow) {
   return trpc.createClient({
     links: [
       () =>
         ({ op }) =>
           observable((observer) => {
-            observer.next({ result: { data: op.path === 'flows.get' ? flow : [] } });
+            observer.next({ result: { data: op.path === 'flows.get' ? saved : [] } });
             observer.complete();
           }),
     ],
   });
 }
 
-function renderEditor() {
+function renderEditor(saved?: typeof flowWithSteps) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <JotaiProvider store={appStore}>
-      <trpc.Provider client={createTestClient()} queryClient={queryClient}>
+      <trpc.Provider client={createTestClient(saved)} queryClient={queryClient}>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <FlowEditor flowId="flow-1" onBack={() => undefined} />
@@ -85,5 +98,13 @@ describe('FlowEditor opened on a run', () => {
     expect(
       await screen.findByRole('button', { name: 'Editor', pressed: true }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('FlowEditor on another computer', () => {
+  it("flags a step whose project isn't on this computer", async () => {
+    renderEditor(flowWithSteps);
+
+    expect(await screen.findByText("Project “gone” isn't on this computer")).toBeInTheDocument();
   });
 });

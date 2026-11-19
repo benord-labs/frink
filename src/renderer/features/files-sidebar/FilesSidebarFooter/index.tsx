@@ -11,6 +11,8 @@ type Props = {
   selectedCount?: number;
   /** Compact spacing used in split-pane sidebars */
   compact?: boolean;
+  /** How many projects the tree shows, the chat's own included; the count shows from 2 */
+  projectCount?: number;
 };
 
 export const FilesSidebarFooter = memo(function FilesSidebarFooter({
@@ -19,8 +21,10 @@ export const FilesSidebarFooter = memo(function FilesSidebarFooter({
   worktreePath,
   selectedCount,
   compact = false,
+  projectCount = 1,
 }: Props): ReactElement {
   const isMultiSelected = selectedCount != null && selectedCount > 1;
+  const treeCount = projectCount > 1 ? `${projectCount} projects in this tree` : null;
   const worktreeName = worktreePath?.replace(/\\/g, '/').split('/').filter(Boolean).pop();
   const isDistinctProjectPath = Boolean(worktreePath && worktreePath !== projectPath);
   const pathTitle = worktreePath
@@ -51,10 +55,10 @@ export const FilesSidebarFooter = memo(function FilesSidebarFooter({
               </output>
             )}
           </div>
-          {isDistinctProjectPath && (
+          {(isDistinctProjectPath || treeCount) && (
             <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground/60">
               <Folder className="h-2.5 w-2.5 shrink-0" aria-hidden />
-              <span className="truncate">{projectName}</span>
+              <span className="truncate">{treeCount ?? projectName}</span>
             </div>
           )}
         </div>
@@ -68,7 +72,7 @@ export const FilesSidebarFooter = memo(function FilesSidebarFooter({
           title={pathTitle}
         >
           <Folder className={compact ? 'h-3 w-3 shrink-0' : 'h-3.5 w-3.5 shrink-0'} aria-hidden />
-          <span className="truncate">{projectName}</span>
+          <span className="truncate">{treeCount ?? projectName}</span>
           {isMultiSelected && (
             <output
               className="ml-auto shrink-0 text-xs font-medium text-foreground/60"

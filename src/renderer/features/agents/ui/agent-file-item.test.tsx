@@ -40,6 +40,19 @@ describe('AgentFileItem', () => {
     expect(screen.getByText('notes.md').nextElementSibling).toHaveTextContent('2.0 KB');
   });
 
+  // `truncate` and `min-w-0` come from the badge itself, for every span inside it.
+  it("cuts a long project name before the file's own, and keeps the line whole", () => {
+    render(<AgentFileItem filename="a.ts" project="frink-mockups-design-system" detail="L7" />);
+
+    const name = screen.getByText('a.ts');
+    const project = screen.getByText('frink-mockups-design-system');
+    const line = screen.getByText('L7');
+    expect([name.nextElementSibling, project.nextElementSibling]).toEqual([project, line]);
+    expect(project).toHaveClass('shrink-1000');
+    expect(name).not.toHaveClass('shrink-0');
+    expect(line).toHaveClass('shrink-0');
+  });
+
   it('shows the full path in the tooltip of the name', () => {
     render(
       <TooltipProvider>

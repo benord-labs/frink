@@ -20,14 +20,14 @@ Blocks execute top-to-bottom following the edges. When a block completes, its ou
 
 Open a flow row's **⋯** menu and choose **Duplicate** to copy its latest saved version. The new flow appears in the list with its name suffixed by “(copy)”, while your current selection stays unchanged. Unsaved editor changes, earlier versions, and run history are not included.
 
-Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. Trigger-binding configuration is also preserved, but every copied binding starts inactive and must be explicitly reactivated before it can fire.
+Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. A scheduled copy runs on its schedule once you turn it on. Post-Task Trigger automations are copied turned off; turn them on in the trigger step.
 
 ## Moving a flow to another computer
 
 Open a flow row's **⋯** menu and choose **Export file** to save its latest saved version as a `.json` file. On the other computer, choose **Import flow** at the top of the Flows page and pick the file. The flow arrives as a new flow and opens in the editor.
 
 - **It starts turned off.** Nothing runs until you turn it on, and an agent must ask you before starting it.
-- **Projects are matched by name.** A step whose project isn't on this computer keeps the project's name and stops with an error until you add or pick one. Post-Task Trigger automations must be turned on again in the trigger step.
+- **Projects are matched by name.** A step whose project isn't on this computer keeps the project's name. The editor flags it on the canvas and in the step's panel ("The project … isn't on this computer"), and the step stops with an error if the flow runs before you add or pick one. Post-Task Trigger automations must be turned on again in the trigger step.
 - **Not included:** run history, earlier versions, unsaved edits, connected accounts, custom node packages (`~/.frink/nodes/`) and their credentials. Steps that need these are flagged in the editor.
 - **The file is plain text.** It holds everything the steps say, including commands, request headers and the briefing. Only import flows from people you trust: turning one on runs its commands on your computer.
 
@@ -42,7 +42,7 @@ If you press Save on a copy that has fallen behind, the same two choices appear 
 
 ## Project defaults
 
-Steps that run in a project (`start_task`, `run_command`, your own custom nodes) resolve their project as **node override → flow default** (`graph.settings.defaultProjectId`, set in **flow settings → Project**). A node override may be a `{{…}}` template, letting an upstream step decide the target project at run time; the flow default then applies only when the node's field is left blank — an override that renders to nothing fails the step rather than inheriting it. Picking a project when creating a flow seeds the flow default automatically, so new steps inherit it without per-node setup. When a step has no project from either source, its amber warning and the node config panel both link straight to the flow settings Project field. Integration steps from an installed plugin are the exception: they run through the plugin's connected account, take no project, and show no project field or warning. Agents creating flows via MCP get the same behavior: the creation `projectId` (or, when omitted, the chat session's project) becomes the flow default.
+Steps that run in a project (`start_task`, `run_command`, your own custom nodes) resolve their project as **node override → flow default** (`graph.settings.defaultProjectId`, set in **flow settings → Project**). A node override may be a `{{…}}` template, letting an upstream step decide the target project at run time; the flow default then applies only when the node's field is left blank — an override that renders to nothing fails the step rather than inheriting it. Picking a project when creating a flow seeds the flow default automatically, so new steps inherit it without per-node setup. When a step has no project from either source, or its project isn't on this computer, it gets an amber warning and its config panel shows the error. The warning links straight to the flow settings Project field when the problem is the flow default; a project set on the step itself is fixed in the step. The editor checks values the way runs resolve them: a step's own project may be an id, a name only one project has, or a `{{…}}` variable (a broken variable is flagged); the flow default is used as written, never as a variable; custom nodes and Post-Task Trigger bindings match by id only. A webhook trigger whose connected account was removed shows "Account isn't connected", because it would never fire. Integration steps from an installed plugin are the exception: they run through the plugin's connected account, take no project, and show no project field or warning. Agents creating flows via MCP get the same behavior: the creation `projectId` (or, when omitted, the chat session's project) becomes the flow default.
 
 ## Custom nodes (Flow Editor)
 
@@ -550,18 +550,23 @@ Collapsing a row you opened from history clears the historical canvas overlay.
 
 **Clear** invokes `clearOverlay()` in the editor: it hides node borders and badges on the canvas immediately. **For historical or idle overlays** (no active run driving the canvas—e.g. you finished inspecting a past run, or nothing is running), that hide is **complete**—the overlay stays gone until you open another run from history or start a new execution. **For live runs** (**running** or **paused**), `clearOverlay()` is only **temporary**: the next socket execution event for that run will repaint borders and badges, so the overlay **reappears**. In short: for historical/idle overlays, Clear removes the overlay entirely; for live runs, Clear is temporary.
 
-## Monitor image uploads
+## Monitor file uploads
 
-In the **Monitor**, you can attach images (screenshots, references, etc.) to a run via the **Images** panel in the run detail view. Images are only accepted for runs in **pending** status — once a run starts, the upload controls are hidden.
+In the **Monitor**, you can attach files to a run in the **Files** panel of the run detail view: screenshots and references, but also CSV exports, PDFs, text and other documents. Drop them, paste them, or click to pick them. Files are only accepted for runs in **pending** status. Once a run starts, the upload controls are hidden.
 
-**Supported formats:** PNG, JPEG, WebP  
-**Size limit:** 5MB per image, maximum 10 images per run
+**What the agent receives:**
+- A PNG, JPEG or WebP image of 5MB or less is sent to each agent step inline, as an image.
+- Any other file, or a larger image, is copied into the agent's chat folder. The prompt names its full path and asks the agent to read it, which it can do without a permission prompt.
 
-**"Run has started…" message:** If you begin uploading an image just as the batch starts dispatching that run, the server detects the conflict and shows `Run has started and images can no longer be added`. The run itself is unaffected — the image was not saved.
+**Limits:** 20MB per file, maximum 10 files per run.
 
-**"Upload failed" message:** Usually a transient network or storage error. Retry by adding the image again.
+**"Save it to your computer…" message:** the file has no place on disk (for example, it was dragged from a web page). Save it first, then drag it in or click to add it.
 
-**Image privacy:** Uploaded images are stored privately and served through the Frink backend with your authentication. They are not publicly accessible — only you can retrieve them via the authenticated API. Images cannot be opened directly in a browser.
+**"Attachments can only be added before the run starts" message:** you added a file just as the batch started that run. The run itself is unaffected; the file was not saved.
+
+**A warning in the agent's prompt:** a file that went missing from this computer since it was attached is skipped, and the prompt says so. Attach it again on a new run.
+
+**Where files are stored:** on this computer, in Frink's app data folder, in a folder for each run. Agent steps read a copy kept in their own chat folder.
 
 ## Failure handling
 

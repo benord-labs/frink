@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
-import { atom } from 'jotai';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { atom, getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { openFilesAtom } from '@/lib/code-editor/state';
+import { filesSidebarActiveTabAtom } from './atoms';
 import { FilesSidebar } from './index';
 
 const mockState = vi.hoisted(() => ({
@@ -15,6 +18,11 @@ const clearSelectionMock = vi.hoisted(() => vi.fn());
 const searchState = vi.hoisted(() => ({
   searchQuery: '',
   debouncedQuery: '',
+}));
+// The Search tab's query and each folder's matches for it.
+const contentState = vi.hoisted(() => ({
+  query: '',
+  matchesByPath: {} as Record<string, unknown[]>,
 }));
 const directoryState = vi.hoisted(() => ({
   rootContents: [] as Array<{
@@ -33,6 +41,16 @@ const fileTreePropsState = vi.hoisted(() => ({
   onCopyItem: null as null | ((path: string) => void),
   onPasteIntoFolder: null as null | ((targetFolder: string) => void),
   nodes: [] as Array<{ path: string; gitStatus?: string }>,
+  onMoveFile: undefined as unknown,
+}));
+// The other projects in the chat's tree (none unless a test adds some), and what the host hands on.
+const treeState = vi.hoisted(() => ({
+  extras: [] as Array<{ id: string; name: string; path: string }>,
+  candidates: [] as Array<{ id: string; name: string; path: string }>,
+  add: vi.fn(),
+  projectCount: undefined as number | undefined,
+  isMainRootHidden: undefined as undefined | (() => boolean),
+  searchAccessory: undefined as unknown,
 }));
 
 vi.mock('@/components/ui/context-menu', () => ({
@@ -66,6 +84,7 @@ vi.mock('@/lib/trpc', () => ({
         listDirectory: { invalidate: vi.fn() },
         search: { invalidate: vi.fn() },
         searchContent: { invalidate: vi.fn() },
+        entryType: { invalidate: vi.fn() },
       },
     }),
     chats: {
@@ -77,6 +96,7 @@ vi.mock('@/lib/trpc', () => ({
       listDirectory: { useQuery: () => ({ data: directoryState.rootContents, isLoading: false }) },
       search: { useQuery: () => ({ data: [], isLoading: false }) },
       searchContent: { useQuery: () => ({ data: { matches: [], invalidRegex: false } }) },
+      entryType: { useQuery: () => ({ data: 'folder', isSuccess: true }) },
       moveFile: { useMutation: () => ({ mutate: vi.fn() }) },
       batchMoveFiles: { useMutation: () => ({ mutate: vi.fn() }) },
       createFile: { useMutation: () => ({ mutate: vi.fn() }) },
@@ -106,22 +126,43 @@ vi.mock('./atoms', () => ({
   filesSidebarOpenAtom: atom(true),
   filesSidebarActiveTabAtom: atom('files'),
   filesSidebarWidthAtom: atom(320),
+  contentSearchOptionsAtom: atom({ matchCase: false, wholeWord: false, useRegex: false }),
 }));
 
 vi.mock('../sidebar/components/SidebarHeaderWithSearch', () => ({
-  SidebarHeaderWithSearch: () => null,
+  SidebarHeaderWithSearch: (props: { searchAccessory?: React.ReactNode }) => {
+    treeState.searchAccessory = props.searchAccessory;
+    return props.searchAccessory;
+  },
 }));
 
 vi.mock('./ContentSearchOptionsRow', () => ({
   ContentSearchOptionsRow: () => null,
 }));
 
-vi.mock('./ContentSearchResults', () => ({
-  ContentSearchResults: () => null,
+vi.mock('./FilesSidebarFooter', () => ({
+  FilesSidebarFooter: (props: { projectCount?: number }) => {
+    treeState.projectCount = props.projectCount;
+    return null;
+  },
 }));
 
-vi.mock('./FilesSidebarFooter', () => ({
-  FilesSidebarFooter: () => null,
+vi.mock('@/lib/workspace-context/use-tree-projects', () => ({
+  useTreeProjects: (chatId?: string) => ({
+    main: { id: 'proj', name: 'proj', path: '/tmp/proj', workingPath: '/tmp/proj', branch: null },
+    extras: treeState.extras,
+    candidates: treeState.candidates,
+    projectsStatus: 'success',
+    canAdd: Boolean(chatId),
+    add: treeState.add,
+    remove: vi.fn(),
+  }),
+}));
+
+vi.mock('./tree-roots/ExtraProjectRoot', () => ({
+  ExtraProjectRoot: (props: { project: { name: string }; manageDnd?: boolean }) => (
+    <section data-read-only-root aria-label={props.project.name} data-dnd={props.manageDnd} />
+  ),
 }));
 
 vi.mock('./FileTree', () => ({
@@ -130,7 +171,9 @@ vi.mock('./FileTree', () => ({
     onCopyItem?: (path: string) => void;
     onPasteIntoFolder?: (targetFolder: string) => void;
     nodes: Array<{ path: string; gitStatus?: string }>;
+    onMoveFile?: unknown;
   }) => {
+    fileTreePropsState.onMoveFile = props.onMoveFile;
     fileTreePropsState.pathToExpandAfterDrop = props.pathToExpandAfterDrop;
     fileTreePropsState.onCopyItem = props.onCopyItem ?? null;
     fileTreePropsState.onPasteIntoFolder = props.onPasteIntoFolder ?? null;
@@ -144,16 +187,21 @@ vi.mock('./use-chat-context-file', () => ({
 }));
 
 vi.mock('./use-content-search-tab', () => ({
-  useContentSearchTab: () => ({
-    contentSearchQuery: '',
-    contentDebouncedQuery: '',
+  useContentSearchTab: ({ projectPath }: { projectPath: string }) => ({
+    contentSearchQuery: contentState.query,
+    contentDebouncedQuery: contentState.query,
     setContentSearchQuery: vi.fn(),
     contentSearchOptions: { matchCase: false, wholeWord: false, useRegex: false },
     setContentSearchOptions: vi.fn(),
-    contentMatches: [],
+    contentMatches: contentState.matchesByPath[projectPath] ?? [],
     contentSearchInvalidRegex: false,
     isLoadingContentSearch: false,
     highlightContentMatch: (line: string) => line,
+  }),
+  useContentSearch: ({ projectPath }: { projectPath: string }) => ({
+    matches: contentState.matchesByPath[projectPath] ?? [],
+    invalidRegex: false,
+    isLoading: false,
   }),
 }));
 
@@ -176,7 +224,9 @@ vi.mock('./use-external-file-drop', () => ({
 }));
 
 vi.mock('./use-file-tree-hotkeys', () => ({
-  useFileTreeHotkeys: () => {},
+  useFileTreeHotkeys: (params: { isMainRootHidden?: () => boolean }) => {
+    treeState.isMainRootHidden = params.isMainRootHidden;
+  },
 }));
 
 vi.mock('./use-file-tree-navigation', () => ({
@@ -208,6 +258,10 @@ afterEach(() => {
   clearSelectionMock.mockReset();
   searchState.searchQuery = '';
   searchState.debouncedQuery = '';
+  contentState.query = '';
+  contentState.matchesByPath = {};
+  getDefaultStore().set(filesSidebarActiveTabAtom, 'files');
+  getDefaultStore().set(openFilesAtom, []);
   directoryState.rootContents = [];
   navigationState.onCopy = null;
   duplicateMutateMock.mockReset();
@@ -217,6 +271,11 @@ afterEach(() => {
   fileTreePropsState.onCopyItem = null;
   fileTreePropsState.onPasteIntoFolder = null;
   fileTreePropsState.nodes = [];
+  fileTreePropsState.onMoveFile = undefined;
+  treeState.extras = [];
+  treeState.candidates = [];
+  treeState.add.mockReset();
+  treeState.searchAccessory = undefined;
   cleanup();
 });
 
@@ -456,5 +515,120 @@ describe('FilesSidebar external-drop announcement', () => {
     const liveRegion = container.querySelector('[role="tree"] [role="status"]');
     expect(liveRegion).toBeInTheDocument();
     expect(liveRegion).toHaveTextContent('');
+  });
+});
+
+describe('FilesSidebar with another project in the tree', () => {
+  const api = { id: 'api', name: 'api', path: '/w/api' };
+  const mainRow = () => screen.getByRole('button', { name: 'proj Main' });
+  const chatTree = () => screen.getByRole('tree', { name: 'proj file tree', hidden: true });
+
+  it("mounts it below the chat's tree with its own drag and drop, and counts both projects", () => {
+    treeState.extras = [api];
+    render(<FilesSidebar chatId="chat-1" />);
+    const section = screen.getByRole('region', { name: 'api' });
+
+    expect(chatTree().compareDocumentPosition(section)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(chatTree().contains(section)).toBe(false);
+    expect(section).toHaveAttribute('data-dnd', 'true');
+    expect(fileTreePropsState.onMoveFile).toBeTypeOf('function');
+    expect(treeState.projectCount).toBe(2);
+
+    // The shortcuts skip the chat's tree once Main is closed.
+    expect(treeState.isMainRootHidden?.()).toBe(false);
+    fireEvent.click(mainRow());
+    expect(treeState.isMainRootHidden?.()).toBe(true);
+  });
+
+  it("adds a project picked in the header below the chat's tree, keeping the tree mounted", async () => {
+    const user = userEvent.setup();
+    treeState.candidates = [api];
+    const { rerender } = render(
+      <FilesSidebar chatId="chat-1" getMentionTexts={() => ['Read /w/api/a.ts']} />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Link project' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'api Mentioned in this chat' }));
+    expect(treeState.add).toHaveBeenCalledExactlyOnceWith('api');
+
+    // What the real hook does once the project is in the chat's list.
+    treeState.extras = [api];
+    chatTree().focus();
+    rerender(<FilesSidebar chatId="chat-1" />);
+    expect(screen.getByRole('region', { name: 'api' })).toBeInTheDocument();
+    // A remounted tree would have lost focus.
+    expect(chatTree()).toHaveFocus();
+  });
+
+  it('leaves the header without a slot for Add project when the chat has no project folder', () => {
+    render(<FilesSidebar />);
+
+    expect(treeState.searchAccessory).toBeUndefined();
+  });
+
+  it('opens Main again on a switch to another chat', () => {
+    treeState.extras = [api];
+    const { rerender } = render(<FilesSidebar chatId="chat-1" />);
+    fireEvent.click(mainRow());
+
+    rerender(<FilesSidebar chatId="chat-2" />);
+
+    expect(mainRow()).toHaveAttribute('aria-expanded', 'true');
+    expect(chatTree()).toBeVisible();
+    expect(treeState.isMainRootHidden?.()).toBe(false);
+  });
+
+  it("focuses Main, not the hidden tree, when the files shortcut asks while it's closed", () => {
+    treeState.extras = [api];
+    render(<FilesSidebar chatId="chat-1" />);
+    const askForFocus = () => act(() => void window.dispatchEvent(new Event('file-tree:focus')));
+
+    askForFocus();
+    expect(chatTree()).toHaveFocus();
+
+    fireEvent.click(mainRow());
+    askForFocus();
+    expect(mainRow()).toHaveFocus();
+  });
+
+  it("groups the Search tab's matches by project and opens a browsed match as a browsed tab", () => {
+    const match = (id: string) => ({
+      id,
+      filePath: 'src/a.ts',
+      lineNumber: 4,
+      startColumn: 1,
+      endColumn: 10,
+      lineText: 'useOrders()',
+    });
+    treeState.extras = [api];
+    contentState.query = 'useOrders';
+    contentState.matchesByPath = { '/tmp/proj': [match('own')], '/w/api': [match('browsed')] };
+    render(<FilesSidebar chatId="chat-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    const headings = screen.getAllByRole('heading');
+    expect(headings.map((heading) => heading.textContent)).toEqual(['projMain', 'apiLinked']);
+    expect(headings[0]).toHaveAttribute('title', '/tmp/proj');
+    const [, browsed] = screen.getAllByRole('button', { name: /useOrders/ });
+    fireEvent.click(browsed);
+    expect(
+      getDefaultStore()
+        .get(openFilesAtom)
+        .map(({ path, projectPath, isOtherProject, sourceChatId, sourcePaneIndex }) => ({
+          path,
+          projectPath,
+          isOtherProject,
+          sourceChatId,
+          sourcePaneIndex,
+        })),
+    ).toEqual([
+      {
+        path: '/w/api/src/a.ts',
+        projectPath: '/w/api',
+        isOtherProject: true,
+        sourceChatId: 'chat-1',
+        sourcePaneIndex: undefined,
+      },
+    ]);
   });
 });

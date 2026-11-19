@@ -29,6 +29,46 @@ type UseContentSearchTabResult = {
 
 const CONTENT_SEARCH_LIMIT = 200;
 
+type UseContentSearchParams = {
+  projectPath: string;
+  /** Searched once trimmed; an empty or blank query sends nothing */
+  query: string;
+  options: ContentSearchOptions;
+  enabled: boolean;
+  staleTime?: number;
+};
+
+/** One folder's matches for the Search tab's query. Earlier matches stay up while new ones load. */
+export function useContentSearch({
+  projectPath,
+  query,
+  options,
+  enabled,
+  staleTime,
+}: UseContentSearchParams) {
+  const trimmedQuery = query.trim();
+  const { data, isLoading } = trpc.files.searchContent.useQuery(
+    {
+      projectPath,
+      query: trimmedQuery,
+      limit: CONTENT_SEARCH_LIMIT,
+      matchCase: options.matchCase,
+      wholeWord: options.wholeWord,
+      useRegex: options.useRegex,
+    },
+    {
+      enabled: enabled && trimmedQuery.length > 0,
+      placeholderData: (prev) => prev,
+      ...(typeof staleTime === 'number' ? { staleTime } : {}),
+    },
+  );
+  return {
+    matches: Array.isArray(data?.matches) ? (data.matches as ContentSearchMatch[]) : [],
+    invalidRegex: data?.invalidRegex === true,
+    isLoading,
+  };
+}
+
 export function useContentSearchTab({
   projectPath,
   canSearch,
@@ -42,28 +82,17 @@ export function useContentSearchTab({
   } = useSearchDebounce();
   const [contentSearchOptions, setContentSearchOptions] = useAtom(contentSearchOptionsAtom);
 
-  const trimmedContentQuery = contentDebouncedQuery.trim();
-  const { data: rawContentMatches, isLoading: isLoadingContentSearch } =
-    trpc.files.searchContent.useQuery(
-      {
-        projectPath,
-        query: trimmedContentQuery,
-        limit: CONTENT_SEARCH_LIMIT,
-        matchCase: contentSearchOptions.matchCase,
-        wholeWord: contentSearchOptions.wholeWord,
-        useRegex: contentSearchOptions.useRegex,
-      },
-      {
-        enabled: canSearch && isSearchTabActive && trimmedContentQuery.length > 0,
-        placeholderData: (prev) => prev,
-        ...(typeof staleTime === 'number' ? { staleTime } : {}),
-      },
-    );
-
-  const contentMatches = Array.isArray(rawContentMatches?.matches)
-    ? (rawContentMatches.matches as ContentSearchMatch[])
-    : [];
-  const contentSearchInvalidRegex = rawContentMatches?.invalidRegex === true;
+  const {
+    matches: contentMatches,
+    invalidRegex: contentSearchInvalidRegex,
+    isLoading: isLoadingContentSearch,
+  } = useContentSearch({
+    projectPath,
+    query: contentDebouncedQuery,
+    options: contentSearchOptions,
+    enabled: canSearch && isSearchTabActive,
+    staleTime,
+  });
 
   const highlightContentMatch = useMemo(
     () => createMatchHighlighter(contentDebouncedQuery, contentSearchOptions),

@@ -17,14 +17,13 @@ import {
   X,
   Loader2,
 } from 'lucide-react';
-import type * as Monaco from 'monaco-editor';
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { MemoizedMarkdown } from '@/components/chat-markdown-renderer';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { selectedProjectAtom } from '@/features/agents/atoms';
+import { NEW_CHAT_PANE, selectedProjectAtom } from '@/features/agents/atoms';
 import { type CodeSelectionContext, createTextPreview } from '@/features/agents/lib/queue-utils';
 import { CompactPaneDigitBadge } from '@/features/agents/ui/split-view-container/pane-number-badge';
 import { triggerFileTreeRefresh } from '@/features/files-sidebar/refresh-trigger';
@@ -56,6 +55,7 @@ import {
   initializeATA,
   limitTsDiagnosticsToSyntax,
   loadProjectTypes,
+  registerCodeNavigationOpener,
   useMonacoTheme,
 } from '@/lib/code-editor/monaco';
 import {
@@ -73,6 +73,7 @@ import {
   codeEditorWidthAtom,
   codeSelectionContextAtomFamily,
   consumePendingReveal,
+  contextPathForTab,
   diffModePreferenceAtom,
   editorActivePaneIndexAtom,
   editorIsSplitActiveAtom,
@@ -85,29 +86,32 @@ import {
   lastActiveTabPerPaneAtom,
   markFileSavedAtom,
   normalizeRevealSelection,
+  revealPendingOnMount,
   type OpenFile,
-  openFileAtom,
   openFilesAtom,
   pinFileAtom,
   type RevealLineDetail,
   revokeBlobUrlIfPresent,
   revokePdfBlobIfPresent,
+  selectionFileNameForTab,
   shouldRevealNow,
   trackPaneTabAtom,
   updateFileContentAtom,
 } from '@/lib/code-editor/state';
 import { customHotkeysAtom } from '@/lib/atoms';
 import {
+  arrangeTabsByProject,
   disambiguateProjectPaths,
   getEditorTabCycleDirection,
   getProjectName,
-  groupFilesByProject,
 } from '@/lib/code-editor/tabs';
 import type { ShortcutActionId } from '@/lib/hotkeys';
 import { appStore } from '@/lib/jotai-store';
 import { getPaneColor } from '@/lib/pane-colors';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { cn, isMac } from '@/lib/utils';
+import { OtherProjectNotice } from './OtherProjectNotice';
+import { ProjectGroupSeparator } from './ProjectGroupSeparator';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
@@ -141,13 +145,14 @@ function sanitizeMonacoColorizedHtml(html: string): string {
 function buildCodeSelectionContext(
   selection: { startLineNumber: number; endLineNumber: number },
   selectedText: string,
-  currentFile: { path: string; name: string; language?: string },
+  currentFile: OpenFile,
+  target: { chatId: string; isSplit: boolean },
 ): CodeSelectionContext {
   return {
     id: crypto.randomUUID(),
     text: selectedText,
-    filePath: currentFile.path,
-    fileName: currentFile.name,
+    filePath: contextPathForTab(currentFile, target.chatId, target.isSplit).path,
+    fileName: selectionFileNameForTab(currentFile, target.chatId, target.isSplit),
     language: currentFile.language ?? 'plaintext',
     startLine: selection.startLineNumber,
     endLine: selection.endLineNumber,
@@ -271,10 +276,6 @@ const FileTab = memo(function FileTab({
   );
 });
 
-type ProjectGroupSeparatorProps = {
-  projectName: string;
-};
-
 /** Fade gradient overlay indicating hidden tabs beyond the scroll boundary */
 const TabOverflowFade = memo(function TabOverflowFade({ side }: { side: 'left' | 'right' }) {
   return (
@@ -286,17 +287,6 @@ const TabOverflowFade = memo(function TabOverflowFade({ side }: { side: 'left' |
           : 'right-0 bg-linear-to-l from-muted/80 to-transparent',
       )}
     />
-  );
-});
-
-/** Separator between project groups in the tab bar */
-const ProjectGroupSeparator = memo(function ProjectGroupSeparator({
-  projectName,
-}: ProjectGroupSeparatorProps) {
-  return (
-    <div className="flex items-center px-2 py-1.5 text-[10px] text-muted-foreground/60 font-medium uppercase tracking-wider select-none shrink-0 border-r border-border/30">
-      {projectName}
-    </div>
   );
 });
 
@@ -417,6 +407,8 @@ export function CodeEditorPanel() {
   filesRef.current = files;
   const codeEditorActiveChatIdRef = useRef(codeEditorActiveChatId);
   codeEditorActiveChatIdRef.current = codeEditorActiveChatId;
+  const isSplitActiveRef = useRef(isSplitActive);
+  isSplitActiveRef.current = isSplitActive;
   // Tab-bar overflow fade indicators — bound via useTabOverflow after visibleFiles is computed.
   const tabBarRef = useRef<HTMLDivElement>(null);
 
@@ -438,13 +430,16 @@ export function CodeEditorPanel() {
   }, [activePath, activeFile?.sourcePaneIndex, trackPaneTab]);
 
   // Sync active file to per-chat context so context stays correct when switching tabs or after project switch
+  const activeContextPath = activeFile
+    ? contextPathForTab(activeFile, activeFile.sourceChatId, isSplitActive).path
+    : undefined;
   useEffect(() => {
-    if (!activeFile?.sourceChatId) return;
+    if (!activeFile?.sourceChatId || activeContextPath === undefined) return;
     appStore.set(chatContextFileAtomFamily(activeFile.sourceChatId), {
       name: activeFile.name,
-      path: activeFile.path,
+      path: activeContextPath,
     });
-  }, [activeFile?.sourceChatId, activeFile?.name, activeFile?.path]);
+  }, [activeFile?.sourceChatId, activeFile?.name, activeContextPath]);
 
   // Auto-focus: when active pane changes in split view, switch to that pane's last active tab
   const prevPaneIndexRef = useRef(editorActivePaneIndex);
@@ -464,13 +459,14 @@ export function CodeEditorPanel() {
     }
   }, [editorActivePaneIndex, isSplitActive, lastActiveTabPerPane, files, setActivePath]);
 
-  // Compute visible (possibly filtered) and grouped files for the tab bar
-  const { visibleFiles, groupedFiles } = useMemo(() => {
+  // Compute visible (possibly filtered) files, and how the tab bar groups and orders them
+  const { visibleFiles, tabGroups, tabOrder } = useMemo(() => {
     let visible = files;
     if (isSplitActive && filterToActivePane && editorActivePaneIndex !== null) {
       visible = files.filter((f) => f.sourcePaneIndex === editorActivePaneIndex);
     }
-    return { visibleFiles: visible, groupedFiles: groupFilesByProject(visible) };
+    const { groups, order } = arrangeTabsByProject(visible);
+    return { visibleFiles: visible, tabGroups: groups, tabOrder: order };
   }, [files, isSplitActive, filterToActivePane, editorActivePaneIndex]);
 
   // Tab-bar overflow fade indicators; re-measures on scroll/resize and when the
@@ -499,8 +495,15 @@ export function CodeEditorPanel() {
 
   const previousInlineDiffAvailabilityRef = useRef(false);
 
-  // Global editor shortcuts: cycle tabs (Cmd+Shift+]/[) and open Monaco's find widget.
-  useEditorWindowShortcuts({ visibleFiles, activePath, setActivePath, editorRef, isOpen });
+  // Global editor shortcuts: cycle tabs (Cmd+Shift+]/[) in the order the tab bar draws them, and
+  // open Monaco's find widget.
+  useEditorWindowShortcuts({
+    visibleFiles: tabOrder,
+    activePath,
+    setActivePath,
+    editorRef,
+    isOpen,
+  });
 
   const revealLineInEditor = useCallback((detail: RevealLineDetail): boolean => {
     const editor = editorRef.current;
@@ -597,6 +600,8 @@ export function CodeEditorPanel() {
   }, [activePath, markdownPreviewVisible]);
 
   const activeAbsoluteFilePath = activeFile ? getFullPath(projectPath, activeFile.path) : null;
+  const activeAbsoluteFilePathRef = useRef(activeAbsoluteFilePath);
+  activeAbsoluteFilePathRef.current = activeAbsoluteFilePath;
   const activeFileModelPath = useMemo(() => {
     if (!activeFile) return undefined;
     return buildFileModelPath(projectPath, activeFile.path);
@@ -1226,7 +1231,10 @@ export function CodeEditorPanel() {
     if (selectedText.length < 1) return;
     appStore.set(
       codeSelectionContextAtomFamily(chatId),
-      buildCodeSelectionContext(selection, selectedText, currentFile),
+      buildCodeSelectionContext(selection, selectedText, currentFile, {
+        chatId,
+        isSplit: isSplitActiveRef.current,
+      }),
     );
   }, []);
 
@@ -1257,10 +1265,10 @@ export function CodeEditorPanel() {
           appStore.set(codeSelectionContextAtomFamily(chatId), null);
           const currentFile = activeFileRef.current;
           if (currentFile) {
-            appStore.set(chatContextFileAtomFamily(chatId), {
-              name: currentFile.name,
-              path: currentFile.path,
-            });
+            appStore.set(
+              chatContextFileAtomFamily(chatId),
+              contextPathForTab(currentFile, chatId, isSplitActiveRef.current),
+            );
           }
           return;
         }
@@ -1273,7 +1281,10 @@ export function CodeEditorPanel() {
 
         appStore.set(
           codeSelectionContextAtomFamily(chatId),
-          buildCodeSelectionContext(selection, selectedText, currentFile),
+          buildCodeSelectionContext(selection, selectedText, currentFile, {
+            chatId,
+            isSplit: isSplitActiveRef.current,
+          }),
         );
       }, debounceDelay);
     });
@@ -1681,11 +1692,15 @@ export function CodeEditorPanel() {
                   <output className="px-3 py-1.5 text-xs text-muted-foreground italic">
                     No files from this pane
                   </output>
-                ) : isSplitActive && groupedFiles.length > 1 ? (
-                  groupedFiles.map((group) => (
+                ) : tabGroups ? (
+                  tabGroups.map((group) => (
                     <div key={group.projectPath ?? 'none'} className="flex items-center shrink-0">
                       <ProjectGroupSeparator
-                        projectName={
+                        projectPath={group.projectPath}
+                        worktreeChatId={
+                          group.files.find((file) => file.isWorktreeContext)?.sourceChatId
+                        }
+                        folderName={
                           group.projectPath
                             ? (projectDisplayNames.get(group.projectPath) ?? group.projectName)
                             : group.projectName
@@ -1881,6 +1896,10 @@ export function CodeEditorPanel() {
               canSave={isTextEditorFile}
             />
           )}
+          <OtherProjectNotice
+            file={activeFile}
+            chatId={codeEditorActiveChatId === NEW_CHAT_PANE ? null : codeEditorActiveChatId}
+          />
 
           {/* Editor area — min-h-0 lets content scroll instead of growing over the header (isolate = stacking) */}
           <div className="isolate min-h-0 flex-1 overflow-hidden">
@@ -1976,46 +1995,9 @@ export function CodeEditorPanel() {
                       void initializeATA(monaco);
                       // Route cross-file navigation (Ctrl+Click) through our tab system
                       editorOpenerDisposableRef.current?.dispose();
-                      editorOpenerDisposableRef.current = monaco.editor.registerEditorOpener({
-                        openCodeEditor(
-                          source: Monaco.editor.ICodeEditor,
-                          resource: Monaco.Uri,
-                          selectionOrPosition?: Monaco.IRange | Monaco.IPosition,
-                        ) {
-                          const targetPath = decodeURIComponent(resource.path);
-                          const sourceUri = source?.getModel()?.uri?.toString() ?? 'none';
-                          if (!targetPath) return false;
-                          if (resource.toString() === sourceUri) return false;
-                          const currentProjectPath = projectPathRef.current;
-                          const relativePath =
-                            currentProjectPath && targetPath.startsWith(`${currentProjectPath}/`)
-                              ? targetPath.slice(currentProjectPath.length + 1)
-                              : targetPath;
-                          const fileName = relativePath.split('/').pop() ?? relativePath;
-                          appStore.set(openFileAtom, {
-                            path: relativePath,
-                            name: fileName,
-                            projectPath: currentProjectPath,
-                            intent: 'preview',
-                          });
-                          const lineNumber =
-                            selectionOrPosition && 'lineNumber' in selectionOrPosition
-                              ? selectionOrPosition.lineNumber
-                              : selectionOrPosition && 'startLineNumber' in selectionOrPosition
-                                ? (selectionOrPosition as { startLineNumber: number })
-                                    .startLineNumber
-                                : undefined;
-                          if (lineNumber !== undefined) {
-                            requestAnimationFrame(() => {
-                              window.dispatchEvent(
-                                new CustomEvent('editor:reveal-line', {
-                                  detail: { filePath: targetPath, lineNumber },
-                                }),
-                              );
-                            });
-                          }
-                          return true;
-                        },
+                      editorOpenerDisposableRef.current = registerCodeNavigationOpener(monaco, {
+                        store: appStore,
+                        getProjectPath: () => projectPathRef.current,
                       });
                     }}
                     onMount={(editor, _monaco) => {
@@ -2028,15 +2010,11 @@ export function CodeEditorPanel() {
                       if (content) {
                         acquireTypes(content);
                       }
-                      // Apply any pending reveal that was queued before Monaco mounted
-                      const pending = pendingRevealRef.current;
-                      if (pending) {
-                        const model = editor.getModel();
-                        if (model) {
-                          revealLineInEditor(pending);
-                          pendingRevealRef.current = null;
-                        }
-                      }
+                      pendingRevealRef.current = revealPendingOnMount(
+                        pendingRevealRef.current,
+                        activeAbsoluteFilePathRef.current,
+                        revealLineInEditor,
+                      );
                     }}
                     theme={monacoTheme}
                     options={{

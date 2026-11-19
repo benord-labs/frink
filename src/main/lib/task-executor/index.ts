@@ -53,6 +53,7 @@ import {
   taskClaimResultSchema,
 } from '../flows/rerun/claim-flags';
 import { type DispatchErrorMeta, persistDispatchFailure } from '../tasks';
+import { attachmentFileNotes } from './attachment-files';
 import { fetchAttachmentImages } from './attachment-images';
 import {
   resolveTaskAccount,
@@ -589,7 +590,7 @@ async function createChatForTask(task: DbTask): Promise<{
     console.error('[TaskExecutor] Failed to update task status with chatId:', error);
   }
 
-  // 6. Build prompt and fetch attachment images
+  // 6. Build prompt, fetch attachment images and hand over attachment files
   const promptWarnings: string[] = [];
   const rawTc = parseTriggerContextRootRecord(task.triggerContext);
   const attachmentImages = await fetchAttachmentImages(rawTc?.attachments, promptWarnings);
@@ -614,7 +615,7 @@ async function createChatForTask(task: DbTask): Promise<{
       trailing ? trailing.text : buildRetryContinuationPrompt(claimResume.priorError),
     );
     if (trailing && trailing.images.length > 0) attachmentImages.push(...trailing.images);
-  }
+  } else prompt += await attachmentFileNotes(rawTc, subChatId, promptWarnings);
   if (promptWarnings.length > 0) {
     prompt = `${prompt}\n\n${promptWarnings.join('\n')}`;
   }

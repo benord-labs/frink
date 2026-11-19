@@ -185,12 +185,13 @@ function cargoTargetDir() {
 }
 
 /**
- * Upstream's release profile keeps DWARF (strip = false, split-debuginfo = off) for packaging to
- * strip. macOS and MSVC keep it outside the executable, but ELF links it in: ~1 GB of a 1.3 GB
- * Linux codex (sc-4794). `debuginfo` keeps the symbol table so panic backtraces still name frames.
+ * ELF links upstream's release DWARF into the executable (~1 GB of a 1.3 GB Linux codex), so Linux
+ * never generates it and strips the toolchain's; the symbol table stays for panic backtraces.
  */
 export function releaseProfileEnv(cargoTarget) {
-  return cargoTarget.includes('-linux-') ? { CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' } : {};
+  return cargoTarget.includes('-linux-')
+    ? { CARGO_PROFILE_RELEASE_DEBUG: '0', CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' }
+    : {};
 }
 
 function rustupExecutable() {

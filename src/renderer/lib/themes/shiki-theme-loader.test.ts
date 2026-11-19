@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { highlightCode } from './shiki-theme-loader';
+import { getShikiTheme, highlightCode } from './shiki-theme-loader';
+
+describe('getShikiTheme', () => {
+  it('resolves a code theme the code editor asks for before any code block has loaded it', async () => {
+    const theme = await getShikiTheme('ayu-dark');
+
+    expect(theme).toMatchObject({ name: 'ayu-dark', type: 'dark' });
+    expect(theme.settings.length).toBeGreaterThan(1);
+  });
+});
 
 /**
- * `highlightCode` is this module's only external export, and its language strings come
- * from markdown fences — often an alias, sometimes a grammar this bundle lacks.
+ * `highlightCode`'s language strings come from markdown fences — often an alias, sometimes a
+ * grammar this bundle lacks.
  */
 describe('highlightCode', () => {
   it("returns the inner code content rather than shiki's <pre> wrapper", async () => {

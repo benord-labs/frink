@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, waitFor } from '@testing-library/react';
 import { createRef, useEffect, useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { linkedMentionOption } from '@/lib/mentions/group-mention-options-by-project';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
 import { AgentsMentionsEditor, type AgentsMentionsEditorHandle } from './agents-mentions-editor';
 
@@ -94,6 +95,33 @@ describe('composer mention chip', () => {
     expect(chip).not.toHaveTextContent('src');
     expect(chip).toHaveAttribute('title', 'src\\a.ts');
   });
+
+  it.each([
+    { root: '/w/ros-service', path: 'src/a.ts', label: 'a.ts' },
+    { root: '/w/Personal and learning/web', path: 'app/[id]/page.tsx', label: 'page.tsx' },
+  ])(
+    'writes a file picked from a linked project as its full path, and reads it back the same: $root',
+    ({ root, path, label }) => {
+      const ref = createRef<AgentsMentionsEditorHandle>();
+      const { container } = render(
+        <AgentsMentionsEditor ref={ref} onTrigger={vi.fn()} onCloseTrigger={vi.fn()} />,
+      );
+      const editor = container.querySelector('[contenteditable="true"]');
+      if (editor) window.getSelection()?.collapse(editor, 0);
+      const file = { label, path, type: 'file' as const };
+      ref.current?.insertMention(linkedMentionOption({ path: root, name: 'web' }, file));
+      const token = `@[file:local:${root}/${path}]`;
+      expect(ref.current?.getValue().trim()).toBe(token);
+
+      // A restored draft draws the chip again, with the space the editor puts after every chip.
+      ref.current?.setValue(`see ${token}`);
+      expect(ref.current?.getValue().trim()).toBe(`see ${token}`);
+      const chips = container.querySelectorAll('[data-mention-id]');
+      expect(chips).toHaveLength(1);
+      expect(chips[0]).toHaveTextContent(label);
+      expect(chips[0]).toHaveAttribute('title', `${root}/${path}`);
+    },
+  );
 
   it('takes the selected look while a selection covers it and drops it when cleared', async () => {
     const { editor, chip } = renderWithMention();

@@ -163,18 +163,40 @@ type Project = {
   worktreePath?: string | null;
   /** The folder of the chat's project; null for a chat that has no project. */
   projectPath?: string | null;
+  /** The projects linked to the chat. */
+  linkedProjects?: { path: string }[];
   /** The chats side by side in split view, in pane order; none in single view. */
   panes?: string[];
+  /** Every registered project; the chat's own is `app`. */
+  registered?: RegisteredProject[];
+  /** What the project list already holds when the reply draws, as it can while tRPC hydrates. */
+  listed?: unknown;
 };
 
+type RegisteredProject = { id: string; name: string; path: string };
+
 const ROOT = '/Users/sam/app';
+const OTHER = '/Users/sam/api';
+const PROJECTS: RegisteredProject[] = [
+  { id: 'app', name: 'app', path: ROOT },
+  { id: 'api', name: 'api', path: OTHER },
+];
 
 const lookup = z.object({ relativePath: z.string() });
 
 /** A reply in chat `chat-1`, which works in `ROOT`; `asked` lists all but the home folder lookup, in order. */
 function renderReply(
   text: string,
-  { disk, index = disk, worktreePath = null, projectPath = ROOT, panes = [] }: Project,
+  {
+    disk,
+    index = disk,
+    worktreePath = null,
+    projectPath = ROOT,
+    linkedProjects = [],
+    panes = [],
+    registered = PROJECTS,
+    listed,
+  }: Project,
 ) {
   const store = createStore();
   store.set(splitViewAtom, {
@@ -190,11 +212,14 @@ function renderReply(
   // The chat view loaded the chat long before this reply, and is the one that keeps it fresh.
   queries.setQueryData(
     getQueryKey(trpc.chats.get, { id: 'chat-1' }, 'query'),
-    { project: projectPath ? { path: projectPath } : null },
+    { project: projectPath ? { id: 'app', name: 'app', path: projectPath } : null, linkedProjects },
     { updatedAt: 0 },
   );
+  if (listed !== undefined) {
+    queries.setQueryData(getQueryKey(trpc.projects.list, undefined, 'query'), listed);
+  }
   const asked: [path: string, input: unknown][] = [];
-  renderWithTrpc<string | Entry[] | Entry['type'] | null>(
+  renderWithTrpc<string | Entry[] | Entry['type'] | RegisteredProject[] | null>(
     <Provider store={store}>
       <TooltipProvider>
         <CurrentChatWorktreeProvider worktreePath={worktreePath} chatId="chat-1">
@@ -213,6 +238,7 @@ function renderReply(
     </Provider>,
     async (op) => {
       if (op.path === 'external.getHomePath') return answerHomePath(op);
+      if (op.path === 'projects.list') return registered;
       asked.push([op.path, op.input]);
       if (op.path === 'files.search') return index;
       const { relativePath } = lookup.parse(op.input);
@@ -225,6 +251,16 @@ function renderReply(
 
 const typeOf = (relativePath: string) => ['files.entryType', { projectPath: ROOT, relativePath }];
 const searchFor = (query: string) => ['files.search', { projectPath: ROOT, query }];
+
+/** Each line of the open tooltip, and whether it is set in monospace. */
+function tooltipLines(): [text: string | null, mono: boolean][] {
+  const tooltip = screen.getByRole('tooltip');
+  expect(tooltip.closest('.font-mono')).toBeNull();
+  return Array.from(tooltip.children, (line) => [
+    line.textContent,
+    line.classList.contains('font-mono'),
+  ]);
+}
 
 describe('opening a file from its badge', () => {
   const reveals: unknown[] = [];
@@ -452,6 +488,103 @@ describe('opening a file from its badge', () => {
     expect(badgeNamed('a.ts').tagName).toBe('SPAN');
     expect(screen.queryByRole('button')).toBeNull();
   });
+
+  it("opens another project's file as that project's, at its line, and names the project", async () => {
+    const { store, asked } = renderReply(`See \`${OTHER}/src/a.ts:7\`.`, {
+      disk: [{ path: 'src/a.ts', type: 'file' }],
+    });
+
+    const badge = await screen.findByRole('button', { name: /a\.ts/ });
+    expect(badge).toHaveTextContent(/^a\.tsapiL7$/);
+    expect(within(badge).getByText('api').parentElement?.nextElementSibling).toHaveTextContent(
+      'L7',
+    );
+    fireEvent.focus(badge);
+    expect(tooltipLines()).toEqual([
+      ['In api · not linked', false],
+      [`${OTHER}/src/a.ts`, true],
+    ]);
+    fireEvent.click(badge);
+
+    await waitFor(() =>
+      expect(reveals).toMatchObject([{ filePath: `${OTHER}/src/a.ts`, lineNumber: 7 }]),
+    );
+    expect(store.get(openFilesAtom)).toEqual([
+      expect.objectContaining({
+        path: 'src/a.ts',
+        projectPath: OTHER,
+        isOtherProject: true,
+        isWorktreeContext: false,
+        sourceChatId: 'chat-1',
+      }),
+    ]);
+    expect(store.get(openFilesAtom)[0]).not.toHaveProperty('projectName');
+    expect(asked).toEqual([['files.entryType', { projectPath: OTHER, relativePath: 'src/a.ts' }]]);
+  });
+
+  it("says when another project's file is from a project linked to the chat", async () => {
+    renderReply(`See \`${OTHER}/src/a.ts\`.`, {
+      disk: [],
+      linkedProjects: [{ path: `${OTHER}/` }],
+    });
+
+    fireEvent.focus(await screen.findByRole('button', { name: /a\.ts/ }));
+
+    expect(tooltipLines()[0]).toEqual(['In api · linked', false]);
+  });
+
+  // During tRPC client hydration on dev start the list can briefly hold something else.
+  it('still draws the reply while the project list holds something other than a list', () => {
+    renderReply(`See \`${OTHER}/src/a.ts\`.`, { disk: [], listed: { projects: PROJECTS } });
+
+    expect(badgeNamed('a.ts').tagName).toBe('SPAN');
+  });
+
+  it('names the other project when the file is missing from it', async () => {
+    renderReply(`See \`${OTHER}/src/gone.ts\`.`, { disk: [] });
+
+    fireEvent.click(await screen.findByRole('button', { name: /gone\.ts/ }));
+
+    await waitFor(() => expect(toast.getHistory()).toHaveLength(toasts + 1));
+    expect(toast.getHistory().at(-1)).toMatchObject({ title: "Couldn't find gone.ts in api" });
+  });
+
+  it("opens a registered project's file from a chat with no project", async () => {
+    const { store } = renderReply(`See \`~/api/src/a.ts\`.`, {
+      disk: [{ path: 'src/a.ts', type: 'file' }],
+      projectPath: null,
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /a\.ts/ }));
+
+    await waitFor(() => expect(store.get(openFilesAtom)).toHaveLength(1));
+    expect(store.get(openFilesAtom)[0]).toMatchObject({ projectPath: OTHER, isOtherProject: true });
+  });
+
+  it.each([
+    ['', `${ROOT}/src/a.ts`],
+    [', even in another project kept inside it', `${ROOT}/packages/ui/a.ts`],
+  ])(
+    "leaves a worktree chat's link into its own project's main folder shut%s, and says why",
+    async (_, file) => {
+      renderReply(`See \`${file}\`.`, {
+        disk: [{ path: 'src/a.ts', type: 'file' }],
+        worktreePath: '/Users/sam/.frink/worktrees/app/fix',
+        registered: [...PROJECTS, { id: 'ui', name: 'ui', path: `${ROOT}/packages/ui` }],
+      });
+
+      fireEvent.focus(badgeNamed('a.ts'));
+
+      await waitFor(() =>
+        expect(tooltipLines()).toEqual([
+          ["In app's main folder, not this chat's worktree", false],
+          [file, true],
+        ]),
+      );
+      expect(badgeNamed('a.ts').tagName).toBe('SPAN');
+      expect(badgeNamed('a.ts')).toHaveTextContent(/^a\.ts$/);
+    },
+  );
 });
 
 describe('file badges in a chat transcript', () => {
