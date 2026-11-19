@@ -248,7 +248,9 @@ describe('Linux debug-info strip (sc-4794)', () => {
   it('strips every Linux target and leaves the macOS and Windows profiles upstream', () => {
     for (const [key, { cargoTarget }] of Object.entries(TARGETS)) {
       expect(releaseProfileEnv(cargoTarget), key).toEqual(
-        key.startsWith('linux-') ? { CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' } : {},
+        key.startsWith('linux-')
+          ? { CARGO_PROFILE_RELEASE_DEBUG: '0', CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' }
+          : {},
       );
     }
   });

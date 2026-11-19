@@ -80,6 +80,16 @@ Upstream's own tests fail when the fixtures are out of date.
 
 - **No dependency changes.** The patch does not carry `Cargo.lock`. `--write-patch` stops if the
   lockfile differs from upstream in any way other than the version rewrite above.
-- **Same upstream tag only.** Moving to a new upstream tag means re-pinning the rest of
-  `manifest.json` and the matching constants in the build script, and rebasing the patch; this loop
-  does not do that.
+- **Same upstream tag only.** This loop does not move to a new upstream tag. A bump changes, in
+  one PR:
+  - `manifest.json`, `EXPECTED_MANIFEST` in `scripts/binaries/build-codex-frink.mjs` and its copy in
+    `build-codex-frink.test.ts`, plus the Rust toolchain in `.github/workflows/build-desktop.yml`;
+  - the patch, rebased onto the new tag;
+  - `thread-item-variants.json`, with any new variant classified in `codex-events.ts`;
+  - `config-surface.json`: its version and a route for every changed key and feature, with the
+    `--disable` list in `src/main/lib/agent-runner/codex/spawn-args.ts` matching the features
+    routed `disabled-by-frink`.
+
+  `codex-config-surface.test.ts` and `build-codex-frink.test.ts` in `scripts/binaries/` fail in
+  seconds while the config surface, the thread-item fixture or the build constants pin another
+  version.
