@@ -14,6 +14,7 @@ import type {
   MobileChatMode,
   MobileComposer,
 } from '@frink/shared/types/remote/mobile';
+import { useDraft } from '../../../lib/drafts';
 import { GlassSurface } from '../../../ui/material';
 import { space, useTheme } from '../../../ui/theme';
 import {
@@ -98,8 +99,7 @@ export function Composer({
   flowRun,
   busy,
   note,
-  value,
-  onChange,
+  draft,
   onSend,
   onStop,
   composer,
@@ -118,8 +118,8 @@ export function Composer({
   flowRun: boolean;
   busy: boolean;
   note: { text: string; error?: boolean } | null;
-  value: string;
-  onChange: (text: string) => void;
+  /** The draft this box edits; it redraws only the box, not the conversation, as you type. */
+  draft: string;
   onSend: () => void;
   onStop: () => void;
   composer?: MobileComposer;
@@ -136,6 +136,7 @@ export function Composer({
 }) {
   const t = useTheme();
   const line = useLine();
+  const { value, update } = useDraft(draft, '');
   const [contentHeight, setContentHeight] = useState(LINE);
   const sizing = messageInputSizing(Platform.OS === 'web', line, contentHeight, !!value);
   const mode = composerMode(
@@ -155,6 +156,11 @@ export function Composer({
       failed: attachments.failed,
     });
   const choosing = activity === 'idle' && executionReady;
+  const shown =
+    note ??
+    (flowRun && activity === 'background' && value.trim()
+      ? { text: 'Kept until the background work finishes.' }
+      : null);
   const settings =
     inline ??
     (composer && (
@@ -173,9 +179,9 @@ export function Composer({
   // Context stays above the floating composer; the model and Send share its lower row.
   return (
     <View style={{ gap: 6 }}>
-      {note && (
+      {shown && (
         <View style={{ paddingHorizontal: space.md }}>
-          <Note error={note.error}>{note.text}</Note>
+          <Note error={shown.error}>{shown.text}</Note>
         </View>
       )}
       {choosing && context && (
@@ -200,8 +206,8 @@ export function Composer({
             placeholderTextColor={t.muted}
             selectionColor={t.accent}
             value={value}
-            onChangeText={onChange}
-            editable={!busy && mode !== 'unavailable'}
+            onChangeText={update}
+            editable={mode !== 'unavailable'}
             autoFocus={autoFocus}
             multiline
             maxLength={32000}
@@ -231,7 +237,7 @@ export function Composer({
           <ActionButton
             mode={mode}
             enabled={enabled}
-            busy={busy || (mode === 'send' && attachments.uploading)}
+            busy={mode === 'send' && attachments.uploading}
             stopLabel={flowRun ? 'Stop run' : 'Stop'}
             onSend={onSend}
             onStop={onStop}

@@ -21,38 +21,45 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={store.current}>{children}</Context.Provider>;
 }
 
-export function useDraft<T>(name: string, initial: T) {
+/** Reads and changes drafts without redrawing on each keystroke. Every change mints a new request
+ *  id, so an id is never reused for different content. */
+export function useDrafts() {
   const store = useContext(Context);
   if (!store) throw new Error('DraftProvider is missing');
-  const key = `${useConnection().connection?.deviceId}${SEPARATOR}${name}`;
-  const initialValue = useRef(initial);
-  function snapshot(): Draft<T> {
+  const deviceId = useConnection().connection?.deviceId;
+  const keyOf = (name: string) => `${deviceId}${SEPARATOR}${name}`;
+  const notify = () => store.listeners.forEach((listener) => listener());
+  function get<T>(name: string, initial: T): Draft<T> {
+    const key = keyOf(name);
     if (!store!.entries.has(key))
-      store!.entries.set(key, {
-        value: initialValue.current,
-        requestId: Crypto.randomUUID(),
-      });
+      store!.entries.set(key, { value: initial, requestId: Crypto.randomUUID() });
     return store!.entries.get(key) as Draft<T>;
   }
-  const draft = useSyncExternalStore(
-    (listener) => {
-      store.listeners.add(listener);
-      return () => {
-        store.listeners.delete(listener);
-      };
-    },
-    snapshot,
-    snapshot,
-  );
-  function update(value: T) {
-    store!.entries.set(key, { value, requestId: Crypto.randomUUID() });
-    store!.listeners.forEach((listener) => listener());
+  function update<T>(name: string, value: T) {
+    store!.entries.set(keyOf(name), { value, requestId: Crypto.randomUUID() });
+    notify();
   }
-  function clear(acknowledgedRequestId: string) {
+  function clear(name: string, acknowledgedRequestId: string) {
     // An acknowledgement from an earlier screen must not erase a newer edit.
-    if (store!.entries.get(key)?.requestId !== acknowledgedRequestId) return;
-    store!.entries.delete(key);
-    store!.listeners.forEach((listener) => listener());
+    if (store!.entries.get(keyOf(name))?.requestId !== acknowledgedRequestId) return;
+    store!.entries.delete(keyOf(name));
+    notify();
   }
-  return { ...draft, update, clear };
+  function subscribe(listener: () => void) {
+    store!.listeners.add(listener);
+    return () => void store!.listeners.delete(listener);
+  }
+  return { get, update, clear, subscribe };
+}
+
+export function useDraft<T>(name: string, initial: T) {
+  const drafts = useDrafts();
+  const initialValue = useRef(initial);
+  const snapshot = () => drafts.get(name, initialValue.current);
+  const draft = useSyncExternalStore(drafts.subscribe, snapshot, snapshot);
+  return {
+    ...draft,
+    update: (value: T) => drafts.update(name, value),
+    clear: (acknowledgedRequestId: string) => drafts.clear(name, acknowledgedRequestId),
+  };
 }

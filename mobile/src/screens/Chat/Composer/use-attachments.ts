@@ -120,11 +120,15 @@ function resetAttachments(
 }
 
 function attachmentState(items: ComposerAttachment[], targetMatches: boolean) {
+  // Ids belong only to the destination that stored them, in pick order.
+  const files = targetMatches
+    ? items.flatMap(({ status, id, name, kind }) =>
+        status === 'ready' && id ? [{ id, name, kind }] : [],
+      )
+    : [];
   return {
-    /** Ids belong only to the destination that stored them, in pick order. */
-    ids: targetMatches
-      ? items.flatMap((item) => (item.status === 'ready' && item.id ? [item.id] : []))
-      : [],
+    files,
+    ids: files.map(({ id }) => id),
     uploading:
       items.some((item) => item.status === 'uploading') || (items.length > 0 && !targetMatches),
     failed: items.some((item) => item.status === 'failed'),

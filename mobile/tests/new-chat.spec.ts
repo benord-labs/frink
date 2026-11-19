@@ -1,11 +1,19 @@
 import { openHistory } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
-import { openApp, type AppState } from './fixtures/app';
+import { held, openApp, type AppState } from './fixtures/app';
+import { conversation } from './fixtures/chat';
 import { NOW, overviewFixture } from './fixtures/data';
 
 const messageBox = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true });
 const send = (page: Page) => page.getByRole('button', { name: 'Send message', exact: true });
 const created = { chatId: 'chat-new', subChatId: 'sub-new' };
+/** The chat the first message made, as the Mac reports it before that message is saved. */
+const madeChat = conversation({
+  chat: { id: created.chatId, name: 'New chat', projectId: 'project-1' },
+  subChatId: created.subChatId,
+  subChats: [{ id: created.subChatId, name: 'New chat', activity: 'idle' }],
+  messages: [],
+});
 
 async function openNewChat(page: Page, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openApp(page, { ...options, data: { createChat: created, ...options.data } });
@@ -167,9 +175,33 @@ test('the project picker lists every project and searches a long list', async ({
   await expect(messageBox(page)).toBeVisible();
 });
 
-test('a failed first message keeps the text and reuses the chat on retry', async ({ page }) => {
+test('the first message shows on its new chat while it is still being sent', async ({ page }) => {
+  const answer = held();
+  const state = await openNewChat(page, {
+    data: { chat: madeChat },
+    respond: async (input) => {
+      if (input.type !== 'sendMessage') return undefined;
+      await answer.promise;
+      const message = { id: String(input.requestId), role: 'user', text: String(input.text) };
+      state.data.chat = { ...madeChat, messages: [message] };
+      return { ok: true };
+    },
+  });
+  await messageBox(page).fill('Bump the Electron version');
+  await send(page).click();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
+  await expect(page.getByText('Bump the Electron version')).toBeVisible();
+  await expect(page.getByText('Sending…', { exact: true })).toBeVisible();
+  answer.release();
+  // Once the Mac takes it, the chat reads it back at once instead of waiting for the next poll.
+  await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0, { timeout: 1500 });
+  await expect(page.getByText('Bump the Electron version')).toHaveCount(1);
+});
+
+test('a failed first message says so on its chat, and a tap retries it', async ({ page }) => {
   let failSend = true;
   const state = await openNewChat(page, {
+    data: { chat: madeChat },
     respond: (input) => {
       if (input.type === 'sendMessage' && failSend) return new Error('Frink is busy. Try again.');
       return undefined;
@@ -177,14 +209,12 @@ test('a failed first message keeps the text and reuses the chat on retry', async
   });
   await messageBox(page).fill('Bump the Electron version');
   await send(page).click();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
   await expect(page.getByText('Frink is busy. Try again.')).toBeVisible();
-  await expect(messageBox(page)).toHaveValue('Bump the Electron version');
-  // The message may have arrived, so the chat is kept and its project can no longer change.
-  await expect(page.getByRole('button', { name: /^Project: / })).toBeDisabled();
 
   failSend = false;
-  await send(page).click();
-  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Not delivered · Tap to retry/ }).click();
+  await expect.poll(() => mutations(state).length).toBe(3);
   expect(mutations(state).map((input) => input.type)).toEqual([
     'createChat',
     'sendMessage',

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 import { ArrowDown, History, MessageSquare } from 'lucide-react-native';
-import type { MobileChatDetail, MobileMessage } from '@frink/shared/types/remote/mobile';
+import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
+import type { PendingMessage } from '../../lib/chat/pending';
 import { EmptyState } from '../../ui/list';
 import { GlassSurface } from '../../ui/material';
 import { Text } from '../../ui/text';
@@ -79,13 +80,18 @@ export function Transcript({
   scrolling,
   targetResolved,
   onAnswered,
+  onRetry,
+  onDiscard,
 }: {
   data: MobileChatDetail;
-  messages: MobileMessage[];
+  messages: PendingMessage[];
   history: History;
   scrolling: Scrolling;
   targetResolved: boolean;
   onAnswered: () => void;
+  /** A message that failed to send: resend it, or drop it from this phone. */
+  onRetry: (id: string) => void;
+  onDiscard: (id: string) => void;
 }) {
   const empty = !messages.length && !data.questions.length && !data.permissions.length;
   const latestReply = messages.findLast((message) => message.role !== 'user')?.id;
@@ -122,7 +128,13 @@ export function Transcript({
           register={(view) => scrolling.registerMessage(message.id, view)}
           scrolling={scrolling}
         >
-          <Message message={message} latest={message.id === latestReply} plan={plan} />
+          <Message
+            message={message}
+            latest={message.id === latestReply}
+            plan={plan}
+            onRetry={onRetry}
+            onDiscard={onDiscard}
+          />
         </Measured>
       ))}
       {data.error && <Note error>{data.error}</Note>}

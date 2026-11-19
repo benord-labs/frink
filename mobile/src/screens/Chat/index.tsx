@@ -15,8 +15,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MobileActivity } from '@frink/shared/types/remote/mobile';
+import { mergeTranscript } from '../../lib/chat/pending';
 import { useResource } from '../../lib/connection';
-import { useDraft } from '../../lib/drafts';
+import { duration } from '../../lib/status';
 import { afterChatDeletion } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
 import { GlassSurface } from '../../ui/material';
@@ -27,7 +28,7 @@ import { NewChat } from '../NewChat';
 import { chatPollInterval, decisionStillOpen, showsComposer } from './chat-state';
 import { Composer, useComposerAttachments, useComposerState } from './Composer';
 import { useExecutionReady, useKeyboardShown } from './environment';
-import { SubChatTabs, useChatHeader } from './header';
+import { SubChatTabs, useChatHeader, type TitleInfo } from './header';
 import { LatestChip, Transcript } from './transcript';
 import { useChatActions } from './use-chat-actions';
 import { useChatHistory } from './use-chat-history';
@@ -100,6 +101,31 @@ function PinnedStrip({
   );
 }
 
+/**
+ * The header, with the running turn's clock. Ticking here each second redraws only this, not
+ * the conversation under it.
+ */
+function ChatHeader({
+  title,
+  since,
+  onDelete,
+}: {
+  title: Omit<TitleInfo, 'elapsed'>;
+  since: number | null;
+  onDelete: (() => Promise<void>) | null;
+}) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (since === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+  const elapsed = since === null ? '' : duration(new Date(since).toISOString(), now);
+  useChatHeader({ ...title, elapsed }, onDelete);
+  return null;
+}
+
 function ChatView({
   id,
   initialSubChatId,
@@ -125,10 +151,8 @@ function ChatView({
   const flowRun = kind === 'flow';
   const projects = useResource({ type: 'projects' }, { interval: 60_000 });
   const project = projects.data?.find((entry) => entry.id === data?.chat.projectId)?.name;
-  const draft = useDraft(
-    JSON.stringify(['chat', id, data?.subChatId ?? subChatId ?? 'loading']),
-    '',
-  );
+  const conversation = data?.subChatId ?? subChatId;
+  const draft = JSON.stringify(['chat', id, conversation ?? 'loading']);
   const history = useChatHistory(id, data?.messages);
   const composerState = useComposerState(id, data?.subChatId);
   const attachments = useComposerAttachments(
@@ -152,6 +176,7 @@ function ChatView({
   const clock = useTurnClock(data?.activity, `${id}:${data?.subChatId}`, resource.updatedAt);
   const actions = useChatActions({
     chatId: id,
+    subChatId: conversation,
     data,
     draft,
     attachments,
@@ -163,16 +188,6 @@ function ChatView({
     },
     onDeleted: () => navigation.reset(afterChatDeletion(navigation.getState(), id)),
   });
-  useChatHeader(
-    {
-      name: data?.chat.name ?? 'Frink',
-      kind,
-      project,
-      activity: data?.activity,
-      elapsed: clock.elapsed,
-    },
-    data ? actions.remove : null,
-  );
   function switchConversation(next: string) {
     if (actions.busy || next === data?.subChatId) return;
     history.reset();
@@ -185,6 +200,11 @@ function ChatView({
     actions.note ?? (composerState.error ? { text: composerState.error, error: true } : null);
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={ios ? 'padding' : undefined}>
+      <ChatHeader
+        title={{ name: data?.chat.name ?? 'Frink', kind, project, activity: data?.activity }}
+        since={clock.since}
+        onDelete={data ? actions.remove : null}
+      />
       <View style={{ flex: 1 }}>
         <ScrollView
           ref={scrolling.scrollRef}
@@ -220,11 +240,13 @@ function ChatView({
             {data ? (
               <Transcript
                 data={data}
-                messages={history.messages}
+                messages={mergeTranscript(history.messages, actions.pending)}
                 history={history}
                 scrolling={scrolling}
                 targetResolved={!!target && !targetOpen}
                 onAnswered={resource.refresh}
+                onRetry={actions.retry}
+                onDiscard={actions.discard}
               />
             ) : (
               !resource.error && <ActivityIndicator color={t.muted} style={{ paddingTop: 120 }} />
@@ -263,8 +285,7 @@ function ChatView({
                 flowRun={flowRun}
                 busy={actions.busy}
                 note={note}
-                value={draft.value}
-                onChange={draft.update}
+                draft={draft}
                 onSend={actions.submit}
                 onStop={actions.stop}
                 composer={composerState.composer}

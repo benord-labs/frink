@@ -1,9 +1,11 @@
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useRef, useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, View } from 'react-native';
+import { AppState, Image, KeyboardAvoidingView, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useResource } from '../../lib/connection';
-import { useDraft } from '../../lib/drafts';
+import { deliver } from '../../lib/chat/deliver';
+import { addPending, changePending, pendingKey, type PendingEntry } from '../../lib/chat/pending';
+import { useConnection, useResource } from '../../lib/connection';
+import { useDrafts } from '../../lib/drafts';
 import { readPreferences, savePreferences, type NewChatPreferences } from '../../lib/preferences';
 import { useRootNavigation } from '../../navigation/routes';
 import { ResourceStatus } from '../../ui/resource-status';
@@ -23,6 +25,7 @@ import { useStartChat } from './use-start-chat';
 const ios = Platform.OS === 'ios';
 const mark = require('../../../assets/frink-mark.png');
 const NO_PROJECTS = 'Add a project in Frink on your Mac to start a chat.';
+const DRAFT = 'new-chat';
 const PLACES = [
   { id: 'worktree', label: 'Worktree' },
   { id: 'local', label: 'Local' },
@@ -41,7 +44,8 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
   const keyboard = useKeyboardShown();
   const projects = useResource({ type: 'projects' }, { interval: 10_000 });
   const ready = useExecutionReady();
-  const draft = useDraft('new-chat', '');
+  const { connection, request } = useConnection();
+  const drafts = useDrafts();
   const [choice, setChoice] = useState<NewChatPreferences | null>(null);
   const [picking, setPicking] = useState(false);
   const chat = useStartChat();
@@ -83,17 +87,26 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
     setChoice(next);
   }
 
+  // The first message shows on the chat's own screen while it goes out.
   async function send() {
-    const { requestId } = draft;
     const made = await start();
     if (!made || !choice || !project) return;
     // A model or mode picked a moment ago must be saved before the message that uses it.
-    if (!(await settings.settled())) return;
-    const message = { text: draft.value, requestId, attachments: attachments.ids };
-    if (!(await chat.send(made, message))) return;
-    draft.clear(requestId);
+    if (!(await settings.settled()) || !chat.claim(made)) return;
+    const { value, requestId } = drafts.get(DRAFT, '');
+    const first: PendingEntry = {
+      id: requestId,
+      text: value,
+      attachments: attachments.files,
+      kind: 'send',
+      state: 'sending',
+    };
+    const outbox = { key: pendingKey(connection?.deviceId, made.chatId, made.subChatId), ...made };
+    changePending(outbox.key, (entries) => addPending(entries, first));
+    drafts.clear(DRAFT, requestId);
     void savePreferences({ ...choice, projectId: project.id });
     navigation.replace('Chat', { id: made.chatId, subChatId: made.subChatId });
+    void deliver({ request, app: AppState }, outbox, first);
   }
 
   const note = chat.error
@@ -104,8 +117,6 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
         ? { text: NO_PROJECTS }
         : null;
   const busy = chat.busy;
-  // A chat whose first message may have arrived keeps its project and place.
-  const fixed = busy || chat.sendTried;
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={ios ? 'padding' : undefined}>
       <View
@@ -161,8 +172,7 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
               flowRun={false}
               busy={busy}
               note={note}
-              value={draft.value}
-              onChange={draft.update}
+              draft={DRAFT}
               onSend={() => void send()}
               onStop={() => {}}
               attachments={attachments}
@@ -189,13 +199,13 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
                   <ChipButton
                     label={project?.name ?? 'Project'}
                     accessibilityLabel={project ? `Project: ${project.name}` : 'Choose project'}
-                    disabled={fixed}
+                    disabled={busy}
                     onPress={() => setPicking(true)}
                   />
                   <MenuChip
                     label={choice.useWorktree ? 'Worktree' : 'Local'}
                     accessibilityLabel={`Work in: ${choice.useWorktree ? 'Worktree' : 'Local'}`}
-                    disabled={fixed}
+                    disabled={busy}
                     groups={[
                       {
                         title: 'Work in',

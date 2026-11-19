@@ -63,9 +63,6 @@ export function composerPlaceholder(
   return executionReady ? 'Message Frink' : 'Open Frink on your Mac to chat';
 }
 
-export const STEER_NOT_DELIVERED =
-  'Frink can’t take this mid-step. It’s kept for when it finishes.';
-
 /** Busy chats refresh quickly so steps and Stop feel live; idle ones settle down. */
 export function chatPollInterval(activity: MobileActivity | undefined): number {
   return activity === 'running' || activity === 'background' ? 2000 : 4000;

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MobileActivity } from '@frink/shared/types/remote/mobile';
-import { duration } from '../../lib/status';
 
 /**
  * How long the current turn has run. The computer doesn't send a start time, so the clock only
@@ -14,7 +13,6 @@ export function useTurnClock(
   updatedAt: number | undefined,
 ) {
   const [since, setSince] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now);
   const previous = useRef({ conversation, activity });
   // A send from here, waiting for a poll to report its turn running.
   const pending = useRef<number | null>(null);
@@ -35,15 +33,9 @@ export function useTurnClock(
         pending.current = null;
     }
   }, [activity, conversation, updatedAt]);
-  const ticking = since !== null && activity === 'running';
-  useEffect(() => {
-    if (!ticking) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [ticking]);
   return {
-    elapsed: ticking ? duration(new Date(since).toISOString(), now) : '',
+    /** When the running turn started, or null when there is no number to show. */
+    since: activity === 'running' ? since : null,
     /** A send from this phone starts the turn now, before the next poll reports it. */
     started: () => {
       pending.current = Date.now();
