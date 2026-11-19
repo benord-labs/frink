@@ -20,6 +20,8 @@ function git(...args: string[]): string | undefined {
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...(config as ExpoConfig),
+  // Memoises components at build time so a changed prop redraws only what reads it.
+  experiments: { ...config.experiments, reactCompiler: true },
   // Which checkout's code the phone is running, shown on the connection screen.
   extra: {
     ...config.extra,
