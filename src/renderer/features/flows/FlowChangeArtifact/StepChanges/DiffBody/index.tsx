@@ -15,14 +15,18 @@ const SMALL_BUTTON_CLASS =
   'cursor-pointer border-0 bg-transparent p-0 text-left text-xs text-muted-foreground hover:text-foreground focus-visible:underline';
 /** Longer new text starts clamped so one rewrite cannot take over the chat. */
 const CLAMP_CHARS = 480;
+const CLAMP_LINES = 6;
 
 type SegmentsProps = { segments: DiffSegment[]; swaps?: boolean };
 
 /** In a preview, an arrow joins a removal to its replacement and a comma separates swaps. */
-function previewSeparator(previous: DiffSegment | undefined): string | null {
+function previewSeparator(previous: DiffSegment | undefined, current: DiffSegment): string | null {
   if (!previous) return null;
-  return previous.kind === 'removed' ? ' → ' : ', ';
+  return previous.kind === 'removed' && current.kind === 'added' ? ' → ' : ', ';
 }
+
+/** Moves keyboard focus to content that replaced the control the user just activated. */
+export const focusOnMount = (node: HTMLElement | null) => node?.focus();
 
 function ChangedSegment({ segments, swaps, index }: SegmentsProps & { index: number }) {
   const segment = segments[index];
@@ -30,7 +34,7 @@ function ChangedSegment({ segments, swaps, index }: SegmentsProps & { index: num
   const Tag = segment.kind === 'added' ? 'ins' : 'del';
   return (
     <span>
-      {swaps ? previewSeparator(previous) : null}
+      {swaps ? previewSeparator(previous, segment) : null}
       <Tag
         className={cn(
           segment.kind === 'added' ? ADDED_CLASS : REMOVED_CLASS,
@@ -76,7 +80,11 @@ function foldUnchanged(paragraphs: DiffParagraph[], showAll: boolean): DiffItem[
 function WordDiff({ paragraphs }: { paragraphs: DiffParagraph[] }): ReactElement {
   const [showAll, setShowAll] = useState(false);
   return (
-    <div className="flex flex-col gap-2.5">
+    <div
+      className="flex flex-col gap-2.5 outline-none"
+      ref={showAll ? focusOnMount : undefined}
+      tabIndex={-1}
+    >
       {foldUnchanged(paragraphs, showAll).map((item, index) =>
         item.kind === 'folded' ? (
           <button
@@ -101,7 +109,9 @@ function WordDiff({ paragraphs }: { paragraphs: DiffParagraph[] }): ReactElement
 }
 
 function Rewrite({ field }: { field: TextFieldChange }): ReactElement {
-  const [full, setFull] = useState(field.after.length <= CLAMP_CHARS);
+  const [full, setFull] = useState(
+    field.after.length <= CLAMP_CHARS && field.after.split('\n').length <= CLAMP_LINES,
+  );
   return (
     <div className="flex flex-col gap-2">
       <p className="m-0 text-xs text-muted-foreground">

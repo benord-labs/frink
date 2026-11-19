@@ -39,6 +39,19 @@ describe('diffText', () => {
     );
   });
 
+  it('folds untouched paragraphs in text saved with Windows line endings', () => {
+    const windows = (text: string) => text.replaceAll('\n', '\r\n');
+
+    const diff = diffText(windows(PROMPT), windows(PROMPT.replace('Keep it short.', 'Be brief.')));
+
+    expect(diff.paragraphs.map((paragraph) => paragraph.changed)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
   it('calls mostly new text a rewrite, previews its opening line and skips the word diff', () => {
     const diff = diffText(PROMPT, 'Ship this story as one PR.\nRun every gate first.');
 

@@ -72,11 +72,20 @@ export function buildStepChanges(
   versions: FlowVersionPair,
   routes: FlowOutlineRoute[],
 ): StepChangeEntry[] {
+  // A step removed and re-added under the same id is a different step; diffing it would mislead.
+  const replaced = new Set(
+    presentation.changes
+      .filter(
+        (change) =>
+          change.kind === 'node' && change.action !== 'update' && change.status === 'applied',
+      )
+      .map((change) => change.nodeId),
+  );
   const nodeIds = [
     ...new Set(
       presentation.changes.filter(isAppliedStepUpdate).map((change) => change.nodeId ?? ''),
     ),
-  ];
+  ].filter((nodeId) => !replaced.has(nodeId));
   return nodeIds.flatMap((nodeId) => {
     const before = versions.before.nodes.find((node) => node.id === nodeId);
     const after = versions.after.nodes.find((node) => node.id === nodeId);

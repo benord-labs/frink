@@ -23,7 +23,7 @@ const TINY_EDIT_WORDS = 3;
 const SMALL_EDIT_KEPT = 0.75;
 const EDITED_KEPT = 0.4;
 const PREVIEW_CHARS = 160;
-const PARAGRAPH_BREAK = /\n[ \t]*\n\s*/;
+const PARAGRAPH_BREAK = /\r?\n[ \t]*\r?\n\s*/;
 const WORD = /\S+/g;
 const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 

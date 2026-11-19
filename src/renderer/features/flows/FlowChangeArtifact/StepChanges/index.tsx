@@ -1,6 +1,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { memo, type ReactElement, useState } from 'react';
 import type { StepChangeEntry } from '../../../../lib/flows/flow-step-diff';
+import { focusOnMount } from './DiffBody';
 import { FieldRow } from './FieldRow';
 
 type Props = { entries: StepChangeEntry[] };
@@ -24,9 +25,15 @@ function firstTextFieldKey(entries: StepChangeEntry[]): string | undefined {
   return undefined;
 }
 
-function StepEntry({ entry, openKey }: { entry: StepChangeEntry; openKey?: string }) {
+type StepEntryProps = { entry: StepChangeEntry; openKey?: string; takeFocus?: boolean };
+
+function StepEntry({ entry, openKey, takeFocus }: StepEntryProps) {
   return (
-    <li className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-muted/20 contrast-more:border-foreground">
+    <li
+      className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-muted/20 outline-none contrast-more:border-foreground"
+      ref={takeFocus ? focusOnMount : undefined}
+      tabIndex={takeFocus ? -1 : undefined}
+    >
       <div className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/50 px-3 py-2">
         <span
           aria-hidden="true"
@@ -41,7 +48,7 @@ function StepEntry({ entry, openKey }: { entry: StepChangeEntry; openKey?: strin
           </span>
         ) : null}
         {entry.path.length > 0 ? (
-          <span className="col-start-2 col-end-4 truncate text-xs text-muted-foreground">
+          <span className="col-start-2 col-end-4 text-xs text-muted-foreground wrap-anywhere">
             {entry.path.join(' › ')}
           </span>
         ) : null}
@@ -73,8 +80,13 @@ export const StepChanges = memo(function StepChanges({ entries }: Props): ReactE
     >
       <h4 className="m-0 pb-1.5 text-xs font-medium text-muted-foreground">What changed</h4>
       <ol className="m-0 flex list-none flex-col gap-2 p-0">
-        {visible.map((entry) => (
-          <StepEntry entry={entry} key={entry.nodeId} openKey={openKey} />
+        {visible.map((entry, index) => (
+          <StepEntry
+            entry={entry}
+            key={entry.nodeId}
+            openKey={openKey}
+            takeFocus={showAll && index === VISIBLE_STEPS}
+          />
         ))}
       </ol>
       {hiddenCount > 0 ? (

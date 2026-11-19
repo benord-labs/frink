@@ -104,4 +104,39 @@ describe('buildStepChanges', () => {
 
     expect(entries.map((entry) => entry.nodeId)).toEqual(['edge']);
   });
+
+  it('skips a step that was removed and re-added under the same id, since it is a new step', () => {
+    const replaced = (action: 'add' | 'remove', operationIndex: number) => ({
+      ...update('ship', operationIndex),
+      action,
+    });
+    const presentation = receipt({
+      changes: [replaced('remove', 0), replaced('add', 1), update('ship', 2)],
+    });
+
+    const entries = buildStepChanges(
+      presentation,
+      { before: graph('Old step'), after: graph('Brand new step') },
+      [],
+    );
+
+    expect(entries).toEqual([]);
+  });
+
+  it('still lists an applied update when the same patch failed to remove that step', () => {
+    const failedRemove: FlowSemanticChange = {
+      ...update('ship', 0),
+      action: 'remove',
+      status: 'failed',
+    };
+    const presentation = receipt({ changes: [failedRemove, update('ship', 1)] });
+
+    const entries = buildStepChanges(
+      presentation,
+      { before: graph('Open a PR.'), after: graph('Open a PR. Attach screenshots.') },
+      [],
+    );
+
+    expect(entries.map((entry) => entry.nodeId)).toEqual(['ship']);
+  });
 });

@@ -451,12 +451,12 @@ describe('FlowChangeArtifact — what changed', () => {
         id: 'agent',
         before: {
           instructions: RULES.join('\n\n'),
-          agentInstructions: 'You review code.',
+          agentInstructions: 'Alpha one Beta two Gamma',
           model: 'sonnet',
         },
         after: {
           instructions: RULES.join('\n\n').replace('criteria.', 'criteria. Attach UI screenshots.'),
-          agentInstructions: 'You review code carefully.',
+          agentInstructions: 'Alpha Beta Gamma',
           model: 'opus',
         },
       },
@@ -478,9 +478,11 @@ describe('FlowChangeArtifact — what changed', () => {
     expect(screen.queryByText('Do not merge the PR.')).toBeNull();
     fireEvent.click(folds[1]);
     expect(screen.getByText('Do not merge the PR.')).toBeTruthy();
+    expect(document.activeElement?.textContent).toContain('Do not merge the PR.');
 
     const role = screen.getByRole('button', { name: /Agent role/ });
     expect(role.getAttribute('aria-expanded')).toBe('false');
+    expect(role.parentElement?.querySelector('p')?.textContent).toBe('one, two');
     fireEvent.click(role);
     expect(role.getAttribute('aria-expanded')).toBe('true');
   });
@@ -490,14 +492,17 @@ describe('FlowChangeArtifact — what changed', () => {
       {
         id: 'agent',
         before: { instructions: RULES.join('\n\n') },
-        after: { instructions: 'Ship it as one PR and stop.' },
+        after: {
+          instructions: ['Ship it as one PR and stop.', ...Array(9).fill('Wait.')].join('\n'),
+        },
       },
     ]);
 
     render(<FlowChangeArtifact presentation={PRESENTATION} versions={versions} />);
 
     expect(screen.getByText('Rewritten')).toBeTruthy();
-    expect(screen.getByText('Ship it as one PR and stop.')).toBeTruthy();
+    expect(screen.getByText(/Ship it as one PR and stop\./)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show all' })).toBeTruthy();
     expect(screen.getByText('Previous version').closest('details')?.textContent).toContain(
       'Do not merge the PR.',
     );
@@ -543,5 +548,6 @@ describe('FlowChangeArtifact — what changed', () => {
     expect(list.querySelectorAll('ol > li')).toHaveLength(3);
     fireEvent.click(screen.getByRole('button', { name: 'Show 1 more changed step' }));
     expect(list.querySelectorAll('ol > li')).toHaveLength(4);
+    expect(document.activeElement).toBe(list.querySelectorAll('ol > li')[3]);
   });
 });

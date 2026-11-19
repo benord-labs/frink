@@ -396,12 +396,12 @@ The graph is saved after each patch call, even with incomplete configs. **Run-mo
 Each patch shows a card in the chat. When the agent edited existing steps, the card lists them under **What changed**, without you opening the Flow:
 
 - Each edited step shows where it sits in the Flow (for example "If yes › Then").
-- Text fields such as instructions, agent role, command and reply message get a size label (**Formatting only**, **Tiny edit**, **Small edit**, **Edited** or **Rewritten**), the number of words added and removed, and a one-line preview. Open a field to see the changed words highlighted; unchanged paragraphs stay folded. A rewrite shows the new text, with the previous version one click away.
+- Text fields such as instructions, agent role, command and reply message get a size label (**Formatting only**, **Tiny edit**, **Small edit**, **Edited** or **Rewritten**), the number of words added and removed, and a one-line preview. Open a field to see the changed words highlighted; unchanged paragraphs stay folded. A rewrite shows the new text, with the previous version one click away. A field where only spacing or line breaks changed reads **Formatting only** and has nothing to open.
 - Short settings such as model, branch, schedule, iteration limit and on/off switches show the old and new value.
-- Request headers, body and URL, working directories, projects and any setting Frink doesn't recognise are named but their values are not shown. A command's text never appears in the collapsed preview; open the field to see it.
+- Request headers, body and URL, working directories and projects are named but their values are not shown. Settings Frink doesn't recognise share one row, **Other step setup**; open the Flow to see which ones changed. A command's text never appears in the collapsed preview; open the field to see it.
 - The list shows up to three steps; **Show more** reveals the rest. **Show flow** still shows where each edit sits in the whole Flow.
 
-The card reads the two saved versions the patch went from and to, on your computer. The agent's own view of the result never contains the text of your steps.
+The card reads the two saved versions the patch went from and to, on your computer. The agent's own view of the result never contains the text of your steps. If either version is no longer there (for example the Flow was deleted) the card shows no **What changed** list; open the Flow to see its current steps.
 
 ### Letting an agent run a flow
 

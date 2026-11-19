@@ -105,15 +105,16 @@ function valueChange({ key, label, before, after }: FieldInput): FieldResult {
   };
 }
 
-/** The row for one changed key, or undefined when both sides read the same (an empty value vs none). */
+/** One row per changed key. A shown value moving between empty and absent is skipped; other keys
+ *  keep their row, since the step's runtime may treat empty and absent differently. */
 function fieldChange(input: FieldInput): FieldResult {
   const { key, before, after } = input;
+  if (!isDisplayedKey(key)) return { kind: 'label', label: input.label };
   const bothEmpty =
     EMPTY_VALUE.safeParse(before.config?.[key]).success &&
     EMPTY_VALUE.safeParse(after.config?.[key]).success;
   if (bothEmpty) return undefined;
-  if (TEXT_KEYS.has(key)) return textChange(input);
-  return VALUE_KEYS.has(key) ? valueChange(input) : { kind: 'label', label: input.label };
+  return TEXT_KEYS.has(key) ? textChange(input) : valueChange(input);
 }
 
 function isDisplayedKey(key: string): boolean {
