@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UploadedImage } from '../hooks/use-agents-file-upload';
 import type { PastedTextFile } from '../hooks/use-pasted-text-files';
 import {
+  appendDraftPastedText,
   clearDraft,
   clearDraftIfUnchanged,
   clearSubChatDraft,
@@ -396,6 +397,54 @@ describe('drafts store', () => {
       saveSubChatDraftText('chat-1', 'sub-1', 'something');
       saveSubChatDraftText('chat-1', 'sub-1', '');
       expect(getSubChatDraftFull('chat-1', 'sub-1')).toBeNull();
+    });
+  });
+
+  describe('late pasted-file append', () => {
+    it('adds one chip, keeps text, images and sub-chat id byte-for-byte, and makes no blob url', () => {
+      const key = newChatDraftKey(0);
+      const image = { id: 'i1', filename: 'i1.png', base64Data: 'aGk=', mediaType: 'image/png' };
+      const stored = {
+        id: 'p0',
+        filePath: '/tmp/p0.txt',
+        filename: 'p0.txt',
+        size: 1,
+        preview: 'x',
+      };
+      seedRaw(key, {
+        text: 'see attached',
+        images: [image],
+        pastedTexts: [stored],
+        subChatId: 'sub-stored',
+      });
+
+      appendDraftPastedText(key, makePasted('p1'), 'sub-dropped');
+
+      expect(readRaw()[key]).toMatchObject({
+        text: 'see attached',
+        images: [image],
+        subChatId: 'sub-stored',
+        pastedTexts: [
+          stored,
+          { id: 'p1', filePath: '/tmp/p1.txt', filename: 'p1.txt', size: 42, preview: 'hello' },
+        ],
+      });
+      expect(URL.createObjectURL).not.toHaveBeenCalled();
+    });
+
+    // Appending into an expired home slot would resurrect week-old text beside the new file.
+    it('drops an expired new-chat slot first and files the chip under the drop-time sub-chat id', () => {
+      const key = newChatDraftKey(0);
+      seedRaw(key, {
+        text: 'old',
+        subChatId: 'sub-old',
+        updatedAt: Date.now() - SEVEN_DAYS_MS - 1,
+      });
+
+      appendDraftPastedText(key, makePasted('p1'), 'sub-dropped');
+
+      expect(readRaw()[key]).toMatchObject({ text: '', subChatId: 'sub-dropped' });
+      expect(readRaw()[key].pastedTexts).toHaveLength(1);
     });
   });
 });
