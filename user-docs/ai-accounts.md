@@ -17,6 +17,8 @@ OpenAI chats don't have Plan or Debug mode yet, so Frink doesn't offer them ther
 
 Helper agents are off for now in OpenAI chats. Frink doesn't offer them to Codex until it can check what they run.
 
+If Codex settings managed on your computer or by your organisation switch helper agents, or another feature Frink keeps off, back on, Frink won't start the OpenAI chat. It tells you which setting to ask whoever manages Codex to change.
+
 ### OpenCode (macOS and Linux)
 
 OpenCode is a free, open-source coding agent that can use many AI providers, including free models. Frink runs the OpenCode you install yourself.

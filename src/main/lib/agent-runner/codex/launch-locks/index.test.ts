@@ -89,6 +89,17 @@ describe('verifyLaunchLocks', () => {
     await expect(verifyLaunchLocks(peer, ARGS)).rejects.toThrow('Send your message again');
   });
 
+  it('fails closed instead of looping when Codex keeps returning the same feature page', async () => {
+    const peer = codex();
+    peer.sendRequest.mockImplementation(async (method: string) =>
+      method === 'config/read'
+        ? { config: cleanConfig() }
+        : { data: cleanFeatures(), nextCursor: '1' },
+    );
+    await expect(verifyLaunchLocks(peer, ARGS)).rejects.toBeInstanceOf(CodexSettingsUncheckedError);
+    expect(peer.sendRequest).toHaveBeenCalledTimes(3);
+  });
+
   it('reads nothing when the launch set no locks', async () => {
     const peer = codex();
     await verifyLaunchLocks(peer, ['--config', 'model="m"']);

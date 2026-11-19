@@ -80,6 +80,7 @@ export class CodexSettingsUncheckedError extends Error {
 
 async function effectiveFeatures(request: Request): Promise<Map<string, boolean>> {
   const enabled = new Map<string, boolean>();
+  const seen = new Set<string>();
   let cursor: string | null | undefined;
   do {
     const page = featurePage.parse(
@@ -87,6 +88,9 @@ async function effectiveFeatures(request: Request): Promise<Map<string, boolean>
     );
     for (const feature of page.data) enabled.set(feature.name, feature.enabled);
     cursor = page.nextCursor;
+    // Each read is timed out, but a cursor that never advances would loop forever.
+    if (cursor && seen.has(cursor)) throw new Error(`Codex repeated feature page ${cursor}`);
+    if (cursor) seen.add(cursor);
   } while (cursor);
   return enabled;
 }
