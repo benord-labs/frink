@@ -18,6 +18,9 @@ import { Server as SocketServer, type Socket } from 'socket.io';
 
 const HEX_32_BYTES = /^[0-9a-f]{64}$/;
 const FRAME_BYTES = 256 * 1024;
+/** Every client: a dead one is dropped within 15 s rather than 45 s, while a pong late by up to
+ * 10 s (a desktop busy on its main thread, a phone on a poor link) still keeps it. */
+const HEARTBEAT = { pingInterval: 5_000, pingTimeout: 10_000 };
 const UNAVAILABLE = 'Mobile connection unavailable.';
 const DEFAULT_LIMITS = {
   sockets: 4096,
@@ -364,7 +367,7 @@ export function createRelay(
   app.use(helmet());
 
   const httpServer = createServer(app);
-  const io = new SocketServer(httpServer, { maxHttpBufferSize: FRAME_BYTES });
+  const io = new SocketServer(httpServer, { maxHttpBufferSize: FRAME_BYTES, ...HEARTBEAT });
   const stopMobile = attachMobileRelay(
     io,
     (handshake) => originOf(handshake, proxyHops),

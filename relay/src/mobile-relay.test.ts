@@ -67,6 +67,12 @@ describe('mobile relay', () => {
     ).toBe(true);
   });
 
+  it('drops a dead client within 15 s yet tolerates a pong up to 10 s late', () => {
+    relay = createRelay();
+    // A pong is due 10 s after each ping, and pings follow 5 s after the last pong.
+    expect(relay.io.engine.opts).toMatchObject({ pingInterval: 5_000, pingTimeout: 10_000 });
+  });
+
   it('refuses missing desktops and replaces a stale host on a new ownership proof', async () => {
     const url = await start();
     await expect(dial(url, { role: 'phone', route })).rejects.toThrow('unavailable');

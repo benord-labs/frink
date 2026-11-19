@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   sever: vi.fn(),
+  reconnect: vi.fn(),
+  power: new Map<string, () => void>(),
   executor: vi.fn(),
   warn: vi.fn(),
   liveActivity: vi.fn(),
@@ -19,7 +21,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: { getPath: () => mocks.directory },
   BrowserWindow: { getFocusedWindow: mocks.focused },
-  powerMonitor: { getSystemIdleState: mocks.idleState, getSystemIdleTime: () => 42 },
+  powerMonitor: {
+    getSystemIdleState: mocks.idleState,
+    getSystemIdleTime: () => 42,
+    on(event: string, listener: () => void) {
+      mocks.power.set(event, listener);
+      return this;
+    },
+    off(event: string, listener: () => void) {
+      if (mocks.power.get(event) === listener) mocks.power.delete(event);
+      return this;
+    },
+  },
 }));
 vi.mock('electron-log', () => ({ default: { warn: mocks.warn } }));
 vi.mock('./domain-api', () => ({
@@ -38,9 +51,14 @@ beforeEach(async () => {
   vi.stubEnv('FRINK_WEBHOOK_BASE_URL', undefined);
   mocks.stop.mockReset();
   mocks.sever.mockReset();
-  mocks.start
-    .mockReset()
-    .mockReturnValue({ close: mocks.stop, sever: mocks.sever, connected: () => true });
+  mocks.reconnect.mockReset();
+  mocks.power.clear();
+  mocks.start.mockReset().mockReturnValue({
+    close: mocks.stop,
+    sever: mocks.sever,
+    reconnect: mocks.reconnect,
+    connected: () => true,
+  });
   mocks.warn.mockReset();
   mocks.liveActivity.mockReset().mockReturnValue({ stop: vi.fn(), endDevice: vi.fn() });
 });
@@ -133,6 +151,31 @@ describe('desktop mobile access lifecycle', () => {
     await mobile.revokeMobileDevice(deviceId);
     const [revoked] = mocks.sever.mock.calls[0] as [(token: string) => boolean];
     expect(revoked(token)).toBe(true);
+  });
+
+  it('redials the relay after a sleep the relay outlasted, only while the host runs', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const mobile = await import('./index');
+      await mobile.enableMobileAccess();
+      // A resume with no recorded suspend, like one for a sleep before the host started, is ignored.
+      mocks.power.get('resume')?.();
+      // A short sleep leaves the socket, and the phones on it, alone.
+      mocks.power.get('suspend')?.();
+      vi.advanceTimersByTime(5_000);
+      mocks.power.get('resume')?.();
+      expect(mocks.reconnect).not.toHaveBeenCalled();
+      mocks.power.get('suspend')?.();
+      vi.advanceTimersByTime(60_000);
+      mocks.power.get('resume')?.();
+      // A repeated resume does not reuse the suspend the first one consumed.
+      mocks.power.get('resume')?.();
+      expect(mocks.reconnect).toHaveBeenCalledOnce();
+      await mobile.stopMobileAccess();
+      expect(mocks.power.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('restores an explicitly enabled listener and closes it without revoking on normal shutdown', async () => {

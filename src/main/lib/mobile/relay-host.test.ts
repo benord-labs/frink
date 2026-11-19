@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('electron-log', () => ({ default: { warn: vi.fn() } }));
+vi.mock('electron-log', () => ({ default: { warn: vi.fn(), debug: vi.fn() } }));
 vi.mock('../sentry', () => ({ captureContained: vi.fn() }));
 import {
   decodeEnvelope,
@@ -31,6 +32,7 @@ function fakeRelay() {
     connected: true,
     active: true,
     connect: vi.fn(),
+    disconnect: vi.fn(() => handlers.get('disconnect')?.('io client disconnect')),
     on: (event: string, handler: Handler) => handlers.set(event, handler),
     emit: (event: string, peerId: string) => {
       if (event === 'disconnect-peer') disconnected.push(peerId);
@@ -191,6 +193,7 @@ describe('mobile relay host', () => {
   it('drops a peer whose first frame is not a hello', () => {
     relay.fromPhone('peer-1', Buffer.from(new Uint8Array(40)));
     expect(relay.disconnected).toEqual(['peer-1']);
+    expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('peer-1'));
   });
 
   it('severs exactly the channels of a revoked phone, at once', async () => {
@@ -223,6 +226,25 @@ describe('mobile relay host', () => {
       host.close();
       vi.advanceTimersByTime(5_000);
       expect(relay.socket.connect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reconnect redials the relay at once and forgets every phone channel', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      expect((await phone('peer-1')).session).not.toBeNull();
+      // A client-side disconnect leaves socket.io inactive, which schedules a reclaim.
+      relay.socket.active = false;
+      host.reconnect();
+      expect(relay.socket.disconnect).toHaveBeenCalledOnce();
+      expect(relay.socket.connect).toHaveBeenCalledOnce();
+      // No delayed reclaim follows the immediate one.
+      vi.advanceTimersByTime(5_000);
+      expect(relay.socket.connect).toHaveBeenCalledOnce();
+      // The old channel is gone, so the same peer id must handshake afresh.
+      expect((await phone('peer-1')).session).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
