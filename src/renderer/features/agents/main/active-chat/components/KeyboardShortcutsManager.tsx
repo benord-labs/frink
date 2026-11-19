@@ -139,7 +139,7 @@ export function KeyboardShortcutsManager({
     if (!isActive || !isPaneActive) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!chatOwnsKeyboardShortcuts(chatRef.current)) return;
+      if (e.defaultPrevented || !chatOwnsKeyboardShortcuts(chatRef.current)) return;
       if (
         e.key === 'Enter' &&
         isPrimaryChord(e) &&
@@ -147,9 +147,9 @@ export function KeyboardShortcutsManager({
         hasUnapprovedPlan &&
         !isStreaming
       ) {
-        // Capture phase + stop: the composer also submits on Enter, so it must not see this one.
+        // Capture phase + stop: the composer and other window listeners must not also act on it.
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         handleApprovePlan();
       }
     };

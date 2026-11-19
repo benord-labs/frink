@@ -279,4 +279,40 @@ describe('KeyboardShortcutsManager', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
     expect(submit).toHaveBeenCalledOnce();
   });
+
+  it('runs one action per Cmd+Enter alongside other window capture listeners', () => {
+    const handleApprovePlan = vi.fn();
+    const earlierOwner = vi.fn((e: KeyboardEvent) => e.preventDefault());
+    window.addEventListener('keydown', earlierOwner, true);
+    const view = (approve: () => void) => (
+      <KeyboardShortcutsManager
+        isActive={true}
+        isPaneActive={true}
+        isStreaming={false}
+        pendingQuestions={null}
+        hasUnapprovedPlan={true}
+        editorRef={createRef()}
+        stop={vi.fn(async () => undefined)}
+        handleQuestionsSkip={vi.fn(async () => undefined)}
+        handleApprovePlan={approve}
+        scrollToBottom={vi.fn()}
+      />
+    );
+    const { unmount } = render(view(handleApprovePlan));
+
+    // An earlier capture listener (the hotkeys manager) already owns this chord.
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    expect(handleApprovePlan).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', earlierOwner, true);
+    unmount();
+
+    // Approval registered first: a later capture listener must not also act on the chord.
+    render(view(handleApprovePlan));
+    const laterListener = vi.fn();
+    window.addEventListener('keydown', laterListener, true);
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    window.removeEventListener('keydown', laterListener, true);
+    expect(handleApprovePlan).toHaveBeenCalledOnce();
+    expect(laterListener).not.toHaveBeenCalled();
+  });
 });
