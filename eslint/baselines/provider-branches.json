@@ -71,7 +71,7 @@
   },
   "src/main/lib/socket/executor.ts": {
     "frink/no-provider-branch": {
-      "count": 16
+      "count": 17
     }
   },
   "src/main/lib/socket/operator-reminders.ts": {
@@ -96,7 +96,7 @@
   },
   "src/main/lib/trpc/routers/agent-accounts.ts": {
     "frink/no-provider-branch": {
-      "count": 7
+      "count": 9
     }
   },
   "src/main/lib/trpc/routers/agent-utils.ts": {
