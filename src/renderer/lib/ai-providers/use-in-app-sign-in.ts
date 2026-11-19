@@ -64,7 +64,9 @@ export function useInAppSignIn<T>({
 
   const waiting = signIn.isPending || checking;
   const state = waiting ? 'waiting' : signIn.isError || missed ? 'failed' : 'idle';
-  return { state, waiting, start, cancel } as const;
+  // Only while the browser step waits; once it finished, a new start would drop the login it made.
+  const reopen = signIn.isPending ? start : undefined;
+  return { state, waiting, start, cancel, reopen } as const;
 }
 
 export type InAppSignIn = ReturnType<typeof useInAppSignIn>;

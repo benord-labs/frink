@@ -8,6 +8,7 @@ import {
 } from '../../../../shared/lib/ai-providers';
 import { findAcpAgent } from '../../agent-runner/acp';
 import { rememberedAgentModels } from '../../agent-runner/agent-models';
+import { cancelCodexSignIn, signInToCodex } from '../../agent-runner/codex/login';
 import { findCopilotAgent } from '../../agent-runner/copilot';
 import { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
 import { cancelClaudeSignIn, signInToClaude } from '../../claude/login';
@@ -24,6 +25,8 @@ type AgentAccountsDeps = {
   signInCursor: typeof signInToCursor;
   signInClaude: typeof signInToClaude;
   cancelClaude: typeof cancelClaudeSignIn;
+  signInCodex: typeof signInToCodex;
+  cancelCodex: typeof cancelCodexSignIn;
   detectCodex: typeof detectCodexAccount;
   rememberedModels: typeof rememberedAgentModels;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
@@ -31,7 +34,7 @@ type AgentAccountsDeps = {
 };
 
 const NOT_AVAILABLE = "Frink can't connect this agent yet.";
-const NO_CODEX_LOGIN = 'No Codex login found. Run `codex login` and try again.';
+const NO_CODEX_LOGIN = "Frink didn't find a ChatGPT login on this computer.";
 const signInUnfinished = (name: string) => `${name}'s sign-in didn't finish. Try again.`;
 const typeInput = z.object({ type: z.string() });
 
@@ -83,6 +86,8 @@ export function createAgentAccountsRouter(
     signInCursor: signInToCursor,
     signInClaude: signInToClaude,
     cancelClaude: cancelClaudeSignIn,
+    signInCodex: signInToCodex,
+    cancelCodex: cancelCodexSignIn,
     detectCodex: detectCodexAccount,
     rememberedModels: rememberedAgentModels,
     flags: LAUNCH_FLAGS,
@@ -95,19 +100,25 @@ export function createAgentAccountsRouter(
       return row ? detectAgent(row, deps) : { available: false, reason: NOT_AVAILABLE };
     }),
 
-    /** Starts Claude's or Cursor's own sign-in in the browser; the provider keeps what it makes. */
+    /** Starts Claude's, Codex's or Cursor's own sign-in in the browser; the provider keeps what it makes. */
     signIn: publicProcedure.input(typeInput).mutation(async ({ input }) => {
       if (input.type === 'claude-code' && deps.platform !== 'win32') {
         if (!(await deps.signInClaude())) throw new Error(signInUnfinished('Claude'));
         return;
       }
-      if (connectableAgent(input.type, deps)?.runtime !== 'cursor') throw new Error(NOT_AVAILABLE);
+      const runtime = connectableAgent(input.type, deps)?.runtime;
+      if (runtime === 'codex' && deps.platform !== 'win32') {
+        if (!(await deps.signInCodex())) throw new Error(signInUnfinished('ChatGPT'));
+        return;
+      }
+      if (runtime !== 'cursor') throw new Error(NOT_AVAILABLE);
       if (!(await deps.signInCursor())) throw new Error(signInUnfinished('Cursor'));
     }),
 
     /** Stops a sign-in still waiting on the browser. */
     cancelSignIn: publicProcedure.input(typeInput).mutation(({ input }) => {
       if (input.type === 'claude-code') deps.cancelClaude();
+      if (input.type === 'codex') deps.cancelCodex();
     }),
 
     /** The models the agent last reported on this computer; none before its first session. */
