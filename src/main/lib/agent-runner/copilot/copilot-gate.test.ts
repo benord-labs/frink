@@ -134,6 +134,18 @@ describe('questionsForCopilotTool', () => {
     expect(questions('rg', { pattern: 'KEY', glob: null })).toEqual(ask());
   });
 
+  it('asks about an env filter outside the folder too, as a folder may read without asking', () => {
+    const away = path.dirname(outside);
+    const grep = (glob: string) => questions('grep', { pattern: 'KEY', paths: away, glob });
+    for (const glob of ['**/.env*', '*.env', '[.]env', '{.env,a}']) {
+      expect(grep(glob)).toEqual(ask(read(away), read(path.join(away, glob))));
+    }
+    // With no wildcard the filter is the place itself, asked once.
+    expect(grep('config/.env')).toEqual(ask(read(path.join(away, 'config/.env'))));
+    expect(grep('*.conf')).toEqual(ask(read(away)));
+    expect(questions('glob', { pattern: '**/.env*', paths: away })).toEqual(ask(read(away)));
+  });
+
   it('reads a filter that only leaves files out as no filter, and judges the rest', () => {
     for (const glob of EXCLUSIONS) {
       expect(questions('grep', { pattern: 'KEY', glob })).toEqual(ask());

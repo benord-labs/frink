@@ -1,10 +1,7 @@
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { and, eq, inArray, notLike, sql } from 'drizzle-orm';
-import { isRootLikePath } from '../../../../shared/lib/path-normalization';
-import { isPathWithinProject, resolveToRealPath } from '../../permissions/path-check';
-import { SYSTEM_DENIED_EXACT } from '../../permissions/v2/system-denied-patterns';
+import { isPathWithinProject } from '../../permissions/path-check';
+import { isRootFolder } from '../../permissions/v2/linked-read/root-folder';
 import type { getDatabase } from '../index';
 import { chatLinkedProjects, chats, type Project, projects } from '../schema';
 
@@ -27,8 +24,6 @@ export type LinkResult = { ok: true } | { ok: false; reason: LinkRefusal };
 type MoveDestination = { projectId: string | null; worktreePath: string | null };
 
 const isVirtual = (dir: string) => dir.startsWith('virtual://');
-// macOS also shows every user folder under its data volume, and realpath keeps that spelling.
-const DATA_VOLUME = '/System/Volumes/Data';
 const linkOrder = sql`${chatLinkedProjects}.rowid`;
 const ofChat = (chatId: string) => eq(chatLinkedProjects.chatId, chatId);
 
@@ -39,25 +34,10 @@ function overlapsAny(dir: string, mainFolders: Array<string | null | undefined>)
   );
 }
 
-/** Home and the protected folders in it, with their data-volume spellings on macOS. */
-function guardedFolders(): string[] {
-  const folders = [os.homedir(), ...SYSTEM_DENIED_EXACT];
-  if (process.platform !== 'darwin') return folders;
-  return [
-    ...folders,
-    ...folders.map((folder) => path.join(DATA_VOLUME, resolveToRealPath(folder))),
-  ];
-}
-
-/** `/` or a drive root, home, or a folder holding home or a protected folder such as `~/.ssh`,
- * however it is spelled: by real path, so a link to `/` or `/Users/..` counts as `/`. */
-function isRootFolder(dir: string): boolean {
-  const real = resolveToRealPath(path.resolve(dir));
-  return (
-    isRootLikePath(dir) ||
-    isRootLikePath(real) ||
-    guardedFolders().some((inner) => isPathWithinProject(inner, real))
-  );
+/** The links the agent may read now: each folder on disk and apart from the chat's own folders.
+ * One rule for what the agent is told and what the permission gate lets it read. */
+export function liveLinks<T extends { path: string }>(links: T[], ownFolders: string[]): T[] {
+  return links.filter((link) => fs.existsSync(link.path) && !overlapsAny(link.path, ownFolders));
 }
 
 /** The chat's linked projects in the order they were linked. Virtual folders are never linked. */

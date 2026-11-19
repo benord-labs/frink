@@ -4,11 +4,26 @@ import path from 'node:path';
 import log from 'electron-log';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { claudeMemoryProjectRoot } from '../../claude/auto-memory';
+import { getDatabase } from '../../db';
+import { listLinkedProjects, liveLinks } from '../../db/repos/chat-linked-projects';
 import { getMultiProjectContext } from '../../multi-project-prompt';
 import { resolvePermissionProjectPath } from '../../permissions';
 
 type WorkspaceProject = { id: string; name: string; path: string };
-type WorkspaceChat = { worktreePath?: string | null; branch?: string | null };
+type WorkspaceChat = { id: string; worktreePath?: string | null; branch?: string | null };
+
+/** The chat's linked projects the agent is told about, by name: each one on disk and apart from
+ * the chat's own folders. When the links cannot be read the agent is told of none. */
+function linkedProjectsOf(chatId: string, ownFolders: string[]) {
+  try {
+    return liveLinks(listLinkedProjects(getDatabase(), chatId), ownFolders)
+      .map((link) => ({ name: link.name, path: link.path }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+  } catch (err) {
+    log.warn("[Socket Executor] Could not read the chat's linked projects; none are named", err);
+    return [];
+  }
+}
 
 function physicalPath(dir: string): string {
   try {
@@ -76,5 +91,7 @@ export async function resolveChatWorkspace(
     projectConfigRoot,
     multiProjectPrefix: multiProject.promptPrefix,
     dynamicChatMcpUrl,
+    linkedProjects:
+      folder && chat ? linkedProjectsOf(chat.id, [projectPath, permissionProjectPath]) : [],
   };
 }

@@ -1,6 +1,11 @@
 import type { AgentRuntime } from '../../../../../shared/lib/ai-providers';
 
-export type ScenarioId = 'simple-turn' | 'write-file-changed';
+export type ScenarioId =
+  | 'simple-turn'
+  | 'write-file-changed'
+  | 'linked-projects-note'
+  | 'linked-projects-typed'
+  | 'linked-projects-compact';
 export type RowId = `${ScenarioId} x ${AgentRuntime}`;
 
 const CLAUDE_ONLY_REFRESH = 'Only the Claude turn loop tells open editor tabs a file changed.';

@@ -43,6 +43,13 @@ const SESSION_ID = 'sess-conformance';
 const NOTE = 'hello';
 export const WRITE_PATH = path.resolve('/workspace/project', 'notes.md');
 const WRITE_ID = 'call-write';
+/** The one project linked to the chat in the link-note scenarios. */
+export const LINKED_PROJECT = { name: 'ros-service', path: path.resolve('/workspace/ros-service') };
+/** A worktree chat's folder, and the main checkout its permissions are judged against. */
+export const WORKTREE = {
+  path: path.resolve('/workspace/project-wt'),
+  main: path.resolve('/workspace/project'),
+};
 
 // SAFETY: the transformer and the Claude session loop read only these fields of an SDK frame.
 const CLAUDE_REPLY = [

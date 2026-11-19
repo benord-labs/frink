@@ -1,0 +1,231 @@
+/** Linked-project reads: Read, Glob and Grep inside a folder linked to the chat run without
+ * asking. Applied to a checker's result, so the deny list and every rule have already run; it
+ * only ever turns an ask that names no rule into an allow, or into a deny or an ask that does. */
+
+import * as nodeFs from 'node:fs';
+import * as nodePath from 'node:path';
+import picomatch from 'picomatch';
+import { parseRule } from '../../../../../shared/lib/rule-parser';
+import { envFileAsks, envGlobAsks } from '../../../agent-runner/env-file-reads';
+import { isPathWithinProject, resolveToRealPath } from '../../path-check';
+import { combineFileRules, expandTilde, type FileOpInput, ruleMatchPath } from '../check-edit';
+import {
+  type CombinedDecision,
+  evalScope,
+  resultFromCombined,
+  type ScopedDocs,
+  type ScopeEval,
+} from '../eval-rules';
+import { searchRoot, searchStaysInRoot, type SearchInput } from '../search';
+import { isSystemDeniedPath } from '../system-denied-patterns';
+import type { LinkedRoot, PermissionRequest, PermissionResult, PermissionsDoc } from '../types';
+import { type GrepFilterInput, grepFilterResult } from './grep-filter';
+import { isRootFolder } from './root-folder';
+
+type ReadInput = FileOpInput & SearchInput & GrepFilterInput;
+type Ask = Extract<PermissionResult, { decision: 'ask' }>;
+/** A linked folder holding the target, and the target's path relative to it (rule form). */
+type Holder = { root: LinkedRoot; rels: string[] };
+type LinkedHit = { hit: ScopeEval; projectId: string };
+
+const LINKED_READ_TOOLS: ReadonlySet<string> = new Set(['Read', 'Glob', 'Grep']);
+const SEVERITY: Record<ScopeEval['kind'], number> = { miss: 0, allow: 0, ask: 1, deny: 2 };
+// Glob syntax, which the Read question for a Copilot or Cursor search filter carries.
+const GLOB_CHARS = /[*?[\]{}()!]/;
+
+/** The absolute path a Read reads or a search searches, by the checkers' own field chain. A Glob
+ * whose pattern alone is absolute searches the chat's folder by this chain, so it still asks. */
+function readTarget(tool: string, input: ReadInput, projectPath: string): string | null {
+  if (tool === 'Glob' || tool === 'Grep') return searchRoot(input, projectPath);
+  const raw = input.file_path ?? input.file ?? input.path;
+  if (typeof raw !== 'string' || !raw) return null;
+  return nodePath.resolve(projectPath, expandTilde(raw));
+}
+
+/** True when file is folder or inside it as written, before any link on the way is followed. */
+function writtenWithin(file: string, folder: string): boolean {
+  const rest = nodePath.relative(nodePath.resolve(folder), file);
+  return !nodePath.isAbsolute(rest) && rest.split(nodePath.sep)[0] !== '..';
+}
+
+/** The target relative to a linked folder, as resolved and as written, with `/` breaks. */
+function relPaths(folder: string, target: string, realTarget: string): string[] {
+  const written = nodePath.resolve(folder);
+  const rels = [
+    nodePath.relative(resolveToRealPath(written), realTarget),
+    nodePath.relative(written, target),
+  ];
+  return [...new Set(rels.map((rel) => rel.split(nodePath.sep).join('/')))];
+}
+
+/** True when a Read opens an env file, or is the question for a search filter that can reach
+ * one: both ask, as they do in the chat's own folder. A filter names no file on disk, so a path
+ * that exists is judged as the file it is. */
+function readsEnvFile(holders: Holder[], target: string): boolean {
+  const asFilter = !nodeFs.existsSync(target);
+  return holders.some(({ rels }) =>
+    rels.some((rel) => envFileAsks(rel) || (asFilter && GLOB_CHARS.test(rel) && envGlobAsks(rel))),
+  );
+}
+
+/** The chat's own rules at the target's other spellings: its real path, and that path under each
+ * linked folder as the folder is written. The checker matched them only at the path as written,
+ * and a link must not let a symlink or another letter case step around a rule. */
+function chatRulesElsewhere(
+  docs: ScopedDocs,
+  req: PermissionRequest,
+  ask: Ask,
+  holders: Holder[],
+  [target, realTarget]: [string, string],
+): CombinedDecision {
+  const spellings = new Set([target, realTarget]);
+  for (const { root } of holders) {
+    const folder = nodePath.resolve(root.path);
+    spellings.add(nodePath.join(folder, nodePath.relative(resolveToRealPath(folder), realTarget)));
+  }
+  const location = ask.prompt.pathLocation ?? 'outside';
+  const found = [...spellings].map((spelling) =>
+    combineFileRules(docs, req.tool, req.input, ruleMatchPath(spelling, req.projectPath), location),
+  );
+  return (
+    found.find((each) => each.decision === 'deny') ??
+    found.find((each) => each.decision === 'ask' && each.rule !== undefined) ?? { decision: 'ask' }
+  );
+}
+
+/** The linked project's own rules, matched at the target relative to its folder, as written and
+ * as resolved, so neither a symlink nor another spelling of the folder steps around one. */
+function linkedRuleHits({ root, rels }: Holder, req: PermissionRequest): LinkedHit[] {
+  const { doc, projectId } = root;
+  if (!doc) return [];
+  return rels.map((resolvedPath) => ({
+    hit: evalScope(doc, req.tool, req.input, { resolvedPath }),
+    projectId,
+  }));
+}
+
+function strictest(hits: LinkedHit[]): LinkedHit {
+  return hits.reduce<LinkedHit>(
+    (worst, each) => (SEVERITY[each.hit.kind] > SEVERITY[worst.hit.kind] ? each : worst),
+    { hit: { kind: 'miss' }, projectId: '' },
+  );
+}
+
+/** True for a search, or a Read of a folder (how Copilot, Cursor and OpenCode ask to search). */
+function readsFolder(tool: string, realTarget: string): boolean {
+  if (tool !== 'Read') return true;
+  try {
+    return nodeFs.statSync(realTarget, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/** True when a Read deny or ask rule can match a file inside the folder at `rel`. Rules match a
+ * file's own path, never the folder a search reads it through, so this is judged apart. */
+function ruleReachesInside(doc: PermissionsDoc, rel: string): boolean {
+  return [...doc.deny, ...doc.ask].some((rule) => {
+    const parsed = parseRule(rule);
+    if ('error' in parsed || parsed.tool !== 'Read') return false;
+    if (parsed.content === undefined || parsed.content === '*') return true;
+    const base = picomatch.scan(parsed.content).base;
+    return (
+      !base || !rel || base === rel || base.startsWith(`${rel}/`) || rel.startsWith(`${base}/`)
+    );
+  });
+}
+
+function reachesInside({ root, rels }: Holder): boolean {
+  const { doc } = root;
+  return !!doc && rels.some((rel) => ruleReachesInside(doc, rel));
+}
+
+/** The rules' answer for a read inside linked folders: a deny wins, then an ask that names its
+ * rule, and a linked project whose rules could not be loaded grants nothing. */
+function judge(
+  ask: Ask,
+  req: PermissionRequest,
+  docs: ScopedDocs,
+  holders: Holder[],
+  targets: [string, string],
+): PermissionResult {
+  const chat: CombinedDecision =
+    req.tool === 'Read'
+      ? chatRulesElsewhere(docs, req, ask, holders, targets)
+      : { decision: 'ask' };
+  if (chat.decision === 'deny') return resultFromCombined(chat, req.tool, req.input);
+  const { hit, projectId } = strictest(holders.flatMap((holder) => linkedRuleHits(holder, req)));
+  if (hit.kind === 'deny') {
+    return {
+      decision: 'deny',
+      reason: { kind: 'rule:deny', rule: hit.rule, tier: 'project', projectId },
+    };
+  }
+  if (chat.decision === 'ask' && chat.rule) {
+    const { rule: matchedRule, tier: matchedTier } = chat;
+    return {
+      decision: 'ask',
+      prompt: { ...ask.prompt, reason: 'rule:ask', matchedRule, matchedTier },
+    };
+  }
+  if (holders.some(({ root }) => !root.doc)) return ask;
+  if (hit.kind === 'ask') {
+    // Only "Allow once": a lasting grant would be saved on the chat's own project, where it
+    // would answer before this rule for good.
+    return {
+      decision: 'ask',
+      prompt: {
+        ...ask.prompt,
+        reason: 'rule:ask',
+        matchedRule: hit.rule,
+        matchedTier: 'project',
+        matchedProjectId: projectId,
+        suggestedRules: [],
+        pathLocation: 'outside',
+      },
+    };
+  }
+  if (readsFolder(req.tool, targets[1]) && holders.some(reachesInside)) return ask;
+  return { decision: 'allow' };
+}
+
+/**
+ * Allows a Read, Glob or Grep the checker would ask about when it reads only inside a linked
+ * folder. Changes nothing unless the checker named no rule (`no-matching-rule`, which includes
+ * the project tool-wide grant set aside outside the project), the target's real path is inside a
+ * linked folder that is still not home or a drive, and a search neither climbs out nor spans a
+ * protected folder. A path in a linked folder that leads to the deny list is denied, and so is a
+ * Grep whose file filter names a file on it. Env files and search filters that can reach one still
+ * ask, as in the chat's own folder, and so does a Grep filtered by file type. The chat's own rules,
+ * matched again at the real path, and the linked project's own rules then decide, and a linked
+ * project whose rules could not be loaded grants nothing.
+ */
+export function applyLinkedRead(
+  result: PermissionResult,
+  req: PermissionRequest,
+  docs: ScopedDocs,
+): PermissionResult {
+  if (!LINKED_READ_TOOLS.has(req.tool)) return result;
+  if (result.decision !== 'ask' || result.prompt.reason !== 'no-matching-rule') return result;
+  const input = (req.input ?? {}) as ReadInput;
+  const target = readTarget(req.tool, input, req.projectPath);
+  if (!target) return result;
+  const linked = (req.linkedRoots ?? []).filter((root) => nodePath.isAbsolute(root.path));
+  const holding = linked.filter((root) => isPathWithinProject(target, root.path));
+  if (holding.length === 0 && !linked.some((root) => writtenWithin(target, root.path))) {
+    return result;
+  }
+  const realTarget = resolveToRealPath(target);
+  // Refused outright, so Auto review never weighs a read the deny list forbids.
+  if (isSystemDeniedPath(target) || isSystemDeniedPath(realTarget)) {
+    return { decision: 'deny', reason: { kind: 'safety:path', path: realTarget } };
+  }
+  // A link checked when it was made may since lead to home or a whole drive.
+  if (holding.length === 0 || holding.some((root) => isRootFolder(root.path))) return result;
+  if (!searchStaysInRoot(req.tool, input, target)) return result;
+  const holders = holding.map((root) => ({ root, rels: relPaths(root.path, target, realTarget) }));
+  if (req.tool === 'Read' && readsEnvFile(holders, target)) return result;
+  const filtered = req.tool === 'Grep' ? grepFilterResult(input, target, result) : undefined;
+  if (filtered) return filtered;
+  return judge(result, req, docs, holders, [target, realTarget]);
+}

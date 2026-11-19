@@ -63,8 +63,9 @@ export const FourButtonView = memo(function FourButtonView({
   }, [isFileOpTool, prompt.tool, prompt.suggestedRules, request.path]);
 
   // An empty (not absent) suggestion list is the dispatcher saying no rule can
-  // express this command, so a fabricated fallback would never match on replay.
-  const canPersistRule = !isBash || prompt.suggestedRules?.length !== 0;
+  // express this call (a command, or a search a linked project's own rule asks
+  // about), so a fabricated fallback would never match on replay.
+  const canPersistRule = prompt.suggestedRules?.length !== 0;
 
   const [selectedRule, setSelectedRule] = useState(defaultRule);
 

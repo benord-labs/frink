@@ -8,6 +8,7 @@ export { registerClaudeWarmSessionGuardTests } from './claude-warm-session-guard
 export { registerComposerContextTests } from './composer-context';
 export { registerConformanceTests } from './conformance';
 export { registerExecutorPermissionTests } from './executor-codex-permissions';
+export { registerLinkedReadPermissionTests } from './linked-read-permission';
 export {
   registerFlowRunEndedTests,
   registerOperatorReminderDeliveryTests,

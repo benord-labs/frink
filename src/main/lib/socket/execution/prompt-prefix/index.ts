@@ -9,5 +9,6 @@
  */
 export { applyApprovedPlanContextToPrompt } from './approved-plan-prompt';
 export { codexComposerContext, isPersonAuthored, projectComposerContext } from './composer-context';
+export { linkedProjectsNote } from './linked-projects-note';
 export { formatPromptWithHistory, replaceCarriedWithHistory } from './prompt-history';
 export { carryUndeliveredMessages, forgetUndeliveredOnClear } from './undelivered-messages';

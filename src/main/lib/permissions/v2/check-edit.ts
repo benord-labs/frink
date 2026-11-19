@@ -10,8 +10,14 @@ import * as nodePath from 'node:path';
 import { expandHomePath as expandTilde } from '../../../../shared/lib/expand-home';
 import { getSkillReadRoots } from '../../frink-skills-dir';
 import { isPathWithinProject, resolveToRealPath } from '../path-check';
-import { classifyPath } from './classify-path';
-import { combineScopes, evalScope, resultFromCombined, type ScopedDocs } from './eval-rules';
+import { classifyPath, type PathLocation } from './classify-path';
+import {
+  type CombinedDecision,
+  combineScopes,
+  evalScope,
+  resultFromCombined,
+  type ScopedDocs,
+} from './eval-rules';
 import { isAutoAllowedPath, isSystemDeniedPath } from './system-denied-patterns';
 import type { MatchContext, PermissionResult } from './types';
 
@@ -92,6 +98,59 @@ const PLAN_DIR_BYPASS_TOOLS = new Set<PathToolName>(['Read', 'Write', 'Edit', 'M
 /** Re-exported under the v2-friendly name for check-bash + check-edit usage. */
 export { expandHomePath as expandTilde } from '../../../../shared/lib/expand-home';
 
+/**
+ * The path rules are matched against. picomatch is anchored — `Edit(src/**)`
+ * matches `src/a.ts`, NOT `/project/src/a.ts` — so the project-relative form is
+ * used when the file is inside projectRoot, the absolute path otherwise.
+ */
+export function ruleMatchPath(absolute: string, projectRoot: string): string {
+  const relative = nodePath.relative(projectRoot, absolute);
+  return relative.startsWith('..') ? absolute : relative;
+}
+
+/**
+ * Policy, project and user rules for a file op, matched at `matchPath`.
+ *
+ * Project-scope tool-wide file-op safety net. Without this guardrail, a
+ * tool-wide rule like `Read` stored at project scope (the natural shape from
+ * clicking "Allow Read for {project}") would match ANY Read invocation
+ * regardless of path, because the matcher treats `Read` (no content) as "any
+ * input for this tool" (`rule-matcher.ts:51`). The user's mental model is "I'm
+ * allowing Reads inside this project", not "I'm allowing every Read anywhere on
+ * the filesystem while I happen to be chatting in this project". Outside the
+ * project such a grant counts for nothing: the policy and user rules decide on
+ * their own, so a user rule that asks is still named, and with none the prompt
+ * fires.
+ *
+ * Path-specific project-scope rules (e.g. `Read(src/**)`, `Read(/etc/hosts)`)
+ * are NOT downgraded — they carry their own path semantics and trusting the
+ * user's explicit glob/path is the right call.
+ *
+ * User-scope and policy-scope rules are not downgraded: user-scope is by
+ * definition machine-wide (must be added explicitly via Settings), and
+ * policy-scope is managed by an admin.
+ */
+export function combineFileRules(
+  docs: ScopedDocs,
+  toolName: string,
+  input: unknown,
+  matchPath: string,
+  pathLocation: PathLocation,
+): CombinedDecision {
+  const ctx: MatchContext = { resolvedPath: matchPath };
+  const policy = evalScope(docs.policy, toolName, input, ctx);
+  const project = evalScope(docs.project, toolName, input, ctx);
+  const user = evalScope(docs.user, toolName, input, ctx);
+  const combined = combineScopes(policy, project, user);
+  if (combined.decision !== 'allow' || combined.tier !== 'project' || pathLocation !== 'outside') {
+    return combined;
+  }
+  const matchedRule = combined.rule ?? '';
+  if (matchedRule !== toolName && matchedRule !== `${toolName}(*)`) return combined;
+  const rest = combineScopes(policy, { kind: 'miss' }, user);
+  return rest.decision === 'ask' && rest.rule ? rest : { decision: 'ask' };
+}
+
 export function checkEdit(
   input: FileOpInput,
   docs: ScopedDocs,
@@ -116,15 +175,9 @@ export function checkEdit(
     return { decision: 'deny', reason: { kind: 'safety:path', path: filePath } };
   }
 
-  // Rule eval. picomatch is anchored — `Edit(src/**)` matches `src/a.ts`, NOT
-  // `/project/src/a.ts`. Pass the project-relative form when the file is
-  // inside projectRoot; absolute as fallback for outside-project paths.
   const absolute = nodePath.isAbsolute(filePath)
     ? filePath
     : nodePath.resolve(projectRoot, filePath);
-  const relative = nodePath.relative(projectRoot, absolute);
-  const matchPath = relative.startsWith('..') ? absolute : relative;
-  const ctx: MatchContext = { resolvedPath: matchPath };
 
   // Auto-allow: Read tool invocations against this chat's own session dir,
   // scoped to the `isSessionScopedRead` allow-list (paste blobs + CLI
@@ -168,43 +221,13 @@ export function checkEdit(
     return { decision: 'allow' };
   }
 
-  const policy = evalScope(docs.policy, toolName, input, ctx);
-  const project = evalScope(docs.project, toolName, input, ctx);
-  const user = evalScope(docs.user, toolName, input, ctx);
-  let combined = combineScopes(policy, project, user);
-
   // Path-location classification used for two things below:
-  //  1. The project-tier tool-wide guardrail (just below).
+  //  1. The project-tier tool-wide guardrail (`combineFileRules`).
   //  2. The `ask` prompt's `pathLocation` field that drives the renderer's
   //     3-button flow (further down).
   const pathLocation = classifyPath(absolute, projectRoot);
-
-  // Project-scope tool-wide file-op safety net.
-  //
-  // Without this guardrail, a tool-wide rule like `Read` stored at project
-  // scope (the natural shape from clicking "Allow Read for {project}") would
-  // match ANY Read invocation regardless of path, because the matcher treats
-  // `Read` (no content) as "any input for this tool" (`rule-matcher.ts:51`).
-  // The user's mental model is "I'm allowing Reads inside this project", not
-  // "I'm allowing every Read anywhere on the filesystem while I happen to be
-  // chatting in this project". Downgrade outside-project hits to `ask` so the
-  // prompt fires.
-  //
-  // Path-specific project-scope rules (e.g. `Read(src/**)`, `Read(/etc/hosts)`)
-  // are NOT downgraded — they carry their own path semantics and trusting the
-  // user's explicit glob/path is the right call.
-  //
-  // User-scope and policy-scope rules are not downgraded: user-scope is by
-  // definition machine-wide (must be added explicitly via Settings), and
-  // policy-scope is managed by an admin.
-  if (combined.decision === 'allow' && combined.tier === 'project' && pathLocation === 'outside') {
-    const matchedRule = combined.rule ?? '';
-    const isToolWideGrant = matchedRule === toolName || matchedRule === `${toolName}(*)`;
-    if (isToolWideGrant) {
-      combined = { decision: 'ask' };
-    }
-  }
-
+  const matchPath = ruleMatchPath(absolute, projectRoot);
+  const combined = combineFileRules(docs, toolName, input, matchPath, pathLocation);
   const result = resultFromCombined(combined, toolName, input);
 
   // For ask decisions, attach file-op classification so the renderer can drive

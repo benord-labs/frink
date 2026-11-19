@@ -128,6 +128,7 @@ import {
   codexComposerContext,
   forgetUndeliveredOnClear,
   isPersonAuthored,
+  linkedProjectsNote,
   projectComposerContext,
   replaceCarriedWithHistory,
 } from './execution/prompt-prefix';
@@ -554,7 +555,8 @@ export async function handleRemoteExecute(
     });
 
     const workspace = await resolveChatWorkspace(project, chatAccountResult?.chat, mode);
-    const { projectPath, permissionProjectPath } = workspace;
+    const { projectPath, permissionProjectPath, dynamicChatMcpUrl } = workspace;
+    composer.notes.unshift(...linkedProjectsNote(workspace.linkedProjects, projectPath, message));
     // Flow-driven execution suppresses in-chat plan Approve; the run panel is the sole surface.
     const {
       isFlowDrivenExecution,
@@ -813,7 +815,6 @@ export async function handleRemoteExecute(
     if (sessionFlowBriefing && freshSessionFallbackPrompt !== undefined) {
       freshSessionFallbackPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${freshSessionFallbackPrompt}`;
     }
-    const { dynamicChatMcpUrl } = workspace;
     // Independent of the dynamic-chat MCP mount (gated on 2+ projects): an unsignalled linked task
     // needs the quiet-end marker regardless, or the flows sweep never parks it (stuck `running`).
     shouldFinalizeLinkedTaskSignal = Boolean(signalTaskId && executionContextId);
