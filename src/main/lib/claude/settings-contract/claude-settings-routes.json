@@ -176,7 +176,7 @@
     "agentPushNotifEnabled": "inert-headless",
     "skipAutoPermissionPrompt": "inert-headless",
     "useAutoModeDuringPlan": "not-yet-delivered",
-    "autoMode": "not-yet-delivered",
+    "autoMode": "delivered",
     "disableDeepLinkRegistration": "inert-headless",
     "voiceEnabled": "inert-headless",
     "defaultView": "inert-headless"

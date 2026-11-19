@@ -2,6 +2,7 @@ import type { Settings } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { hooksForLaunch } from '../../provider/hooks/store';
 import type { resolveClaudeAutoMemorySettings } from '../auto-memory';
+import type { readUserAutoModeRules } from '../auto-mode-rules';
 import {
   type AssertNone,
   CLAUDE_SETTINGS_CONTRACT,
@@ -34,10 +35,17 @@ type _MissingKey = AssertNone<Exclude<SettingKey, WithoutHooks>>;
 type _ExtraKey = AssertNone<Exclude<WithUnknownKey, SettingKey>>;
 
 // What the session spec spreads into the SDK's flag settings from the user's own config.
-const DELIVERED = ['autoMemoryDirectory', 'autoMemoryEnabled', 'disableAllHooks', 'hooks'] as const;
+const DELIVERED = [
+  'autoMemoryDirectory',
+  'autoMemoryEnabled',
+  'autoMode',
+  'disableAllHooks',
+  'hooks',
+] as const;
 type CarriedOver =
   | keyof Awaited<ReturnType<typeof hooksForLaunch>>
-  | keyof ReturnType<typeof resolveClaudeAutoMemorySettings>;
+  | keyof ReturnType<typeof resolveClaudeAutoMemorySettings>
+  | keyof ReturnType<typeof readUserAutoModeRules>;
 
 describe('CLAUDE_SETTINGS_CONTRACT', () => {
   it('routes every key to a known route', () => {
