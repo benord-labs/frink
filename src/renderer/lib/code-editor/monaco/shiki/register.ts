@@ -48,7 +48,9 @@ export function registerShikiTokenizers(
             setJsonTokens(true);
             return null;
           }
-          return (await entry.loader?.())?.language ?? null;
+          // A fallback that cannot load either leaves the language plain, as Monaco would alone.
+          const fallback = await entry.loader?.().catch(() => undefined);
+          return fallback?.language ?? null;
         }
       },
     });

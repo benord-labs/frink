@@ -5,6 +5,7 @@ import { TokenizationRegistry } from 'monaco-editor/editor/common/languages.js';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { getShikiTheme, loadLanguage } from '@/lib/themes/shiki-theme-loader';
 import { shikiThemeToMonacoRules } from '../shiki-theme-to-monaco';
+import { shikiLanguageFor } from './language-map';
 import { registerShikiTokenizers } from './register';
 import { setEditorSyntax } from './tokens-provider';
 
@@ -71,6 +72,8 @@ describe('registerShikiTokenizers', () => {
 
     await vi.waitFor(() => expect(colourAt(model, 'uint')).toBe('#79b8ff'), slow);
     model.dispose();
+    // An inherited object key is not a grammar.
+    expect(shikiLanguageFor('constructor')).toBeUndefined();
   });
 
   it('tokenizes JSON with Shiki rather than the JSON mode', async () => {
@@ -95,6 +98,23 @@ describe('registerShikiTokenizers', () => {
     await vi.waitFor(() => expect(colourAt(model, 'name')).toBe('#9ecbff'), slow);
     expect(monaco.json.jsonDefaults.modeConfiguration.tokens).toBe(true);
     model.dispose();
+    report.mockClear();
+  });
+
+  it('leaves a language plain, without an unhandled rejection, when its fallback fails too', async () => {
+    // toml has a Shiki grammar; register it here with a fallback grammar that cannot load.
+    const toml: monaco.languages.ILanguageExtensionPoint & { loader: () => Promise<never> } = {
+      id: 'toml',
+      loader: () => Promise.reject(new Error('fallback chunk failed')),
+    };
+    monaco.languages.register(toml);
+    registerShikiTokenizers(monaco, {
+      report,
+      load: (id) => (id === 'toml' ? Promise.reject(new Error('chunk failed')) : loadLanguage(id)),
+    });
+
+    await expect(TokenizationRegistry.getOrCreate('toml')).resolves.toBeNull();
+    expect(report).toHaveBeenCalledOnce();
     report.mockClear();
   });
 

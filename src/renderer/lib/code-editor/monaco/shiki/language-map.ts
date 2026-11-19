@@ -17,6 +17,6 @@ const SHIKI_ID = new Map<string, BundledLanguage>([
 export function shikiLanguageFor(monacoId: string): BundledLanguage | undefined {
   const renamed = SHIKI_ID.get(monacoId);
   if (renamed) return renamed;
-  // SAFETY: the `in` check proves monacoId is a key of bundledLanguages.
-  return monacoId in bundledLanguages ? (monacoId as BundledLanguage) : undefined;
+  // SAFETY: Object.hasOwn proves monacoId is a key of bundledLanguages, not an inherited one.
+  return Object.hasOwn(bundledLanguages, monacoId) ? (monacoId as BundledLanguage) : undefined;
 }
