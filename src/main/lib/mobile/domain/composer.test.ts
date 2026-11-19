@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as sentry from '../../sentry/init';
 
 const fixture = vi.hoisted(() => ({
   requireChat: vi.fn(),
@@ -270,6 +271,22 @@ describe('phone composer', () => {
     expect(fixture.updateSubChatMode.mock.calls).toEqual(
       shown === 'agent' ? [[{ id: 'sub', mode: 'agent' }]] : [],
     );
+  });
+
+  it('still reads the composer when moving a saved Debug to Agent fails to save', async () => {
+    const capture = vi.spyOn(sentry, 'captureMainException').mockImplementation(() => {});
+    const failure = new Error('database is locked');
+    fixture.requireChat.mockResolvedValue({
+      chat: { id: 'chat', projectId: 'project' },
+      subChat: { id: 'sub', mode: 'debug' },
+    });
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    fixture.updateSubChatMode.mockRejectedValueOnce(failure);
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.mode).toBe('debug');
+    expect(capture.mock.calls).toEqual([[failure, { surface: 'mobile-composer-mode' }]]);
   });
 
   it.each([

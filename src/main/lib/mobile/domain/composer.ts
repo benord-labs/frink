@@ -37,6 +37,7 @@ import {
   claudeVersionSupportsXhigh,
   getBundledClaudeVersion,
 } from '../../claude';
+import { captureMainException } from '../../sentry/init';
 import { MobileApiError, mobileCallers, requireChat } from './context';
 
 type ComposerRequest = Extract<MobileRequest, { type: 'composer' }>;
@@ -104,8 +105,14 @@ async function runnableMode(
 ): Promise<MobileChatMode> {
   const mode = (subChat.mode as MobileChatMode | null) ?? 'agent';
   if (mode !== 'debug' || !unsupportedModes(accountType).includes('debug')) return mode;
-  await mobileCallers.chats.updateSubChatMode({ id: subChat.id, mode: 'agent' });
-  return 'agent';
+  try {
+    await mobileCallers.chats.updateSubChatMode({ id: subChat.id, mode: 'agent' });
+    return 'agent';
+  } catch (error) {
+    // A failed save keeps the composer readable; the next send is then refused in plain words.
+    captureMainException(error, { surface: 'mobile-composer-mode' });
+    return mode;
+  }
 }
 
 export async function readMobileComposer(input: ComposerRequest): Promise<MobileComposer> {
