@@ -246,7 +246,7 @@ describe('WebhookTriggerConfig advanced filters', () => {
 });
 
 describe('WebhookTriggerConfig account no longer connected', () => {
-  const NOTICE = 'This account is no longer connected. Pick another or reconnect it.';
+  const NOTICE = "This account isn't connected on this computer. Pick one or connect it.";
   const panel = (integrationId: string) => (
     <WebhookTriggerConfig
       node={{

@@ -116,7 +116,7 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
   const accountGone = integrationId !== '' && integrations !== undefined && !selected;
   const accountGoneNotice = accountGone ? (
     <p role="alert" className="text-sm text-destructive">
-      This account is no longer connected. Pick another or reconnect it.
+      This account isn't connected on this computer. Pick one or connect it.
     </p>
   ) : null;
   const supportedProvider: IntegrationProvider | undefined = selected?.provider;
