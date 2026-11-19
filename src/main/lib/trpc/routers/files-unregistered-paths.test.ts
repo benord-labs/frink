@@ -256,6 +256,12 @@ describe('filesRouter symlinked entries', () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it('lists a folder link in name search without walking into it', async () => {
+    const results = await (await caller()).search({ projectPath, query: '' });
+
+    expect(results.map((entry) => [entry.path, entry.type])).toEqual([['linked', 'folder']]);
+  });
+
   it('lists file and folder links by their target kind and skips broken links', async (ctx) => {
     await writeFile(join(projectPath, 'AGENTS.md'), '# agents', 'utf8');
     try {

@@ -87,6 +87,16 @@ Search files looks in every project in the chat's file tree. When the tree has m
 
 In split view, Search files looks in the projects of the pane you're working in. It doesn't open for a pane with no project, such as a new chat that hasn't started yet.
 
+## Search inside files
+
+On the file tree's **Search** tab, type to look inside the files of every project in the tree. **Aa** matches case, **.ab** matches whole words and **.\*** reads your text as a regular expression.
+
+- **Filter files** (the funnel) opens **Files to include** and **Files to exclude**. Type patterns separated by commas, such as `src, *.ts` or `**/*.test.ts`. A plain name like `gen` matches a folder of that name and everything in it. The filters are saved with the other search options.
+- The usual build and dependency folders, such as `node_modules` and `dist`, are always left out. Your `.gitignore` is not used.
+- A search shows at most 200 matches. If it runs for 30 seconds it stops and says so, keeping the matches it found. Narrow it with **Files to include**.
+- Typing a new search stops the one before it, so Frink stays responsive while you type, even with a slow regular expression.
+- A linked file is searched when it points at a file inside the project. Linked folders are not searched, and nothing outside the project is read.
+
 ## Symbolic links in the tree
 
 A **symbolic link** (a file or folder that points at another one, such as `CLAUDE.md` pointing at `AGENTS.md`) shows in the tree like the thing it points at. Open a linked folder to browse the real folder's contents. A link whose target is missing is hidden.

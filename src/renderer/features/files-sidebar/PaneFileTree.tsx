@@ -185,11 +185,11 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
     setContentSearchOptions,
     contentMatches,
     contentSearchInvalidRegex,
+    contentSearchTimedOut,
     isLoadingContentSearch,
-    highlightContentMatch,
   } = useContentSearchTab({
     projectPath,
-    canSearch: !!projectPath,
+    paneIndex,
     isSearchTabActive: activeTab === 'search',
     staleTime: 5_000,
   });
@@ -764,7 +764,7 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
           searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
           className="@container/files-header pt-3! px-2 pb-0"
         />
-        <div className="flex items-center gap-1.5 border-b border-border/25 px-3 pb-2">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border/25 px-3 pb-2">
           <Button
             variant="ghost"
             size="sm"
@@ -906,9 +906,9 @@ export const PaneFileTree = forwardRef<PaneFileTreeHandle, PaneFileTreeProps>(fu
             isLoading={isLoading}
             query={contentDebouncedQuery}
             invalidRegex={contentSearchInvalidRegex}
+            timedOut={contentSearchTimedOut}
             matches={contentMatches}
             onSelectMatch={handleSelectContentMatch}
-            renderLine={highlightContentMatch}
           />
         )}
 
