@@ -15,3 +15,6 @@ export function readSavedComputers(): Promise<Computers> {
 export function savingComputers(stored: Computers) {
   return computerSaver(tab, stored);
 }
+
+/** Small values the browser preview keeps for this tab. */
+export const appStore = tab;

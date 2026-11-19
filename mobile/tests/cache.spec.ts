@@ -3,7 +3,7 @@ import { openApp } from './fixtures/app';
 import { conversation, openChat, requestsOf } from './fixtures/chat';
 import { NOW, overviewFixture } from './fixtures/data';
 import { macFlows } from './fixtures/flows';
-import { openDestination, openHistory } from './fixtures/navigation';
+import { openDestination, openTab } from './fixtures/navigation';
 
 const offlineBanner = (page: Page) => page.getByText('Can’t reach your Mac', { exact: true });
 
@@ -35,15 +35,12 @@ test('Flows reopens with its last rows even when the Mac is unreachable', async 
   await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
 });
 
-test('the chat list and Flows open warm on first visit', async ({ page }) => {
+test('Flows opens warm on first visit', async ({ page }) => {
   const state = await openApp(page, { data: { flows: macFlows() } });
+  await expect(page.getByTestId('chat-row-chat-1')).toBeVisible();
   await expect.poll(() => requestsOf(state, 'flows').length).toBe(1);
-  await expect.poll(() => requestsOf(state, 'chats').length).toBe(1);
   state.offline = true;
-  await openHistory(page);
-  const panel = page.getByTestId('history-panel');
-  await expect(panel.getByTestId('chat-row-chat-1')).toBeVisible();
-  await panel.getByRole('button', { name: 'Flows', exact: true }).click();
+  await openTab(page, 'Flows');
   await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
 });
 
@@ -54,9 +51,8 @@ test('re-expanding a Queue section shows the live rows, not an earlier expansion
   await openDestination(page, 'Queue');
   await page.getByRole('button', { name: 'Show all' }).click();
   await expect(page.getByText('Nightly build 5')).toBeVisible();
-  await openDestination(page, 'Settings');
+  await page.getByRole('button', { name: 'Show less' }).click();
   state.data.overview = sixRunning('New build');
-  await openDestination(page, 'Queue');
   await expect(page.getByText('New build')).toBeVisible();
   state.offline = true;
   await page.getByRole('button', { name: 'Show all' }).click();

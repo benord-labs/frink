@@ -1,30 +1,25 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, View } from 'react-native';
-import {
-  ChevronDown,
-  ChevronRight,
-  GitBranch,
-  Inbox,
-  Plus,
-  SearchX,
-  SquarePen,
-} from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Plus, SearchX, SquarePen } from 'lucide-react-native';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
+import { readLastChat } from '../../lib/last-chat';
 import { useOverview } from '../../lib/overview';
+import { CHATS_PAGE } from '../../lib/resource/first-pages';
+import { appStore } from '../../lib/storage';
 import { useWindow } from '../../lib/use-window';
 import { useRootNavigation } from '../../navigation/routes';
-import { afterChatDeletion } from '../../navigation/after-chat-deletion';
-import { Button } from '../../ui/button';
+import { useScreenHeader } from '../../navigation/screen-header';
+import { closeDeletedChat } from '../../navigation/after-chat-deletion';
+import { Button, IconButton } from '../../ui/button';
 import { EmptyState } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { SearchField } from '../../ui/search-field';
 import { Segmented } from '../../ui/segmented';
 import { Text } from '../../ui/text';
-import { radius, space, useTheme } from '../../ui/theme';
+import { space, useTheme } from '../../ui/theme';
 import { confirmChatDeletion } from '../Chat/confirm';
 import { NOT_READY } from '../NewChat/new-chat-options';
-import { needsYouCount } from '../Queue/queue-view';
 import { ChatRow } from './chat-row';
 import { chatSections, recentSections, type ChatSection } from './chat-sections';
 import { tell } from '../../ui/tell';
@@ -35,98 +30,53 @@ const VIEWS = [
   { id: 'projects', label: 'Projects' },
 ] as const;
 
-/** One history query serves Recent, Projects and search in the retained conversation drawer. */
-export function ChatsScreen({ selectedId }: { selectedId?: string }) {
-  const t = useTheme();
+/** On launch, reopen the conversation that was on screen, once, unless something else opened. */
+function useReopenLastChat() {
+  const navigation = useRootNavigation();
+  const deviceId = useConnection().connection?.deviceId;
+  useEffect(() => {
+    if (!deviceId) return;
+    void readLastChat(appStore, deviceId).then((chat) => {
+      if (chat && navigation.isFocused()) navigation.navigate('Chat', chat);
+    });
+    // Only the first mount reopens; later visits to the list stay on the list.
+  }, []);
+}
+
+/** A new chat waits until the computer can run one. */
+function NewChatButton({ ready }: { ready: boolean }) {
   const root = useRootNavigation();
-  const overview = useOverview();
-  const ready = overview.data?.executionReady !== false;
-  const needsYou = needsYouCount(overview.data);
+  return (
+    <IconButton
+      icon={SquarePen}
+      label="New chat"
+      tone="plain"
+      size={44}
+      disabled={!ready}
+      onPress={() => root.navigate('Chat', undefined)}
+    />
+  );
+}
+
+/** The Chats tab: one history query serves Recent, Projects and search. */
+export function ChatsScreen() {
+  const root = useRootNavigation();
+  const ready = useOverview().data?.executionReady !== false;
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'recent' | 'projects'>('recent');
+  useScreenHeader({ title: 'Chats' });
+  useReopenLastChat();
+  useLayoutEffect(() => {
+    const newChat = () => <NewChatButton ready={ready} />;
+    root.setOptions({ headerLeft: newChat });
+  }, [root, ready]);
   return (
-    <View style={{ flex: 1, minHeight: 0 }}>
+    <View style={{ flex: 1, minHeight: 0, paddingTop: space.sm }}>
       <View style={{ paddingHorizontal: 15, gap: space.sm }}>
         <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="New chat"
-          accessibilityState={{ disabled: !ready }}
-          disabled={!ready}
-          onPress={() => root.popTo('Chat', undefined)}
-          style={({ pressed }) => ({
-            minHeight: 44,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            paddingHorizontal: 10,
-            borderRadius: radius.sm,
-            backgroundColor: pressed ? t.pressed : 'transparent',
-            opacity: ready ? 1 : 0.4,
-          })}
-        >
-          <SquarePen size={20} color={t.text} />
-          <Text variant="row">New chat</Text>
-        </Pressable>
-        <View
-          accessibilityLabel="Work"
-          style={{
-            borderWidth: 1,
-            borderColor: t.borderSubtle,
-            borderRadius: radius.md,
-            backgroundColor: t.fill,
-            overflow: 'hidden',
-          }}
-        >
-          {(
-            [
-              { name: 'Queue', icon: Inbox },
-              { name: 'Flows', icon: GitBranch },
-            ] as const
-          ).map(({ name, icon: Icon }, index) => (
-            <Pressable
-              key={name}
-              accessibilityRole="button"
-              accessibilityLabel={
-                name === 'Queue' && needsYou ? `Queue, ${needsYou} need you` : name
-              }
-              onPress={() => root.replace(name)}
-              style={({ pressed }) => ({
-                minHeight: 44,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                paddingHorizontal: 11,
-                borderTopWidth: index ? 1 : 0,
-                borderTopColor: t.borderSubtle,
-                backgroundColor: pressed ? t.pressed : 'transparent',
-              })}
-            >
-              <Icon size={19} color={t.secondary} />
-              <Text variant="secondary" style={{ flex: 1 }}>
-                {name}
-              </Text>
-              {name === 'Queue' && needsYou > 0 ? (
-                <Text
-                  variant="secondary"
-                  color="attention"
-                  style={{
-                    paddingHorizontal: 6,
-                    borderRadius: 5,
-                    backgroundColor: t.attentionSoft,
-                  }}
-                >
-                  {needsYou}
-                </Text>
-              ) : (
-                <ChevronRight size={16} color={t.muted} />
-              )}
-            </Pressable>
-          ))}
-        </View>
         <Segmented items={VIEWS} value={view} onChange={setView} tabs />
       </View>
-      <ChatList query={query} view={view} selectedId={selectedId} ready={ready} />
+      <ChatList query={query} view={view} ready={ready} />
     </View>
   );
 }
@@ -134,19 +84,17 @@ export function ChatsScreen({ selectedId }: { selectedId?: string }) {
 function ChatList({
   query,
   view,
-  selectedId,
   ready,
 }: {
   query: string;
   view: 'recent' | 'projects';
-  selectedId?: string;
   ready: boolean;
 }) {
   const t = useTheme();
   const root = useRootNavigation();
   const { request } = useConnection();
   const search = useDebounced(query, 250);
-  const page = useWindow(30);
+  const page = useWindow(CHATS_PAGE);
   // Scroll events can outrun the render that loads the next page.
   const grown = useRef<unknown>(null);
   const [searched, setSearched] = useState(search);
@@ -165,7 +113,7 @@ function ChatList({
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const { refresh } = chats;
   const open = useCallback(
-    (chat: MobileChatSummary) => root.popTo('Chat', { id: chat.id }),
+    (chat: MobileChatSummary) => root.navigate('Chat', { id: chat.id }),
     [root],
   );
   const remove = useCallback(
@@ -173,7 +121,7 @@ function ChatList({
       if (!(await confirmChatDeletion(chat.name || 'Untitled chat'))) return;
       try {
         await request({ type: 'deleteChat', chatId: chat.id });
-        root.reset(afterChatDeletion(root.getState(), chat.id));
+        closeDeletedChat(root, chat.id);
         refresh();
       } catch (error) {
         tell('Couldn’t delete this chat', error instanceof Error ? error.message : '');
@@ -184,7 +132,7 @@ function ChatList({
 
   return (
     <ScrollView
-      testID="history-list"
+      testID="chat-list"
       style={{ flex: 1 }}
       contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: space.lg }}
       keyboardDismissMode="on-drag"
@@ -216,7 +164,7 @@ function ChatList({
               }
               onCreate={
                 section.projectId
-                  ? () => root.popTo('Chat', { projectId: section.projectId! })
+                  ? () => root.navigate('Chat', { projectId: section.projectId! })
                   : undefined
               }
               ready={ready}
@@ -235,7 +183,6 @@ function ChatList({
               <ChatRow
                 key={chat.id}
                 chat={chat}
-                selected={chat.id === selectedId}
                 onOpen={open}
                 onDelete={(chat) => void remove(chat)}
               />
@@ -258,7 +205,7 @@ function ChatList({
               ready ? 'Ask Frink to fix a bug, build a feature or look into a question.' : NOT_READY
             }
             action={
-              <Button disabled={!ready} onPress={() => root.popTo('Chat', undefined)}>
+              <Button disabled={!ready} onPress={() => root.navigate('Chat', undefined)}>
                 Start a chat
               </Button>
             }

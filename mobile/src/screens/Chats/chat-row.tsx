@@ -28,12 +28,10 @@ export const ChatRow = memo(function ChatRow({
   chat,
   onOpen,
   onDelete,
-  selected = false,
 }: {
   chat: MobileChatSummary;
   onOpen: (chat: MobileChatSummary) => void;
   onDelete: (chat: MobileChatSummary) => void;
-  selected?: boolean;
 }) {
   const t = useTheme();
   const { fontScale } = useWindowDimensions();
@@ -52,7 +50,6 @@ export const ChatRow = memo(function ChatRow({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ selected }}
         testID={`chat-row-${chat.id}`}
         accessibilityLabel={[title, chat.kind === 'flow' ? 'Flow' : '', chat.activity]
           .filter(Boolean)
@@ -64,9 +61,7 @@ export const ChatRow = memo(function ChatRow({
           paddingVertical: 10,
           gap: 3,
           borderRadius: radius.md,
-          borderWidth: 1,
-          borderColor: selected ? t.glint : 'transparent',
-          backgroundColor: pressed ? t.pressed : selected ? t.accentSoft : 'transparent',
+          backgroundColor: pressed ? t.pressed : 'transparent',
         })}
       >
         <Text variant="row" numberOfLines={fontScale > 1.2 ? undefined : 2}>

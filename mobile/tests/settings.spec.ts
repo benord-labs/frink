@@ -1,4 +1,4 @@
-import { openDestination } from './fixtures/navigation';
+import { openDestination, tabButton } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
 import { computers, openApp } from './fixtures/app';
 import { conversation, messageBox, openChat } from './fixtures/chat';
@@ -58,7 +58,7 @@ test('says when the Mac cannot be reached, keeping what it last sent', async ({ 
   await expect(mac.getByText(/Keep Frink open/)).toBeVisible();
   await expect(mac.getByText('Can’t reach your Mac')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Try again' }).last()).toBeVisible();
-  await expect(page.getByText('0.0.13')).toBeVisible();
+  await expect(page.getByTestId('settings-about').getByText('0.0.13')).toBeVisible();
   await shot(page, 'offline');
 });
 
@@ -123,7 +123,7 @@ test('forgetting the shown computer moves to the other one', async ({ page }) =>
   await openSettings(page, { second: true });
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Forget this Mac' }).click();
-  await expect(page.getByTestId('history-open')).toBeVisible();
+  await expect(tabButton(page, 'Chats')).toBeVisible();
   await openDestination(page, 'Settings');
   const list = page.getByTestId('settings-computers');
   await expect(list.getByLabel('Studio Mac, shown')).toBeVisible();
@@ -246,6 +246,7 @@ test('a half-typed message survives switching to another computer and back', asy
   const switchTo = async (name: string) => {
     await openDestination(page, 'Settings');
     await page.getByTestId('settings-computers').getByRole('button', { name }).click();
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeHidden();
   };
   await switchTo('Studio Mac');
   await switchTo("Benji's MacBook Pro");

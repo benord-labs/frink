@@ -2,6 +2,7 @@ import { expect as baseExpect, test, type Page } from '@playwright/test';
 import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
 import { openApp } from './fixtures/app';
 import { conversation, messageBox, openChat, requestsOf } from './fixtures/chat';
+import { openTab } from './fixtures/navigation';
 
 const expect = baseExpect.configure({ timeout: 15_000 });
 
@@ -159,7 +160,7 @@ test.describe('a plan waiting for review', () => {
 
   test('the Queue’s Plan ready row opens the plan', async ({ page }) => {
     const state = await openApp(page, { data: { chat: planChat() } });
-    await page.getByTestId('queue-open').click();
+    await openTab(page, 'Queue');
     await page.getByTestId('queue-row-task-plan').click();
     await expect.poll(() => requestsOf(state, 'chat').some((r) => r.id === 'chat-4')).toBe(true);
     await expect(button(page, 'Approve')).toBeInViewport();

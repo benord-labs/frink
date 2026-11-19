@@ -15,9 +15,15 @@ const madeChat = conversation({
   messages: [],
 });
 
+/** Opens a blank chat from the compose button on the Chats list. */
+async function startNewChat(page: Page) {
+  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await expect(messageBox(page)).toBeVisible();
+}
+
 async function openNewChat(page: Page, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openApp(page, { ...options, data: { createChat: created, ...options.data } });
-  await expect(messageBox(page)).toBeVisible();
+  await startNewChat(page);
   return state;
 }
 
@@ -147,6 +153,8 @@ test('the next new chat starts where the last one did', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
 
   await page.goto('/');
+  await openHistory(page);
+  await startNewChat(page);
   await expect(page.getByRole('button', { name: 'Project: billing-api' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Work in: Local' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Mode: Plan' })).toBeVisible();

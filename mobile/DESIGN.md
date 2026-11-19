@@ -30,11 +30,13 @@ claims. Measurements are visual estimates at a 390 by 844 logical viewport.
 
 ## Implementation contract
 
-1. A conversation is the root. History is a translucent overlay over the retained chat;
-   Recent and Projects preserve search, paging, project creation and swipe deletion.
-   Queue remains one toolbar tap away. Flows and Settings open from History.
+1. Chats, Flows and Queue are tabs, each with its own stack: the system tab bar on iOS,
+   a JavaScript tab bar in the web preview. Launch opens Chats and reopens the last
+   conversation once. Recent and Projects preserve search, paging, project creation and
+   swipe deletion. The tab bar hides inside a conversation, whose header keeps the Queue
+   button and needs-you badge. The computer button on each tab root opens Settings as a sheet.
 2. Retain visible grouping: Queue and Settings use inset translucent groups with
-   the desktop rim. History rows stay compact, with an explicit selected fill.
+   the desktop rim. Chats rows stay compact, with an explicit selected fill.
    Assistant prose remains unboxed; user messages use the shared glass material.
 3. The composer uses Frink glass, a 25pt radius, a small send button and a compact
    tools row. Project and mode sit above it. Root launch leaves the keyboard closed.
@@ -45,7 +47,7 @@ claims. Measurements are visual estimates at a 390 by 844 logical viewport.
    OS Reduce Transparency overrides the level with solid material. Atmosphere stays fixed.
 5. Preserve selected-computer ownership, notifications, live Queue counts, semantic
    green/amber/red states and all named commands. Opening a review preserves its
-   return route. History traps web keyboard focus and isolates native accessibility.
+   return route. Tabs out of view leave the page, so screen readers reach only the shown tab.
 
 ## Verification
 

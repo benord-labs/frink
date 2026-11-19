@@ -23,6 +23,7 @@
     "@expo/ui": "~57.0.14",
     "@iconify-icons/simple-icons": "2.0.4",
     "@iconify-icons/vscode-icons": "2.0.6",
+    "@react-navigation/bottom-tabs": "7.19.0",
     "@react-navigation/elements": "2.9.43",
     "@react-navigation/native": "7.4.1",
     "@react-navigation/native-stack": "7.19.2",

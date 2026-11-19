@@ -18,7 +18,7 @@ import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { mergeTranscript } from '../../lib/chat/pending';
 import { useResource } from '../../lib/connection';
 import { duration } from '../../lib/status';
-import { afterChatDeletion } from '../../navigation/after-chat-deletion';
+import { closeDeletedChat } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
 import { GlassSurface } from '../../ui/material';
 import { ResourceStatus } from '../../ui/resource-status';
@@ -186,7 +186,7 @@ function ChatView({
       if (data?.activity === 'idle') clock.started();
       scrolling.latest();
     },
-    onDeleted: () => navigation.reset(afterChatDeletion(navigation.getState(), id)),
+    onDeleted: () => closeDeletedChat(navigation, id),
   });
   function switchConversation(next: string) {
     if (actions.busy || next === data?.subChatId) return;

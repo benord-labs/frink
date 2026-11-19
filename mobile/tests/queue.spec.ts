@@ -1,7 +1,9 @@
 import { expect as baseExpect, test, type Page } from '@playwright/test';
 import type { MobileQueueItem } from '@frink/shared/types/remote/mobile';
 import { openApp } from './fixtures/app';
+import { openChat } from './fixtures/chat';
 import { NOW, overviewFixture } from './fixtures/data';
+import { openTab, tabButton } from './fixtures/navigation';
 
 // The first web bundle can take a while while other previews rebuild on this machine.
 const expect = baseExpect.configure({ timeout: 15_000 });
@@ -12,7 +14,7 @@ const row = (page: Page, key: string) => page.getByTestId(`queue-row-${key}`);
 
 async function openQueue(page: Page, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openApp(page, options);
-  await page.getByTestId('queue-open').click();
+  await openTab(page, 'Queue');
   return state;
 }
 
@@ -61,10 +63,10 @@ test('shows what needs you, what is running and what is ready', async ({ page })
   for (const title of ['Needs you', 'Running', 'Ready for review'])
     await expect(page.getByRole('heading', { name: new RegExp(`^${title}`) })).toBeVisible();
   // Question + permission + plan ready + failed, and the finished task the phone can complete.
-  await page.getByRole('link', { name: /back/i }).click();
-  await expect(page.getByTestId('queue-open')).toContainText('5');
-  await page.getByTestId('queue-open').click();
-  await expect(page.getByText("Benji's MacBook Pro")).toBeVisible();
+  await expect(tabButton(page, 'Queue')).toContainText('5');
+  await expect(
+    page.getByText("Benji's MacBook Pro").filter({ visible: true }).first(),
+  ).toBeVisible();
   await shot(page, 'sections');
   await page.mouse.wheel(0, 600);
   await expect(row(page, 'task-done')).toBeInViewport();
@@ -80,17 +82,26 @@ test('opens a decision at its question, a Flow at its run and a task at its chat
   const state = await openQueue(page);
   const opened = (type: string, id: string) =>
     expect.poll(() => state.requests.some((r) => r.type === type && r.id === id)).toBe(true);
-  // Each tap starts from a fresh Queue: the web preview keeps no navigation history.
   for (const [key, type, id] of [
     ['question:question-1', 'chat', 'chat-5'],
     ['task-run-flow', 'run', 'run-1'],
     ['task-plan', 'chat', 'chat-4'],
   ]) {
-    await page.reload();
-    await page.getByTestId('queue-open').click();
+    await openTab(page, 'Queue');
     await row(page, key).click();
     await opened(type, id);
   }
+});
+
+test('the Queue tab and a chat’s Queue button both carry the needs-you count', async ({ page }) => {
+  await openApp(page);
+  await expect(tabButton(page, 'Queue')).toHaveAccessibleName('5 Queue');
+  await openChat(page);
+  await expect(tabButton(page, 'Queue')).toBeHidden();
+  await expect(page.getByTestId('queue-open')).toContainText('5');
+  await page.getByTestId('queue-open').click();
+  await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toBeVisible();
+  await expect(tabButton(page, 'Queue')).toHaveAttribute('aria-selected', 'true');
 });
 
 test('Show all grows the section with a larger server page', async ({ page }) => {
@@ -120,9 +131,7 @@ test('says you are all caught up when nothing is waiting', async ({ page }) => {
   };
   await openQueue(page, { data: { overview } });
   await expect(page.getByText('You’re all caught up')).toBeVisible();
-  await page.getByRole('link', { name: /back/i }).click();
-  await expect(page.getByTestId('queue-open')).not.toContainText(/\d/);
-  await page.getByTestId('queue-open').click();
+  await expect(tabButton(page, 'Queue')).not.toContainText(/\d/);
   await shot(page, 'empty');
   await page.emulateMedia({ colorScheme: 'light' });
   await shot(page, 'empty', 'light');
