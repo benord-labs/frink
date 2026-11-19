@@ -52,7 +52,7 @@ export const WORKTREE = {
 };
 
 // SAFETY: the transformer and the Claude session loop read only these fields of an SDK frame.
-const CLAUDE_REPLY = [
+export const CLAUDE_REPLY = [
   {
     type: 'assistant',
     parent_tool_use_id: null,
