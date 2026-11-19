@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { Mutex } from 'async-mutex';
 import { app, BrowserWindow, powerMonitor } from 'electron';
 import { encodeKey } from '../../../shared/lib/mobile-channel';
+import { onLiveChatEvent } from '../socket/streaming/live-stream/events';
 import { FRINK_RELAY_BASE_URL } from '../webhooks/base-url';
 import { executeMobileRequest, storeMobileAttachment, subChatBusy } from './domain-api';
 import { loadDesktopIdentity, resetDesktopIdentity, type DesktopIdentity } from './identity';
@@ -11,10 +12,12 @@ import { startMobileNotifications } from './notifications';
 import { MobilePairingStore } from './pairing-store';
 import { startRelayHost, type RelayHost } from './relay-host';
 import { createMobileApp } from './server';
+import { createMobileStreamHub, type MobileStreamHub } from './stream';
 
 let storePromise: Promise<MobilePairingStore> | null = null;
 let host: { relay: string; identity: DesktopIdentity; channel: RelayHost } | null = null;
 let hostError: string | null = null;
+let streams: MobileStreamHub | null = null;
 let stopNotifications: (() => void) | null = null;
 let liveActivity: ReturnType<typeof startMobileLiveActivity> | null = null;
 const lifecycle = new Mutex();
@@ -72,7 +75,13 @@ async function startHost(store: MobilePairingStore): Promise<void> {
   try {
     const relay = mobileRelay();
     const identity = await loadDesktopIdentity(identityPath());
-    const mobileApp = createMobileApp(store, executeMobileRequest, storeMobileAttachment);
+    const hub = createMobileStreamHub(onLiveChatEvent);
+    streams = hub;
+    const mobileApp = createMobileApp(
+      store,
+      (request, channelId) => executeMobileRequest(request, { streams: hub, channelId }),
+      storeMobileAttachment,
+    );
     stopNotifications = startMobileNotifications(store, {
       desktop: desktopPresence,
       isBusy: subChatBusy,
@@ -83,6 +92,7 @@ async function startHost(store: MobilePairingStore): Promise<void> {
       identity,
       fetch: (request) => mobileApp.fetch(request),
       authenticate: (token) => store.authenticate(token),
+      streams: hub,
     });
     host = { relay, identity, channel };
     powerMonitor.on('suspend', noteSuspend).on('resume', reconnectAfterSleep);
@@ -102,6 +112,8 @@ function stopHost(): void {
   stopNotifications?.();
   stopNotifications = null;
   host?.channel.close();
+  streams?.dispose();
+  streams = null;
   host = null;
 }
 

@@ -12,6 +12,7 @@ import {
 import { mobileEnvelopeSchema } from '../../../shared/types/remote/mobile-envelope';
 import { createBodyBudget, createChannelBridge, type ChannelBridge } from './channel-bridge';
 import type { DesktopIdentity } from './identity';
+import type { MobileStreamHub } from './stream';
 
 /** A frame the relay has not acknowledged by then means that phone is gone or too slow. The relay
  * gives up at 15 s, so its own disconnect normally arrives first. */
@@ -36,7 +37,7 @@ function bytesOf(data: unknown): Uint8Array | null {
   return data instanceof ArrayBuffer ? new Uint8Array(data) : null;
 }
 
-type Peer = { session: ChannelSession; bridge: ChannelBridge; sending: Promise<unknown> };
+type Peer = { session: ChannelSession; bridge: ChannelBridge; sending: Promise<void> };
 
 export type RelayHost = {
   /** Closes every channel whose bearer token `revoked` rejects, at once. */
@@ -52,6 +53,7 @@ export function startRelayHost(options: {
   identity: DesktopIdentity;
   fetch: (request: Request) => Response | Promise<Response>;
   authenticate: (token: string) => boolean;
+  streams: Pick<MobileStreamHub, 'register' | 'unregister'>;
   connect?: typeof connect;
 }): RelayHost {
   const budget = createBodyBudget(BODY_BUDGET_BYTES);
@@ -113,7 +115,10 @@ export function startRelayHost(options: {
     if (!answer) return drop(peerId, 'handshake refused');
     const peer: Peer = {
       session: answer.session,
-      sending: emit(peerId, answer.ready).catch(() => dropIfCurrent(peerId, peer)),
+      sending: emit(peerId, answer.ready).then(
+        () => undefined,
+        () => dropIfCurrent(peerId, peer),
+      ),
       bridge: createChannelBridge({
         fetch: options.fetch,
         // Seal now so counters follow call order; the relay acks each frame before the next goes.
@@ -123,15 +128,20 @@ export function startRelayHost(options: {
           try {
             frame = peer.session.seal(encodeEnvelope(envelope));
           } catch {
-            return drop(peerId, 'seal failed');
+            drop(peerId, 'seal failed');
+            return peer.sending;
           }
           peer.sending = peer.sending
-            .then(() => peers.get(peerId) === peer && emit(peerId, frame))
+            .then(async () => {
+              if (peers.get(peerId) === peer) await emit(peerId, frame);
+            })
             .catch(() => dropIfCurrent(peerId, peer));
+          return peer.sending;
         },
         fail: () => drop(peerId, 'protocol violation'),
         authenticate: options.authenticate,
         budget,
+        streams: options.streams,
       }),
     };
     peers.set(peerId, peer);
