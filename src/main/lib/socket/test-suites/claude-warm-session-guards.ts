@@ -453,7 +453,10 @@ function registerBriefingRecreateTests(
     vi.mocked(getFlowBriefingForSubChat).mockResolvedValueOnce('PRD: use strict mode');
     await send('second', { sessionId: 'sess-held' });
 
-    expect(spawned(0)?.systemPrompt).toMatchObject({ snapshot: false });
+    expect(spawned(0)?.systemPrompt).toMatchObject({
+      snapshot: false,
+      excludeDynamicSections: true,
+    });
     expect(spawned(0)?.systemPrompt.append).not.toContain('## Flow Briefing');
     expect(sessionLines('claim')).toEqual(['miss:none', 'miss:key-mismatch:systemPrompt']);
     expect(first.close).toHaveBeenCalledOnce();
