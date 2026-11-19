@@ -22,7 +22,17 @@ import {
 import { showNotice } from './notice';
 import { forgetTurnedOn } from './notifications/default-on';
 import { closeMobileRelay } from './relay/client';
-import { clearCache, readCache, resourceKey, share, writeCache } from './resource/cache';
+import {
+  cacheWriter,
+  clearCache,
+  freshSince,
+  prefetch,
+  prefetched,
+  readCache,
+  resourceKey,
+  share,
+} from './resource/cache';
+import { FIRST_PAGES } from './resource/first-pages';
 import { readSavedComputers, savingComputers } from './storage';
 
 type Session = {
@@ -36,9 +46,11 @@ type Session = {
   connect: (connection: Connection, replacing?: string) => Promise<void>;
   select: (deviceId: string) => void;
   forget: (deviceId: string) => Promise<void>;
+  /** Asks `host`, the selected computer by default, so an answer is tied to who was asked. */
   request: <T extends MobileRequest>(
     request: T,
     signal?: AbortSignal,
+    host?: Connection | null,
   ) => Promise<MobileResponses[T['type']]>;
 };
 const Context = createContext<Session | null>(null);
@@ -148,8 +160,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     async <T extends MobileRequest>(
       input: T,
       signal?: AbortSignal,
+      host = selectedComputer(current.current),
     ): Promise<MobileResponses[T['type']]> => {
-      const host = selectedComputer(current.current);
       if (!host) throw new ApiError('Pair your computer to continue.', 401);
       try {
         return await requestMobile(host, input, signal);
@@ -163,7 +175,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
   const connection = selectedComputer(state);
   useEffect(() => {
-    if (connection) prefetch(connection, request);
+    if (connection) prefetchFirstPages(connection, request);
   }, [connection, request]);
   return (
     <Context.Provider
@@ -185,28 +197,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
 const isRevocation = (error: unknown) => error instanceof ApiError && error.status === 401;
 
-// The first request the Chats and Flows screens make, so their first open draws from the cache.
-const PREFETCHED: MobileRequest[] = [{ type: 'chats', limit: 30 }, { type: 'flows' }];
-
-/** Prefetches still on their way, so a screen opened meanwhile waits for one instead of asking twice. */
-const prefetching = new Map<string, Promise<Response<MobileRequest>>>();
-
-function prefetch(host: Connection, request: Session['request']) {
-  for (const input of PREFETCHED) {
-    const key = resourceKey(host.deviceId, host.route, input);
-    if (readCache(key) || prefetching.has(key)) continue;
-    const answer = request(input);
-    prefetching.set(key, answer);
-    answer
-      .then((data) => readCache(key) || writeCache(key, host.deviceId, data))
-      .catch(() => undefined)
-      .finally(() => prefetching.delete(key));
-  }
-}
-
-function prefetched<T extends MobileRequest>(key: string) {
-  // SAFETY: a key serializes its request, and only that request's answer is stored under it.
-  return prefetching.get(key) as Promise<Response<T>> | undefined;
+function prefetchFirstPages(host: Connection, request: Session['request']) {
+  for (const input of FIRST_PAGES)
+    prefetch(resourceKey(host.deviceId, host.route, input), host.deviceId, () =>
+      request(input, undefined, host),
+    );
 }
 
 export function useConnection() {
@@ -224,12 +219,6 @@ function failureState(error: unknown) {
 }
 
 type Response<T extends MobileRequest> = MobileResponses[T['type']];
-
-/** When the cached answer is younger than `interval`, the time it was written. */
-function freshSince(key: string, interval: number) {
-  const at = readCache(key)?.updatedAt;
-  return at !== undefined && Date.now() - at < interval ? at : undefined;
-}
 
 /** Calls `tick` an interval after `since`, then an interval after each tick settles. The interval is
  *  read when scheduling, and `retime` re-reads it for the tick already waiting. */
@@ -322,12 +311,15 @@ export function useResource<T extends MobileRequest>(
       pending = new AbortController();
       const controller = pending;
       if (visible) setState((old) => ({ ...old, refreshing: true }));
+      const write = cacheWriter(deviceId);
       try {
-        const next = await (prefetched<T>(key) ?? request(input, pending.signal));
+        // A shared prefetch is not aborted with this screen: other screens may be waiting on it.
+        const next = await (prefetched<Response<T>>(key) ??
+          request(input, pending.signal, connection));
         if (!cancelled && currentKey.current === key) {
           const data = share(readCache<Response<T>>(key)?.data, next);
           const updatedAt = Date.now();
-          writeCache(key, deviceId, data, updatedAt);
+          write(key, data, updatedAt);
           setState({ key, data, updatedAt, refreshing: false });
         }
       } catch (error) {
