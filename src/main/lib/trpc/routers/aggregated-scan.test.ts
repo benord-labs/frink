@@ -189,10 +189,10 @@ describe('aggregatedScan (scan + project orchestration)', () => {
   });
 });
 
-describe('dedupeByLogicalName — AGENT read-map (Cursor does NOT read .claude/agents)', () => {
-  it('a .claude-only AGENT is NOT "Synced" for a Claude+Cursor user (skills would be — BUG-6)', () => {
-    const rows = dedupeByLogicalName([entry('.claude', 'reviewer')], 'agent', TOOLS);
-    expect(rows[0].followsYou).toBe(false); // Cursor can't read .claude/agents → the gap the copy fixes
+describe('dedupeByLogicalName — AGENT read-map', () => {
+  it('a .frink-only AGENT is readable by Claude alone (as a skill no tool would read it)', () => {
+    const rows = dedupeByLogicalName([entry('.frink', 'reviewer')], 'agent', TOOLS);
+    expect(rows[0].followsYou).toBe(false);
     expect(rows[0].readableBy).toEqual(['claude-code']);
   });
 

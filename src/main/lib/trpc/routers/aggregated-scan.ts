@@ -199,7 +199,7 @@ function buildAgentInfo<T extends ScannedResource>(
   // Read-only ONLY when no user-authored copy exists — a same-name user override stays editable.
   const builtIn = members.every((m) => m.item.builtIn === true);
   // Follows you = every configured tool can READ a copy (per the verified read-map). Hooks never bridge.
-  // Agents use a DIFFERENT read-map than skills (Cursor can't read .claude/agents) — pass the kind.
+  // Agents use a DIFFERENT read-map than skills (no shared .agents dir) — pass the kind.
   const paths = members.map((m) => m.item.path);
   const readKind = type === 'agent' ? 'agent' : 'skill';
   const followsYou = type !== 'hook' && followsYouAcross(paths, userTools, readKind);

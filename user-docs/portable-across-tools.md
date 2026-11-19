@@ -12,7 +12,7 @@ Frink lets you move between coding tools — Claude, Codex, Cursor and more — 
 
 ## Switching tools
 
-Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude, Codex, OpenCode, GitHub Copilot or Cursor, and changing either only affects chats you start afterwards. To use a different signed-in login for just one new chat, pick it from the account menu at the top of the new-chat screen; that never changes either default. Nothing inside a chat changes its tool or login; its header shows which one it always uses. The one exception is a chat that hits its usage limit: **Retry with** another signed-in Claude login carries the same conversation on there (on that login's organisation), and the chat stays on it. To work in another tool, start a new chat. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors such as the Cursor editor: Frink imports their config and writes yours back.
+Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude, Codex, OpenCode, GitHub Copilot or Cursor, and changing either only affects chats you start afterwards. To use a different signed-in login for just one new chat, pick it from the account menu at the top of the new-chat screen; that never changes either default. Nothing inside a chat changes its tool or login; its header shows which one it always uses. The one exception is a chat that hits its usage limit: **Retry with** another signed-in Claude login carries the same conversation on there (on that login's organisation), and the chat stays on it. To work in another tool, start a new chat. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors such as the Cursor editor: Frink imports their config, including your Cursor custom agents, and writes your skills back. The Cursor editor reads the custom agents Frink keeps in `~/.claude/agents` itself, so Frink adds no copies to the editor's own agents folder (an agent's tool limits don't carry over to the editor).
 
 ## What follows you
 
@@ -23,7 +23,7 @@ Each chat stays on the tool it started with. A new chat uses its project's accou
 | Commands               | Yes                                                                    |
 | Custom agents          | Yes                                                                    |
 | Connected integrations | Yes (delivered as MCP)                                                 |
-| Tool limits            | Yes — enforced where the tool can, relaxed to read-only where it can't |
+| Tool limits            | Yes — enforced where the tool can, relaxed to read-only on Codex; not in the Cursor editor |
 | Hooks                  | Yes, from Claude to Codex — the ones Codex can run                     |
 | Tool-native plugins    | Stays per-tool                                                         |
 | Auto Mode rules        | Stays per-tool — Claude and Codex each follow their own                |
@@ -57,6 +57,7 @@ Say you built an agent called **Security Auditor** and told it _"only allowed to
 
 - On tools that can enforce that precisely, the limit carries over exactly.
 - On tools that only offer a coarser "read-only or not" switch, the fine-grained limit relaxes to the closest thing that tool understands.
+- The Cursor editor reads your agent file directly and applies none of its limits.
 
 Frink tells you what changed when you switch tools. The agent itself (its name and instructions) always comes with you. Tool-specific settings — which model it runs on, and how tightly its rules are policed — translate to the closest thing the new tool offers: model names differ between tools, so on a new tool the agent starts on that tool's default model until you pick one.
 
