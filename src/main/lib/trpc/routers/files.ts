@@ -1007,7 +1007,7 @@ export const filesRouter = router({
    * Clear the module-resolver tsconfig cache (e.g. after editing tsconfig.json)
    */
   clearResolverCache: publicProcedure.mutation(async () => {
-    const { clearResolverCache } = await import('../../module-resolver');
+    const { clearResolverCache } = await import('../../code-navigation');
     clearResolverCache();
     return { success: true };
   }),
@@ -1952,28 +1952,14 @@ export const filesRouter = router({
     .input(z.object({ subChatId: z.string(), sourcePath: z.string().min(1) }))
     .mutation(({ input }) => copyIntoPasted(input)),
 
-  /**
-   * Read the project's tsconfig.json and resolve paths/baseUrl for Monaco.
-   * Walks the `extends` chain and returns fully-resolved absolute paths.
-   */
-  getTsConfigPaths: publicProcedure
-    .input(z.object({ projectPath: z.string() }))
-    .query(async ({ input }) => {
-      const { resolveTsConfigPaths } = await import('../../tsconfig-resolver');
-      return resolveTsConfigPaths(input.projectPath);
-    }),
-
-  /**
-   * Resolve a symbol or module specifier to an absolute file path.
-   * Uses TypeScript's own parser + module resolution — universal, no regex.
-   */
+  /** Where the import under the cursor (or a clicked module specifier) is defined: path, line and columns. */
   resolveDefinition: publicProcedure
     .input(
       z.object({
         projectPath: z.string(),
         containingFile: z.string(),
-        symbolName: z.string().optional(),
         fileContent: z.string().optional(),
+        offset: z.number().int().nonnegative().optional(),
         specifier: z.string().optional(),
       }),
     )
@@ -1990,18 +1976,8 @@ export const filesRouter = router({
         return null;
       }
 
-      const { findModuleSpecifierForSymbol, resolveModuleSpecifier } =
-        await import('../../module-resolver');
-
-      let specifier = input.specifier;
-
-      if (!specifier && input.symbolName && input.fileContent) {
-        specifier = findModuleSpecifierForSymbol(input.fileContent, input.symbolName) ?? undefined;
-      }
-
-      if (!specifier) return null;
-
-      return resolveModuleSpecifier(input.projectPath, input.containingFile, specifier);
+      const { resolveDefinition } = await import('../../code-navigation');
+      return resolveDefinition(input);
     }),
 
   /**
