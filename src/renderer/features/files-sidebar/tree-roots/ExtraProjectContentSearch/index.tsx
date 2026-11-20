@@ -8,6 +8,7 @@ import { contentSearchOptionsAtom } from '../../atoms';
 import { ContentSearchResults } from '../../ContentSearchResults';
 import { FILE_TREE_REFRESH_EVENT } from '../../refresh-trigger';
 import { useContentSearch } from '../../use-content-search-tab';
+import { useLinkedFolderAnswer } from '@/lib/workspace-context/use-linked-folder-answer';
 import { openContentSearchMatchInEditor } from '../../utils/content-search-actions';
 import { FOCUS_REFRESH_MS, LINKED_BADGE, SEARCH_SECTION_CLASS } from '../constants';
 import { RootHeading } from '../ProjectRootRow';
@@ -56,8 +57,7 @@ export function ExtraProjectContentSearch({
   const folderEntry = asEntryOfParent(project.path);
   const noMatches =
     !project.missing && query.trim() !== '' && !isLoading && !invalidRegex && matches.length === 0;
-  const folderType = trpc.files.entryType.useQuery(folderEntry, { enabled: noMatches });
-  const cantOpen = noMatches && folderType.isSuccess && folderType.data !== 'folder';
+  const folder = useLinkedFolderAnswer(folderEntry, project.name, noMatches);
 
   const refresh = () => {
     lastReadAt.current = Date.now();
@@ -89,7 +89,7 @@ export function ExtraProjectContentSearch({
     <ContentSearchResults
       heading={<RootHeading name={project.name} path={project.path} badge={LINKED_BADGE} />}
       className={SEARCH_SECTION_CLASS}
-      isLoading={isLoading || (noMatches && folderType.isLoading)}
+      isLoading={isLoading || folder.isLoading}
       query={query}
       invalidRegex={invalidRegex}
       timedOut={search.timedOut}
@@ -97,9 +97,7 @@ export function ExtraProjectContentSearch({
       emptyMessage={
         project.missing
           ? `Can't find ${project.name}'s folder.`
-          : cantOpen
-            ? `Can't open ${project.name}'s folder. It may have moved or been deleted.`
-            : `No matches in ${project.name}.`
+          : (folder.problem ?? `No matches in ${project.name}.`)
       }
       onSelectMatch={(relativePath, lineNumber, startColumn, endColumn) =>
         openContentSearchMatchInEditor(

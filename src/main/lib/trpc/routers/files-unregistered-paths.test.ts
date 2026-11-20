@@ -8,12 +8,14 @@ import {
   readlink,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createEntryKinds, STAT_TIMEOUT_MS } from './entry-type';
 
 vi.mock('electron', () => ({
   app: {
@@ -282,6 +284,41 @@ describe('filesRouter symlinked entries', () => {
       ['AGENTS.md', 'file'],
       ['CLAUDE.md', 'file'],
     ]);
+  });
+
+  it('lists the folder without a link whose target never answers', async () => {
+    await writeFile(join(projectPath, 'readme.md'), 'x', 'utf8');
+    await linkFolder(outside, join(projectPath, 'nas'));
+    const nas = join(projectPath, 'nas');
+    let nasAsked = false;
+    const kinds = createEntryKinds({
+      stat: (path) => {
+        if (path !== nas) return stat(path);
+        nasAsked = true;
+        return new Promise(() => {});
+      },
+      readlink: (path) => readlink(path),
+    });
+    const { listDirectoryContents } = await import('./files');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const rows = listDirectoryContents(
+        projectPath,
+        projectPath,
+        undefined,
+        undefined,
+        kinds.direntKind,
+      );
+      await vi.waitFor(() => expect(nasAsked).toBe(true));
+      await vi.advanceTimersByTimeAsync(STAT_TIMEOUT_MS);
+
+      expect((await rows).map((row) => [row.path, row.type])).toEqual([
+        ['linked', 'folder'],
+        ['readme.md', 'file'],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('expands a linked folder inside a git repo and creates files through it', async () => {

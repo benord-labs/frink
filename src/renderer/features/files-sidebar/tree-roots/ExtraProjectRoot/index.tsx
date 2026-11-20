@@ -13,6 +13,10 @@ import { useFileTreeNavigation } from '../../use-file-tree-navigation';
 import { useFileTreeNodes } from '../../utils/build-file-tree';
 import { getVisiblePaths } from '../../utils/get-visible-paths';
 import { createMetaLookupFromDOM } from '../../utils/meta-lookup-from-dom';
+import {
+  cantOpenFolder,
+  useLinkedFolderAnswer,
+} from '@/lib/workspace-context/use-linked-folder-answer';
 import { FOCUS_REFRESH_MS, LINKED_BADGE } from '../constants';
 import { ProjectRootRow } from '../ProjectRootRow';
 
@@ -72,10 +76,9 @@ export function ExtraProjectRoot({
   // The listing and the search read a missing folder as an empty one, so an empty result asks
   // the disk, and the tree waits for that answer before it calls the folder empty.
   const isEmpty = shown.data?.length === 0;
-  const folderType = trpc.files.entryType.useQuery(folderEntry, { enabled: canRead && isEmpty });
-  const cantOpen =
-    shown.isError || (isEmpty && folderType.isSuccess && folderType.data !== 'folder');
-  const isLoading = shown.isLoading || (isEmpty && folderType.isLoading);
+  const folder = useLinkedFolderAnswer(folderEntry, project.name, canRead && isEmpty);
+  const problem = shown.isError ? cantOpenFolder(project.name) : folder.problem;
+  const isLoading = shown.isLoading || folder.isLoading;
   // A folder that isn't a git repository fails here and shows no branch.
   const branchInput = { worktreePath: project.path };
   const branch = trpc.changes.getBranches.useQuery(branchInput, {
@@ -170,9 +173,9 @@ export function ExtraProjectRoot({
           <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
             {`Can't find ${project.name}'s folder.`}
           </p>
-        ) : cantOpen ? (
+        ) : problem ? (
           <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
-            {`Can't open ${project.name}'s folder. It may have moved or been deleted.`}
+            {problem}
           </p>
         ) : isLoading ? (
           <LoadingState />
