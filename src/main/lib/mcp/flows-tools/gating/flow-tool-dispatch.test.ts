@@ -158,6 +158,22 @@ describe('dispatchFlowToolCall', () => {
     expect(state.handleFlowsToolCall).not.toHaveBeenCalled();
   });
 
+  it('reads the live plan phase over the send-start mode', async () => {
+    let planning = true;
+    const ctx = makeCtx({ isPlanPhase: () => planning });
+
+    const refused = await dispatch({ name: 'frink_flows_list', mode: 'plan', ctx });
+    expect(resultText(refused)).toBe(PLAN_MODE_REFUSAL);
+    // An auto-approved plan implements in the same turn: the snapshot still says 'plan'.
+    planning = false;
+    expect((await dispatch({ name: 'frink_flows_list', mode: 'plan', ctx }))?.isError).toBe(false);
+    expect((await dispatch({ mode: 'plan', ctx }))?.isError).toBe(false);
+    expect(state.handleFlowsToolCall).toHaveBeenCalledTimes(2);
+    // A mid-turn EnterPlanMode plans on an 'agent' snapshot.
+    planning = true;
+    expect(resultText(await dispatch({ name: 'frink_flows_list', ctx }))).toBe(PLAN_MODE_REFUSAL);
+  });
+
   it('preserves an explicit deny message in the structured agent-facing result', async () => {
     const message = 'Denied by project rule mcp__frink__frink_flows_patch';
     state.validateToolPermission.mockResolvedValue({ allowed: false, message });

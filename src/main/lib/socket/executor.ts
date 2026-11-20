@@ -184,7 +184,9 @@ import {
   createModeFlip,
   isAutoReviewSupported,
   isPlanAutoDenyFloorActive,
+  isTurnPlanning,
   persistPlanFlipThenNotify,
+  trackPlanReentry,
   resolveAutoReviewModes,
   resolvePermissionMode,
 } from './streaming/plan-auto-approve';
@@ -752,6 +754,8 @@ export async function handleRemoteExecute(
             abortController.signal,
             () => agentRuntime === 'claude' && isPlanAutoDenyFloorActive(turn),
             signalTaskId,
+            // Live plan phase: only Claude turns move it; for others it equals the start mode.
+            () => isTurnPlanning(mode, turn, flowPlanAutoApprove),
           )
         : undefined;
     // Native resumes already own the transcript; shipping Frink history duplicates it.
@@ -1345,6 +1349,11 @@ export async function handleRemoteExecute(
           ) {
             await handleExitPlanModeCompletion();
           }
+          trackPlanReentry(
+            turn,
+            chunk,
+            'toolCallId' in chunk ? toolNameByCallId.get(chunk.toolCallId) : undefined,
+          );
 
           toolEffects(chunk);
 
