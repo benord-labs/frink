@@ -1,9 +1,6 @@
 import path from 'node:path';
 import { z } from 'zod';
-import {
-  FRINK_DYNAMIC_CHAT_MCP_KEY,
-  parseMcpToolFullName,
-} from '../../../../../shared/lib/mcp-tool-name';
+import { FRINK_MCP_KEY, parseMcpToolFullName } from '../../../../../shared/lib/mcp-tool-name';
 import { PATH_TOOLS } from '../../../../../shared/types/permissions';
 import { extractFilePathFromToolInput, remapPathForPermissionBoundary } from '../../../permissions';
 import type { ApprovalOutcome, CodexApprovalRequest } from '../codex-events';
@@ -42,7 +39,7 @@ function trustedFrinkMcpFor(
   request: CodexApprovalRequest,
   frinkMcpInjected: boolean,
 ): boolean | undefined {
-  if (request.mcp) return frinkMcpInjected && request.mcp.server === FRINK_DYNAMIC_CHAT_MCP_KEY;
+  if (request.mcp) return frinkMcpInjected && request.mcp.server === FRINK_MCP_KEY;
   return parseMcpToolFullName(request.toolName) ? false : undefined;
 }
 

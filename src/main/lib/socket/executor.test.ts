@@ -4087,7 +4087,7 @@ describe('execution-scoped MCP URL wiring', () => {
     vi.mocked(createTransformer).mockReturnValue(function* () {});
   });
 
-  it('addresses Claude frink_dynamic_chat by its channel and toolset, never an executionId', async () => {
+  it('addresses Claude frink by its channel and toolset, never an executionId', async () => {
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
       token: 'claude-token',
       isApiKey: true,
@@ -4114,7 +4114,7 @@ describe('execution-scoped MCP URL wiring', () => {
       history: [],
     });
 
-    const mcpUrl = stagedMcpServers().frink_dynamic_chat?.url;
+    const mcpUrl = stagedMcpServers().frink?.url;
     expect(mcpUrl).toBeDefined();
     const parsed = new URL(mcpUrl as string);
     expect(parsed.searchParams.get('executionId')).toBeNull();

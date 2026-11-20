@@ -30,13 +30,13 @@ describe('buildCodexMcpBinding', () => {
   it('keeps the Flow MCP inside the replacement table', () => {
     const binding = buildCodexMcpBinding({
       canonicalServers: {
-        frink_dynamic_chat: { url: 'http://127.0.0.1:4312/mcp?channel=chat' },
+        frink: { url: 'http://127.0.0.1:4312/mcp?channel=chat' },
       },
     });
 
     expect(binding.threadConfig.mcp_servers).toEqual({
       __frink_replace: true,
-      frink_dynamic_chat: {
+      frink: {
         enabled: true,
         url: 'http://127.0.0.1:4312/mcp?channel=chat',
       },
@@ -46,7 +46,7 @@ describe('buildCodexMcpBinding', () => {
   it('installs Frink task completion as a native Codex Stop hook', () => {
     const binding = buildCodexMcpBinding({
       canonicalServers: {
-        frink_dynamic_chat: { url: 'http://127.0.0.1:4312/mcp?channel=chat' },
+        frink: { url: 'http://127.0.0.1:4312/mcp?channel=chat' },
       },
       taskSignalEnabled: true,
     });
@@ -57,7 +57,7 @@ describe('buildCodexMcpBinding', () => {
           hooks: [
             {
               type: 'mcp_tool',
-              server: 'frink_dynamic_chat',
+              server: 'frink',
               tool: 'frink_task_stop_guard',
               input: { stop_hook_active: `\${stop_hook_active}` },
               timeout: 5,
@@ -168,9 +168,9 @@ describe('buildCodexMcpBinding', () => {
     const revision = (canonicalServers: Record<string, unknown>) =>
       buildCodexMcpBinding({ canonicalServers }).revision;
     const github = { command: 'gh-mcp', args: ['--stdio'] };
-    expect(revision({ Linear: { url: 'https://l.test', headers: { A: '1', b: '2' } }, github })).toBe(
-      revision({ github, Linear: { headers: { b: '2', A: '1' }, url: 'https://l.test' } }),
-    );
+    expect(
+      revision({ Linear: { url: 'https://l.test', headers: { A: '1', b: '2' } }, github }),
+    ).toBe(revision({ github, Linear: { headers: { b: '2', A: '1' }, url: 'https://l.test' } }));
   });
 
   it('keeps the replace sentinel when a Frink server is named after it', () => {

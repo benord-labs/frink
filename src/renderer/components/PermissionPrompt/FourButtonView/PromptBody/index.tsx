@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react';
 import {
-  FRINK_DYNAMIC_CHAT_MCP_KEY,
   friendlyMcpName,
+  frinkToolPartName,
   parseMcpToolFullName,
 } from '../../../../../shared/lib/mcp-tool-name';
 import { isPermissionPresentation } from '../../../../../shared/lib/permissions/presentation';
@@ -35,7 +35,7 @@ const PROMPT_HEADER_LABELS: Record<PromptKind, string> = {
   tool: 'Tool',
 };
 
-const CUSTOM_NODE_REGISTRATION_TOOL = `mcp__${FRINK_DYNAMIC_CHAT_MCP_KEY}__frink_register_node`;
+const CUSTOM_NODE_REGISTRATION_TOOL = frinkToolPartName('frink_register_node');
 
 function promptKind({ isBash, isFileOpTool, isFlowPatch, isMcp }: PromptKindFlags): PromptKind {
   if (isBash) return 'bash';

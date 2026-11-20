@@ -1,3 +1,4 @@
+import { frinkToolPartName } from '../../../shared/lib/mcp-tool-name';
 import { isPermissionPresentation } from '../../../shared/lib/permissions/presentation';
 import type { PermissionPresentation } from '../../../shared/types/permissions';
 
@@ -7,7 +8,7 @@ export function isValidPermissionPresentation(
   presentation: PermissionPresentation | undefined,
 ): boolean {
   if (presentation === undefined) return true;
-  if (toolName !== 'mcp__frink_dynamic_chat__frink_register_node') return false;
+  if (toolName !== frinkToolPartName('frink_register_node')) return false;
   try {
     return isPermissionPresentation(presentation);
   } catch {

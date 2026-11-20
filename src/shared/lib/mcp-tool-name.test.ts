@@ -1,14 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FRINK_MCP_HISTORY_KEYS,
+  FRINK_MCP_KEY,
   FRINK_MUTATING_FLOW_TOOLS,
   FRINK_OWNED_MCP_SERVERS,
   formatMcpToolName,
+  frinkToolPartName,
   isVendorPluginMcpServer,
+  isFrinkMcpServerInHistory,
   isFrinkMutatingFlowTool,
   isFrinkOwnedMcpTool,
   parseMcpToolFullName,
   vendorPluginMcpServerName,
 } from './mcp-tool-name';
+
+describe('frinkToolPartName', () => {
+  it('names a Frink tool so it parses back to the trusted Frink server', () => {
+    const name = frinkToolPartName('browser_open');
+    expect(parseMcpToolFullName(name)).toEqual({
+      serverName: FRINK_MCP_KEY,
+      toolName: 'browser_open',
+    });
+    expect(isFrinkOwnedMcpTool(name)).toBe(true);
+  });
+});
 
 describe('parseMcpToolFullName', () => {
   it('parses mcp__server__tool into components', () => {
@@ -42,8 +57,21 @@ describe('parseMcpToolFullName', () => {
 
 describe('isFrinkOwnedMcpTool', () => {
   it('is true for frink-owned servers', () => {
-    expect(isFrinkOwnedMcpTool('mcp__frink_dynamic_chat__frink_flows_patch')).toBe(true);
-    expect(isFrinkOwnedMcpTool('mcp__frink__frink_flows_list')).toBe(true);
+    expect(isFrinkOwnedMcpTool('mcp__frink__frink_flows_patch')).toBe(true);
+    expect(isFrinkOwnedMcpTool('mcp__frink__browser_open')).toBe(true);
+  });
+
+  it("is false for the server's earlier key, which saved chats still carry", () => {
+    for (const key of FRINK_MCP_HISTORY_KEYS) {
+      expect(isFrinkOwnedMcpTool(`mcp__${key}__frink_flows_list`)).toBe(false);
+      expect(isFrinkMutatingFlowTool(`mcp__${key}__frink_flows_patch`)).toBe(false);
+      expect(isFrinkMcpServerInHistory(key)).toBe(true);
+    }
+  });
+
+  it('is false for servers whose name extends the key', () => {
+    expect(isFrinkOwnedMcpTool('mcp__frink_browser__open')).toBe(false);
+    expect(isFrinkOwnedMcpTool('mcp__frinkx__browser_open')).toBe(false);
   });
 
   it('is false for a server whose name merely contains "frink" (substring trap)', () => {
@@ -52,35 +80,30 @@ describe('isFrinkOwnedMcpTool', () => {
 
   it('is false for third-party servers and malformed names', () => {
     expect(isFrinkOwnedMcpTool('mcp__codebase__searchCode')).toBe(false);
-    expect(isFrinkOwnedMcpTool('tool-mcp__frink_dynamic_chat__x')).toBe(false);
+    expect(isFrinkOwnedMcpTool('tool-mcp__frink__x')).toBe(false);
     expect(isFrinkOwnedMcpTool('frink_flows_list')).toBe(false);
     expect(isFrinkOwnedMcpTool('mcp__onlyone')).toBe(false);
   });
 
-  it('trusts EXACTLY the two frink keys — locks the silent-trust boundary against drift', () => {
+  it('trusts EXACTLY the one frink key — locks the silent-trust boundary against drift', () => {
     // This set is a security boundary: every member is auto-approved with no prompt.
     // A widened set (extra entry, or a mutation via the shared FRINK_LOOPBACK_KEYS alias)
     // would silently trust a non-frink server. Lock membership exactly.
-    expect([...FRINK_OWNED_MCP_SERVERS].sort()).toEqual(['frink', 'frink_dynamic_chat']);
+    expect([...FRINK_OWNED_MCP_SERVERS]).toEqual([FRINK_MCP_KEY]);
+    expect(FRINK_MCP_KEY).toBe('frink');
   });
 });
 
 describe('isFrinkMutatingFlowTool', () => {
-  it('is true for every mutating flow tool under BOTH frink server keys', () => {
-    // The same tools are served under `frink_dynamic_chat` (in-app) and `frink`
-    // (~/.claude.json mirror). A key missed here would silently auto-allow that
-    // identity's writes at the trust short-circuit.
+  it('is true for every mutating flow tool under the frink server key', () => {
     for (const tool of FRINK_MUTATING_FLOW_TOOLS) {
-      expect(isFrinkMutatingFlowTool(`mcp__frink_dynamic_chat__${tool}`)).toBe(true);
       expect(isFrinkMutatingFlowTool(`mcp__frink__${tool}`)).toBe(true);
     }
   });
 
   it('is false for read-only frink tools (they keep trust auto-allow)', () => {
-    expect(isFrinkMutatingFlowTool('mcp__frink_dynamic_chat__frink_flows_list')).toBe(false);
-    expect(isFrinkMutatingFlowTool('mcp__frink_dynamic_chat__frink_navigation_context')).toBe(
-      false,
-    );
+    expect(isFrinkMutatingFlowTool('mcp__frink__frink_flows_list')).toBe(false);
+    expect(isFrinkMutatingFlowTool('mcp__frink__frink_navigation_context')).toBe(false);
   });
 
   it('is false for a third-party server carrying a flow-tool name (server spoof)', () => {
@@ -91,7 +114,7 @@ describe('isFrinkMutatingFlowTool', () => {
 
   it('is false for malformed and bare names', () => {
     expect(isFrinkMutatingFlowTool('frink_flows_patch')).toBe(false);
-    expect(isFrinkMutatingFlowTool('mcp__frink_dynamic_chat__')).toBe(false);
+    expect(isFrinkMutatingFlowTool('mcp__frink__')).toBe(false);
   });
 });
 

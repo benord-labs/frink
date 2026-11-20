@@ -3,8 +3,8 @@
  *
  * Reads `~/.claude.json` (global), `~/.cursor/mcp.json` (global), and each
  * registered project's `<project>/.cursor/mcp.json`, and emits a flat list
- * of provider-neutral `ImportCandidate` records. Filters out Frink's own
- * injected `frink_dynamic_chat` entry.
+ * of provider-neutral `ImportCandidate` records. Filters out any entry under
+ * Frink's own server key.
  *
  * Out of scope: per-project Claude MCPs from `~/.claude.json` `projects.*`
  * blocks (Frink's own per-project model is enablement-by-name from globals,

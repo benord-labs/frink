@@ -1,5 +1,5 @@
 import log from 'electron-log';
-import { FRINK_DYNAMIC_CHAT_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
 import type { CodexThreadSubscription } from './app-server-client';
 import {
   type ApprovalOutcome,
@@ -29,9 +29,9 @@ function isRegisterNodeTransportRequest(
 ): boolean {
   return (
     request?.kind === 'mcp' &&
-    request.mcp?.server === FRINK_DYNAMIC_CHAT_MCP_KEY &&
+    request.mcp?.server === FRINK_MCP_KEY &&
     request.mcp.tool === REGISTER_NODE_TOOL_NAME &&
-    request.toolName === `mcp__${FRINK_DYNAMIC_CHAT_MCP_KEY}__${REGISTER_NODE_TOOL_NAME}`
+    request.toolName === frinkToolPartName(REGISTER_NODE_TOOL_NAME)
   );
 }
 

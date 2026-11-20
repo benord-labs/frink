@@ -1,6 +1,6 @@
 import {
-  FRINK_DYNAMIC_CHAT_MCP_KEY,
   FRINK_MUTATING_FLOW_TOOLS,
+  frinkToolPartName,
 } from '../../../../../shared/lib/mcp-tool-name';
 import type { AgentRuntime } from '../../../../../shared/lib/ai-providers';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
@@ -152,7 +152,7 @@ export async function gateFlowWrite(
   const permissionRoot = presentation ? FRINK_CUSTOM_NODES_DIR : ctx.projectPath;
   if (!permissionRoot) return { allowed: false, message: MISSING_FLOW_PROJECT_MESSAGE };
   const permissionArgs = [
-    `mcp__${FRINK_DYNAMIC_CHAT_MCP_KEY}__${toolName}`,
+    frinkToolPartName(toolName),
     args,
     permissionRoot,
     ctx.chatId,
@@ -165,7 +165,7 @@ export async function gateFlowWrite(
   ] as const;
   const result = presentation
     ? await validateWrite(
-        `mcp__${FRINK_DYNAMIC_CHAT_MCP_KEY}__${toolName}`,
+        frinkToolPartName(toolName),
         args,
         permissionRoot,
         ctx.chatId,

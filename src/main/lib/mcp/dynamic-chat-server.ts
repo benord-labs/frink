@@ -14,6 +14,7 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import type { AgentRuntime } from '../../../shared/lib/ai-providers';
+import { FRINK_MCP_KEY } from '../../../shared/lib/mcp-tool-name';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { getDatabase } from '../db';
 import { dropLinksOverlapping } from '../db/repos/chat-linked-projects';
@@ -23,10 +24,7 @@ import {
   parseWorktreeHistory,
   updateChat,
 } from '../db/repos/chats';
-import {
-  getProjectById as getProjectByIdLocal,
-  listRealProjects,
-} from '../db/repos/projects';
+import { getProjectById as getProjectByIdLocal, listRealProjects } from '../db/repos/projects';
 import { gitCache } from '../git/cache';
 import { resolveTargetWorktreeForMove } from '../git/resolve-target-worktree';
 import { getCurrentBranch } from '../git/worktree';
@@ -833,7 +831,8 @@ async function handleToolsCall(
   }
 
   if (name === 'frink_task_signal' || name === 'frink_request_secret') {
-    if (!executionId || !ctx) return toolResult(`${name} requires an active execution context.`, true);
+    if (!executionId || !ctx)
+      return toolResult(`${name} requires an active execution context.`, true);
     const handler = name === 'frink_task_signal' ? handleTaskSignalToolCall : handleRequestSecret;
     return handler(ctx, a);
   }
@@ -880,7 +879,7 @@ async function processMethod(
       return {
         protocolVersion: clientVersion,
         capabilities: { tools: {} },
-        serverInfo: { name: 'frink-dynamic-chat', version: '1.0.0' },
+        serverInfo: { name: FRINK_MCP_KEY, version: '1.0.0' },
       };
     }
     case 'initialized':

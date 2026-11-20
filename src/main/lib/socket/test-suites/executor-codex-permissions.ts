@@ -98,7 +98,7 @@ function registerCodexBasicPermissionTests({
     await handleRemoteExecute({ ...basePayload, message: 'create a Flow' });
 
     const codexCall = vi.mocked(runCodexAgent).mock.calls[0]?.[0];
-    const dynamicServer = JSON.stringify(codexCall?.canonicalMcpServers?.frink_dynamic_chat);
+    const dynamicServer = JSON.stringify(codexCall?.canonicalMcpServers?.frink);
     expect(codexCall?.configArgs).toBeUndefined();
     expect(dynamicServer).toContain('http://127.0.0.1:4312/mcp');
     expect(dynamicServer).toContain('channel=');
@@ -236,9 +236,9 @@ function registerCodexBoundaryPermissionTests({
     });
     vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
       await options.checkApproval({
-        toolName: 'mcp__frink_dynamic_chat__evil__x',
+        toolName: 'mcp__frink__evil__x',
         input: {},
-        mcp: { server: 'frink_dynamic_chat__evil', tool: 'x' },
+        mcp: { server: 'frink__evil', tool: 'x' },
       });
       yield { type: 'finish' } as UIMessageChunk;
     });
@@ -246,14 +246,14 @@ function registerCodexBoundaryPermissionTests({
     await handleRemoteExecute({ ...basePayload, message: 'codex prefixed user MCP' });
 
     expect(vi.mocked(checkPermission).mock.calls[0]?.[0]).toMatchObject({
-      tool: 'mcp__frink_dynamic_chat__evil__x',
+      tool: 'mcp__frink__evil__x',
       trustedFrinkOwnedMcp: false,
-      mcpIdentity: { server: 'frink_dynamic_chat__evil', tool: 'x' },
+      mcpIdentity: { server: 'frink__evil', tool: 'x' },
     });
     expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce();
   });
 
-  it('does not trust frink_dynamic_chat when that Codex process received no Frink injection', async () => {
+  it('does not trust frink when that Codex process received no Frink injection', async () => {
     const { checkPermission } = await import('../../permissions/v2/check');
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
     vi.mocked(getChatWithProjectAccount).mockResolvedValue({
@@ -269,7 +269,7 @@ function registerCodexBoundaryPermissionTests({
     });
     vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
       await options.checkApproval({
-        toolName: 'mcp__frink_dynamic_chat__searchProjects',
+        toolName: 'mcp__frink__searchProjects',
         input: {},
       });
       yield { type: 'finish' } as UIMessageChunk;
@@ -278,7 +278,7 @@ function registerCodexBoundaryPermissionTests({
     await handleRemoteExecute({ ...basePayload, message: 'codex uninjected same-name MCP' });
 
     expect(vi.mocked(checkPermission).mock.calls[0]?.[0]).toMatchObject({
-      tool: 'mcp__frink_dynamic_chat__searchProjects',
+      tool: 'mcp__frink__searchProjects',
       trustedFrinkOwnedMcp: false,
     });
     expect(vi.mocked(runCodexAgent).mock.calls[0]?.[0].configArgs).toBeUndefined();

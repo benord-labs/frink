@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { flowChangeStringValue } from '../../../../shared/lib/flows/flow-change-text';
 import { spilledToolResultPath, unwrapMcpOutput } from '../../../../shared/lib/mcp-output';
 import {
-  FRINK_OWNED_MCP_SERVERS,
+  isFrinkMcpServerInHistory,
   parseMcpToolFullName,
 } from '../../../../shared/lib/mcp-tool-name';
 import { isSessionToolResultPath } from '../../permissions/v2/check-edit';
@@ -48,7 +48,7 @@ type ToolOutputChunk = Extract<
 function isFlowPatchTool(toolName: string | undefined): boolean {
   if (toolName === FLOW_PATCH_TOOL) return true;
   const parsed = toolName ? parseMcpToolFullName(toolName) : null;
-  return parsed?.toolName === FLOW_PATCH_TOOL && FRINK_OWNED_MCP_SERVERS.has(parsed.serverName);
+  return parsed?.toolName === FLOW_PATCH_TOOL && isFrinkMcpServerInHistory(parsed.serverName);
 }
 
 function spillNoteText(chunk: ToolOutputChunk): string | undefined {

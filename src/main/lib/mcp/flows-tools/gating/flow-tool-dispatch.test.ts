@@ -159,7 +159,7 @@ describe('dispatchFlowToolCall', () => {
   });
 
   it('preserves an explicit deny message in the structured agent-facing result', async () => {
-    const message = 'Denied by project rule mcp__frink_dynamic_chat__frink_flows_patch';
+    const message = 'Denied by project rule mcp__frink__frink_flows_patch';
     state.validateToolPermission.mockResolvedValue({ allowed: false, message });
     const result = await dispatch();
 
@@ -286,58 +286,58 @@ describe('dispatchFlowToolCall', () => {
   it.each(['claude', 'codex'] as const)(
     'authorizes the captured registration snapshot at dynamic dispatch for %s',
     async (runtime) => {
-    const args = { packagePath: 'read-colocated-image' };
-    const presentation = {
-      type: 'custom-node-registration' as const,
-      packagePath: args.packagePath,
-      action: 'create' as const,
-      node: { name: 'read-colocated-image', entrypoint: 'index.js' },
-      source: { current: "console.log('ok');" },
-      modules: [],
-      resources: [{ path: 'cinder.png', bytes: 5795, change: 'added' as const }],
-      credentialNames: [],
-      packageDigest: 'a'.repeat(64),
-      packageBytes: 6000,
-      warning: 'Runs unsandboxed and may execute unattended from a Flow.',
-    };
-    state.handleFlowsToolCall.mockImplementationOnce(
-      async (
-        name: string,
-        toolArgs: Record<string, JsonValue>,
-        executionId: string,
-        projectPath: string,
-        options: {
-          registerNode: {
-            chatScoped?: boolean;
-            authorize: (value: typeof presentation) => Promise<{ allowed: boolean }>;
-            isExecutionCurrent?: () => boolean;
-          };
+      const args = { packagePath: 'read-colocated-image' };
+      const presentation = {
+        type: 'custom-node-registration' as const,
+        packagePath: args.packagePath,
+        action: 'create' as const,
+        node: { name: 'read-colocated-image', entrypoint: 'index.js' },
+        source: { current: "console.log('ok');" },
+        modules: [],
+        resources: [{ path: 'cinder.png', bytes: 5795, change: 'added' as const }],
+        credentialNames: [],
+        packageDigest: 'a'.repeat(64),
+        packageBytes: 6000,
+        warning: 'Runs unsandboxed and may execute unattended from a Flow.',
+      };
+      state.handleFlowsToolCall.mockImplementationOnce(
+        async (
+          name: string,
+          toolArgs: Record<string, JsonValue>,
+          executionId: string,
+          projectPath: string,
+          options: {
+            registerNode: {
+              chatScoped?: boolean;
+              authorize: (value: typeof presentation) => Promise<{ allowed: boolean }>;
+              isExecutionCurrent?: () => boolean;
+            };
+          },
+        ) => {
+          expect([name, toolArgs, executionId, projectPath]).toEqual([
+            'frink_register_node',
+            args,
+            'execution-1',
+            '/project',
+          ]);
+          expect(options.registerNode.isExecutionCurrent?.()).toBe(true);
+          expect(options.registerNode.chatScoped).toBe(true);
+          await expect(options.registerNode.authorize(presentation)).resolves.toEqual({
+            allowed: true,
+          });
+          return FLOW_RESULT;
         },
-      ) => {
-        expect([name, toolArgs, executionId, projectPath]).toEqual([
-          'frink_register_node',
-          args,
-          'execution-1',
-          '/project',
-        ]);
-        expect(options.registerNode.isExecutionCurrent?.()).toBe(true);
-        expect(options.registerNode.chatScoped).toBe(true);
-        await expect(options.registerNode.authorize(presentation)).resolves.toEqual({
-          allowed: true,
-        });
-        return FLOW_RESULT;
-      },
-    );
+      );
 
-    await expect(
-      dispatch({
-        name: 'frink_register_node',
-        args,
-        ctx: makeCtx({ runtime }),
-        isExecutionCurrent: () => true,
-        providerPreapproved: runtime === 'codex',
-      }),
-    ).resolves.toBe(FLOW_RESULT);
+      await expect(
+        dispatch({
+          name: 'frink_register_node',
+          args,
+          ctx: makeCtx({ runtime }),
+          isExecutionCurrent: () => true,
+          providerPreapproved: runtime === 'codex',
+        }),
+      ).resolves.toBe(FLOW_RESULT);
 
       expect(state.validateToolPermission).toHaveBeenCalledOnce();
       expect(state.validateToolPermission.mock.calls[0]?.at(-1)).toEqual(presentation);
@@ -416,7 +416,7 @@ describe('gateFlowWrite', () => {
     ).resolves.toEqual({ allowed: true });
 
     expect(state.validateToolPermission).toHaveBeenCalledWith(
-      'mcp__frink_dynamic_chat__frink_flows_patch',
+      'mcp__frink__frink_flows_patch',
       args,
       '/project',
       'chat-1',
@@ -1096,7 +1096,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
   it('still reports a rule denial as a decline, since the user wrote the rule', async () => {
     state.validateToolPermission.mockResolvedValue({
       allowed: false,
-      message: 'Denied by project rule mcp__frink_dynamic_chat__frink_flows_run',
+      message: 'Denied by project rule mcp__frink__frink_flows_run',
     });
 
     const result = await dispatch({ name: 'frink_flows_run' });

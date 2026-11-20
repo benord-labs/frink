@@ -82,43 +82,43 @@ export function registerDynamicChatFlowDispatchTests({
       clearCurrentExecutionChat(executionId);
     });
 
-    it.each([
-      false,
-      true,
-    ])('uses one exact Codex provider decision and one transport call with Auto=%s', async (autoReview) => {
-      setCurrentExecutionChat(
-        'chat-1',
-        'sub-1',
-        '/proj',
-        'agent',
-        undefined,
-        undefined,
-        undefined,
-        'codex',
-        autoReview,
-      );
-      state.consumeCodexMcpApproval.mockReturnValueOnce(true);
-      const args = { name: 'provider-approved', operations: [] };
+    it.each([false, true])(
+      'uses one exact Codex provider decision and one transport call with Auto=%s',
+      async (autoReview) => {
+        setCurrentExecutionChat(
+          'chat-1',
+          'sub-1',
+          '/proj',
+          'agent',
+          undefined,
+          undefined,
+          undefined,
+          'codex',
+          autoReview,
+        );
+        state.consumeCodexMcpApproval.mockReturnValueOnce(true);
+        const args = { name: 'provider-approved', operations: [] };
 
-      const result = await callToolOverHttp(
-        'frink_flows_patch',
-        args,
-        getChannelToken('sub-1', 'codex'),
-        { threadId: 'thread-1', turnId: 'turn-1', callId: 'call-1' },
-      );
+        const result = await callToolOverHttp(
+          'frink_flows_patch',
+          args,
+          getChannelToken('sub-1', 'codex'),
+          { threadId: 'thread-1', turnId: 'turn-1', callId: 'call-1' },
+        );
 
-      expect(result.isError).toBe(false);
-      expect(state.consumeCodexMcpApproval).toHaveBeenCalledWith(
-        'thread-1',
-        'turn-1',
-        'call-1',
-        'frink_dynamic_chat',
-        'frink_flows_patch',
-        args,
-      );
-      expect(state.validateToolPermission).not.toHaveBeenCalled();
-      expect(state.handleFlowsToolCall).toHaveBeenCalledOnce();
-    });
+        expect(result.isError).toBe(false);
+        expect(state.consumeCodexMcpApproval).toHaveBeenCalledWith(
+          'thread-1',
+          'turn-1',
+          'call-1',
+          'frink',
+          'frink_flows_patch',
+          args,
+        );
+        expect(state.validateToolPermission).not.toHaveBeenCalled();
+        expect(state.handleFlowsToolCall).toHaveBeenCalledOnce();
+      },
+    );
 
     it('binds a channel write to its captured signal and refuses it after abort', async () => {
       const controller = new AbortController();
