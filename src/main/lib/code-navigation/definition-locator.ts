@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import ts from 'typescript';
 
 export type DefinitionLocation = {
@@ -100,11 +101,39 @@ export function findImportBindingAt(
   return declaration ? bindingFromDeclaration(declaration) : null;
 }
 
-function readSource(path: string): ts.SourceFile | null {
+/** Unsaved text of open files, keyed by {@link canonicalPath}; it wins over the file on disk.
+ * `null` is an unsaved file too large to send, read as unreadable rather than from disk. */
+export type SourceOverlay = ReadonlyMap<string, string | null>;
+
+/** One spelling per file, so a tab path and a TS-resolved (realpath'd) path meet. */
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync.native(resolve(path));
+  } catch {
+    return resolve(path);
+  }
+}
+
+export function buildSourceOverlay(buffers: Record<string, string | null>): SourceOverlay {
+  return new Map(Object.entries(buffers).map(([path, text]) => [canonicalPath(path), text]));
+}
+
+function sourceText(path: string, overlay: SourceOverlay): string | null {
+  const unsaved = overlay.size > 0 ? overlay.get(canonicalPath(path)) : undefined;
+  if (unsaved !== undefined) {
+    return unsaved === null || Buffer.byteLength(unsaved, 'utf8') > MAX_SOURCE_BYTES
+      ? null
+      : unsaved;
+  }
+  if (statSync(path).size > MAX_SOURCE_BYTES) return null;
+  return readFileSync(path, 'utf8');
+}
+
+function readSource(path: string, overlay: SourceOverlay): ts.SourceFile | null {
   if (!SOURCE_FILE_PATTERN.test(path)) return null;
   try {
-    if (statSync(path).size > MAX_SOURCE_BYTES) return null;
-    return ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+    const text = sourceText(path, overlay);
+    return text === null ? null : ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   } catch {
     return null;
   }
@@ -177,6 +206,7 @@ function importedNames(statement: ts.Statement): ImportDeclarationPart[] {
 
 type Walk = {
   resolve: ResolveSpecifier;
+  overlay: SourceOverlay;
   visited: Set<string>;
   depth: number;
 };
@@ -311,7 +341,7 @@ function locateIn(path: string, name: string, walk: Walk): DefinitionLocation | 
   const key = `${path}#${name}`;
   if (walk.depth > MAX_EXPORT_DEPTH || walk.visited.has(key)) return null;
   walk.visited.add(key);
-  const sourceFile = readSource(path);
+  const sourceFile = readSource(path, walk.overlay);
   if (!sourceFile) return null;
   return name === 'default'
     ? locateDefaultExport(sourceFile, walk)
@@ -323,6 +353,7 @@ export function locateExport(
   path: string,
   exportName: string,
   resolve: ResolveSpecifier,
+  overlay: SourceOverlay = new Map(),
 ): DefinitionLocation | null {
-  return locateIn(path, exportName, { resolve, visited: new Set(), depth: 0 });
+  return locateIn(path, exportName, { resolve, overlay, visited: new Set(), depth: 0 });
 }

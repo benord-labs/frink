@@ -93,7 +93,7 @@ export const FIXTURE_FLOW_EDIT_MESSAGE = {
   role: 'assistant',
   parts: [
     {
-      type: 'tool-mcp__frink_dynamic_chat__frink_flows_patch',
+      type: 'tool-mcp__frink__frink_flows_patch',
       toolCallId: 'qa-flow-patch-edit',
       state: 'output-available',
       input: {

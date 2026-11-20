@@ -82,43 +82,78 @@ export function registerDynamicChatFlowDispatchTests({
       clearCurrentExecutionChat(executionId);
     });
 
-    it.each([
-      false,
-      true,
-    ])('uses one exact Codex provider decision and one transport call with Auto=%s', async (autoReview) => {
-      setCurrentExecutionChat(
-        'chat-1',
-        'sub-1',
-        '/proj',
-        'agent',
-        undefined,
-        undefined,
-        undefined,
-        'codex',
-        autoReview,
+    it('gates on the live plan phase, kept across a same-execution re-registration', async () => {
+      // The flip lands in the stream consumer; MCP calls reach here over HTTP, independently.
+      let planning = true;
+      const register = (isPlanPhase?: () => boolean) =>
+        setCurrentExecutionChat(
+          'chat-1',
+          'sub-1',
+          '/proj',
+          'plan',
+          'exec-plan',
+          undefined,
+          undefined,
+          'claude',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          isPlanPhase,
+        );
+      register(() => planning);
+      expect((await callDynamicChatToolByName('frink_flows_get', {}, 'exec-plan')).isError).toBe(
+        true,
       );
-      state.consumeCodexMcpApproval.mockReturnValueOnce(true);
-      const args = { name: 'provider-approved', operations: [] };
-
-      const result = await callToolOverHttp(
-        'frink_flows_patch',
-        args,
-        getChannelToken('sub-1', 'codex'),
-        { threadId: 'thread-1', turnId: 'turn-1', callId: 'call-1' },
-      );
-
-      expect(result.isError).toBe(false);
-      expect(state.consumeCodexMcpApproval).toHaveBeenCalledWith(
-        'thread-1',
-        'turn-1',
-        'call-1',
-        'frink_dynamic_chat',
-        'frink_flows_patch',
-        args,
-      );
-      expect(state.validateToolPermission).not.toHaveBeenCalled();
-      expect(state.handleFlowsToolCall).toHaveBeenCalledOnce();
+      register();
+      planning = false;
+      for (const name of ['frink_flows_get', 'frink_flows_patch']) {
+        expect((await callDynamicChatToolByName(name, { flowId: 'f' }, 'exec-plan')).isError).toBe(
+          false,
+        );
+      }
+      expect(state.handleFlowsToolCall).toHaveBeenCalledTimes(2);
+      clearCurrentExecutionChat('exec-plan');
     });
+
+    it.each([false, true])(
+      'uses one exact Codex provider decision and one transport call with Auto=%s',
+      async (autoReview) => {
+        setCurrentExecutionChat(
+          'chat-1',
+          'sub-1',
+          '/proj',
+          'agent',
+          undefined,
+          undefined,
+          undefined,
+          'codex',
+          autoReview,
+        );
+        state.consumeCodexMcpApproval.mockReturnValueOnce(true);
+        const args = { name: 'provider-approved', operations: [] };
+
+        const result = await callToolOverHttp(
+          'frink_flows_patch',
+          args,
+          getChannelToken('sub-1', 'codex'),
+          { threadId: 'thread-1', turnId: 'turn-1', callId: 'call-1' },
+        );
+
+        expect(result.isError).toBe(false);
+        expect(state.consumeCodexMcpApproval).toHaveBeenCalledWith(
+          'thread-1',
+          'turn-1',
+          'call-1',
+          'frink',
+          'frink_flows_patch',
+          args,
+        );
+        expect(state.validateToolPermission).not.toHaveBeenCalled();
+        expect(state.handleFlowsToolCall).toHaveBeenCalledOnce();
+      },
+    );
 
     it('binds a channel write to its captured signal and refuses it after abort', async () => {
       const controller = new AbortController();

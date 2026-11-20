@@ -191,7 +191,7 @@ export function checkEdit(
   }
 
   // Auto-allow: Read of a FRINK-SHIPPED skill (one carrying the baseline marker),
-  // wherever it lives — the canonical `~/.frink/skills` store or a per-tool real-copy
+  // wherever it lives — the canonical `~/.frink/skills` store or a per-tool skills
   // dir (`~/.agents/skills`, `~/.claude/skills`, `~/.cursor/skills`). Frink's own
   // skills are first-party-trusted: the agent reads SKILL.md/references constantly and
   // they sit outside the project cwd, so they would otherwise prompt every read.

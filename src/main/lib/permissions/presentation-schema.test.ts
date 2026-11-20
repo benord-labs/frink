@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PermissionPresentation } from '../../../shared/types/permissions';
 import { isValidPermissionPresentation } from './presentation-schema';
 
-const TOOL = 'mcp__frink_dynamic_chat__frink_register_node';
+const TOOL = 'mcp__frink__frink_register_node';
 type CyclicFixture = { self?: object };
 const presentation: PermissionPresentation = {
   type: 'custom-node-registration',

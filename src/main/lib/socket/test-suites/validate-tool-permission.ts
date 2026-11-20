@@ -116,13 +116,13 @@ function registerDispatcherDecisionTests({
     const { checkPermission } = await import('../../permissions/v2/check');
     const { persistApprovedRule } = await import('../../permissions/v2/persist-approved-rule');
     vi.mocked(persistApprovedRule).mockClear();
-    const tool = 'mcp__frink_dynamic_chat__frink_flows_patch';
+    const tool = 'mcp__frink__frink_flows_patch';
     const input = { flowId: 'flow-1720', operations: [{ op: 'update_settings' }] };
     const prompt = {
       tool,
       input,
       reason: 'no-matching-rule' as const,
-      suggestedRules: [tool, 'mcp__frink_dynamic_chat__*'],
+      suggestedRules: [tool, 'mcp__frink__*'],
     };
     vi.mocked(checkPermission).mockResolvedValueOnce({ decision: 'ask', prompt });
     vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
@@ -177,7 +177,7 @@ function registerDispatcherDecisionTests({
     _registerExecutionForTests('flow-abort-sub', successorController);
 
     const pending = validateToolPermission(
-      'mcp__frink_dynamic_chat__frink_flows_patch',
+      'mcp__frink__frink_flows_patch',
       { flowId: 'flow-abort' },
       '/proj',
       'flow-abort-chat',

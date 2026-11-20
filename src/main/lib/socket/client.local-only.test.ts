@@ -12,9 +12,11 @@ vi.mock('electron-log', () => ({
 
 const { finalizeAssistantMessageLocalMock, upsertAssistantMessageLocalMock, setStreamIdLocalMock } =
   vi.hoisted(() => ({
-    finalizeAssistantMessageLocalMock: vi.fn(async (): Promise<{ messages: never[] } | null> => ({
-      messages: [],
-    })),
+    finalizeAssistantMessageLocalMock: vi.fn(
+      async (): Promise<{ message: { parts: never[] } } | null> => ({
+        message: { parts: [] },
+      }),
+    ),
     upsertAssistantMessageLocalMock: vi.fn(async () => {}),
     setStreamIdLocalMock: vi.fn(async () => {}),
   }));
@@ -173,7 +175,7 @@ describe('stream chunk parts cadence', () => {
 
   beforeEach(() => {
     finalizeAssistantMessageLocalMock.mockReset();
-    finalizeAssistantMessageLocalMock.mockResolvedValue({ messages: [] });
+    finalizeAssistantMessageLocalMock.mockResolvedValue({ message: { parts: [] } });
     upsertAssistantMessageLocalMock.mockClear();
     setStreamIdLocalMock.mockClear();
     _clearActiveExecutionsForTests();
@@ -234,8 +236,8 @@ describe('stream chunk parts cadence', () => {
     const send = captureBroadcasts();
     let finishFinalize = () => {};
     finalizeAssistantMessageLocalMock.mockReturnValueOnce(
-      new Promise<{ messages: never[] }>((resolve) => {
-        finishFinalize = () => resolve({ messages: [] });
+      new Promise<{ message: { parts: never[] } }>((resolve) => {
+        finishFinalize = () => resolve({ message: { parts: [] } });
       }),
     );
     const finalParts = [{ type: 'text', text: 'recoverable tail' }];
@@ -289,8 +291,8 @@ describe('stream chunk parts cadence', () => {
     const send = captureBroadcasts();
     let finishFinalize = () => {};
     finalizeAssistantMessageLocalMock.mockReturnValueOnce(
-      new Promise<{ messages: never[] }>((resolve) => {
-        finishFinalize = () => resolve({ messages: [] });
+      new Promise<{ message: { parts: never[] } }>((resolve) => {
+        finishFinalize = () => resolve({ message: { parts: [] } });
       }),
     );
 
@@ -358,7 +360,7 @@ describe('stream chunk parts cadence', () => {
     const send = captureBroadcasts();
     let failFinalize = (_error: Error) => {};
     finalizeAssistantMessageLocalMock.mockReturnValueOnce(
-      new Promise<{ messages: never[] }>((_resolve, reject) => {
+      new Promise<{ message: { parts: never[] } }>((_resolve, reject) => {
         failFinalize = reject;
       }),
     );
@@ -391,8 +393,8 @@ describe('stream chunk parts cadence', () => {
     const send = captureBroadcasts();
     let finishFinalize = () => {};
     finalizeAssistantMessageLocalMock.mockReturnValueOnce(
-      new Promise<{ messages: never[] }>((resolve) => {
-        finishFinalize = () => resolve({ messages: [] });
+      new Promise<{ message: { parts: never[] } }>((resolve) => {
+        finishFinalize = () => resolve({ message: { parts: [] } });
       }),
     );
     setActiveExecution('aba-finalize', new AbortController(), 1, {
@@ -510,8 +512,8 @@ describe('stream chunk parts cadence', () => {
     const send = captureBroadcasts();
     let finishFinalize = () => {};
     finalizeAssistantMessageLocalMock.mockReturnValueOnce(
-      new Promise<{ messages: never[] }>((resolve) => {
-        finishFinalize = () => resolve({ messages: [] });
+      new Promise<{ message: { parts: never[] } }>((resolve) => {
+        finishFinalize = () => resolve({ message: { parts: [] } });
       }),
     );
     setActiveExecution('aba-error', new AbortController(), 1, {

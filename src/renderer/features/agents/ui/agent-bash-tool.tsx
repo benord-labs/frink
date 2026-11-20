@@ -1,8 +1,9 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { Check, ShieldAlert, X, Minimize2, Maximize2, Loader2 } from 'lucide-react';
+import { Check, ShieldAlert, X, Minimize2, Maximize2 } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
+import { Spinner } from '../../../components/ui/spinner';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
 import { CommandOutput } from '../BackgroundWorkPopover/CommandOutput';
 import { cn } from '../../../lib/utils';
@@ -101,7 +102,7 @@ export const AgentBashTool = memo(function AgentBashTool({
     <div className="flex items-center gap-1 text-xs text-muted-foreground min-w-[60px] justify-end">
       {isPending ? (
         <>
-          <Loader2 className="w-3 h-3 animate-spin" aria-hidden />
+          <Spinner className="w-3 h-3" />
           <span className="sr-only">Running command</span>
         </>
       ) : permissionDenied ? (

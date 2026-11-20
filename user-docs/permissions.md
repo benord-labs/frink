@@ -187,9 +187,9 @@ The auto-allow is scoped to the current chat's folder and runs after the system 
 
 ## Skills auto-allow
 
-Frink-shipped skills (e.g. `frink-flows`) are **first-party assets Frink writes and maintains**, so the agent **reading** one is auto-allowed — no "external path" prompt. Frink installs them as **real copies** into each tool's skills dir (`~/.agents/skills`, `~/.claude/skills`, `~/.cursor/skills`) from the canonical `~/.frink/skills/`, and they carry a `.baseline.json` marker — that marker, not the location, is what grants the auto-allow.
+Frink-shipped skills (e.g. `frink-flows`) are **first-party assets Frink writes and maintains**, so the agent **reading** one is auto-allowed — no "external path" prompt. Frink installs them as **real copies** into the shared skills dirs (`~/.agents/skills`, `~/.claude/skills`) from the canonical `~/.frink/skills/`, and they carry a `.baseline.json` marker — that marker, not the location, is what grants the auto-allow.
 
-Your **own** skills follow you across tools too: Frink projects them (real copies) into each tool's skills dir when you spawn an agent. But because they're **yours, not first-party**, the agent reading one still prompts the first time — allow it once (or add a `Read` rule) and you're set. Anything copied in from another tool is treated the same way: it runs through your approval because Frink didn't author it.
+Your **own** skills follow you across tools too: Frink projects them (real copies) into the shared skills dirs (`~/.agents/skills`, `~/.claude/skills`) when you spawn an agent. But because they're **yours, not first-party**, the agent reading one still prompts the first time — allow it once (or add a `Read` rule) and you're set. Anything copied in from another tool is treated the same way: it runs through your approval because Frink didn't author it.
 
 The auto-allow is **Read-only** (editing or writing a skill file always prompts) and runs **after** the system deny list — a secret smuggled into a skills dir (e.g. a `.env`) is still blocked.
 
@@ -245,6 +245,7 @@ OpenCode chats (macOS and Linux) use the same cards and the same rules as any ot
 - **Frink also holds every command until its check has allowed it**, so no command runs that Frink didn't allow.
 - **If OpenCode ever finishes an action without asking, Frink stops the chat.**
 - **Frink ignores your OpenCode config files while it runs OpenCode, for safety**, and won't start OpenCode at all when an organisation, company sign-in or administrator sends it settings.
+- **Frink's own tools are checked by Frink itself**, with the same rules and cards as in any other chat.
 - **Auto and hooks don't apply to OpenCode chats yet.**
 
 ## GitHub Copilot
@@ -259,6 +260,7 @@ GitHub Copilot chats (macOS and Linux) use the same cards and the same rules as 
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Copilot is told and usually tries another way.
 - **If Copilot ever finishes an action without asking, Frink stops the chat.**
 - **Your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety**, and Frink won't start Copilot at all when an organisation or your device manages its settings.
+- **Frink's own tools are checked by Frink itself**, with the same rules and cards as in any other chat.
 - **Auto and Frink's hooks don't apply to Copilot chats yet.**
 
 ## Cursor
@@ -274,6 +276,7 @@ Cursor chats (macOS and Linux) use the same cards and the same rules as any othe
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Web fetch, web search and helper agents aren't offered to Cursor at all for now.
 - **If Cursor ever finishes an action without asking, or doesn't load Frink's check, Frink stops the chat.**
 - **Your own Cursor hooks, MCP servers, rules and skills, and the project's `AGENTS.md` and `.cursor/rules`, don't apply inside Frink, for safety.**
+- **Frink's own tools aren't offered to Cursor yet.**
 - **Auto and Frink's hooks don't apply to Cursor chats yet.**
 
 ## Agent tool limits
@@ -300,7 +303,7 @@ Things to know:
 
 In the **Cursor editor** your limits don't apply. The editor reads the agent file in `~/.claude/agents` directly and has no per-tool veto, so a read-only agent can edit there. Only a **Copy across → Cursor** you start yourself marks an agent whose `tools` are all read-class as `readonly` in the editor's own folder. The full limit applies again whenever the agent runs in a tool that can enforce it.
 
-On **Codex** there is no per-tool allowlist either, and Frink never hands Codex a limit it can't hold. An agent whose `tools` are all read-class is delivered as a Codex role locked to the `read-only` sandbox (any `disallowedTools` it adds must be file-editing tools — `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `Delete` — which that sandbox already blocks). An agent with any other limit — a `tools` list that includes a write-class tool, `disallowedTools` on its own, or a disallowed tool the sandbox can't stop, such as `Bash`, a read tool or an MCP tool — is **not delivered to Codex at all**, rather than delivered unrestricted; it stays available on Claude. If a custom agent is missing in Codex, check whether it has tool limits Codex can't enforce. Codex chats in Frink run without helper agents for now, so these roles only reach Codex outside Frink.
+On **Codex** there is no per-tool allowlist either, and Frink never hands Codex a limit it can't hold. An agent whose `tools` are all read-class is delivered as a Codex role locked to the `read-only` sandbox (any `disallowedTools` it adds must be file-editing tools — `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `Delete` — which that sandbox already blocks). An agent with any other limit — a `tools` list that includes a write-class tool, `disallowedTools` on its own, or a disallowed tool the sandbox can't stop, such as `Bash`, a read tool or an MCP tool — is **not delivered to Codex at all**, rather than delivered unrestricted; it stays available on Claude. If a custom agent is missing in Codex, check whether it has tool limits Codex can't enforce. Codex chats in Frink run without helper agents for now, so these roles only reach Codex outside Frink. If managed Codex settings switch helper agents back on, Frink refuses to start the chat.
 
 > Note: `disallowedTools` was previously accepted in agent files but not passed through to the runtime — it is now enforced. If an agent suddenly loses a tool, check its frontmatter.
 

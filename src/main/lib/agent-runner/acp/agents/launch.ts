@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
 import log from 'electron-log';
+import { isFileWith } from '../../../fs-helpers';
 import { ensureLoginShellEnv, getLoginShellEnvSync } from '../../../platform/login-shell-env';
 import { killProcessTree } from '../../process-settlement';
 import { commandGateScript } from '../acp-command-ledger';
@@ -106,14 +107,7 @@ export async function userEnv(): Promise<Env> {
   return { ...Object.fromEntries(session), ...loginEnv };
 }
 
-async function isProgram(file: string): Promise<boolean> {
-  try {
-    await access(file, constants.X_OK);
-    return (await stat(file)).isFile();
-  } catch {
-    return false;
-  }
-}
+const isProgram = (file: string): Promise<boolean> => isFileWith(file, constants.X_OK);
 
 async function firstProgram(candidates: string[]): Promise<string | undefined> {
   for (const file of candidates) if (await isProgram(file)) return file;

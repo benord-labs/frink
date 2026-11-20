@@ -42,6 +42,7 @@ vi.mock('electron-log', () => ({ default: { warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../../flows/mcp-cloud-shim', () => ({
   getFlowRun: state.getFlowRun,
   getFlow: state.getFlow,
+  getFlowVersionGraph: vi.fn(),
   createFlow: state.createFlow,
   createFlowVersion: state.createFlowVersion,
   deleteFlow: state.deleteFlow,

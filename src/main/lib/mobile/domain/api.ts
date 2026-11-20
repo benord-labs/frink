@@ -19,9 +19,10 @@ import {
   setMobileMode,
   updateMobileComposer,
 } from './composer';
-import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
+import { MobileApiError, mobileCallers, requireChat, requireExecutionReady } from './context';
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
 import { approveMobilePlan } from './plan';
+import { readChatChanges } from './projections';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
 import { steerMobileMessage } from './steer';
 import { runMobileTaskAction } from './tasks';
@@ -98,6 +99,8 @@ async function dispatch(
       return watchMobileChat(request, watching);
     case 'unwatchChat':
       return unwatchMobileChat(request, watching);
+    case 'chatChanges':
+      return readChatChanges((await requireChat(request.chatId)).chat, request.summaryOnly);
   }
 }
 

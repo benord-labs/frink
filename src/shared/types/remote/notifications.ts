@@ -17,12 +17,16 @@ const completionNotificationSchema = z.object({
   chatId: z.string().min(1).max(200),
   subChatId: z.string().min(1).max(200),
 });
+/** @public The iOS category whose Allow and Deny buttons answer `permissionRequestId`. */
+export const PERMISSION_ALERT_CATEGORY = 'permission';
 /** A chat (or, without a chatId, a Queue task) is waiting on the user. */
 const needsYouNotificationSchema = z.object({
   type: z.literal('needs-you'),
   deviceId: z.string().min(1).max(200),
   chatId: z.string().min(1).max(200).optional(),
   subChatId: z.string().min(1).max(200).optional(),
+  /** The chat's only pending permission request, when the phone can answer it. */
+  permissionRequestId: z.string().min(1).max(200).optional(),
 });
 /** @public Read by the mobile app. */
 export const alertNotificationSchema = z.discriminatedUnion('type', [

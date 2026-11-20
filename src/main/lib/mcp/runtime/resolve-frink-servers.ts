@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import log from 'electron-log';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 import { captureMainMessage } from '../../sentry/init';
 import { refreshOAuthThroughSdk } from './oauth-refresh';
 import { buildSafeEnv } from '../../terminal/env';
@@ -432,9 +433,9 @@ export async function resolveFrinkMcpServers({
 
   if (dynamicChatMcpUrl) {
     const configuredServers = { ...(servers ?? {}) };
-    delete configuredServers.frink_dynamic_chat;
+    delete configuredServers[FRINK_MCP_KEY];
     servers = {
-      frink_dynamic_chat: { type: 'http', url: dynamicChatMcpUrl },
+      [FRINK_MCP_KEY]: { type: 'http', url: dynamicChatMcpUrl },
       ...configuredServers,
     };
   }

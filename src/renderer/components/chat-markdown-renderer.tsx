@@ -6,7 +6,6 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { parseMarkdownIntoBlocks, Streamdown, type StreamdownProps } from 'streamdown';
-import { hashString } from '../lib/hash';
 import { FILE_LINK_ELEMENT, remarkFileLinks } from '../lib/file-links/remark-file-links';
 import { useCodeTheme } from '../lib/hooks/use-code-theme';
 import { MENTION_ELEMENT, MENTION_REMARK_PLUGINS } from '../lib/mentions/remark-mentions';
@@ -561,40 +560,8 @@ export const ChatMarkdownRenderer = memo(function ChatMarkdownRenderer({
 // ============================================================================
 // MEMOIZED MARKDOWN - Block-level memoization for streaming performance
 // ============================================================================
-// This is the KEY optimization for streaming performance!
-// Instead of re-rendering the entire markdown on each chunk, we:
-// 1. Parse markdown into discrete blocks (paragraphs, headers, code blocks, etc.)
-// 2. Memoize each block individually with content-based keys
-// 3. Only the last (incomplete) block re-renders during streaming
-//
-// Streamdown's internal memoization only works within a single render pass.
-// When the parent component re-renders (due to atom update), Streamdown
-// re-renders all blocks. This external block-level memoization prevents that.
-
-type ParsedBlock = {
-  content: string;
-  // Stable key based on: content hash + occurrence index
-  key: string;
-};
-
-function parseIntoBlocks(markdown: string): ParsedBlock[] {
-  try {
-    // Use Streamdown's built-in parser for consistency
-    const blocks = parseMarkdownIntoBlocks(markdown);
-    // Track occurrences of each content hash to handle duplicates
-    const seen = new Map<string, number>();
-    return blocks.map((content) => {
-      const baseKey = hashString(content);
-      const occurrence = seen.get(baseKey) ?? 0;
-      seen.set(baseKey, occurrence + 1);
-      const key = occurrence > 0 ? `${baseKey}-${occurrence}` : baseKey;
-      return { content, key };
-    });
-  } catch {
-    // Fallback: return entire content as single block
-    return [{ content: markdown, key: `fallback-${hashString(markdown)}` }];
-  }
-}
+// Parse markdown into blocks and memoize each one, so only the trailing block
+// re-renders while a reply streams.
 
 // Individual block - only re-renders when its content changes
 const MemoizedMarkdownBlock = memo(
@@ -666,16 +633,21 @@ export const MemoizedMarkdown = memo(
       [content, shouldStripEmojis],
     );
 
-    // Split into blocks - this recalculates when content changes,
-    // but each block is individually memoized with content-based keys
-    const blocks = useMemo(() => parseIntoBlocks(processedContent), [processedContent]);
+    const blocks = useMemo(() => {
+      try {
+        return parseMarkdownIntoBlocks(processedContent);
+      } catch {
+        return [processedContent];
+      }
+    }, [processedContent]);
 
+    // Index keys keep the streaming trailing block (and its code highlight) mounted across chunks.
     return (
       <div className={cn(PROSE_CLASSES, className)}>
-        {blocks.map((block) => (
+        {blocks.map((block, index) => (
           <MemoizedMarkdownBlock
-            key={`${id}-${block.key}`}
-            content={block.content}
+            key={`${id}-${index}`}
+            content={block}
             size={size}
             codeTheme={codeTheme}
           />

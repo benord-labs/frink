@@ -2,13 +2,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { ClientConnection, ContentBlock, SessionUpdate } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
 import type { UIMessageChunk } from '../../claude/types';
+import type { FrinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import { createTurnStream, frameTurn, type TurnSession, type TurnStream } from '../turn-stream';
 import { type CommandLedger, createCommandLedger } from './acp-command-ledger';
 import { answerPermissionRequest, CANCELLED, questionForTool } from './acp-permissions';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
 import { openSession, SignInRequired } from './acp-session';
-import type { KnownToolCall } from './acp-tool-calls';
+import { frinkToolTitles, type KnownToolCall } from './acp-tool-calls';
 import {
   createAcpTurnState,
   mapPromptResponse,
@@ -48,6 +49,8 @@ export type AcpRunnerParams = {
   abortController: AbortController;
   /** Frink's permission gate. It must settle when the turn ends for any reason, not only a stop. */
   checkApproval: CodexApprovalCheck;
+  /** Frink's own MCP server for this turn; left out when it did not start. */
+  frinkTools?: FrinkToolsServer;
 };
 
 type AcpSdk = typeof import('@agentclientprotocol/sdk');
@@ -161,6 +164,10 @@ async function* acpTurnChunks(
   const { rules, commandLedger } = params.launch;
 
   const turn = createAcpTurnState();
+  // Frink's own tools finish without asking the agent: Frink's server decided each call.
+  const quietTools = params.frinkTools
+    ? [...rules.quietTools, ...frinkToolTitles()]
+    : rules.quietTools;
   const ledger = commandLedger ? createCommandLedger(commandLedger) : undefined;
   // Aborted once the turn can take no more answers: the user stopped it, or the prompt settled.
   const turnOver = new AbortController();
@@ -218,7 +225,7 @@ async function* acpTurnChunks(
         mapSessionUpdate(update, turn).forEach(emit);
         const retired = retiredCallId(update);
         if (retired !== undefined) void ledger?.release(retired);
-        const acted = unaskedAction(update, turn, rules.quietTools);
+        const acted = unaskedAction(update, turn, quietTools);
         if (acted) stopActingUnasked(acted);
       })
       .onRequest('session/request_permission', async ({ params: request }) => {

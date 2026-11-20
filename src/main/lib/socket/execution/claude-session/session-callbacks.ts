@@ -6,6 +6,7 @@ import type {
   UserPromptSubmitHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { frinkToolPartName } from '../../../../../shared/lib/mcp-tool-name';
 import { REQUIRED_TOOLS } from '../../../../../shared/types/permissions';
 import {
   TASK_GROUP_CONTROLS,
@@ -76,6 +77,9 @@ const AUTO_REVIEW_GAVE_UP_WHILE_PLANNING =
   "Claude's Auto review blocked several actions in a row, so this one needs a person, and this plan is being drafted with nobody set to approve tool calls. Carry on without it, or include it in the plan.";
 const AUTO_REVIEW_GAVE_UP_IN_FLOW =
   "Claude's Auto review blocked several actions in a row, so this one needs a person, and this is an automated flow run where nobody may be watching. Either carry on without it, or park via frink_task_signal (state: awaiting_input) asking the user to approve it.";
+
+/** Registration's own preview card and write gate run in Frink's server, never here. */
+const REGISTER_NODE_TOOL = frinkToolPartName('frink_register_node');
 
 /** The CLI version whose wording below was checked: Auto's classifier gives up after repeated
  * blocks and asks the host instead, saying only this in the ask's free-text reason. */
@@ -234,7 +238,7 @@ async function judgeToolCall(
   toolInput: Parameters<typeof validateToolPermission>[1],
   sessionCwd?: string,
 ): Promise<ToolVerdict> {
-  if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') return { allowed: true };
+  if (toolName === REGISTER_NODE_TOOL) return { allowed: true };
   if (!isClaudePermissionGatedTool(toolName) && !toolName.startsWith('mcp__')) {
     return { allowed: null };
   }
@@ -412,7 +416,7 @@ async function recheckMcpRules(
   toolName: string,
   toolInput: Parameters<CanUseTool>[1],
 ): Promise<PermissionResult> {
-  if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') {
+  if (toolName === REGISTER_NODE_TOOL) {
     return { behavior: 'allow', updatedInput: toolInput };
   }
   const permResult = await scope.validateToolPermission(

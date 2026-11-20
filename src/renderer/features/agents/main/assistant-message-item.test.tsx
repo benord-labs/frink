@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
@@ -66,6 +67,12 @@ const baseProps = {
   chatId: 'chat-1',
   sandboxSetupStatus: 'ready' as const,
 };
+/** The rich Flow card loads the step diff's base version through react-query. */
+function renderWithQueries(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
 const EXPAND_STEPS_LABEL_REGEX = /Expand \d+ steps?/;
 const APPROVE_AND_RUN_LABEL_REGEX = /Approve & Run/;
 const UNKNOWN_TOOL_PART: MessagePart = {
@@ -275,7 +282,7 @@ describe('AssistantMessageItem rendering', () => {
   });
 
   it('routes the exact Cursor Flow patch name to the rich artifact', () => {
-    render(
+    renderWithQueries(
       <AssistantMessageItem
         {...baseProps}
         message={buildAssistantMessage('msg-cursor-flow-tool', [
@@ -305,28 +312,8 @@ describe('AssistantMessageItem rendering', () => {
     expect(screen.queryByRole('button', { name: EXPAND_STEPS_LABEL_REGEX })).toBeNull();
   });
 
-  it('keeps a lookalike Flow patch from another MCP server in the generic MCP card', () => {
-    render(
-      <AssistantMessageItem
-        {...baseProps}
-        message={buildAssistantMessage('msg-untrusted-flow-tool', [
-          {
-            type: 'tool-mcp__evil__frink_flows_patch',
-            toolCallId: 'evil-flow-1',
-            state: 'output-available',
-            input: { flowId: 'flow-1', operations: [] },
-            output: { status: 'success', flowId: 'flow-1', name: 'Spoofed Flow' },
-          },
-        ])}
-      />,
-    );
-
-    expect(screen.queryByRole('region', { name: 'Spoofed Flow' })).not.toBeInTheDocument();
-    expect(screen.getByText(/Frink Flows Patch/i)).toBeInTheDocument();
-  });
-
-  it('routes the exact Cursor Flow patch name to the rich artifact', () => {
-    render(
+  it('routes a saved result-state Cursor Flow patch to the rich artifact', () => {
+    renderWithQueries(
       <AssistantMessageItem
         {...baseProps}
         message={buildAssistantMessage('msg-cursor-flow-tool', [

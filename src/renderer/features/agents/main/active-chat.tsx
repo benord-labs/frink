@@ -5,7 +5,6 @@ import type { UIMessage } from 'ai';
 import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useStickToBottom } from 'use-stick-to-bottom';
 import { useShallow } from 'zustand/react/shallow';
 import { ChatAtmosphereSurface } from '@/components/ChatAtmosphereSurface';
 import {
@@ -20,7 +19,6 @@ import { buildAnswerMessage } from '../../../../shared/lib/agent-questions/answe
 import type { AiProviderId } from '../../../../shared/lib/ai-providers';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
-import { usePrefersReducedMotion } from '../../../hooks/use-prefers-reduced-motion';
 import { deriveFlowChatBottomSurface } from '../../../lib/agent-chat/flow-chat-surface-state';
 import { useClaudePrewarm } from '../../../lib/agent-chat/prewarm/use-claude-prewarm';
 import { classifyDurableMessageRehydration } from '../../../lib/agent-chat/rehydration';
@@ -35,7 +33,7 @@ import { api } from '../../../lib/mock-api';
 import { hasActiveTransport, runLiveAtomFamily } from '@/lib/stores/active-transport-registry';
 import { askAgent, createPr, startReview } from '../../../lib/agent-chat/git-context';
 import { liveGitContextIo } from '../../../lib/agent-chat/git-context/live-io';
-import { useChatDiff } from '../../../lib/hooks/diff-panel/use-chat-diff';
+import { hasModifiedFiles } from '../../../lib/utils/git-status';
 import {
   generateCommitMessage,
   generateCommitToPrMessage,
@@ -65,6 +63,7 @@ import {
   expiredUserQuestionsAtom,
   filteredDiffFilesAtomFamily,
   filteredSubChatIdAtomFamily,
+  hasAnyUnseenChangesAtom,
   isCreatingPrAtomFamily,
   loadingSubChatsAtom,
   pendingBuildPlanSubChatIdAtom,
@@ -76,9 +75,9 @@ import {
   selectedAgentChatIdAtom,
   setLoading,
   showNewChatFormAtom,
-  splitViewAtom,
-  subChatFilesAtom,
+  splitViewChatIdsAtom,
   taskExecutionErrorAtomFamily,
+  totalSubChatFileCountAtom,
 } from '../atoms';
 import { CurrentChatWorktreeProvider } from '../context/current-chat-worktree-context';
 import { TextSelectionProvider } from '../context/text-selection-context';
@@ -159,6 +158,7 @@ import {
   useTaskCompletionDetection,
   useTextContextWrapper,
 } from './active-chat/hooks';
+import { useChatStickToBottom } from './active-chat/hooks/use-chat-stick-to-bottom';
 import { shouldReleaseEdit } from './active-chat/hooks/use-queue-edit';
 import { useRealtimeSync } from './active-chat/hooks/useRealtimeSync';
 import type { ChatViewInnerProps, ChatViewProps } from './active-chat/types';
@@ -313,22 +313,12 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Auto-scroll: single owner for this chat surface. Follow/release is decided from content-size
   // observation, never from scrollTop arithmetic — a layout-shift clamp is not user intent.
-  // `resize`/`initial` accept only 'instant' or a spring object; bare 'smooth'/'auto' strings are
-  // discarded at runtime, so pass a spring object to change the motion.
-  const prefersReducedMotion = usePrefersReducedMotion();
-  const stickToBottom = useStickToBottom(
-    prefersReducedMotion ? { initial: 'instant', resize: 'instant' } : { initial: 'instant' },
-  );
-  // Depend on members, never on `stickToBottom` itself — the hook returns a fresh object each render
-  // while its members are stable. The same file's decision entry covers why the read-only consumers
-  // (search jump-to-match, pagination, Cmd+Down) get the plain ref below, not the hook's scrollRef:
+  const { stickToBottom, isAtBottom, scrollToBottom, stopScroll } = useChatStickToBottom();
+  // The same file's decision entry covers why the read-only consumers (search jump-to-match,
+  // pagination, Cmd+Down) get the plain ref below, not the hook's scrollRef:
   // docs/decisions/chat-autoscroll-single-owner.md
-  const { isAtBottom, scrollToBottom: scrollViewportToBottom } = stickToBottom;
   /** The scroll viewport; MessagesScrollContainer populates this when the element attaches. */
   const chatContainerRef = useRef<HTMLElement | null>(null);
-  const scrollToBottom = useCallback(() => {
-    void scrollViewportToBottom(prefersReducedMotion ? { animation: 'instant' } : undefined);
-  }, [scrollViewportToBottom, prefersReducedMotion]);
 
   // Sub-chat rename hook
   const { subChatName: storeSubChatName, handleRenameSubChat } = useSubChatRename(subChatId);
@@ -1355,7 +1345,7 @@ const ChatViewInner = memo(function ChatViewInner({
   });
 
   // Message sync and search scroll managed by MessageSyncManager component
-  useSearchScrollManager(chatContainerRef, splitPaneIndex);
+  useSearchScrollManager(chatContainerRef, stopScroll, splitPaneIndex);
 
   return (
     <>
@@ -1579,17 +1569,14 @@ export const ChatView = memo(function ChatView({
   const [selectedTeamId] = useAtom(selectedTeamIdAtom);
   const [chatMode] = useAtom(chatModeAtomFamily(chatId));
   const isActive = useIsPaneActive(splitPaneIndex);
-  const splitViewState = useAtomValue(splitViewAtom);
-  const isSplitActive = splitViewState.chatIds.length > 0;
-  const unseenChanges = useAtomValue(agentsUnseenChangesAtom);
+  const isSplitActive = useAtomValue(splitViewChatIdsAtom).length > 0;
+  const hasAnyUnseenChanges = useAtomValue(hasAnyUnseenChangesAtom);
   const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom);
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom);
   const setSelectedChatId = useSetAtom(selectedAgentChatIdAtom);
   const setShowNewChatForm = useSetAtom(showNewChatFormAtom);
   const { notifyAgentComplete } = useDesktopNotifications();
 
-  // Check if any chat has unseen changes
-  const hasAnyUnseenChanges = unseenChanges.size > 0;
   // Per-chat diff sidebar state - each chat remembers its own open/close state
   const diffSidebarAtom = useMemo(() => diffSidebarOpenAtomFamily(chatId), [chatId]);
   const [isDiffSidebarOpen, setIsDiffSidebarOpen] = useAtom(diffSidebarAtom);
@@ -1635,7 +1622,7 @@ export const ChatView = memo(function ChatView({
   const terminalSidebarAtom = useMemo(() => terminalSidebarOpenAtomFamily(chatId), [chatId]);
   const [isTerminalSidebarOpen, setIsTerminalSidebarOpen] = useAtom(terminalSidebarAtom);
   // Track changed files across all sub-chats for throttled diff refresh
-  const subChatFiles = useAtomValue(subChatFilesAtom);
+  const totalSubChatFileCount = useAtomValue(totalSubChatFileCountAtom);
 
   // Clear "unseen changes" when chat is opened
   useEffect(() => {
@@ -1796,8 +1783,21 @@ export const ChatView = memo(function ChatView({
   // The sidebar render is guarded by canOpenDiff, so it naturally hides.
   // Per-chat state (diffSidebarOpenAtomFamily) preserves each chat's preference.
 
-  // One cached diff per chat (useChatDiff); these triggers only mark it stale
-  const { diffStats, refresh: refreshDiff } = useChatDiff(chatId, !!worktreePath);
+  // The header needs only "uncommitted changes exist". useFileChangeListener and useGitWatcher in
+  // this component invalidate this query on agent writes and git changes.
+  const { data: worktreeStatus, isLoading: isStatusLoading } = trpc.changes.getStatus.useQuery(
+    { worktreePath: worktreePath ?? '' },
+    { enabled: !!worktreePath },
+  );
+  const diffStats = useMemo(
+    () => ({ isLoading: isStatusLoading, hasChanges: hasModifiedFiles(worktreeStatus) }),
+    [isStatusLoading, worktreeStatus],
+  );
+  // The triggers below mark the diff stale; only an open DiffPanel observes it and refetches
+  const refreshDiff = useCallback(
+    () => void trpcUtils.chats.getParsedDiff.invalidate({ chatId }),
+    [trpcUtils, chatId],
+  );
   const refreshDiffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Bursts of agent edits and stream ends collapse into one refresh
   const refreshDiffSoon = useCallback(() => {
@@ -1817,13 +1817,6 @@ export const ChatView = memo(function ChatView({
   }, [isDiffSidebarOpen, refreshDiff]);
 
   // Agent edits and writes change the per-sub-chat file lists; refresh the diff to match
-  const totalSubChatFileCount = useMemo(() => {
-    let count: number = 0;
-    subChatFiles.forEach((files) => {
-      count += files.length;
-    });
-    return count;
-  }, [subChatFiles]);
   useEffect(() => {
     if (totalSubChatFileCount > 0) refreshDiffSoonRef.current();
   }, [totalSubChatFileCount]);

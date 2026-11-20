@@ -1,6 +1,8 @@
 import type { ToolCallContent, ToolCallUpdate, ToolKind } from '@agentclientprotocol/sdk';
 import path from 'node:path';
 import { z } from 'zod';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
+import { frinkToolNames } from '../../mcp/runtime/frink-tools-server';
 
 /** The ACP tool kinds that act on one file, as the tool names Frink's rules and cards use. */
 export const PATH_TOOL_BY_KIND = new Map<ToolKind, string>([
@@ -127,4 +129,15 @@ export function toolCallPaths(toolCall: ToolCallUpdate): string[] {
     entry.type === 'diff' ? [entry.path] : [],
   );
   return [...new Set([...located, ...diffed])];
+}
+
+/** OpenCode names an MCP tool `<server>_<tool>`, in its permission keys and a call's first title. */
+export function frinkToolTitles(): string[] {
+  return frinkToolNames().map((tool) => `${FRINK_MCP_KEY}_${tool}`);
+}
+
+/** The Frink tool a call runs, named exactly by its first title. */
+export function frinkToolOf({ tool }: KnownToolCall): string | undefined {
+  const prefix = `${FRINK_MCP_KEY}_`;
+  return tool && frinkToolTitles().includes(tool) ? tool.slice(prefix.length) : undefined;
 }

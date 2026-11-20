@@ -7,7 +7,7 @@ import {
   TASK_GROUP_CONTROLS,
   type TaskGroupControls,
 } from '../../../agent-runner/process-settlement';
-import { withTimeout } from '../../../agent-runner/codex/app-server-client';
+import { withTimeout } from '../../../platform/with-timeout';
 import { forgetPendingTask, type StopPendingWork } from '../../../task-stop-hook';
 import type { ClaudeSession } from '../../claude-session-registry';
 import { readWakeHolds, type WakeHold } from '../../claude-wake-hold';

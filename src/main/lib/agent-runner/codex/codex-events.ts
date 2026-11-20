@@ -18,6 +18,7 @@ import { CODEX_SUBAGENT_TOOL_NAME } from '../../../../shared/subagent-parts';
 import { usageLimitErrorChunk } from '../../claude/stream-classifiers';
 import type { UIMessageChunk } from '../../claude/types';
 import { compactionOpened, compactionSettled } from './compaction';
+import { mcpCallError } from './mcp/mcp-call-error';
 
 /** Result of Frink's permission gate, as returned by `validateToolPermission`. */
 export type ApprovalOutcome =
@@ -179,7 +180,8 @@ const ITEM_ADAPTERS: Record<string, ItemAdapter> = {
   mcpToolCall: {
     name: (i) => `mcp__${str(i.server, 'mcp')}__${str(i.tool, 'tool')}`,
     input: (i) => (i.arguments as Record<string, unknown>) ?? {},
-    output: (i) => (i.error ? { error: i.error } : ((i.result as Record<string, unknown>) ?? {})),
+    output: (i) => (i.result as Record<string, unknown>) ?? {},
+    error: mcpCallError,
   },
   dynamicToolCall: {
     name: (i) => str(i.tool, 'tool'),
