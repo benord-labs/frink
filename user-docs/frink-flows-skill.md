@@ -18,7 +18,7 @@ Nine references cover triggers, webhook aliases, action contracts, graph/logic, 
 | `~/.frink/skills/frink-flows/` | Canonical editable copy |
 | `~/.agents/skills/frink-flows/`, `~/.claude/skills/frink-flows/` | Real copies projected for agent discovery (the Cursor editor reads both) |
 
-These are real copies, not symlinks. Edit the canonical copy, restart Frink so it projects changes, then start a new agent session. A local edit in a projected provider copy keeps only the edited file; the rest of that copy keeps updating, and the edit does not write back to the canonical skill.
+These are real copies, not symlinks. Frink no longer keeps a copy in `~/.cursor/skills`: each start removes an old unedited `~/.cursor/skills/frink-flows` copy, and keeps one you edited. Edit the canonical copy, restart Frink so it projects changes, then start a new agent session. A local edit in a projected provider copy keeps only the edited file; the rest of that copy keeps updating, and the edit does not write back to the canonical skill.
 
 To add a project-specific pattern, add a Markdown reference in the canonical skill and link it from `SKILL.md`. To change block guidance, follow the router to its current reference. Keep an edited router consistent with its references. Do not edit `.baseline.json`; it records shipped hashes used to distinguish your edits from release content.
 
