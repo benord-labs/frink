@@ -102,7 +102,7 @@ describe('AgentTaskTool — nested narration', () => {
     output: { completed: true },
   };
   const flowPart: MessagePart = {
-    type: 'tool-mcp__frink_dynamic_chat__frink_flows_patch',
+    type: 'tool-mcp__frink__frink_flows_patch',
     toolCallId: 'tu-async-1:child-flow',
     state: 'output-available',
     input: {
@@ -212,7 +212,7 @@ describe('AgentTaskTool — nested narration', () => {
 
   it('keeps an in-flight nested Flow patch applying while the async subagent is live', async () => {
     const pendingFlowPart: MessagePart = {
-      type: 'tool-mcp__frink_dynamic_chat__frink_flows_patch',
+      type: 'tool-mcp__frink__frink_flows_patch',
       toolCallId: 'tu-async-1:child-flow-pending',
       state: 'input-available',
       input: {
@@ -230,7 +230,7 @@ describe('AgentTaskTool — nested narration', () => {
 
   it('recomputes a nested Flow artifact when its MessagePart mutates in place', async () => {
     const pendingFlowPart: MessagePart = {
-      type: 'tool-mcp__frink_dynamic_chat__frink_flows_patch',
+      type: 'tool-mcp__frink__frink_flows_patch',
       toolCallId: 'tu-async-1:child-flow-mutated',
       state: 'input-available',
       input: {

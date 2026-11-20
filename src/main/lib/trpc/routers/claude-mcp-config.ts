@@ -12,7 +12,7 @@
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { FRINK_DYNAMIC_CHAT_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 import { GLOBAL_MCP_PATH, type McpServerConfig, readClaudeConfig } from '../../claude-config';
 import { getDatabase } from '../../db';
 import { listProjects } from '../../db/repos/projects';
@@ -303,7 +303,7 @@ async function buildCursorGlobalGroup(filter: ImportSourceFilter): Promise<McpGr
     const cursorConfig = JSON.parse(content) as { mcpServers?: Record<string, McpServerConfig> };
     if (!cursorConfig.mcpServers || Object.keys(cursorConfig.mcpServers).length === 0) return null;
     // Filter out Frink's own injected MCP, then dedup against Frink-imported entries
-    const { [FRINK_DYNAMIC_CHAT_MCP_KEY]: _frinkMcp, ...otherServers } = cursorConfig.mcpServers;
+    const { [FRINK_MCP_KEY]: _frinkMcp, ...otherServers } = cursorConfig.mcpServers;
     const filtered = filter(otherServers as Record<string, McpServerConfig>, 'cursor-global');
     if (!filtered || Object.keys(filtered).length === 0) return null;
     return {
@@ -333,8 +333,7 @@ async function buildCursorProjectGroups(filter: ImportSourceFilter): Promise<Mcp
             return null;
           }
           // Filter out Frink's own injected MCP, then dedup against Frink-imported entries
-          const { [FRINK_DYNAMIC_CHAT_MCP_KEY]: _frinkMcp, ...otherServers } =
-            cursorConfig.mcpServers;
+          const { [FRINK_MCP_KEY]: _frinkMcp, ...otherServers } = cursorConfig.mcpServers;
           const filtered = filter(
             otherServers as Record<string, McpServerConfig>,
             'cursor-project',

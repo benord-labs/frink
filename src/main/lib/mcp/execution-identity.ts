@@ -1,28 +1,29 @@
+import type { AgentRuntime } from '../../../shared/lib/ai-providers';
+
 /** How a client addresses its run on the dynamic-chat MCP server: the channel token its process
  * carries plus the toolset it lists (decision codex-app-server-identity-scope). */
 
-
-export type ChannelRuntime = 'claude' | 'codex';
+/** Every runtime reaches Frink's server on a channel of its own. */
+export type ChannelRuntime = AgentRuntime;
 export type ExecutionIdentity = { channel?: string; toolset?: string };
 
 // Channel tokens are random rather than the sub-chat id, so no persisted domain id ends up in
 // another process's argv. One current token per (runtime, sub-chat); older ones resolve nothing.
-const channelTokens: Record<ChannelRuntime, Map<string, string>> = {
-  claude: new Map(),
-  codex: new Map(),
-};
+const channelTokens = new Map<string, string>();
 const channelOwners = new Map<string, { subChatId: string; runtime: ChannelRuntime }>();
+
+const tokenKey = (subChatId: string, runtime: ChannelRuntime) => `${runtime}:${subChatId}`;
 
 /** The sub-chat's current channel token for one runtime, minted on first use. */
 export function getChannelToken(subChatId: string, runtime: ChannelRuntime): string {
-  const current = channelTokens[runtime].get(subChatId);
+  const current = channelTokens.get(tokenKey(subChatId, runtime));
   return current ?? setChannelToken(subChatId, runtime, crypto.randomUUID());
 }
 
 /** Make `token` the sub-chat's current channel, retiring the one an earlier process carries. */
 export function setChannelToken(subChatId: string, runtime: ChannelRuntime, token: string): string {
   invalidateChannelToken(subChatId, runtime);
-  channelTokens[runtime].set(subChatId, token);
+  channelTokens.set(tokenKey(subChatId, runtime), token);
   channelOwners.set(token, { subChatId, runtime });
   return token;
 }
@@ -34,9 +35,10 @@ export function channelOwner(channel?: string) {
 /** Drop a sub-chat's current token for one runtime: a request still carrying it resolves no run.
  * Codex calls it on dispose; Claude via setChannelToken (a new CLI) or retireChannelToken (abort). */
 export function invalidateChannelToken(subChatId: string, runtime: ChannelRuntime): void {
-  const token = channelTokens[runtime].get(subChatId);
+  const key = tokenKey(subChatId, runtime);
+  const token = channelTokens.get(key);
   if (!token) return;
-  channelTokens[runtime].delete(subChatId);
+  channelTokens.delete(key);
   channelOwners.delete(token);
 }
 

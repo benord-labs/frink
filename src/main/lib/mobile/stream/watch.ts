@@ -14,7 +14,8 @@ export async function watchMobileChat(
     readMobileChat({ type: 'chat', id: input.chatId, subChatId });
   const watched =
     context?.channelId && (await context.streams.watch(context.channelId, read, input.subChatId));
-  if (!watched) throw new MobileApiError(400, 'Live updates need an open connection. Try again.');
+  // Not 400: the phone reads a 400 here as a desktop without live updates, and stops asking.
+  if (!watched) throw new MobileApiError(409, 'Live updates need an open connection. Try again.');
   return watched;
 }
 

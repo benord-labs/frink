@@ -20,7 +20,7 @@ import { appStore } from '../lib/storage';
 import { SettingsScreen } from '../screens/Settings';
 import { useReduceMotion } from '../ui/glyphs';
 import { useTheme } from '../ui/theme';
-import { alertActions, SHOW_QUEUE } from './open-alert';
+import { alertActions, showQueue } from './open-alert';
 import type { AppRoutes } from './routes';
 import { Tabs } from './tabs';
 
@@ -52,7 +52,7 @@ function useOpenQueueLink(navigation: Navigation) {
   useEffect(
     () =>
       onQueueLink(() => {
-        if (navigation.isReady()) navigation.dispatch(SHOW_QUEUE);
+        if (navigation.isReady()) navigation.dispatch(showQueue());
       }),
     [navigation],
   );

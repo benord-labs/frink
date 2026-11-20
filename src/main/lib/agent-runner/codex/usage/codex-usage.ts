@@ -5,8 +5,9 @@ import {
 } from '../../../../../shared/lib/codex-cli-models';
 import type { RateLimitSnapshot, RateLimitWindow } from '../../../../../shared/types/rate-limit';
 import { createPlanUsageCache, planUsageClock } from '../../../provider/plan-usage-cache';
+import { withTimeout } from '../../../platform/with-timeout';
 import { captureMainException } from '../../../sentry/init';
-import { CodexAppServerClient, withTimeout } from '../app-server-client';
+import { CodexAppServerClient } from '../app-server-client';
 import { resolveCodexBinary } from '../codex-binary';
 
 const REQUEST_TIMEOUT_MS = 10_000;

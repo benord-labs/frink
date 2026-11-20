@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import stableStringify from 'fast-json-stable-stringify';
+import { FRINK_MCP_KEY } from '../../../../../shared/lib/mcp-tool-name';
 import { CODEX_TASK_STOP_GUARD_TOOL_NAME } from '../../../mcp/dynamic-chat-tool-catalog';
 import type { LaunchHooks } from '../../../provider/hooks/store';
 import { codexThreadHooks } from '../hooks';
@@ -115,21 +116,18 @@ export function buildCodexMcpBinding(params: {
   };
   const stopGuard = {
     type: 'mcp_tool' as const,
-    server: 'frink_dynamic_chat',
+    server: FRINK_MCP_KEY,
     tool: CODEX_TASK_STOP_GUARD_TOOL_NAME,
     input: { stop_hook_active: `\${stop_hook_active}` },
     timeout: 5,
   };
-  const guarded = params.taskSignalEnabled && mcpServers.frink_dynamic_chat;
+  const guarded = params.taskSignalEnabled && mcpServers[FRINK_MCP_KEY];
   const hooks = codexThreadHooks(
     params.userHooks,
     guarded ? { Stop: [{ hooks: [stopGuard] }] } : {},
   );
   const threadConfig = hooks ? { ...baseThreadConfig, hooks } : baseThreadConfig;
-  const revision = crypto
-    .createHash('sha256')
-    .update(stableStringify(threadConfig))
-    .digest('hex');
+  const revision = crypto.createHash('sha256').update(stableStringify(threadConfig)).digest('hex');
   const serverNames = Object.keys(mcpServers).filter((name) => name !== REPLACE_SENTINEL);
   return { threadConfig, revision, serverNames };
 }

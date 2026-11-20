@@ -11,22 +11,18 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import log from 'electron-log';
-import { __test__ } from './skill-provisioner';
+import { __test__, provisionFrinkSkills } from './skill-provisioner';
 
 const { provisionOne, diffAgainstBaseline, sha256, baselinesEqual } = __test__;
 
-/** The three machine-local real-copy targets the provisioner projects into. */
+/** The machine-local real-copy targets the provisioner projects into. */
 function ideSkillPaths(home: string, name: string): string[] {
-  return [
-    join(home, '.agents', 'skills', name),
-    join(home, '.claude', 'skills', name),
-    join(home, '.cursor', 'skills', name),
-  ];
+  return [join(home, '.agents', 'skills', name), join(home, '.claude', 'skills', name)];
 }
 
 /** Assert a projected IDE skill dir is a REAL copy (not a symlink) with content. */
@@ -123,9 +119,20 @@ describe('skill-provisioner', () => {
     expect(await readFile(join(dest, 'references', 'topic.md'), 'utf8')).toBe(
       FILES_V1['references/topic.md'],
     );
-    // Projected as REAL COPIES into all three machine-local skill dirs
-    // (~/.agents/skills, ~/.claude/skills, ~/.cursor/skills) — not symlinks.
+    // Projected as REAL COPIES into ~/.agents/skills and ~/.claude/skills — not symlinks, and not into Cursor's folder.
     for (const idePath of ideSkillPaths(userHome, SKILL_NAME)) expectRealCopy(idePath);
+    expect(existsSync(join(userHome, '.cursor', 'skills', SKILL_NAME))).toBe(false);
+  });
+
+  it("boot provisioning removes the copy an older Frink left in Cursor's skills folder", async () => {
+    const bundled = join(process.cwd(), 'assets', 'skills', 'frink-flows');
+    const old = join(userHome, '.cursor', 'skills', 'frink-flows');
+    await cp(bundled, old, { recursive: true });
+
+    await provisionFrinkSkills();
+
+    expect(existsSync(old)).toBe(false);
+    for (const idePath of ideSkillPaths(userHome, 'frink-flows')) expectRealCopy(idePath);
   });
 
   it('atomically migrates a clean semver baseline to a content identity', async () => {

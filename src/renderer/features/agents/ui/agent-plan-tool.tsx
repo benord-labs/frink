@@ -1,10 +1,11 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { Minimize2, Maximize2, Loader2 } from 'lucide-react';
+import { ExpandIcon } from '../../../components/ui/expand-icon';
 import { memo, useEffect, useState } from 'react';
 import { type FrinkPlanStatus, stripPlanFrontmatter } from '../../../../shared/types/plan';
 import { MemoizedMarkdown } from '../../../components/chat-markdown-renderer';
 import { Kbd } from '../../../components/ui/kbd';
+import { Spinner } from '../../../components/ui/spinner';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
 import { toPlainPreview } from '../../../lib/agent-chat/plan/plan-preview';
 import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
@@ -187,24 +188,9 @@ export const AgentPlanTool = memo(function AgentPlanTool({
 
         {/* Right side */}
         <div className="flex items-center gap-2 shrink-0 ml-2">
-          {isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+          {isPending && <Spinner className="w-3 h-3" />}
 
-          {!isLockedOpen && (
-            <div className="relative w-4 h-4">
-              <Maximize2
-                className={cn(
-                  'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                  effectiveIsExpanded ? 'opacity-0 scale-75' : 'opacity-100 scale-100',
-                )}
-              />
-              <Minimize2
-                className={cn(
-                  'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                  effectiveIsExpanded ? 'opacity-100 scale-100' : 'opacity-0 scale-75',
-                )}
-              />
-            </div>
-          )}
+          {!isLockedOpen && <ExpandIcon expanded={effectiveIsExpanded} />}
         </div>
       </Button>
 

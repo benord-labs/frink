@@ -14,6 +14,7 @@ import { attachMainWindowNavigationGuard, resolveRendererEntryUrl } from './navi
 import { revealWhenReady } from './reveal';
 import { startTray } from './tray';
 import { windowManager } from './window-manager';
+import { keepAppZoom } from './zoom';
 
 // Default zoom factor — the app was designed at this zoom level
 // The design was accidental and will be re-designed over time
@@ -339,8 +340,7 @@ export function createMainWindow(search = new URLSearchParams()): BrowserWindow 
   }
 
   revealWhenReady(window, () => {
-    // Apply persisted zoom factor (or default)
-    window.webContents.setZoomFactor(getPersistedZoomFactor());
+    keepAppZoom(window.webContents, getPersistedZoomFactor);
 
     // Ensure native traffic lights are visible by default (login page, loading states)
     if (process.platform === 'darwin') {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { AI_PROVIDERS } from '../../../../../shared/lib/ai-providers';
 import { ENV_FILE_READS } from '../../env-file-reads';
+import { frinkToolTitles } from '../acp-tool-calls';
 import type { AcpLaunchRow, LaunchCheck, LaunchContext } from './launch';
 
 /**
@@ -77,13 +78,24 @@ export async function skillPaths({ userEnv }: LaunchContext): Promise<string[]> 
   return found.filter((folder) => folder !== undefined);
 }
 
+/** OpenCode reports the value under a secret-looking key as `***`; Frink's own entries read as set. */
+function unmaskFrinkTools(reported: string, titles: readonly string[]): string {
+  return titles.reduce(
+    (text, title) => text.replaceAll(`"${title}":"***"`, `"${title}":"allow"`),
+    reported,
+  );
+}
+
 async function openCodeSettings(context: LaunchContext) {
+  // Frink's own tools never ask here, each named alone: Frink's server decides every call.
+  const titles = frinkToolTitles();
+  const permission = { ...PERMISSION, ...Object.fromEntries(titles.map((t) => [t, 'allow'])) };
   const config = {
-    permission: PERMISSION,
+    permission,
     // OpenCode reports each agent with empty options, so they are written out to compare equal.
     agent: {
-      build: { permission: PERMISSION, options: {} },
-      plan: { permission: { ...PERMISSION, edit: 'deny' }, options: {} },
+      build: { permission, options: {} },
+      plan: { permission: { ...permission, edit: 'deny' }, options: {} },
     },
     default_agent: 'build',
     share: 'disabled',
@@ -102,7 +114,7 @@ async function openCodeSettings(context: LaunchContext) {
     const parsed = EffectiveSettings.safeParse(JSON.parse(stdout));
     if (!parsed.success) return false;
     const expected: Settings = { ...config, ...OPENCODE_ADDS, username: parsed.data.username };
-    return canonical(parsed.data) === canonical(expected);
+    return unmaskFrinkTools(canonical(parsed.data), titles) === canonical(expected);
   };
   const checks: LaunchCheck[] = [
     // Remote settings are fetched again at start, so a source must refuse even when it adds

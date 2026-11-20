@@ -10958,7 +10958,7 @@ index 8bf926248099e6c7a6eb7903bb4fc88b27104919..2d52aa4849f2fdd35c46715d3eb2405e
  
      if let Err(err) = handle_result {
 diff --git a/codex-rs/hooks/src/engine/discovery.rs b/codex-rs/hooks/src/engine/discovery.rs
-index 0c5a28ef35ef0fb54c7f0b99c7f23a680af18ae2..f2c84da1ed18ca434d2d1af8694111504530c682 100644
+index 0c5a28ef35ef0fb54c7f0b99c7f23a680af18ae2..dbb6afa3a7fd671e4fa9ae87d0be7a465c7972d8 100644
 --- a/codex-rs/hooks/src/engine/discovery.rs
 +++ b/codex-rs/hooks/src/engine/discovery.rs
 @@ -677,8 +677,11 @@ fn append_matcher_groups(
@@ -10984,7 +10984,7 @@ index 0c5a28ef35ef0fb54c7f0b99c7f23a680af18ae2..f2c84da1ed18ca434d2d1af869411150
 +        kind,
 +        ConfiguredHandlerKind::McpTool { server, tool, .. }
 +            if source == HookSource::SessionFlags
-+                && server == "frink_dynamic_chat"
++                && server == "frink"
 +                && tool == "frink_task_stop_guard"
 +    )
 +}
@@ -11015,7 +11015,7 @@ index 0c5a28ef35ef0fb54c7f0b99c7f23a680af18ae2..f2c84da1ed18ca434d2d1af869411150
 +                matcher: None,
 +                hooks: ["frink_task_stop_guard", "other"]
 +                    .map(|tool| HookHandlerConfig::McpTool {
-+                        server: "frink_dynamic_chat".to_string(),
++                        server: "frink".to_string(),
 +                        tool: tool.to_string(),
 +                        input: serde_json::Map::new(),
 +                        timeout_sec: Some(5),

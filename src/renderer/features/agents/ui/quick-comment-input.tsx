@@ -117,7 +117,7 @@ export function QuickCommentInput({
     : 'animate-in fade-in-0 zoom-in-95 origin-bottom duration-100';
 
   const content = (
-    <div ref={containerRef} style={style} data-artifact-preview-occluder>
+    <div ref={containerRef} style={style} data-native-view-occluder>
       <div
         className={cn('rounded-md border shadow-lg overflow-hidden', overlayGlass, animationClass)}
       >

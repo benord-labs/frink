@@ -17,7 +17,9 @@ export type ScenarioId =
   | 'concurrent-approvals'
   | 'stop-while-asking'
   | 'debug-session'
-  | 'staged-vs-loaded';
+  | 'staged-vs-loaded'
+  | 'frink-tool-card'
+  | 'frink-tool-error-card';
 export type RowId = `${ScenarioId} x ${AgentRuntime}`;
 
 const NO_DEBUG_SESSION =

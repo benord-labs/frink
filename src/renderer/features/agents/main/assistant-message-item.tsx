@@ -2,7 +2,8 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue } from 'jotai';
-import { ListTree, Minimize2, Maximize2 } from 'lucide-react';
+import { ListTree } from 'lucide-react';
+import { ExpandIcon } from '../../../components/ui/expand-icon';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isHtmlArtifactPart } from '../../../../shared/lib/artifacts/html-artifact';
 import {
@@ -20,7 +21,6 @@ import { useCollapseBoundary } from '../../../lib/agent-chat/collapse/use-collap
 import { pendingTurnCard } from '../../../lib/agent-chat/planning/planning-status-message';
 import { compactingAtomFor } from '../lib/compaction-flag';
 import * as FlowPatch from '../../../lib/flows/flow-change-tool';
-import { cn } from '../../../lib/utils';
 import { chatMarkdownModeAtom, showMessageJsonAtom } from '../atoms';
 import { HtmlArtifactCard } from '../HtmlArtifactCard';
 import { FileLinkScope } from '../mentions/FileLinkBadge';
@@ -115,20 +115,7 @@ function CollapsibleSteps({
           </span>
         </div>
         <span className="p-1 rounded-md" aria-hidden="true">
-          <div className="relative w-4 h-4">
-            <Maximize2
-              className={cn(
-                'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                isExpanded ? 'opacity-0 scale-75' : 'opacity-100 scale-100',
-              )}
-            />
-            <Minimize2
-              className={cn(
-                'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                isExpanded ? 'opacity-100 scale-100' : 'opacity-0 scale-75',
-              )}
-            />
-          </div>
+          <ExpandIcon expanded={isExpanded} />
         </span>
       </Button>
       {isExpanded && <div className="mt-1 space-y-1.5">{children}</div>}

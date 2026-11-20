@@ -13,7 +13,7 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 | `desktop_opened` | Frink starts, you reopen its window, or you come back to it after hours away | How it was opened: `launch` (Frink started), `window_reopened` (you clicked Frink in the Dock after closing its window) or `returned_after_idle` (you came back after 4 hours or more without Frink in front). A start also says whether this is the install's first launch |
 | `first_launch` | The first launch only | Nothing extra |
 | `account_connected` | You connect or reconnect an AI account | Which agent it is (such as Claude Code or Codex), how it connects (the agent's own sign-in, an API key or a token), and whether it was a reconnect |
-| `account_connect_failed` | Frink can't connect an AI account, or you leave the connect page or the sign-in without finishing | Which agent it is, and one of these reasons: not installed, not signed in, access denied, couldn't read the sign-in, cancelled, or unknown. Each agent sends each reason at most once per launch |
+| `account_connect_failed` | Frink can't connect an AI account, or you leave the connect page or the sign-in without finishing | Which agent it is, and one of these reasons: not installed, not signed in, access denied, couldn't read the sign-in or start the agent bundled inside Frink, cancelled, or unknown. Each agent sends each reason at most once per launch |
 | `project_opened` | You add or open a project | The project's local id, and whether it has a git remote (yes or no) |
 | `workspace_created` | A chat is created in a project | The chat's and project's local ids, and whether it uses a worktree |
 | `workspace_archived`, `workspace_deleted` | You archive or delete a chat | The chat's local id |

@@ -5,9 +5,12 @@ import type {
   ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
+import { frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
 import type { UIMessageChunk } from '../../claude/types';
+import { frinkToolOutput } from '../../mcp/runtime/frink-tools-server';
 import { endTextRun } from '../codex/codex-stream-chunks';
 import {
+  frinkToolOf,
   type KnownToolCall,
   PATH_TOOL_BY_KIND,
   type ReportSource,
@@ -96,8 +99,10 @@ function editInput(toolCall: ToolCallUpdate, filePath: string | undefined) {
 }
 
 function toolCard(
-  toolCall: ToolCallUpdate,
+  toolCall: KnownToolCall,
 ): Pick<Extract<UIMessageChunk, { type: 'tool-input-available' }>, 'toolName' | 'input'> {
+  const frink = frinkToolOf(toolCall);
+  if (frink) return { toolName: frinkToolPartName(frink), input: toolCall.rawInput ?? {} };
   const [filePath] = toolCallPaths(toolCall);
   if (toolCall.kind === 'execute') {
     return { toolName: 'Bash', input: { command: toolCallCommand(toolCall) ?? toolCall.title } };
@@ -129,11 +134,9 @@ export function mapToolCall(
   if (isFirstReport) chunks.push({ type: 'tool-input-start', toolCallId, toolName: card.toolName });
   chunks.push({ type: 'tool-input-available', toolCallId, ...card });
   if (toolCall.status === 'completed') {
-    chunks.push({
-      type: 'tool-output-available',
-      toolCallId,
-      output: { output: contentText(toolCall) },
-    });
+    const text = contentText(toolCall);
+    const output = frinkToolOf(toolCall) ? frinkToolOutput(text) : { output: text };
+    chunks.push({ type: 'tool-output-available', toolCallId, output });
   }
   if (toolCall.status === 'failed') {
     const reported = contentText(toolCall) || 'The tool call failed.';

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { findMentionTokens } from './mention-grammar';
 import { encodeForMentionToken } from './mention-token-codec';
 import { isAttachedFilePath, parseMention, pickedPathMention } from './parse-mention';
 
@@ -16,6 +17,31 @@ describe('parseMention', () => {
     it('reads back a picked folder exactly as it was built', () => {
       const picked = pickedPathMention('folder', 'src/app');
       expect(parseMention(picked.id)).toStrictEqual(picked);
+    });
+
+    it.each([
+      ['file', 'src/a]b.ts'],
+      ['file', 'app/[id] notes/page.tsx'],
+      ['folder', 'x[/y'],
+      ['file', 'src/日本]語.ts'],
+    ] as const)(
+      'sends the whole path of %s %j, which a plain token would cut short',
+      (type, path) => {
+        const picked = pickedPathMention(type, path);
+        const [token] = findMentionTokens(`see @[${picked.id}]/ and b] here`);
+        expect(token.id).toBe(picked.id);
+        expect(parseMention(token.id)).toStrictEqual(picked);
+      },
+    );
+
+    it('keeps the plain token for a name it holds whole, so stored messages read the same', () => {
+      expect(pickedPathMention('file', 'app/[id]/page.tsx').id).toBe(
+        'file:local:app/[id]/page.tsx',
+      );
+    });
+
+    it('reads nothing from an encoded path that does not decode', () => {
+      expect(parseMention('file:local64:%%%')).toBeNull();
     });
 
     it('reads a dotfile at the repository root', () => {

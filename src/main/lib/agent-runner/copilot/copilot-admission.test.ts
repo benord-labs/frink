@@ -13,6 +13,7 @@ import {
   type ManagedSettingsResolvedData,
   type ResumeSessionConfig,
   type SessionConfig,
+  type SessionEvent,
 } from '@github/copilot-sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -20,8 +21,13 @@ import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import { collectChunks } from '../acp/acp-test-fixtures';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import * as database from '../../db';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
+import type { UIMessageChunk } from '../../claude/types';
+import * as dynamicChat from '../../mcp/dynamic-chat-server';
+import { type FrinkToolsServer, frinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import { plantCanarySetup, registerCanaryRows } from '../../socket/test-suites/conformance/canary';
+import * as copilotEvents from './copilot-events';
 import type { CopilotRunnerDeps } from './copilot-runner';
 import { type CopilotRunnerParams, resolveCopilotLaunch, runCopilotAgent } from './index';
 
@@ -54,7 +60,9 @@ type Case = {
   prompt?: string;
 };
 type TurnSetup = {
-  answer?: (abortController: AbortController) => Promise<Answer>;
+  frinkTools?: FrinkToolsServer;
+  /** `quit` force-stops Copilot, as quitting Frink or a crash does. */
+  answer?: (abortController: AbortController, quit: () => void) => Promise<Answer>;
   prompt?: string;
   model?: string;
   resumeSessionId?: string;
@@ -68,6 +76,11 @@ type Turn = {
   managed: ManagedSettingsResolvedData[];
   approveAll?: string;
   sessionId?: string;
+  chunks: UIMessageChunk[];
+  /** A resumed session's history as the turn first sees it. */
+  resumedHistory?: SessionEvent[];
+  /** The CLI version the session reported, which can differ from what `copilot --version` prints. */
+  version?: string;
 };
 
 const DENY: Answer = { allowed: false, message: 'Denied by the test' };
@@ -343,6 +356,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       const client = new CopilotClient(options);
       const create = client.createSession.bind(client);
       const resume = client.resumeSession.bind(client);
+      const getStatus = client.getStatus.bind(client);
       const watched = <Config extends SessionConfig | ResumeSessionConfig>(
         config: Config,
       ): Config => ({
@@ -363,9 +377,17 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       };
       return Object.assign(client, {
         getAuthStatus: async () => ({ isAuthenticated: true }),
+        getStatus: async () => {
+          const status = await getStatus();
+          record.version = status.version;
+          return status;
+        },
         createSession: async (config: SessionConfig) => opened(await create(watched(config))),
-        resumeSession: async (id: string, config: ResumeSessionConfig) =>
-          opened(await resume(id, watched(config))),
+        resumeSession: async (id: string, config: ResumeSessionConfig) => {
+          const session = await resume(id, watched(config));
+          record.resumedHistory = await session.getEvents();
+          return opened(session);
+        },
       });
     };
   }
@@ -373,9 +395,12 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
   async function turn(id: string, setup: TurnSetup = {}): Promise<Turn> {
     if (!launch) throw new Error('No launch');
     bodiesByCase.delete(id);
-    const record: Turn = { questions: [], errors: [], failures: [], managed: [] };
+    const record: Turn = { questions: [], errors: [], failures: [], managed: [], chunks: [] };
     const abortController = new AbortController();
     const answer = setup.answer ?? (async () => DENY);
+    const wrap = admissionClient(record, setup.approveAll ?? false);
+    let live: CopilotClient | undefined;
+    const quit = () => void live?.forceStop();
     const chunks = await collectChunks(
       runCopilotAgent(
         {
@@ -384,19 +409,24 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
           prompt: setup.prompt ?? `Run the steps. case:${id}`,
           model: setup.model ?? 'fake-model',
           resumeSessionId: setup.resumeSessionId,
+          frinkTools: setup.frinkTools,
           abortController,
           checkApproval: (question) => {
             record.questions.push(question.toolName);
-            return answer(abortController);
+            return answer(abortController, quit);
           },
         },
         {
-          createClient: admissionClient(record, setup.approveAll ?? false),
+          createClient: (options) => {
+            live = wrap(options);
+            return live;
+          },
           provider,
           gateWrapper: setup.gateWrapper,
         },
       ),
     );
+    record.chunks = chunks;
     for (const chunk of chunks) {
       if (chunk.type === 'error') record.errors.push(chunk.errorText);
       if (chunk.type === 'tool-output-error') record.failures.push(chunk.errorText);
@@ -743,6 +773,46 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     TURN_MS,
   );
 
+  // Copilot records a stopped call as aborted. From 1.0.97 a resume closes a call that a quit or crash
+  // cut off as interrupted; 1.0.96 leaves it open and sends nothing for it.
+  const closesLeftOpenCalls = (version = '') =>
+    version.localeCompare('1.0.97', 'en', { numeric: true }) >= 0;
+
+  it.each([
+    { how: 'stopped', repaired: false },
+    { how: 'quit', repaired: true },
+  ])(
+    'resumes without a false unasked-action stop after a turn $how mid-command',
+    async ({ how, repaired }) => {
+      scripts.set(`mid-${how}`, [bash('sleep 30')]);
+      const first = await turn(`mid-${how}`, {
+        answer: async (abortController, quit) => {
+          setTimeout(() => (repaired ? quit() : abortController.abort()), 1500);
+          return ALLOW;
+        },
+      });
+      scripts.set(`mid-${how}-resume`, [bash(`touch '${inProject(`m-mid-${how}`)}'`)]);
+      const second = await turn(`mid-${how}-resume`, { resumeSessionId: first.sessionId });
+      const history = second.resumedHistory ?? [];
+      const finished = new Set(
+        history.flatMap((event) =>
+          event.type === 'tool.execution_complete' ? [event.data.toolCallId] : [],
+        ),
+      );
+      const left = history.filter(
+        (event) => event.type === 'tool.execution_start' && !finished.has(event.data.toolCallId),
+      );
+      expect(left).toHaveLength(1);
+      expect(second.failures.some((text) => text.includes('interrupted before a result'))).toBe(
+        repaired && closesLeftOpenCalls(second.version),
+      );
+      expect(second.errors).toEqual([]);
+      expect(second.questions).toEqual(['Bash']);
+      expect(existsSync(inProject(`m-mid-${how}`))).toBe(false);
+    },
+    TURN_MS,
+  );
+
   it(
     'runs nothing when the turn is stopped while the gate waits',
     async () => {
@@ -853,6 +923,90 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     },
     TURN_MS,
   );
+
+  describe("Frink's own tools", () => {
+    const subChatId = 'sub-frink-tools';
+    const call = { name: `${FRINK_MCP_KEY}-searchProjects`, args: { query: '' } };
+
+    async function frinkTurn(id: string, setup: TurnSetup = {}) {
+      const baseUrl = await dynamicChat.getOrStartDynamicChatMcpUrl();
+      dynamicChat.setCurrentExecutionChat(
+        'chat',
+        subChatId,
+        project,
+        'agent',
+        undefined,
+        undefined,
+        false,
+        'copilot',
+      );
+      const frinkTools = frinkToolsServer({
+        baseUrl,
+        subChatId,
+        runtime: 'copilot',
+        hasSignalTask: false,
+      });
+      const events = vi.spyOn(copilotEvents, 'mapCopilotEvent');
+      scripts.set(id, [call]);
+      try {
+        const result = await turn(id, { ...setup, frinkTools });
+        return { result, events: events.mock.calls.map(([event]) => event) };
+      } finally {
+        events.mockRestore();
+        dynamicChat.clearCurrentExecutionChat();
+      }
+    }
+
+    it(
+      'are listed on the first turn, and one runs with no question and no permission request',
+      async () => {
+        const { result, events } = await frinkTurn('frink-tool');
+        // Tees this real turn as the conformance grid's RECORDED Copilot Frink-tool fixture.
+        const recordTo = process.env.FRINK_RECORD_COPILOT_FRINK_TOOL;
+        if (recordTo) await writeFile(recordTo, JSON.stringify(events, null, 2));
+        const [firstBody = ''] = bodiesByCase.get('frink-tool') ?? [];
+        expect(firstBody).toContain(`"${call.name}"`);
+        expect(firstBody).not.toContain(`"${FRINK_MCP_KEY}-frink_task_signal"`);
+        // MCP is open this turn, yet no planted server's tools reach the model.
+        expect(firstBody).not.toContain('"evil-');
+        const { questions, errors, failures } = result;
+        expect({ questions, errors, failures }).toEqual({
+          questions: [],
+          errors: [],
+          failures: [],
+        });
+        expect(events.map(({ type }) => type)).not.toContain('permission.requested');
+        expect(result.chunks).toContainEqual(
+          expect.objectContaining({
+            type: 'tool-input-available',
+            toolName: frinkToolPartName('searchProjects'),
+          }),
+        );
+        expect(result.chunks).toContainEqual(
+          expect.objectContaining({
+            type: 'tool-output-available',
+            output: { content: [{ type: 'text', text: '{"projects":[]}' }] },
+          }),
+        );
+      },
+      TURN_MS,
+    );
+
+    it(
+      "are refused by Copilot's own check when Frink's answer is missing",
+      async () => {
+        const { result, events } = await frinkTurn('frink-tool-silent', {
+          gateWrapper: () => async () => undefined,
+        });
+        const asked = events.flatMap((event) =>
+          event.type === 'permission.requested' ? [event.data.permissionRequest.kind] : [],
+        );
+        expect(asked).toEqual(['mcp']);
+        expect(result.failures.join('\n')).toContain('Frink decides before each step.');
+      },
+      TURN_MS,
+    );
+  });
 
   registerCanaryRows(
     'copilot',

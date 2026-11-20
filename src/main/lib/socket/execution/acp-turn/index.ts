@@ -5,6 +5,7 @@ import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import { resolveAcpLaunch, runAcpAgent } from '../../../agent-runner/acp';
 import type { CodexApprovalCheck } from '../../../agent-runner/codex/codex-approvals';
 import type { UIMessageChunk } from '../../../claude/types';
+import type { FrinkToolsServer } from '../../../mcp/runtime/frink-tools-server';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { ExtractedImagePart } from '../../streaming/image-parts';
 
@@ -24,6 +25,8 @@ type AcpTurnParams = {
   composerNotes: string[];
   abortController: AbortController;
   checkApproval: CodexApprovalCheck;
+  /** Frink's own tool server for this turn, when the executor attached one. */
+  frinkTools?: FrinkToolsServer;
 };
 
 const DEFAULT_DEPS = { resolveAcpLaunch, runAcpAgent };
@@ -47,10 +50,28 @@ export function agentModelFor(model: string | undefined): string | undefined {
 }
 
 /** The notes in the prompt: after a leading slash command, so the command stays first. */
-export function withNotes(text: string, notes: string[]): string {
+function withNotes(text: string, notes: string[]): string {
   if (notes.length === 0) return text;
   const reminders = wrapRemindersForPrompt(notes);
   return startsWithCommand(text) ? `${text}\n\n${reminders}` : `${reminders}\n\n${text}`;
+}
+
+/** What every agent runner takes from a chat turn the same way: folder, prompt, images and gates. */
+export function sharedTurnInputs(params: Omit<AcpTurnParams, 'providerId' | 'configRoot'>) {
+  const fallback = params.freshSessionFallbackPrompt;
+  return {
+    cwd: params.projectPath,
+    prompt: withNotes(params.prompt, params.composerNotes),
+    freshSessionFallbackPrompt: fallback && withNotes(fallback, params.composerNotes),
+    resumeSessionId: params.resumeSessionId,
+    images: params.images.map(({ base64Data, mediaType }) => ({
+      data: base64Data,
+      mimeType: mediaType,
+    })),
+    abortController: params.abortController,
+    checkApproval: params.checkApproval,
+    frinkTools: params.frinkTools,
+  };
 }
 
 /** Runs one chat turn on an ACP agent, refusing in plain words when it cannot start. */
@@ -66,22 +87,12 @@ export async function* startAcpTurn(
     configRoot: params.configRoot,
   });
   if (!resolved.ok) throw new Error(`${row.name} didn't start. ${resolved.reason}`);
-  const fallback = params.freshSessionFallbackPrompt;
   yield* deps.runAcpAgent({
+    ...sharedTurnInputs(params),
     launch: resolved.launch,
     agentId: row.id,
     agentName: row.name,
-    cwd: params.projectPath,
-    prompt: withNotes(params.prompt, params.composerNotes),
-    freshSessionFallbackPrompt: fallback && withNotes(fallback, params.composerNotes),
-    resumeSessionId: params.resumeSessionId,
     model: agentModelFor(params.model),
     mode,
-    images: params.images.map(({ base64Data, mediaType }) => ({
-      data: base64Data,
-      mimeType: mediaType,
-    })),
-    abortController: params.abortController,
-    checkApproval: params.checkApproval,
   });
 }

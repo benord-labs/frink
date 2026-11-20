@@ -84,6 +84,8 @@ export interface ClaudeTurnContext {
   /** This turn submitted a plan (ExitPlanMode called), so the signal in {@link preplanSignal}
    * belongs to the drafting phase and may not settle the implementation phase. */
   planSubmitted: boolean;
+  /** Back in plan mode after an auto-approved submission, until its next ExitPlanMode runs. */
+  planReentered: boolean;
   /** The drafting `awaiting_input` on record when ExitPlanMode was requested, else null. Once the
    * plan is submitted, the Stop hook accepts any signal except this exact object. */
   preplanSignal: RecordedTaskSignal | null;
@@ -137,6 +139,7 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
     setPlanSubmissionHalt: () => {},
     planTerminalsLocked: false,
     planSubmitted: false,
+    planReentered: false,
     preplanSignal: null,
     submittedPlan: null,
     setHasExplicitTaskSignal: () => {},
@@ -215,6 +218,7 @@ export function createWakeBurstTurn(
   wakeTurn.waitForExecutionSettlement = burst.waitForExecutionSettlement;
   wakeTurn.planTerminalsLocked = arming.planTerminalsLocked;
   wakeTurn.planSubmitted = arming.planSubmitted;
+  wakeTurn.planReentered = arming.planReentered;
   wakeTurn.preplanSignal = arming.preplanSignal;
   wakeTurn.planSubmissionHalt = arming.planSubmissionHalt;
   wakeTurn.setPlanSubmissionHalt = arming.setPlanSubmissionHalt;

@@ -1,4 +1,5 @@
 import {
+  type AgentCapabilities,
   client,
   type ContentBlock,
   ndJsonStream,
@@ -8,6 +9,7 @@ import {
   type ToolCall,
 } from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 import type { UIMessageChunk } from '../../claude/types';
 import * as database from '../../db';
 import { freshDb } from '../../db/test-utils/fresh-db';
@@ -344,5 +346,32 @@ describe('openSession reading the agent version', () => {
     ['nowhere', { _meta: { version: 4 } }, undefined],
   ])('takes the version from %s', async (_, identity, version) => {
     expect(await versionFrom(identity)).toBe(version);
+  });
+});
+
+describe("runAcpAgent offering Frink's own server", () => {
+  const frinkTools = { name: FRINK_MCP_KEY, url: 'http://127.0.0.1:9/?channel=c' };
+  const HTTP: AgentCapabilities = { mcpCapabilities: { http: true }, ...CAN_RESUME };
+
+  async function serversSent(
+    agentCapabilities: AgentCapabilities,
+    overrides: Partial<AcpRunnerParams>,
+  ) {
+    const fake = fakeAcpAgent(async () => {}, { agentCapabilities, resumeFails: true });
+    const params = runnerParams({ resumeSessionId: 'earlier', ...overrides });
+    await collectChunks(runAcpAgent(params, fake.start));
+    return [...fake.resumed, ...fake.opened].map(({ mcpServers }) => mcpServers);
+  }
+
+  it('sends only that server, over HTTP, on both resume and a new session', async () => {
+    const only = [{ type: 'http', name: frinkTools.name, url: frinkTools.url, headers: [] }];
+    expect(await serversSent(HTTP, { frinkTools })).toEqual([only, only]);
+  });
+
+  it.each([
+    ['an agent that cannot take MCP over HTTP', CAN_RESUME, { frinkTools }],
+    ['a turn whose server did not start', HTTP, {}],
+  ])('sends no server to %s', async (_name, capabilities, overrides) => {
+    expect(await serversSent(capabilities, overrides)).toEqual([[], []]);
   });
 });

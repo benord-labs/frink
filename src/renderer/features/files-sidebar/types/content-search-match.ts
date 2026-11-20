@@ -5,4 +5,7 @@ export type ContentSearchMatch = {
   startColumn: number;
   endColumn: number;
   lineText: string;
+  /** The match's span within `lineText`. */
+  previewStart: number;
+  previewEnd: number;
 };

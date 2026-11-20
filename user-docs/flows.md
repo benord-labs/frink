@@ -40,6 +40,13 @@ An agent (through `frink_flows_patch`) or another window can save a new version 
 
 If you press Save on a copy that has fallen behind, the same two choices appear in a dialog. A draft of unsaved edits survives a crash, including edits you made while a save was in progress.
 
+The same protection works the other way round. If you, or another chat, save a flow after an agent read it, the agent's patch can no longer replace what you saved:
+
+- **The agent edits a step you changed:** nothing is saved and the agent's card shows it as stale. The agent reads the flow again and redoes its edit on top of yours.
+- **The agent edits other steps:** its patch is saved on top of your version, and your change is kept. An agent that told Frink which version it read is stopped by any newer save instead, and redoes its edit the same way.
+
+Moving or resizing steps on the canvas never blocks an agent's patch.
+
 ## Project defaults
 
 Steps that run in a project (`start_task`, `run_command`, your own custom nodes) resolve their project as **node override → flow default** (`graph.settings.defaultProjectId`, set in **flow settings → Project**). A node override may be a `{{…}}` template, letting an upstream step decide the target project at run time; the flow default then applies only when the node's field is left blank — an override that renders to nothing fails the step rather than inheriting it. Picking a project when creating a flow seeds the flow default automatically, so new steps inherit it without per-node setup. When a step has no project from either source, or its project isn't on this computer, it gets an amber warning and its config panel shows the error. The warning links straight to the flow settings Project field when the problem is the flow default; a project set on the step itself is fixed in the step. The editor checks values the way runs resolve them: a step's own project may be an id, a name only one project has, or a `{{…}}` variable (a broken variable is flagged); the flow default is used as written, never as a variable; custom nodes and Post-Task Trigger bindings match by id only. A webhook trigger whose connected account was removed shows "Account isn't connected", because it would never fire. Integration steps from an installed plugin are the exception: they run through the plugin's connected account, take no project, and show no project field or warning. Agents creating flows via MCP get the same behavior: the creation `projectId` (or, when omitted, the chat session's project) becomes the flow default.
@@ -713,6 +720,12 @@ The choice is checked again when you click: if the step can no longer be continu
 If the chat the flow started in has been **deleted**, Retry is refused with "This run's chat was deleted — start the flow again to re-run it." Deleting the chat abandons the run, so start a fresh run instead. An *archived* chat still retries, because archiving can be undone.
 
 The Work Queue row menu offers the same single action (**Continue task** or **Retry task**) once the run has paused or settled. It works for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see *Re-running a terminal batch*).
+
+### Letting an agent continue or cancel a run
+
+An agent in a Frink chat can do the same from the chat, for example once it has fixed whatever stopped a batch of runs. `frink_flows_continue_run` is the row's **Continue** / **Retry**, or, given a message, the reply you would type in the step's chat. `frink_flows_cancel_run` is the row's **Cancel**. Each asks your permission like any other Frink tool that changes something.
+
+An agent cannot answer what only you can: an Approval, a plan review, a held run's **Start**, a secret request, or a Retry that may repeat what a step already did. It cannot stop its own run either. A message an agent sends shows in the step's chat as if you had typed it.
 
 ### Usage-limit and API-error pauses
 

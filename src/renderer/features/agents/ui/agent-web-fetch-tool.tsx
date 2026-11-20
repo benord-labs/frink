@@ -1,6 +1,8 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { memo, useState } from 'react';
-import { Minimize2, Maximize2, Globe, Loader2 } from 'lucide-react';
+import { Globe } from 'lucide-react';
+import { ExpandIcon } from '../../../components/ui/expand-icon';
+import { Spinner } from '../../../components/ui/spinner';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
 import { cn } from '../../../lib/utils';
 import type { MessagePart } from '../stores/message-store';
@@ -23,6 +25,53 @@ type AgentWebFetchToolProps = {
   part: WebFetchToolPart;
   chatStatus?: string;
 };
+
+type WebFetchHeaderProps = {
+  isPending: boolean;
+  hostname: string;
+  /** Why the fetch failed, or null when it is pending or succeeded. */
+  failure: string | null;
+  size: string;
+  /** Null when the row cannot expand. */
+  isExpanded: boolean | null;
+};
+
+/** The row's label, status and expand icon, shared by the clickable and the static header. */
+function WebFetchHeader({ isPending, hostname, failure, size, isExpanded }: WebFetchHeaderProps) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5 text-xs truncate flex-1 min-w-0">
+        <Globe className="w-3 h-3 shrink-0 text-muted-foreground" />
+
+        {isPending ? (
+          <TextShimmer as="span" duration={1.2} className="text-xs text-muted-foreground">
+            Fetching
+          </TextShimmer>
+        ) : (
+          <span className="text-xs text-muted-foreground">Fetched</span>
+        )}
+
+        <span className="truncate text-foreground">{hostname}</span>
+      </div>
+
+      {/* Status and expand button */}
+      <div className="flex items-center gap-2 shrink-0 ml-2">
+        <div className="flex items-center gap-1.5 text-xs">
+          {isPending ? (
+            <Spinner className="w-3 h-3" />
+          ) : failure ? (
+            <span className="text-destructive">{failure}</span>
+          ) : (
+            <span className="text-muted-foreground">{size}</span>
+          )}
+        </div>
+
+        {/* Expand/Collapse icon */}
+        {isExpanded !== null && <ExpandIcon expanded={isExpanded} />}
+      </div>
+    </>
+  );
+}
 
 export const AgentWebFetchTool = memo(function AgentWebFetchTool({
   part,
@@ -88,101 +137,23 @@ export const AgentWebFetchTool = memo(function AgentWebFetchTool({
             'duration-150 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2',
           )}
         >
-          <div className="flex items-center gap-1.5 text-xs truncate flex-1 min-w-0">
-            <Globe className="w-3 h-3 shrink-0 text-muted-foreground" />
-
-            {isPending ? (
-              <TextShimmer as="span" duration={1.2} className="text-xs text-muted-foreground">
-                Fetching
-              </TextShimmer>
-            ) : (
-              <span className="text-xs text-muted-foreground">Fetched</span>
-            )}
-
-            <span className="truncate text-foreground">{hostname}</span>
-          </div>
-
-          {/* Status and expand button */}
-          <div className="flex items-center gap-2 shrink-0 ml-2">
-            <div className="flex items-center gap-1.5 text-xs">
-              {isPending ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : isError || !isSuccess ? (
-                <span className="text-destructive">
-                  {statusCode ? `Error ${statusCode}` : 'Failed'}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">{formatBytes(bytes)}</span>
-              )}
-            </div>
-
-            {/* Expand/Collapse icon */}
-            {hasContent && !isPending && (
-              <div className="relative w-4 h-4">
-                <Maximize2
-                  className={cn(
-                    'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                    isExpanded ? 'opacity-0 scale-75' : 'opacity-100 scale-100',
-                  )}
-                />
-                <Minimize2
-                  className={cn(
-                    'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                    isExpanded ? 'opacity-100 scale-100' : 'opacity-0 scale-75',
-                  )}
-                />
-              </div>
-            )}
-          </div>
+          <WebFetchHeader
+            isPending={isPending}
+            hostname={hostname}
+            failure={isError || !isSuccess ? (statusCode ? `Error ${statusCode}` : 'Failed') : null}
+            size={formatBytes(bytes)}
+            isExpanded={hasContent && !isPending ? isExpanded : null}
+          />
         </Button>
       ) : (
         <div className="flex items-center justify-between px-2.5 h-7">
-          <div className="flex items-center gap-1.5 text-xs truncate flex-1 min-w-0">
-            <Globe className="w-3 h-3 shrink-0 text-muted-foreground" />
-
-            {isPending ? (
-              <TextShimmer as="span" duration={1.2} className="text-xs text-muted-foreground">
-                Fetching
-              </TextShimmer>
-            ) : (
-              <span className="text-xs text-muted-foreground">Fetched</span>
-            )}
-
-            <span className="truncate text-foreground">{hostname}</span>
-          </div>
-
-          {/* Status and expand button */}
-          <div className="flex items-center gap-2 shrink-0 ml-2">
-            <div className="flex items-center gap-1.5 text-xs">
-              {isPending ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : isError || !isSuccess ? (
-                <span className="text-destructive">
-                  {statusCode ? `Error ${statusCode}` : 'Failed'}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">{formatBytes(bytes)}</span>
-              )}
-            </div>
-
-            {/* Expand/Collapse icon */}
-            {hasContent && !isPending && (
-              <div className="relative w-4 h-4">
-                <Maximize2
-                  className={cn(
-                    'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                    isExpanded ? 'opacity-0 scale-75' : 'opacity-100 scale-100',
-                  )}
-                />
-                <Minimize2
-                  className={cn(
-                    'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                    isExpanded ? 'opacity-100 scale-100' : 'opacity-0 scale-75',
-                  )}
-                />
-              </div>
-            )}
-          </div>
+          <WebFetchHeader
+            isPending={isPending}
+            hostname={hostname}
+            failure={isError || !isSuccess ? (statusCode ? `Error ${statusCode}` : 'Failed') : null}
+            size={formatBytes(bytes)}
+            isExpanded={hasContent && !isPending ? isExpanded : null}
+          />
         </div>
       )}
 
