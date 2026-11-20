@@ -1,6 +1,6 @@
 import { useAtomValue } from 'jotai';
 import type { ReactElement } from 'react';
-import { useEffect, useEffectEvent, useMemo, useRef } from 'react';
+import { useEffect, useEffectEvent, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
 import { asEntryOfParent } from '@/lib/workspace-context/project-paths';
 import { useOpenBrowsedFile } from '@/lib/workspace-context/use-open-browsed-file';
@@ -9,7 +9,6 @@ import { ContentSearchResults } from '../../ContentSearchResults';
 import { FILE_TREE_REFRESH_EVENT } from '../../refresh-trigger';
 import { useContentSearch } from '../../use-content-search-tab';
 import { openContentSearchMatchInEditor } from '../../utils/content-search-actions';
-import { createMatchHighlighter } from '../../utils/highlight-match';
 import { FOCUS_REFRESH_MS, LINKED_BADGE, SEARCH_SECTION_CLASS } from '../constants';
 import { RootHeading } from '../ProjectRootRow';
 
@@ -45,12 +44,12 @@ export function ExtraProjectContentSearch({
   const search = useContentSearch({
     projectPath: project.path,
     query,
+    paneIndex,
     options,
     enabled: !project.missing,
   });
   const { invalidRegex, isLoading } = search;
   const matches = project.missing ? [] : search.matches;
-  const renderLine = useMemo(() => createMatchHighlighter(query, options), [query, options]);
 
   // The search reads a missing folder as one with no matches, so no matches asks the disk, and
   // the section waits for that answer before it says nothing matched.
@@ -93,6 +92,7 @@ export function ExtraProjectContentSearch({
       isLoading={isLoading || (noMatches && folderType.isLoading)}
       query={query}
       invalidRegex={invalidRegex}
+      timedOut={search.timedOut}
       matches={matches}
       emptyMessage={
         project.missing
@@ -111,7 +111,6 @@ export function ExtraProjectContentSearch({
           openInEditor,
         )
       }
-      renderLine={renderLine}
     />
   );
 }

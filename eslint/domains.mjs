@@ -75,6 +75,8 @@ export const MAIN_LIB_DOMAINS = [
   'db',
   'debug-ingest',
   'diagnostics',
+  // Find-in-files: the content search worker, its runner, globs and the shared ignore policy.
+  'file-search',
   'flows',
   'git',
   'integrations',

@@ -93,9 +93,19 @@ describe('ExtraProjectContentSearch', () => {
       { id: 'web', name: 'web', path: '/w/web' },
     ]);
 
+    // Each section sends its pane's key (main adds the folder), so sections never stop each other's
+    // search, and a section shown again sends the same input, so it reads its cached results.
     for (const projectPath of ['/w/api', '/w/web']) {
       expect(api.searchContent).toHaveBeenCalledWith(
-        { projectPath, query: 'useOrders', limit: 200, ...OPTIONS },
+        {
+          projectPath,
+          query: 'useOrders',
+          limit: 200,
+          ...OPTIONS,
+          includeGlobs: '',
+          excludeGlobs: '',
+          searchKey: 'pane:1',
+        },
         expect.objectContaining({ enabled: true }),
       );
     }

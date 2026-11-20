@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { existsSync } from 'node:fs';
+import { type Dirent, existsSync } from 'node:fs';
 import {
   access,
   cp,
@@ -13,14 +13,22 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { TRPCError } from '@trpc/server';
 import { BrowserWindow, shell } from 'electron';
 import simpleGit from 'simple-git';
 import { z } from 'zod';
 import type { FileStatus } from '../../../../shared/changes-types';
 import { getImageMimeType, isImagePath } from '../../../../shared/image-extensions';
 import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
+import {
+  ContentSearchSuperseded,
+  compileGlobs,
+  IGNORED_DIRS,
+  isIgnoredDirectory,
+  isIgnoredFileByName,
+  runContentSearch,
+} from '../../file-search';
 import { isPdfPath, MAX_PDF_BYTES } from '../../../../shared/pdf-extensions';
-import { escapeRegExp } from '../../../../shared/utils/escape-regexp';
 import { PathValidationError, resolvePathInWorktree } from '../../git/security/path-validation';
 import { parseGitStatus } from '../../git/utils/parse-status';
 import { copyIntoPasted, writePastedText } from '../../claude/pasted-files';
@@ -45,8 +53,6 @@ type ActiveOperation = {
 const activeOperations = new Map<string, ActiveOperation>();
 const OPERATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-const LINE_ENDING_REGEX = /\r?\n/;
-
 // Periodic cleanup of stale operations
 setInterval(() => {
   const now = Date.now();
@@ -57,66 +63,6 @@ setInterval(() => {
     }
   }
 }, 60_000);
-
-const IGNORED_DIRS = new Set([
-  '.git',
-  'node_modules',
-  '.next',
-  '.nuxt',
-  '.turbo',
-  'dist',
-  'build',
-  '.output',
-  '.cache',
-  '__pycache__',
-  '.venv',
-  'venv',
-  '.tox',
-  'vendor',
-  '.gradle',
-  '.idea',
-  '.vscode',
-  'coverage',
-  '.nyc_output',
-  '.parcel-cache',
-]);
-
-// Files to ignore
-const IGNORED_FILES = new Set(['.DS_Store', 'Thumbs.db', '.gitkeep']);
-
-// File extensions to ignore
-const IGNORED_EXTENSIONS = new Set([
-  '.log',
-  '.lock', // We'll handle package-lock.json separately
-  '.pyc',
-  '.pyo',
-  '.class',
-  '.o',
-  '.obj',
-  '.exe',
-  '.dll',
-  '.so',
-  '.dylib',
-]);
-
-// Lock files to keep (not ignore)
-const ALLOWED_LOCK_FILES = new Set([
-  'package-lock.json',
-  'pnpm-lock.yaml',
-  'yarn.lock',
-  'bun.lockb',
-]);
-
-function isIgnoredDirectory(name: string): boolean {
-  return IGNORED_DIRS.has(name);
-}
-
-function isIgnoredFileByName(name: string): boolean {
-  if (IGNORED_FILES.has(name)) return true;
-  const ext = name.includes('.') ? `.${name.split('.').pop()?.toLowerCase()}` : '';
-  if (!IGNORED_EXTENSIONS.has(ext)) return false;
-  return !ALLOWED_LOCK_FILES.has(name);
-}
 
 /**
  * Shared validation & path resolution for cross-project copy/move.
@@ -400,8 +346,6 @@ type FileEntry = {
 // Cache for file and folder listings
 const fileListCache = new Map<string, { entries: FileEntry[]; timestamp: number }>();
 const CACHE_TTL = 30000; // 30 seconds
-const MAX_CONTENT_SEARCH_FILE_BYTES = 512 * 1024; // 512KB per file
-const MAX_CONTENT_SEARCH_LINE_LENGTH = 500;
 
 // Cache for git status per project
 const gitStatusCache = new Map<string, { statusMap: Map<string, FileStatus>; timestamp: number }>();
@@ -616,6 +560,13 @@ async function listDirectoryContents(
  */
 const MAX_SCAN_ENTRIES = 200_000;
 
+/** A directory row's kind in name search, or null when it is ignored or a broken link. */
+async function listedKind(entry: Dirent, fullPath: string): Promise<FileEntry['type'] | null> {
+  const kind = await direntKind(entry, fullPath);
+  if (kind === 'folder') return isIgnoredDirectory(entry.name) ? null : kind;
+  return kind === 'file' && !isIgnoredFileByName(entry.name) ? kind : null;
+}
+
 /**
  * Recursively scan a directory and return all file and folder paths
  * Used for search mode - scans entire tree to find matches
@@ -637,24 +588,13 @@ async function scanDirectory(
     for (const entry of dirEntries) {
       if (budget.remaining <= 0) break;
       const fullPath = join(currentPath, entry.name);
-      const relativePath = relative(rootPath, fullPath);
-
-      if (entry.isDirectory()) {
-        // Skip ignored directories
-        if (isIgnoredDirectory(entry.name)) continue;
-        // Add the folder itself to results
-        entries.push({ path: relativePath, type: 'folder' });
-        budget.remaining--;
-
-        // Recurse into subdirectory
-        const subEntries = await scanDirectory(rootPath, fullPath, depth + 1, maxDepth, budget);
-        entries.push(...subEntries);
-      } else if (entry.isFile()) {
-        // Skip ignored files
-        if (isIgnoredFileByName(entry.name)) continue;
-
-        entries.push({ path: relativePath, type: 'file' });
-        budget.remaining--;
+      const type = await listedKind(entry, fullPath);
+      if (!type) continue;
+      entries.push({ path: relative(rootPath, fullPath), type });
+      budget.remaining--;
+      // A link is listed by its target's kind but never walked into, as in the tree.
+      if (type === 'folder' && !entry.isSymbolicLink()) {
+        entries.push(...(await scanDirectory(rootPath, fullPath, depth + 1, maxDepth, budget)));
       }
     }
   } catch {
@@ -741,184 +681,6 @@ function filterEntries(
   return filtered.map((entry) => pickedPathMention(entry.type, entry.path));
 }
 
-export type FileContentMatch = {
-  id: string;
-  filePath: string;
-  lineNumber: number;
-  startColumn: number;
-  endColumn: number;
-  lineText: string;
-};
-
-type SearchContentOptions = {
-  matchCase: boolean;
-  wholeWord: boolean;
-  useRegex: boolean;
-};
-
-/** Keep content search output lightweight and stable for rendering. */
-function truncateSearchText(text: string, matchStartColumn?: number): string {
-  if (text.length <= MAX_CONTENT_SEARCH_LINE_LENGTH) return text;
-  if (!matchStartColumn || matchStartColumn <= 1) {
-    return `${text.slice(0, MAX_CONTENT_SEARCH_LINE_LENGTH)}...`;
-  }
-
-  const matchIndex = Math.max(0, matchStartColumn - 1);
-  const preferredStart = Math.max(0, matchIndex - Math.floor(MAX_CONTENT_SEARCH_LINE_LENGTH / 2));
-  const maxStart = Math.max(0, text.length - MAX_CONTENT_SEARCH_LINE_LENGTH);
-  const start = Math.min(preferredStart, maxStart);
-  const end = Math.min(start + MAX_CONTENT_SEARCH_LINE_LENGTH, text.length);
-  const snippet = text.slice(start, end);
-  const prefix = start > 0 ? '...' : '';
-  const suffix = end < text.length ? '...' : '';
-  return `${prefix}${snippet}${suffix}`;
-}
-
-type ContentSearchLineMatch = {
-  startColumn: number;
-  endColumn: number;
-};
-
-function createContentSearchMatcher(
-  query: string,
-  options: SearchContentOptions,
-): ((line: string) => ContentSearchLineMatch[]) | null {
-  const { matchCase, wholeWord, useRegex } = options;
-
-  if (useRegex) {
-    try {
-      const flags = matchCase ? '' : 'i';
-      const pattern = wholeWord ? `\\b(?:${query})\\b` : query;
-      const regex = new RegExp(pattern, `${flags}g`);
-      return (line: string) => {
-        regex.lastIndex = 0;
-        const matches: ContentSearchLineMatch[] = [];
-        let match: RegExpExecArray | null = regex.exec(line);
-        while (match) {
-          if (typeof match.index === 'number') {
-            const startColumn = match.index + 1;
-            const endColumn = startColumn + (match[0]?.length ?? 0);
-            matches.push({ startColumn, endColumn });
-            // Prevent infinite loops on zero-length regex matches.
-            if ((match[0]?.length ?? 0) === 0) {
-              regex.lastIndex += 1;
-            }
-          }
-          match = regex.exec(line);
-        }
-        return matches;
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  const source = wholeWord ? `\\b${escapeRegExp(query)}\\b` : escapeRegExp(query);
-  const flags = matchCase ? '' : 'i';
-  const regex = new RegExp(source, `${flags}g`);
-  return (line: string) => {
-    regex.lastIndex = 0;
-    const matches: ContentSearchLineMatch[] = [];
-    let match: RegExpExecArray | null = regex.exec(line);
-    while (match) {
-      if (typeof match.index === 'number') {
-        const startColumn = match.index + 1;
-        const endColumn = startColumn + (match[0]?.length ?? 0);
-        matches.push({ startColumn, endColumn });
-        if ((match[0]?.length ?? 0) === 0) {
-          regex.lastIndex += 1;
-        }
-      }
-      match = regex.exec(line);
-    }
-    return matches;
-  };
-}
-
-/**
- * Recursively search file contents for query matches.
- * Applies the same ignore policy as file tree search and hard caps file size.
- */
-async function searchDirectoryContents(
-  rootPath: string,
-  matcher: (line: string) => ContentSearchLineMatch[],
-  limit: number,
-  currentPath: string = rootPath,
-  depth: number = 0,
-  maxDepth: number = 15,
-  results: FileContentMatch[] = [],
-): Promise<FileContentMatch[]> {
-  if (depth > maxDepth || results.length >= limit) return results;
-
-  let dirEntries = [];
-  try {
-    dirEntries = await readdir(currentPath, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-
-  for (const entry of dirEntries) {
-    if (results.length >= limit) break;
-
-    const fullPath = join(currentPath, entry.name);
-    const relativePath = relative(rootPath, fullPath);
-
-    if (entry.isDirectory()) {
-      if (isIgnoredDirectory(entry.name)) continue;
-      await searchDirectoryContents(
-        rootPath,
-        matcher,
-        limit,
-        fullPath,
-        depth + 1,
-        maxDepth,
-        results,
-      );
-      continue;
-    }
-
-    if (!entry.isFile()) continue;
-    if (isIgnoredFileByName(entry.name)) continue;
-
-    try {
-      const fileStat = await stat(fullPath);
-      if (!fileStat.isFile() || fileStat.size > MAX_CONTENT_SEARCH_FILE_BYTES) {
-        continue;
-      }
-      const content = await readFile(fullPath, 'utf-8');
-      if (content.includes('\u0000')) continue;
-
-      const lines = content.split(LINE_ENDING_REGEX);
-      for (let i = 0; i < lines.length && results.length < limit; i++) {
-        const line = lines[i] ?? '';
-        const lineMatches = matcher(line);
-        if (lineMatches.length === 0) continue;
-
-        for (
-          let matchIndex = 0;
-          matchIndex < lineMatches.length && results.length < limit;
-          matchIndex++
-        ) {
-          const lineMatch = lineMatches[matchIndex];
-          if (!lineMatch) continue;
-          results.push({
-            id: `content:local:${relativePath}:${i + 1}:${lineMatch.startColumn}:${matchIndex}`,
-            filePath: relativePath,
-            lineNumber: i + 1,
-            startColumn: lineMatch.startColumn,
-            endColumn: lineMatch.endColumn,
-            lineText: truncateSearchText(line, lineMatch.startColumn),
-          });
-        }
-      }
-    } catch {
-      // Skip unreadable/binary-like files silently.
-    }
-  }
-
-  return results;
-}
-
 export const filesRouter = router({
   /**
    * Search files and folders in a local project directory
@@ -966,32 +728,34 @@ export const filesRouter = router({
         matchCase: z.boolean().default(false),
         wholeWord: z.boolean().default(false),
         useRegex: z.boolean().default(false),
+        /** The search box, e.g. `sidebar` or `pane:1`: its newer search for a folder stops the older one. */
+        searchKey: z.string().max(100),
+        includeGlobs: z.string().max(2000).default(''),
+        excludeGlobs: z.string().max(2000).default(''),
       }),
     )
-    .query(async ({ input }) => {
-      const { projectPath, query, limit, matchCase, wholeWord, useRegex } = input;
-
-      if (!projectPath) {
-        return { matches: [], invalidRegex: false };
-      }
+    .query(async ({ input, ctx }) => {
+      const { projectPath, searchKey, includeGlobs, excludeGlobs, ...search } = input;
+      // Every window names its search boxes the same way, so a key only means something per window.
+      const runKey = `${ctx.senderWebContentsId}:${searchKey}:${projectPath}`;
+      const empty = { matches: [], invalidRegex: false, timedOut: false };
+      // No awaited check before the run: the key must be claimed in call order. A missing folder or
+      // a file finds nothing in the worker.
+      if (!projectPath) return empty;
 
       try {
-        const pathStat = await stat(projectPath);
-        if (!pathStat.isDirectory()) {
-          return { matches: [], invalidRegex: false };
-        }
-        const matcher = createContentSearchMatcher(query, {
-          matchCase,
-          wholeWord,
-          useRegex,
+        return await runContentSearch(runKey, {
+          ...search,
+          rootPath: projectPath,
+          include: compileGlobs(includeGlobs),
+          exclude: compileGlobs(excludeGlobs),
         });
-        if (!matcher) {
-          return { matches: [], invalidRegex: useRegex };
+      } catch (error) {
+        if (error instanceof ContentSearchSuperseded) {
+          throw new TRPCError({ code: 'CLIENT_CLOSED_REQUEST', message: error.message });
         }
-        const matches = await searchDirectoryContents(projectPath, matcher, limit);
-        return { matches, invalidRegex: false };
-      } catch {
-        return { matches: [], invalidRegex: false };
+        captureMainException(error, { area: 'files-search-content' });
+        return empty;
       }
     }),
 
