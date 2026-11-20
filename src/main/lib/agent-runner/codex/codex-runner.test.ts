@@ -195,9 +195,9 @@ function rememberHostPermissionForStartedTurn(): void {
     turnId: 'tn1',
     itemId: 'item-cleanup',
     kind: 'mcp',
-    toolName: 'mcp__frink_dynamic_chat__frink_flows_patch',
+    toolName: 'mcp__frink__frink_flows_patch',
     input: { flowId: 'flow-1' },
-    mcp: { server: 'frink_dynamic_chat', tool: 'frink_flows_patch' },
+    mcp: { server: 'frink', tool: 'frink_flows_patch' },
   });
   if (!request) throw new Error('host permission fixture must parse');
   codexHostPermissionDeduper.remember(request);
@@ -208,7 +208,7 @@ function hasStartedTurnMcpPermission(): boolean {
     'th1',
     'tn1',
     'item-cleanup',
-    'frink_dynamic_chat',
+    'frink',
     'frink_flows_patch',
     { flowId: 'flow-1' },
   );
@@ -920,11 +920,11 @@ describe('runCodexAgent', () => {
       'config/read': { config: {} },
       'thread/start': { thread: { id: 'th1' } },
       'turn/start': { turn: { id: 'tn1' } },
-      'mcpServerStatus/list': { data: [{ name: 'frink_dynamic_chat' }], nextCursor: null },
+      'mcpServerStatus/list': { data: [{ name: 'frink' }], nextCursor: null },
     });
     const canonicalMcpServers = {
       linear: { url: 'https://l.test' },
-      frink_dynamic_chat: { url: 'x' },
+      frink: { url: 'x' },
     };
     const gen = runCodexAgent(params({ sessionKey: 'chat-1', canonicalMcpServers }));
     await gen.next();
@@ -1352,9 +1352,9 @@ describe('runCodexAgent', () => {
       turnId: 'tn1',
       itemId,
       kind: 'mcp',
-      toolName: 'mcp__frink_dynamic_chat__frink_flows_patch',
+      toolName: 'mcp__frink__frink_flows_patch',
       input: { flowId: 'flow-1' },
-      mcp: { server: 'frink_dynamic_chat', tool: 'frink_flows_patch' },
+      mcp: { server: 'frink', tool: 'frink_flows_patch' },
     });
 
     const { result } = await withTurn({ checkApproval }, async (fake) => {
@@ -1371,14 +1371,9 @@ describe('runCodexAgent', () => {
         request('item-deny'),
       );
       const consume = (itemId: string) =>
-        codexHostPermissionDeduper.consumeMcp(
-          'th1',
-          'tn1',
-          itemId,
-          'frink_dynamic_chat',
-          'frink_flows_patch',
-          { flowId: 'flow-1' },
-        );
+        codexHostPermissionDeduper.consumeMcp('th1', 'tn1', itemId, 'frink', 'frink_flows_patch', {
+          flowId: 'flow-1',
+        });
       return {
         deferred,
         allowed,
@@ -1408,9 +1403,9 @@ describe('runCodexAgent', () => {
       turnId: 'tn-register',
       itemId: 'item-register',
       kind: 'mcp',
-      toolName: 'mcp__frink_dynamic_chat__frink_register_node',
+      toolName: 'mcp__frink__frink_register_node',
       input: { packagePath: 'examples/custom-nodes/read-colocated-image' },
-      mcp: { server: 'frink_dynamic_chat', tool: 'frink_register_node' },
+      mcp: { server: 'frink', tool: 'frink_register_node' },
     };
 
     const { result } = await withTurn({ checkApproval }, async (fake) => {
@@ -1419,7 +1414,7 @@ describe('runCodexAgent', () => {
         'th-register',
         'tn-register',
         'item-register',
-        'frink_dynamic_chat',
+        'frink',
         'frink_register_node',
         request.input,
       );

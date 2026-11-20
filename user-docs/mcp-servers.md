@@ -208,8 +208,8 @@ Yes. Open the MCP's row and click **Turn off**. That keeps the definition and cr
 **Q: Should I use Frink for MCPs that handle sensitive data?**
 The data flow is: the MCP server runs locally, talks to whatever upstream service it integrates with, and returns results into your chat. Frink stores the definition (server name, command, URL) and the encrypted credentials on this computer. If your concern is "is my OAuth token traveling through Frink's cloud?", the answer is no. If your concern is "is this third-party MCP server trustworthy with my data?", that's about the server itself, not Frink.
 
-**Q: I see a `frink` entry in my `~/.claude.json`. Why doesn't it show in Settings?**
-Frink injects that entry so Claude Code can talk back to Frink's own tools. It's deliberately filtered out of the import scan since Frink already manages it internally. Don't delete it manually, or your Claude sessions lose access to Frink's tooling. Frink's read-only and infrastructure tools are trusted and run silently; tools that change your Flows go through the standard permission prompt like any other MCP tool — with "always allow" options, honored deny rules, and no prompt at all when Auto Mode is on.
+**Q: Why doesn't Frink's own server show in Settings?**
+Frink connects its own server, named `frink`, to each chat itself. It never writes it into `~/.claude.json` or any other tool's config. Because that name is Frink's, a server called `frink` in another tool's config is not imported. Frink's read-only and infrastructure tools are trusted and run silently; tools that change your Flows go through the standard permission prompt like any other MCP tool — with "always allow" options, honored deny rules, and no prompt at all when Auto Mode is on. A rule for all of Frink's tools is written `mcp__frink__*`.
 
 **Q: I'm offline. Will the importer still work?**
 Yes. The importer only reads and writes files on this computer: new entries go to `~/.frink/mcp/config.json` and credentials are encrypted as usual.

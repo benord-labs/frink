@@ -51,18 +51,26 @@ export function vendorPluginMcpServerName(pluginName: string, serverKey: string)
   return name;
 }
 
-/** Server key for frink's in-app dynamic-chat MCP. */
-export const FRINK_DYNAMIC_CHAT_MCP_KEY = 'frink_dynamic_chat';
-/** Server key frink injects into `~/.claude.json` (Claude Code CLI). */
-const FRINK_CLAUDE_MCP_KEY = 'frink';
+/** Server key of Frink's own MCP server, the same on every provider. */
+export const FRINK_MCP_KEY = 'frink';
 
-/**
- * MCP server names frink injects into agent configs that point back at frink's own
- * MCP proxy. These tools are trusted — auto-approved at the permission gate, never prompted.
- * Single source of truth for the two keys above (also aliased as `FRINK_LOOPBACK_KEYS`
- * in import-scanner.ts).
- */
-export const FRINK_OWNED_MCP_SERVERS = new Set([FRINK_DYNAMIC_CHAT_MCP_KEY, FRINK_CLAUDE_MCP_KEY]);
+/** The tool name every provider emits for a Frink tool; its chat part type is `tool-<this>`. */
+export function frinkToolPartName(tool: string): string {
+  return `mcp__${FRINK_MCP_KEY}__${tool}`;
+}
+
+/** Frink's own server: its tools are trusted at the permission gate, and import-scanner.ts never
+ * imports a server under this name. */
+export const FRINK_OWNED_MCP_SERVERS: ReadonlySet<string> = new Set([FRINK_MCP_KEY]);
+
+/** Keys Frink's server had in saved chats and transcripts. Read only to render that history;
+ * never trusted, never consulted by a permission check. */
+export const FRINK_MCP_HISTORY_KEYS: ReadonlySet<string> = new Set(['frink_dynamic_chat']);
+
+/** True for Frink's server key, current or historical, when reading saved history. */
+export function isFrinkMcpServerInHistory(serverName: string): boolean {
+  return FRINK_OWNED_MCP_SERVERS.has(serverName) || FRINK_MCP_HISTORY_KEYS.has(serverName);
+}
 
 /** True for a bare `mcp__<frink-server>__<tool>` fullname. */
 export function isFrinkOwnedMcpTool(fullName: string): boolean {
