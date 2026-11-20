@@ -1,5 +1,5 @@
 import type { Dirent, Stats } from 'node:fs';
-import { mkdir, mkdtemp, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,7 @@ function hangingDisk(...paths: string[]) {
       return new Promise((resolve, reject) => waiters.push({ path, resolve, reject }));
     },
     // A hung path reads as a link leaving the project, without waiting on real I/O.
+    lstat: (path) => (hung.has(path) ? Promise.resolve(linkInfo) : lstat(path)),
     readlink: (path) => (hung.has(path) ? Promise.reject(new Error('EINVAL')) : readlink(path)),
   });
   return {
@@ -33,8 +34,42 @@ function hangingDisk(...paths: string[]) {
   };
 }
 
+/** A disk where one folder inside the project, a mount itself, never answers an lstat. */
+function hangingFolderDisk(folder: string, links: Record<string, string> = {}) {
+  let folderLstats = 0;
+  const kinds = createEntryKinds({
+    stat: (path) => stat(path),
+    lstat: (path) => {
+      if (path in links) return Promise.resolve(linkInfo);
+      if (path !== folder) return lstat(path);
+      folderLstats += 1;
+      return new Promise(() => {});
+    },
+    readlink: (path) => (path in links ? Promise.resolve(links[path]) : readlink(path)),
+  });
+  return { ...kinds, folderLstats: () => folderLstats };
+}
+
+/** A disk of folders and the given links (path to target), where every file's stat hangs. */
+function linkedDisk(links: Record<string, string>) {
+  const calls: string[] = [];
+  const kinds = createEntryKinds({
+    stat: (path) => {
+      calls.push(path);
+      return new Promise(() => {});
+    },
+    lstat: async (path) => (path in links ? linkInfo : folderInfo),
+    readlink: async (path) => links[path] ?? Promise.reject(new Error('EINVAL')),
+  });
+  return { ...kinds, statCalls: (path: string) => calls.filter((call) => call === path).length };
+}
+
 // SAFETY: direntKind reads only isSymbolicLink on a row, and every row here is a link.
 const link = { isSymbolicLink: () => true } as Dirent;
+// SAFETY: the walk to a path's first link reads only isSymbolicLink and isDirectory.
+const linkInfo = { isSymbolicLink: () => true, isDirectory: () => false } as Stats;
+// SAFETY: as above, for a plain folder on the way.
+const folderInfo = { isSymbolicLink: () => false, isDirectory: () => true } as Stats;
 // SAFETY: kindOf reads only isDirectory and isFile from a stat result.
 const asFile = { isDirectory: () => false, isFile: () => true } as Stats;
 const settled = () => new Promise((done) => setImmediate(done));
@@ -206,7 +241,45 @@ describe('direntKind on a link whose target does not answer', () => {
 
     // Sharing the link's name as a prefix does not put a path inside it.
     void disk.findEntryType(root, 'nasty.md');
+    await settled();
     expect(disk.statCalls(sibling)).toBe(1);
+  });
+
+  it.each([
+    ['a link that leaves the project', { nas: resolve('/away') }, 'nas'],
+    [
+      'links that stay inside it, then one that leaves',
+      { a: 'sub', [join('sub', 'nas')]: resolve('/away') },
+      join('a', 'nas'),
+    ],
+  ])('gives file lookups through %s the same two disk slots', async (_, relativeLinks, through) => {
+    const links = Object.fromEntries(
+      Object.entries(relativeLinks).map(([at, to]) => [join(root, at), to]),
+    );
+    const disk = linkedDisk(links);
+    const files = ['x.md', 'y.md', 'z.md'].map((name) => join(through, name));
+    const lookups = files.map((file) => disk.findEntryType(root, file));
+    await settled();
+    expect(files.map((file) => disk.statCalls(join(root, file)))).toEqual([1, 1, 0]);
+
+    await vi.advanceTimersByTimeAsync(STAT_TIMEOUT_MS);
+    await expect(Promise.all(lookups)).resolves.toEqual([
+      'unavailable',
+      'unavailable',
+      'unavailable',
+    ]);
+  });
+
+  it('gives up on a file lookup when a folder on its way never answers, and asks that folder once', async () => {
+    const disk = hangingFolderDisk(join(root, 'mnt'), { [join(root, 'a')]: 'mnt' });
+    const first = disk.findEntryType(root, join('mnt', 'a.md'));
+    await vi.advanceTimersByTimeAsync(STAT_TIMEOUT_MS);
+    await expect(first).resolves.toBe('unavailable');
+
+    await expect(disk.findEntryType(root, join('mnt', 'b.md'))).resolves.toBe('unavailable');
+    // Reached through a link inside the project, the stuck folder still answers without a wait.
+    await expect(disk.findEntryType(root, join('a', 'c.md'))).resolves.toBe('unavailable');
+    expect(disk.folderLstats()).toBe(1);
   });
 
   it.runIf(process.platform !== 'linux')(

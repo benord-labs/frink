@@ -297,6 +297,7 @@ describe('filesRouter symlinked entries', () => {
         nasAsked = true;
         return new Promise(() => {});
       },
+      lstat: (path) => lstat(path),
       readlink: (path) => readlink(path),
     });
     const { listDirectoryContents } = await import('./files');

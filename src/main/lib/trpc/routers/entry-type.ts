@@ -1,15 +1,16 @@
 import type { Dirent, Stats } from 'node:fs';
-import { readlink, stat } from 'node:fs/promises';
-import { dirname, resolve, sep } from 'node:path';
+import { lstat, readlink, stat } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { resolvePathInWorktree } from '../../git/security/path-validation';
 import { withTimeout } from '../../platform/with-timeout';
 
 /** `unavailable`: the disk didn't answer in time, as on a network drive that has gone away. */
 export type EntryKind = 'file' | 'folder' | 'unavailable' | null;
 
-/** The two disk reads this module makes, so a test can stand in a drive that never answers. */
+/** The disk reads this module makes, so a test can stand in a drive that never answers. */
 export interface EntryKindFs {
   stat: (path: string) => Promise<Stats>;
+  lstat: (path: string) => Promise<Stats>;
   readlink: (path: string) => Promise<string>;
 }
 
@@ -17,6 +18,8 @@ export const STAT_TIMEOUT_MS = 2_000;
 /** A stat on a hung network mount can't be cancelled and holds one of libuv's 4 fs workers until
  * the mount answers, so links that leave the project share this many and the rest stay free. */
 const MAX_OUTSIDE_STATS = 2;
+/** Links followed inside the project before a path counts as looping, as the kernel's ELOOP. */
+const MAX_LINK_HOPS = 40;
 
 function kindOf(entry: Dirent | Stats): EntryKind {
   if (entry.isDirectory()) return 'folder';
@@ -43,11 +46,13 @@ export function createEntryKinds(fs: EntryKindFs) {
   const queuedOutside: (() => void)[] = [];
   let outsideActive = 0;
   let outsideStuck = 0;
+  /** One lstat per folder at a time while a file lookup walks its path, like `pending`. */
+  const walking = new Map<string, { info: Promise<Stats | null>; stuck: boolean }>();
 
   /** A path at or inside a stuck one (a file in a linked folder whose mount hung) hangs too. */
   function isInsideStuckPath(path: string): boolean {
-    for (const [pendingPath, entry] of pending) {
-      if (entry.stuck && isInside(path, pendingPath)) return true;
+    for (const [stuckPath, entry] of [...pending, ...walking]) {
+      if (entry.stuck && isInside(path, stuckPath)) return true;
     }
     return false;
   }
@@ -114,6 +119,63 @@ export function createEntryKinds(fs: EntryKindFs) {
     }
   }
 
+  async function lstatBy(path: string, deadline: number): Promise<Stats | null | 'stuck'> {
+    let entry = walking.get(path);
+    if (!entry) {
+      const info = fs.lstat(path).catch(() => null);
+      entry = { info, stuck: false };
+      walking.set(path, entry);
+      void info.then(() => walking.delete(path));
+    }
+    const own = entry;
+    if (own.stuck) return 'stuck';
+    return withTimeout(own.info, Math.max(0, deadline - Date.now()), 'lstat timed out').catch(
+      () => {
+        own.stuck = true;
+        return 'stuck' as const;
+      },
+    );
+  }
+
+  /** Follows links at `path` while they stay inside the project: where that ends, or why not. */
+  async function followInside(
+    path: string,
+    rootPath: string,
+    deadline: number,
+  ): Promise<string | 'outside' | 'stuck'> {
+    let current = path;
+    for (let hops = 0; hops < MAX_LINK_HOPS; hops += 1) {
+      const info = await lstatBy(current, deadline);
+      if (info === 'stuck') return 'stuck';
+      if (!info?.isSymbolicLink()) return current;
+      const at = current;
+      const target = await fs.readlink(at).then(
+        (to) => resolve(dirname(at), to),
+        () => null,
+      );
+      if (!target || !isInside(target, rootPath)) return 'outside';
+      current = target;
+    }
+    return current;
+  }
+
+  /** Whether a path inside the project reaches a link that leaves it, or null when a folder on the
+   * way didn't answer in time. Only links are read past, never the drive one points to. */
+  async function reachedThroughOutsideLink(
+    rootPath: string,
+    fullPath: string,
+  ): Promise<boolean | null> {
+    const deadline = Date.now() + STAT_TIMEOUT_MS;
+    let current = rootPath;
+    for (const part of relative(rootPath, fullPath).split(sep).filter(Boolean)) {
+      const step = await followInside(join(current, part), rootPath, deadline);
+      if (step === 'stuck') return null;
+      if (step === 'outside') return true;
+      current = step;
+    }
+    return false;
+  }
+
   return {
     /** files.entryType: what sits at a path inside a project, read from the disk as it is now.
      * Null when nothing is there, or when the path leaves the project. Links are followed. */
@@ -124,7 +186,10 @@ export function createEntryKinds(fs: EntryKindFs) {
       } catch {
         return Promise.resolve(null);
       }
-      return statKind(fullPath, false);
+      if (isInsideStuckPath(fullPath)) return Promise.resolve('unavailable');
+      return reachedThroughOutsideLink(projectPath, fullPath).then((outside) =>
+        outside === null ? 'unavailable' : statKind(fullPath, outside),
+      );
     },
 
     /** A directory listing row's kind. A link takes its target's kind; a broken or looping link
@@ -140,5 +205,6 @@ export type EntryKinds = ReturnType<typeof createEntryKinds>;
 
 export const { findEntryType, direntKind } = createEntryKinds({
   stat: (path) => stat(path),
+  lstat: (path) => lstat(path),
   readlink: (path) => readlink(path),
 });
