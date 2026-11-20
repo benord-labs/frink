@@ -79,6 +79,8 @@ type Turn = {
   chunks: UIMessageChunk[];
   /** A resumed session's history as the turn first sees it. */
   resumedHistory?: SessionEvent[];
+  /** The CLI version the session reported, which can differ from what `copilot --version` prints. */
+  version?: string;
 };
 
 const DENY: Answer = { allowed: false, message: 'Denied by the test' };
@@ -354,6 +356,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       const client = new CopilotClient(options);
       const create = client.createSession.bind(client);
       const resume = client.resumeSession.bind(client);
+      const getStatus = client.getStatus.bind(client);
       const watched = <Config extends SessionConfig | ResumeSessionConfig>(
         config: Config,
       ): Config => ({
@@ -374,6 +377,11 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       };
       return Object.assign(client, {
         getAuthStatus: async () => ({ isAuthenticated: true }),
+        getStatus: async () => {
+          const status = await getStatus();
+          record.version = status.version;
+          return status;
+        },
         createSession: async (config: SessionConfig) => opened(await create(watched(config))),
         resumeSession: async (id: string, config: ResumeSessionConfig) => {
           const session = await resume(id, watched(config));
@@ -765,7 +773,11 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     TURN_MS,
   );
 
-  // Copilot records a stopped call as aborted, but one cut off by a quit or crash is repaired on resume.
+  // Copilot records a stopped call as aborted. From 1.0.97 a resume closes a call that a quit or crash
+  // cut off as interrupted; 1.0.96 leaves it open and sends nothing for it.
+  const closesLeftOpenCalls = (version = '') =>
+    version.localeCompare('1.0.97', 'en', { numeric: true }) >= 0;
+
   it.each([
     { how: 'stopped', repaired: false },
     { how: 'quit', repaired: true },
@@ -792,7 +804,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       );
       expect(left).toHaveLength(1);
       expect(second.failures.some((text) => text.includes('interrupted before a result'))).toBe(
-        repaired,
+        repaired && closesLeftOpenCalls(second.version),
       );
       expect(second.errors).toEqual([]);
       expect(second.questions).toEqual(['Bash']);
