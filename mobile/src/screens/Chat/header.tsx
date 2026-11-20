@@ -1,4 +1,4 @@
-import { StackActions, useRoute, type RouteProp } from '@react-navigation/native';
+import { StackActions, useIsFocused, useRoute, type RouteProp } from '@react-navigation/native';
 import type {
   NativeStackHeaderItem,
   NativeStackNavigationOptions,
@@ -7,6 +7,8 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Keyboard, Platform, Pressable, ScrollView, View } from 'react-native';
 import { ChevronDown, Inbox, SquarePen, Trash2, type LucideIcon } from 'lucide-react-native';
 import type { MobileActivity, MobileChatDetail } from '@frink/shared/types/remote/mobile';
+import { useChatChanges } from '../../lib/changes/use-chat-changes';
+import { changeCount, countTurnEnd } from '../../lib/changes/view';
 import { useOverview } from '../../lib/overview';
 import { useRootNavigation, type RootRoutes } from '../../navigation/routes';
 import { IconButton } from '../../ui/button';
@@ -30,22 +32,24 @@ export type TitleInfo = {
   elapsed: string;
 };
 
+type TitleValue = TitleInfo & { changes: string | null };
 /**
  * The title's live values, outside the navigation options: the clock ticks every second while
  * Frink works, and re-setting options that often would rebuild the native header (and its menu).
  */
 function createTitleStore() {
-  let value: TitleInfo = {
+  let value: TitleValue = {
     name: '',
     kind: undefined,
     project: undefined,
     activity: undefined,
     elapsed: '',
+    changes: null,
   };
   const listeners = new Set<() => void>();
   return {
     get: () => value,
-    set(next: TitleInfo) {
+    set(next: TitleValue) {
       value = next;
       listeners.forEach((listener) => listener());
     },
@@ -102,17 +106,19 @@ function ChatSubtitle({ kind, project, activity, elapsed }: Omit<TitleInfo, 'nam
 /** The conversation title opens its actions; project and live status stay visible underneath. */
 function ChatTitle({
   store,
+  onChanges,
   onDelete,
 }: {
   store: TitleStore;
+  onChanges: () => void;
   onDelete?: () => Promise<void> | undefined;
 }) {
   const t = useTheme();
   const [open, setOpen] = useState(false);
-  const title = useSyncExternalStore(store.subscribe, store.get);
+  const { changes, ...title } = useSyncExternalStore(store.subscribe, store.get);
   const { name } = title;
   return (
-    <>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, maxWidth: 210 }}>
       <Pressable
         accessible
         accessibilityRole={onDelete ? 'button' : 'header'}
@@ -120,7 +126,7 @@ function ChatTitle({
         accessibilityHint={onDelete ? `${name}. Opens conversation actions.` : undefined}
         disabled={!onDelete}
         onPress={() => setOpen(true)}
-        style={{ justifyContent: 'center', minHeight: 44, maxWidth: 210 }}
+        style={{ justifyContent: 'center', minHeight: 44, flexShrink: 1 }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Text variant="headline" numberOfLines={1} style={{ flexShrink: 1 }}>
@@ -130,6 +136,7 @@ function ChatTitle({
         </View>
         <ChatSubtitle {...title} />
       </Pressable>
+      {changes && <ChangesButton label={changes} onPress={onChanges} />}
       {open && (
         <Sheet title="Chat options" onClose={() => setOpen(false)}>
           <Pressable
@@ -153,7 +160,33 @@ function ChatTitle({
           </Pressable>
         </Sheet>
       )}
-    </>
+    </View>
+  );
+}
+
+/** The worktree's line counts beside the title; opens what changed. */
+function ChangesButton({ label, onPress }: { label: string; onPress: () => void }) {
+  const t = useTheme();
+  return (
+    <Pressable
+      testID="chat-changes"
+      accessibilityRole="button"
+      accessibilityLabel={`Changes ${label}`}
+      onPress={onPress}
+      hitSlop={{ top: 9, bottom: 9, left: 4, right: 8 }}
+      style={({ pressed }) => ({
+        height: 26,
+        justifyContent: 'center',
+        paddingHorizontal: space.sm,
+        borderRadius: radius.pill,
+        backgroundColor: t.fill,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <Text variant="label" color="secondary" numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -233,21 +266,34 @@ function ConversationActions({
   );
 }
 
+/** The chat's change count, asked for on focus and when a turn ends; never on a timer. */
+function useChangeCount(chatId: string | undefined, activity: MobileActivity | undefined) {
+  const [turns, setTurns] = useState({ activity, ended: 0 });
+  const counted = countTurnEnd(turns, activity);
+  if (counted !== turns) setTurns(counted);
+  const enabled = useIsFocused();
+  return changeCount(
+    useChatChanges(chatId, { summaryOnly: true, enabled, revision: turns.ended }).data,
+  );
+}
+
 /** A conversation inside any tab; its Queue button switches to the Queue tab. */
 export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) | null) {
   const navigation = useRootNavigation();
   const t = useTheme();
   const count = needsYouCount(useOverview().data);
   const route = useRoute<RouteProp<RootRoutes, 'Chat'>>();
-  const hasChat = !!route.params?.id;
+  const chatId = route.params?.id;
+  const hasChat = !!chatId;
+  const changes = useChangeCount(chatId, title.activity);
   const [store] = useState(createTitleStore);
   const deleteRef = useRef(onDelete);
   deleteRef.current = onDelete;
   const canDelete = !!onDelete;
   const { name, kind, project, activity, elapsed } = title;
   useLayoutEffect(() => {
-    store.set({ name, kind, project, activity, elapsed });
-  }, [store, name, kind, project, activity, elapsed]);
+    store.set({ name, kind, project, activity, elapsed, changes });
+  }, [store, name, kind, project, activity, elapsed, changes]);
   useLayoutEffect(() => {
     navigation.setOptions({ title: name });
   }, [navigation, name]);
@@ -262,12 +308,20 @@ export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) 
       Keyboard.dismiss();
       navigation.navigate('QueueTab', { screen: 'Queue', pop: true });
     };
+    const openChanges = () => {
+      Keyboard.dismiss();
+      if (chatId) navigation.push('Changes', { chatId });
+    };
     const actions = () => (
       <ConversationActions onNewChat={hasChat ? newChat : undefined} onQueue={queue} />
     );
     const options: NativeStackNavigationOptions = {
       headerTitle: () => (
-        <ChatTitle store={store} onDelete={canDelete ? () => deleteRef.current?.() : undefined} />
+        <ChatTitle
+          store={store}
+          onChanges={openChanges}
+          onDelete={canDelete ? () => deleteRef.current?.() : undefined}
+        />
       ),
       headerRight: actions,
       ...(Platform.OS === 'ios' && {
@@ -304,7 +358,7 @@ export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) 
       }),
     };
     navigation.setOptions(options);
-  }, [navigation, route.key, store, canDelete, hasChat, count, t.text, t.attentionSolid]);
+  }, [navigation, route.key, store, canDelete, chatId, hasChat, count, t.text, t.attentionSolid]);
 }
 
 /** One tab per conversation in the chat. A filled dot marks a running one, a ring one parked on
