@@ -219,7 +219,7 @@ describe('ExtraProjectContentSearch', () => {
     renderSections('useOrders');
 
     const section = screen.getByRole('heading', { name: 'api Linked' }).parentElement;
-    expect(section?.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(section?.querySelector('[data-spinner]')).toBeInTheDocument();
     expect(screen.queryByText(/No matches|Can't open/)).not.toBeInTheDocument();
   });
 

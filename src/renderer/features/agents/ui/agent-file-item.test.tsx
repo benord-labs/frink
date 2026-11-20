@@ -34,6 +34,13 @@ describe('AgentFileItem', () => {
     expect(chipIcon('send.ts')).not.toBe(chipIcon('package.json'));
   });
 
+  it('sizes and tints its loading spinner like the file icon it stands in for', () => {
+    const { container } = render(<AgentFileItem filename="report.ts" isLoading />);
+
+    const spinner = container.querySelector('[data-spinner]');
+    expect(spinner).toHaveClass('size-3.5', 'self-center', 'brightness-60', 'dark:brightness-100');
+  });
+
   it('shows the size after the name', () => {
     render(<AgentFileItem filename="notes.md" size={2048} />);
 

@@ -7,7 +7,7 @@
  * Retry when its agent session already answered it, and a started non-agent step confirms first.
  */
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, MessageSquare, Play, RotateCcw, SkipForward } from 'lucide-react';
+import { MessageSquare, Play, RotateCcw, SkipForward } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { RESUME_ACTIONABLE_NODE_STATUSES } from '../../../../../../shared/types/flow';
@@ -23,6 +23,7 @@ import { resolveEffectiveAgentMode } from '../../../../../lib/flows/resolve-effe
 import { trpc } from '../../../../../lib/trpc';
 import { DirtyNavAlertDialog } from '../BatchReportPanel/DirtyNavAlertDialog';
 import { parseNodeOutput } from '../NodeRunDetail/parse-node-output';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 /** Structural subset of DbFlowRunWithNodeRuns; the panel passes the full snake_case DTO. */
 type PausedRunDetail = {
@@ -175,9 +176,7 @@ export function PausedRunActions({
               disabled={resumePending}
               onClick={() => onResumeRun({ action: 'approve', nodeRunId: nr.id })}
             >
-              {isResumeLoadingFor('approve', nr.id) ? (
-                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-              ) : null}
+              {isResumeLoadingFor('approve', nr.id) ? <Spinner className="h-3 w-3" /> : null}
               Approve
             </Button>
           </div>
@@ -235,9 +234,7 @@ export function PausedRunActions({
                   onClick={() => onResumeRun({ action: 'approve', nodeRunId: nr.id })}
                   title="Approve the plan and continue to the next step."
                 >
-                  {isResumeLoadingFor('approve', nr.id) ? (
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                  ) : null}
+                  {isResumeLoadingFor('approve', nr.id) ? <Spinner className="h-3 w-3" /> : null}
                   Approve
                 </Button>
               ) : null}
@@ -252,7 +249,7 @@ export function PausedRunActions({
                   title="Open the chat and answer the agent's question."
                 >
                   {answeringNodeRunId === nr.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    <Spinner className="h-3 w-3" />
                   ) : (
                     <MessageSquare className="h-3 w-3" aria-hidden />
                   )}
@@ -271,7 +268,7 @@ export function PausedRunActions({
                       title="Open the chat and reply to unblock the agent."
                     >
                       {answeringNodeRunId === nr.id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        <Spinner className="h-3 w-3" />
                       ) : (
                         <MessageSquare className="h-3 w-3" aria-hidden />
                       )}
@@ -292,7 +289,7 @@ export function PausedRunActions({
                     }
                   >
                     {isResumeLoadingFor('retry', nr.id) ? (
-                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                      <Spinner className="h-3 w-3" />
                     ) : isContinue ? (
                       <Play className="h-3 w-3" aria-hidden />
                     ) : (
@@ -309,7 +306,7 @@ export function PausedRunActions({
                     onClick={() => onResumeRun({ action: 'skip', nodeRunId: nr.id })}
                   >
                     {isResumeLoadingFor('skip', nr.id) ? (
-                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                      <Spinner className="h-3 w-3" />
                     ) : (
                       <SkipForward className="h-3 w-3" aria-hidden />
                     )}

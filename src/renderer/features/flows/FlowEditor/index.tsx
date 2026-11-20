@@ -6,7 +6,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { TRPCClientError } from '@trpc/client';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -80,6 +80,7 @@ import { useRemoteVersionSync } from './hooks/use-remote-version-sync';
 import { StaleVersionDialog } from './StaleVersionDialog';
 import { applyCreatorPick } from '../../../lib/flows/node-creator/pick';
 import { type NodeCreatorMode, NodeCreatorPanel } from './NodeCreatorPanel';
+import { Spinner } from '../../../components/ui/spinner';
 
 type FlowEditorProps = {
   flowId: string;
@@ -1163,7 +1164,7 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
   if (isLoading || !hydrated) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+        <Spinner className="h-5 w-5" />
         Loading flow…
       </div>
     );

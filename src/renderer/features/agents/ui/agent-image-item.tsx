@@ -1,8 +1,9 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { ImageOff, X, Loader2 } from 'lucide-react';
+import { ImageOff, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
 import { type FullscreenImage, ImageFullscreen } from './ImageFullscreen';
+import { Spinner } from '../../../components/ui/spinner';
 
 type AgentImageItemProps = {
   id: string;
@@ -54,7 +55,7 @@ export function AgentImageItem({
       >
         {isLoading ? (
           <div className="size-8 flex items-center justify-center bg-muted rounded">
-            <Loader2 className="size-4 text-muted-foreground animate-spin" />
+            <Spinner className="size-4 text-muted-foreground" />
           </div>
         ) : hasError ? (
           <div
@@ -91,7 +92,7 @@ export function AgentImageItem({
           </HoverCard>
         ) : (
           <div className="size-8 bg-muted rounded flex items-center justify-center">
-            <Loader2 className="size-4 text-muted-foreground animate-spin" />
+            <Spinner className="size-4 text-muted-foreground" />
           </div>
         )}
 

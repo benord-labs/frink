@@ -13,10 +13,10 @@ import {
   DialogDescription,
   DialogTitle,
 } from '../../../components/ui/dialog';
-import { Loader2 } from 'lucide-react';
 import { Label } from '../../../components/ui/label';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
+import { Spinner } from '../../../components/ui/spinner';
 
 type CommandEditorModalProps = {
   open: boolean;
@@ -377,7 +377,7 @@ export function CommandEditorModal({
             >
               {deleteMutation.isPending ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Spinner className="w-4 h-4 mr-2" />
                   Deleting...
                 </>
               ) : confirmingDelete ? (
@@ -405,7 +405,7 @@ export function CommandEditorModal({
           >
             {createMutation.isPending || updateMutation.isPending ? (
               <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <Spinner className="w-4 h-4 mr-2" />
                 {isEditing ? 'Saving...' : 'Creating...'}
               </>
             ) : isEditing ? (

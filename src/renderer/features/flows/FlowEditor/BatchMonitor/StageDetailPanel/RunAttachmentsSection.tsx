@@ -11,7 +11,7 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { FileText, ImageIcon, Loader2, X } from 'lucide-react';
+import { FileText, ImageIcon, X } from 'lucide-react';
 import { type ClipboardEvent, type DragEvent, type ReactElement, useRef, useState } from 'react';
 import {
   PASTED_FILE_MAX_BYTES,
@@ -24,6 +24,7 @@ import {
 import { Dialog, DialogContent, DialogTitle } from '../../../../../components/ui/dialog';
 import { trpc } from '../../../../../lib/trpc';
 import { cn } from '../../../../../lib/utils';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 const INLINE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_ATTACHMENTS = 10;
@@ -293,10 +294,7 @@ export function RunAttachmentsSection({
               key={item.id}
               className="flex items-center gap-2 rounded border border-border/40 bg-muted/20 px-2 py-1.5"
             >
-              <Loader2
-                className="h-3 w-3 text-muted-foreground/50 shrink-0 animate-spin"
-                aria-hidden
-              />
+              <Spinner className="h-3 w-3 text-muted-foreground/50 shrink-0" />
               <span className="text-[11px] text-muted-foreground/60 truncate flex-1">
                 {item.label}
               </span>
@@ -390,9 +388,7 @@ function AttachmentRow({ attachment, isPending, onRemove }: AttachmentRowProps):
           aria-label={`Preview ${displayLabel}`}
           iconOnly
         >
-          {isLoading && (
-            <Loader2 className="h-3 w-3 text-muted-foreground/40 animate-spin" aria-hidden />
-          )}
+          {isLoading && <Spinner className="h-3 w-3 text-muted-foreground/40" />}
           {isFile && <FileText className="h-3 w-3 text-muted-foreground/50" aria-hidden />}
           {isError && <ImageIcon className="h-3 w-3 text-muted-foreground/30" aria-hidden />}
           {data?.dataUrl && (

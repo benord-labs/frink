@@ -7,7 +7,7 @@ import '@xyflow/react/dist/style.css';
 
 import { Button } from '@benord-labs/frink-primitives';
 import { Background, BackgroundVariant, ReactFlow, ReactFlowProvider } from '@xyflow/react';
-import { Loader2, XCircle } from 'lucide-react';
+import { XCircle } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { type ReactElement, useMemo } from 'react';
 import type { BatchStageDetail } from '../../../../../../shared/types/flows/flow-batch';
@@ -19,6 +19,7 @@ import { BatchMonitorStageNode } from './BatchMonitorStageNode';
 import { buildBatchMonitorGraph, computeMonitorTopologyKey } from './build-batch-dag-graph';
 import { MINIMAP_STAGE_THRESHOLD, MONITOR_FIT_VIEW_PADDING } from './constants';
 import { monitorMinimapNodeColor } from './monitorMinimapNodeColor';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 const nodeTypes = { batchMonitorStage: BatchMonitorStageNode };
 
@@ -111,7 +112,7 @@ function BatchDagCanvasInner({
   if (isStagesLoading) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
-        <Loader2 className="h-8 w-8 animate-spin" aria-hidden />
+        <Spinner className="h-8 w-8" />
         <p className="text-sm">Loading stages…</p>
       </div>
     );

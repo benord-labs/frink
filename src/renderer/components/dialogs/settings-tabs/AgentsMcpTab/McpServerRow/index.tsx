@@ -1,5 +1,5 @@
 import { Button, cn } from '@benord-labs/frink-primitives';
-import { CircleCheck, CircleOff, Loader2, RefreshCw, Server, Settings, Trash2 } from 'lucide-react';
+import { CircleCheck, CircleOff, RefreshCw, Server, Settings, Trash2 } from 'lucide-react';
 import { memo } from 'react';
 import {
   GlyphTile,
@@ -11,6 +11,7 @@ import {
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { PluginMark } from '@/features/plugins';
 import { getStatusText } from '../constants';
+import { Spinner } from '../../../../ui/spinner';
 
 type Props = {
   name: string;
@@ -56,7 +57,7 @@ function StatusWord({
   if (isReconnecting) {
     return (
       <span className="flex items-center gap-1.5 text-muted-fg text-xs">
-        <Loader2 className="size-3 animate-spin" aria-hidden />
+        <Spinner className="size-3" />
         Reconnecting
       </span>
     );

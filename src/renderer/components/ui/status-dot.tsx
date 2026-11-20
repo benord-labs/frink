@@ -2,9 +2,9 @@
  * Shared status indicator for resources/servers (MCP, agents, sidebar widgets).
  * Uses design tokens (--status-online, --status-warning, destructive).
  */
-import { Loader2 } from 'lucide-react';
 import { memo, type ReactElement } from 'react';
 import { cn } from '@/lib/utils';
+import { Spinner } from './spinner';
 
 export type ResourceStatus =
   | 'connected'
@@ -45,12 +45,7 @@ export const StatusDot = memo(function StatusDot({
   'aria-label': ariaLabel,
 }: Props): ReactElement {
   if (status === 'reconnecting') {
-    return (
-      <Loader2
-        className={cn('w-3.5 h-3.5 text-primary animate-spin shrink-0', className)}
-        aria-hidden
-      />
-    );
+    return <Spinner className={cn('w-3.5 h-3.5 text-primary', className)} />;
   }
 
   const colorClass = getStatusColor(status);

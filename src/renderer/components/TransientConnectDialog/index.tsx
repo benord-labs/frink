@@ -1,5 +1,5 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { CopyableInput } from '../CopyableInput';
+import { Spinner } from '../ui/spinner';
 
 /** An in-flight consent's sign-in page, plus whether the system browser actually opened it. */
 export type ConnectLinkState = {
@@ -166,7 +167,7 @@ export function TransientConnectDialog({
             <>
               {finishing ? (
                 <>
-                  <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin" aria-hidden="true" />
+                  <Spinner className="flex h-8 w-8 mx-auto mb-3" />
                   <p className="text-sm text-muted-foreground" role="status">
                     Setting up your connection…
                   </p>
@@ -177,7 +178,7 @@ export function TransientConnectDialog({
                 </p>
               ) : (
                 <>
-                  <Loader2 className="h-8 w-8 mx-auto mb-3 animate-spin" aria-hidden="true" />
+                  <Spinner className="flex h-8 w-8 mx-auto mb-3" />
                   <p className="text-sm text-muted-foreground" role="status">
                     {preparing
                       ? 'Your browser will open when the connection is ready.'

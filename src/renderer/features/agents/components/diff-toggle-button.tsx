@@ -1,8 +1,9 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { memo } from 'react';
-import { Diff, Loader2 } from 'lucide-react';
+import { Diff } from 'lucide-react';
 import { Kbd } from '../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
+import { Spinner } from '../../../components/ui/spinner';
 
 type DiffToggleButtonProps = {
   isLoading: boolean;
@@ -27,7 +28,7 @@ export const DiffToggleButton = memo(function DiffToggleButton({
           aria-label="View changes"
           iconOnly
         >
-          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Diff className="h-4 w-4" />}
+          {isLoading ? <Spinner className="h-4 w-4" /> : <Diff className="h-4 w-4" />}
           <span className="sr-only">View changes</span>
         </Button>
       </TooltipTrigger>

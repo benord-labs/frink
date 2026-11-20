@@ -1,5 +1,5 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { Check, ChevronDown, GitBranch, Loader2 } from 'lucide-react';
+import { Check, ChevronDown, GitBranch } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -23,6 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { formatTimeAgo } from '../utils/format-time-ago';
+import { Spinner } from '../../../components/ui/spinner';
 
 // Regex pattern for branch name validation (alphanumeric, dots, hyphens, underscores, slashes)
 const BRANCH_NAME_REGEX = /^[a-zA-Z0-9._/-]+$/;
@@ -226,7 +227,7 @@ export function CreateBranchDialog({
           >
             {createBranchMutation.isPending ? (
               <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <Spinner className="w-4 h-4 mr-2" />
                 Creating...
               </>
             ) : (

@@ -9,7 +9,7 @@
 
 import { TRPCClientError } from '@trpc/client';
 import { useAtomValue } from 'jotai';
-import { Loader2, RotateCcw, XCircle } from 'lucide-react';
+import { RotateCcw, XCircle } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import type { DbFlowRun, DbFlowRunWithNodeRuns } from '../../../../../shared/types/flow-run';
@@ -29,6 +29,7 @@ import { RecoverInterruptedAction } from './RecoverInterruptedAction';
 import { RunDetailHeader } from './RunDetailHeader';
 import { RunRow, runPresentation } from './RunRow';
 import { buildRunHistoryBatchView } from './run-history-batch-view';
+import { Spinner } from '../../../../components/ui/spinner';
 
 /** Same window as `listRuns` so `listBatches` returns API summaries for batches in the visible run list (fewer synthetic fallbacks in `buildRunHistoryBatchView`). */
 const FLOW_RUN_HISTORY_PAGE_SIZE = 20;
@@ -191,7 +192,7 @@ export function FlowRunHistoryPanel({
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
         {isLoading && (
           <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            <Spinner className="h-4 w-4" />
             Loading…
           </div>
         )}
@@ -282,7 +283,7 @@ export function RunDetailPane({
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        <Spinner className="h-4 w-4" />
         Loading run…
       </div>
     );

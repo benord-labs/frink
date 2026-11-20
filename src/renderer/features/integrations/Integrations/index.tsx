@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2 } from 'lucide-react';
 import { getProviderById } from '../../../../shared/integrations/selectors';
 import { trpc } from '../../../lib/trpc';
 import { PluginsPanel } from '../../plugins';
 import { IntegrationDetailDialog } from '../IntegrationDetailDialog';
 import type { ConnectedIntegration } from '../types';
+import { Spinner } from '../../../components/ui/spinner';
 
 type Props = {
   /** Reports whether a plugin's page (which owns the h1) replaces the directory. */
@@ -129,7 +129,7 @@ export function Integrations({ onDetailChange }: Props) {
   if (isLoading) {
     return (
       <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin" />
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }

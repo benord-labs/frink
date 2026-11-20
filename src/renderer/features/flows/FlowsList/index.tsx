@@ -5,7 +5,7 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
 import type { inferRouterOutputs } from '@trpc/server';
 import { useSetAtom } from 'jotai';
-import { Loader2, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { AppRouter } from '../../../../main/lib/trpc/routers';
@@ -34,6 +34,7 @@ import { FirstFlowEmptyState } from './FirstFlowEmptyState';
 import { FlowListSkeleton } from './FlowListSkeleton';
 import { FlowListTable } from './FlowListTable';
 import { FlowSortControl, type FlowSortOrder } from './FlowSortControl';
+import { Spinner } from '../../../components/ui/spinner';
 
 const FLOW_LIST_RUN_LEVEL_EVENTS = new Set<FlowExecutionEvent['eventType']>([
   'run_started',
@@ -282,11 +283,7 @@ export function FlowsList({ onCreateClick, onOpenChat }: FlowsListProps): ReactE
               onClick={() => void confirmDelete()}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleteMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              ) : (
-                'Delete'
-              )}
+              {deleteMutation.isPending ? <Spinner className="h-4 w-4" /> : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

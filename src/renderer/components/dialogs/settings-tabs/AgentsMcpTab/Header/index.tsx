@@ -1,5 +1,5 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { FileJson, Loader2, MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
+import { FileJson, MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
 import { memo } from 'react';
 import {
   DropdownMenu,
@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Spinner } from '../../../../ui/spinner';
 
 type Props = {
   isRefreshing: boolean;
@@ -27,11 +28,7 @@ export const Header = memo(function Header({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" iconOnly aria-label="More server options">
-            {isRefreshing ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <MoreHorizontal className="size-4" />
-            )}
+            {isRefreshing ? <Spinner className="size-4" /> : <MoreHorizontal className="size-4" />}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">

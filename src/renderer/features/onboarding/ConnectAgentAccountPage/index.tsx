@@ -1,5 +1,4 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2 } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { aiProviderMark } from '@/components/AiProviderMark';
 import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
@@ -21,6 +20,7 @@ import {
   TerminalCommand,
 } from '../connect-account-shell';
 import { SignInWaitingCard } from '../SignInWaitingCard';
+import { Spinner } from '../../../components/ui/spinner';
 
 /** Why an agent can't connect: not installed and how to install it, or the launch's own reason. */
 function agentNotFound(
@@ -64,7 +64,7 @@ function CursorSignIn({ label, onSignedIn }: { label: string; onSignedIn: () => 
       >
         {signIn.isPending ? (
           <>
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            <Spinner className="h-4 w-4" />
             Continue in your browser
           </>
         ) : (

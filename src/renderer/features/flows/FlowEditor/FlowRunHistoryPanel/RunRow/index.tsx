@@ -1,5 +1,5 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, Square } from 'lucide-react';
+import { Square } from 'lucide-react';
 import type { DbFlowRun } from '../../../../../../shared/types/flow-run';
 import { cn } from '../../../../../lib/utils';
 import { formatRelativeTime } from '../../../../../lib/utils/format-time';
@@ -9,6 +9,7 @@ import { flowRunDisplayStatus } from '../../../../../../shared/lib/flows/run-dis
 import { FlowRunStatusIcon, isLiveFlowAdmissionState } from '../../FlowRunStatusIcon';
 import { formatDuration } from '../format-duration';
 import { RunStatusLabel } from '../RunStatusLabel';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 type RunRowProps = {
   run: DbFlowRun;
@@ -135,7 +136,7 @@ export function RunRow({
               }}
             >
               {stopPending ? (
-                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                <Spinner className="h-3 w-3" />
               ) : (
                 <Square className="h-2.5 w-2.5 fill-current" aria-hidden />
               )}

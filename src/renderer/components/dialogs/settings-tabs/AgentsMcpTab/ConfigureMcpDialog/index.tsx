@@ -1,7 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '../../../../ui/spinner';
 
 type Props = {
   open: boolean;
@@ -335,14 +336,14 @@ export const ConfigureMcpDialog = memo(function ConfigureMcpDialog({
           </Button>
           {needsInput && (
             <Button onClick={handleSubmit} disabled={isSubmitting}>
-              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+              {isSubmitting ? <Spinner className="h-4 w-4" /> : 'Save'}
             </Button>
           )}
           {isOAuth && onStartOAuth && (
             <Button onClick={onStartOAuth} disabled={isOAuthInProgress}>
               {isOAuthInProgress ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Spinner className="mr-2 h-4 w-4" />
                   Waiting for browser…
                 </>
               ) : (
