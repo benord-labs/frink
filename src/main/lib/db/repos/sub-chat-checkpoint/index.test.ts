@@ -10,12 +10,13 @@ import {
   _resetCorruptTranscriptReportsForTests,
   _setCorruptTranscriptCaptureForTests,
 } from '../../transcript-corruption';
-import { __resetSubChatLocks } from '../sub-chat-mutex';
+import { __resetSubChatLocks, bumpWriteGeneration } from '../sub-chat-mutex';
 import {
   appendUserMessage,
   createSubChat,
   finalizeAssistantMessage,
   getSubChatById,
+  readSubChatRow,
   setStreamId,
   updateSubChatMessages,
   upsertAssistantMessage,
@@ -497,5 +498,148 @@ describe('upsertAssistantMessage branch selection', () => {
     expect(await rawMessages(subChatId)).toBe(
       `[{"id":"assistant-1","role":"assistant","parts":[{"type":"text"}]},${exotic}]`,
     );
+  });
+
+  describe('finalizeAssistantMessage branch selection', () => {
+    const user = (id: string) => JSON.stringify({ id, role: 'user', parts: [] });
+    const withUuid = (id: string, text: string) =>
+      JSON.stringify({
+        id,
+        role: 'assistant',
+        parts: [{ type: 'text', text }],
+        metadata: { sdkMessageUuid: 'uuid-1' },
+      });
+    const done = [{ type: 'text', text: 'done' }];
+
+    /** A corrupt middle row is reported by any full transcript read, so its silence proves none ran. */
+    const seedAroundCorruptRow = async (rows: string[]) => {
+      captureMainException.mockClear();
+      _resetCorruptTranscriptReportsForTests();
+      const subChatId = await seedRaw('[]');
+      seedRawRows(subChatId, rows);
+      return subChatId;
+    };
+    const expectNoFullRead = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(captureMainException).not.toHaveBeenCalled();
+    };
+
+    it('writes only the last row when it is the finalised message', async () => {
+      const subChatId = await seedAroundCorruptRow([
+        user('user-1'),
+        '{not json',
+        assistant('assistant-1', 'first'),
+      ]);
+
+      const finalized = await finalizeAssistantMessage(
+        db,
+        subChatId,
+        'assistant-1',
+        done,
+        'session-1',
+      );
+
+      await expectNoFullRead();
+      expect(finalized?.message.parts).toEqual(done);
+      expect(await rawMessages(subChatId)).toBe(
+        `[${user('user-1')},{not json,${assistant('assistant-1', 'done')}]`,
+      );
+      expect(readSubChatRow(db, subChatId)).toMatchObject({
+        streamId: null,
+        sessionId: 'session-1',
+      });
+    });
+
+    it('rewrites the transcript for a non-last message and keeps its sdkMessageUuid', async () => {
+      const subChatId = await seedAroundCorruptRow([
+        withUuid('assistant-1', 'first'),
+        '{not json',
+        user('user-2'),
+      ]);
+
+      const finalized = await finalizeAssistantMessage(db, subChatId, 'assistant-1', done, null);
+
+      await vi.waitFor(() => expect(captureMainException).toHaveBeenCalled());
+      expect(finalized?.message).toEqual({
+        id: 'assistant-1',
+        role: 'assistant',
+        parts: done,
+        metadata: { sdkMessageUuid: 'uuid-1' },
+      });
+    });
+
+    it('keeps stored metadata when a last-row finalize carries none', async () => {
+      const subChatId = await seedAroundCorruptRow([
+        user('user-1'),
+        '{not json',
+        withUuid('assistant-1', 'first'),
+      ]);
+
+      const finalized = await finalizeAssistantMessage(db, subChatId, 'assistant-1', done, null);
+
+      await expectNoFullRead();
+      expect(finalized?.message.metadata).toEqual({ sdkMessageUuid: 'uuid-1' });
+      expect(await rawMessages(subChatId)).toContain('uuid-1');
+    });
+
+    it('keeps the checkpointed parts for a contentless last-row finalize', async () => {
+      const subChatId = await seedAroundCorruptRow([
+        user('user-1'),
+        '{not json',
+        assistant('assistant-1', 'streamed'),
+      ]);
+
+      const finalized = await finalizeAssistantMessage(
+        db,
+        subChatId,
+        'assistant-1',
+        [{ type: 'step-start' }],
+        null,
+      );
+
+      await expectNoFullRead();
+      expect(finalized?.message.parts).toEqual([{ type: 'text', text: 'streamed' }]);
+      expect(await rawMessages(subChatId)).toContain('streamed');
+    });
+
+    it('refuses a stale finalize before the last-row write', async () => {
+      const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`);
+      bumpWriteGeneration(subChatId);
+
+      expect(
+        await finalizeAssistantMessage(db, subChatId, 'assistant-1', done, null, undefined, 0),
+      ).toBeNull();
+      expect(await rawMessages(subChatId)).toBe(`[${assistant('assistant-1', 'first')}]`);
+      expect(readSubChatRow(db, subChatId)?.streamId).toBe('stream-1');
+    });
+
+    it('finalizes past a corrupt last row instead of raising on it', async () => {
+      const subChatId = await seedRaw('[]');
+      seedRawRows(subChatId, ['{not json']);
+
+      const finalized = await finalizeAssistantMessage(db, subChatId, 'assistant-1', done, null);
+
+      expect(finalized?.message.parts).toEqual(done);
+      expect(await rawMessages(subChatId)).toBe(`[${assistant('assistant-1', 'done')}]`);
+    });
+
+    it('leaves an identical last row unwritten but still settles the sub-chat', async () => {
+      // 1e21 re-serialises as 1e+21, so a byte-identical row proves it was not rewritten.
+      const stored = '{"id":"assistant-1","role":"assistant","parts":[{"n":1e21}]}';
+      const subChatId = await seedRaw('[]');
+      seedRawRows(subChatId, [stored]);
+      const old = new Date('2020-01-01T00:00:00Z');
+      db.update(schema.subChats)
+        .set({ updatedAt: old })
+        .where(eq(schema.subChats.id, subChatId))
+        .run();
+
+      await finalizeAssistantMessage(db, subChatId, 'assistant-1', [{ n: 1e21 }], null);
+
+      expect(await rawMessages(subChatId)).toBe(`[${stored}]`);
+      const row = readSubChatRow(db, subChatId);
+      expect(row?.streamId).toBeNull();
+      expect(row?.updatedAt?.getTime()).toBeGreaterThan(old.getTime());
+    });
   });
 });
