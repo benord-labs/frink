@@ -1,39 +1,19 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
-import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useWindow } from '../../lib/use-window';
 import { usePageTitle } from '../../navigation/page-title';
-import { useRootNavigation, type RootRoutes } from '../../navigation/routes';
-import { ListRow, SectionHeader } from '../../ui/list';
+import type { RootRoutes } from '../../navigation/routes';
+import { SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
-import { FlowControls } from './FlowControls';
+import { PrimaryRow, useEnabledSwitch } from './FlowControls';
 import { FlowOutline } from './FlowOutline';
-import { currentRunId, flowAttention } from './flow-view';
 import { READINESS } from './readiness';
 import { RecentRuns } from './RecentRuns';
-
-/** One row above the controls that says what a Flow in "Needs you" is waiting on. */
-function Attention({ flow }: { flow: MobileFlow }) {
-  const navigation = useRootNavigation();
-  const attention = flowAttention(flow);
-  if (!attention || currentRunId(flow)) return null;
-  return (
-    <View style={{ paddingBottom: space.lg }}>
-      <ListRow
-        testID="flow-attention"
-        accessibilityLabel={`${attention.title}, ${attention.subtitle}`}
-        title={attention.title}
-        subtitle={attention.subtitle}
-        onPress={() => navigation.navigate('Run', { id: attention.runId })}
-      />
-    </View>
-  );
-}
 
 /** One Flow: run it, turn it on or off, see its recent runs and how it is built. */
 export function FlowScreen() {
@@ -49,6 +29,7 @@ export function FlowScreen() {
   const { data, error, stale, refreshing, pull, refresh } = resource;
   const name = data?.flow.name;
   const heading = usePageTitle(name);
+  const enabled = useEnabledSwitch(data?.flow, refresh);
   return (
     <Screen>
       <ScrollView
@@ -70,10 +51,10 @@ export function FlowScreen() {
                 {data.flow.description}
               </Text>
             )}
-            <Attention flow={data.flow} />
-            <FlowControls
-              flow={data.flow}
+            <PrimaryRow
+              flow={{ ...data.flow, enabled: enabled.enabled ?? data.flow.enabled }}
               executionReady={readiness.data?.executionReady}
+              switchError={enabled.error}
               onChanged={refresh}
             />
             <SectionHeader title="Recent runs" />
