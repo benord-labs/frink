@@ -54,6 +54,8 @@ export type FlowGateContext = {
   runtime?: AgentRuntime;
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
+  /** The turn's live plan phase; `mode` is the send-start snapshot, stale after an in-turn approval. */
+  isPlanPhase?: () => boolean;
   isFlowDrivenTurn?: boolean;
   abortSignal?: AbortSignal;
 };
@@ -202,12 +204,14 @@ export function dispatchFlowToolCall(
 
 function flowUnavailableReason({
   mode,
+  ctx,
   flowsEnabled,
 }: DispatchFlowToolCallOptions): string | undefined {
   if (!flowsEnabled) {
     return 'Flow tools are not available in this version.';
   }
-  return mode === 'plan'
+  const planning = ctx?.isPlanPhase ? ctx.isPlanPhase() : mode === 'plan';
+  return planning
     ? 'Flow tools are not available in plan mode. Put the Flow change in your plan instead; it can run once the plan is approved.'
     : undefined;
 }

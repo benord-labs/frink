@@ -66,6 +66,7 @@ import {
   consumeCodexFlowPreapproval,
   createFlowExecutionLiveness,
 } from './flows-tools/permissions';
+import { filterProjectsByQuery } from './project-query-filter';
 import { earlyJsonRpcReply, resolveInitializeProtocolVersion } from './protocol-version';
 import { handleTaskSignalToolCall, type RecordedTaskSignal } from './task-signal-tool';
 import { type McpToolResult, toolResult } from './tool-result';
@@ -113,6 +114,7 @@ type ExecutionContext = {
   /** Per-send Auto consent; never inherited across sends. */
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
+  isPlanPhase?: () => boolean;
   /** Flow-dispatched turn — threads flow-specific steering into permission-timeout messages. */
   isFlowDrivenTurn?: boolean;
   /** Controller for the exact turn that registered this context. */
@@ -190,6 +192,7 @@ export function setCurrentExecutionChat(
   abortSignal?: AbortSignal,
   planAutoDenyFloor?: () => boolean,
   signalTaskId?: string | null,
+  isPlanPhase?: () => boolean,
 ): string {
   sweepNavigationSessions();
   const resolvedExecutionId = executionId ?? crypto.randomUUID();
@@ -212,6 +215,7 @@ export function setCurrentExecutionChat(
     // re-calls) — a new execution id starts from the value its registering turn passes.
     autoReviewTools: autoReviewTools ?? previous?.autoReviewTools ?? false,
     planAutoDenyFloor: planAutoDenyFloor ?? previous?.planAutoDenyFloor,
+    isPlanPhase: isPlanPhase ?? previous?.isPlanPhase,
     isFlowDrivenTurn: isFlowDrivenTurn ?? previous?.isFlowDrivenTurn ?? false,
     abortSignal: abortSignal ?? previous?.abortSignal,
   });
@@ -349,32 +353,6 @@ const navigationContextArgsSchema = z.object({});
 
 function buildProjectName(projectId: string | null, fallback = 'Unknown Project'): string {
   return projectId ? fallback : 'General Chats';
-}
-
-/** Project fields the chat agent sees from searchProjects / fetchAllProjects. */
-type ProjectHit = { id: string; name: string; path: string; description: string | null };
-
-const WHITESPACE_REGEX = /\s+/;
-
-/**
- * Filter local projects by a free-form query: every whitespace-delimited word must appear
- * (case-insensitive) in the project's name, description, or path. Empty query → all rows.
- * Single-user local DB has few projects, so an in-memory filter is cheaper than a SQL pass.
- */
-function filterProjectsByQuery(
-  rows: Array<{ id: string; name: string; path: string; description: string | null }>,
-  query: string,
-  limit: number,
-): ProjectHit[] {
-  const words = query.toLowerCase().split(WHITESPACE_REGEX).filter(Boolean);
-  const matched = rows.filter((p) => {
-    if (words.length === 0) return true;
-    const haystack = `${p.name} ${p.description ?? ''} ${p.path}`.toLowerCase();
-    return words.every((w) => haystack.includes(w));
-  });
-  return matched
-    .slice(0, limit)
-    .map((p) => ({ id: p.id, name: p.name, path: p.path, description: p.description ?? null }));
 }
 
 function createNavigationSession(origin: NavigationSnapshot): NavigationSession {

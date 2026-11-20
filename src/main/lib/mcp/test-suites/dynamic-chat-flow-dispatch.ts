@@ -82,6 +82,41 @@ export function registerDynamicChatFlowDispatchTests({
       clearCurrentExecutionChat(executionId);
     });
 
+    it('gates on the live plan phase, kept across a same-execution re-registration', async () => {
+      // The flip lands in the stream consumer; MCP calls reach here over HTTP, independently.
+      let planning = true;
+      const register = (isPlanPhase?: () => boolean) =>
+        setCurrentExecutionChat(
+          'chat-1',
+          'sub-1',
+          '/proj',
+          'plan',
+          'exec-plan',
+          undefined,
+          undefined,
+          'claude',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          isPlanPhase,
+        );
+      register(() => planning);
+      expect((await callDynamicChatToolByName('frink_flows_get', {}, 'exec-plan')).isError).toBe(
+        true,
+      );
+      register();
+      planning = false;
+      for (const name of ['frink_flows_get', 'frink_flows_patch']) {
+        expect((await callDynamicChatToolByName(name, { flowId: 'f' }, 'exec-plan')).isError).toBe(
+          false,
+        );
+      }
+      expect(state.handleFlowsToolCall).toHaveBeenCalledTimes(2);
+      clearCurrentExecutionChat('exec-plan');
+    });
+
     it.each([false, true])(
       'uses one exact Codex provider decision and one transport call with Auto=%s',
       async (autoReview) => {
