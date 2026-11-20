@@ -2,7 +2,7 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import MonacoEditor, { type EditorProps } from '@monaco-editor/react';
-import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
   BookOpen,
   ChevronRight,
@@ -96,8 +96,8 @@ import {
   revealPendingOnMount,
   type OpenFile,
   openFilesAtom,
-  pendingCloseKeysAtom,
   pinFileAtom,
+  promptReturnFocusAtom,
   type RevealLineDetail,
   requestCloseFilesAtom,
   revokeBlobUrlIfPresent,
@@ -124,14 +124,20 @@ import { ProjectGroupSeparator } from './ProjectGroupSeparator';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 import { UnsavedChangesDialog } from './UnsavedChangesDialog';
 
-const preventFocus = (event: Event) => event.preventDefault();
-
 /** The app's one unsaved-changes prompt, mounted at the root so a quit can ask from any view. */
 export function UnsavedChangesPrompt(): ReactElement {
   const selectedProject = useAtomValue(selectedProjectAtom);
   const saveOpenFile = useSaveOpenFile(selectedProject?.path, triggerFileTreeRefresh);
-  // The panel puts focus back on the editor itself once the prompt closes.
-  return <UnsavedChangesDialog saveOpenFile={saveOpenFile} onCloseAutoFocus={preventFocus} />;
+  const returnFocus = useAtomValue(promptReturnFocusAtom);
+  return (
+    <UnsavedChangesDialog
+      saveOpenFile={saveOpenFile}
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        returnFocus?.focus();
+      }}
+    />
+  );
 }
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
@@ -412,16 +418,12 @@ export function CodeEditorPanel({
   const resizeStartWidth = useRef(0);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
   const editorRef = useRef<import('monaco-editor').editor.IStandaloneCodeEditor | null>(null);
-  // The root unsaved-changes prompt leaves focus to the panel: back to the editor once answered.
-  const store = useStore();
+  // Once the root unsaved-changes prompt is answered, focus comes back to this editor.
+  const setPromptReturnFocus = useSetAtom(promptReturnFocusAtom);
   useEffect(() => {
-    let wasOpen = store.get(pendingCloseKeysAtom) !== null;
-    return store.sub(pendingCloseKeysAtom, () => {
-      const open = store.get(pendingCloseKeysAtom) !== null;
-      if (wasOpen && !open) editorRef.current?.focus();
-      wasOpen = open;
-    });
-  }, [store]);
+    setPromptReturnFocus({ focus: () => editorRef.current?.focus() });
+    return () => setPromptReturnFocus(null);
+  }, [setPromptReturnFocus]);
   const lineChangeDecorationIdsRef = useRef<string[]>([]);
   const inlineDiffDecorationIdsRef = useRef<string[]>([]);
   const inlineDeletedZoneIdsRef = useRef<string[]>([]);

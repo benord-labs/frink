@@ -33,6 +33,9 @@ export const requestCloseFilesAtom = atom(null, (get, set, keys: string[]) => {
   set(codeEditorOpenAtom, true);
 });
 
+/** Where focus goes once the unsaved-changes prompt closes: the editor panel registers its editor. */
+export const promptReturnFocusAtom = atom<{ focus: () => void } | null>(null);
+
 /** Why the window is waiting on the prompt (quit, close, reload, update); null for a tab close. */
 export const pendingLeaveAtom = atom<LeaveReason | null>(null);
 

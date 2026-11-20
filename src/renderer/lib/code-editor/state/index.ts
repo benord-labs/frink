@@ -37,6 +37,7 @@ export {
   closePaneTabsAtom,
   pendingCloseKeysAtom,
   pendingLeaveAtom,
+  promptReturnFocusAtom,
   requestCloseAllFilesAtom,
   requestCloseFilesAtom,
   requestLeaveAtom,

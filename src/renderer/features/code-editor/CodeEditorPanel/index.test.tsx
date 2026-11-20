@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'jotai';
 import { MotionGlobalConfig } from 'motion/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ import {
   openFileAtom,
   openFilesAtom,
   pendingCloseKeysAtom,
+  promptReturnFocusAtom,
   updateFileContentAtom,
 } from '@/lib/code-editor/state';
 import { appStore } from '@/lib/jotai-store';
@@ -66,6 +67,30 @@ const pressCmdW = () =>
   act(() => {
     fireEvent.keyDown(document, { key: 'w', metaKey: true, ctrlKey: true });
   });
+
+describe('UnsavedChangesPrompt', () => {
+  it('hands focus back to the editor the panel registered once the root prompt is answered', async () => {
+    const focus = vi.fn();
+    appStore.set(promptReturnFocusAtom, { focus });
+    renderWithTrpc(
+      <Provider store={appStore}>
+        <UnsavedChangesPrompt />
+      </Provider>,
+      async () => null,
+    );
+    await act(() => {
+      appStore.set(pendingCloseKeysAtom, [dirty]);
+    });
+
+    await screen.findByRole('alertdialog');
+    await act(() => {
+      fireEvent.keyDown(document, { key: 'Escape' });
+    });
+
+    await waitFor(() => expect(focus).toHaveBeenCalledTimes(1));
+    appStore.set(promptReturnFocusAtom, null);
+  });
+});
 
 describe('CodeEditorPanel closing tabs', () => {
   it('asks before Cmd+W closes the unsaved tab', async () => {
