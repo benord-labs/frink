@@ -3,13 +3,11 @@ import type {
   ArtifactPreviewBounds,
   HtmlArtifactData,
 } from '../../../../shared/types/artifacts/html-artifact';
-import { measureSlot } from './geometry';
+import type { SlotBlock } from '../../native-view/geometry';
 import {
-  isCoveredByLayers,
-  mutationTouchesOccluder,
-  type OccludingLayers,
-  scanOccludingLayers,
-} from './occlusion';
+  type NativeViewSlotState,
+  useNativeViewSlot,
+} from '../../native-view/use-native-view-slot';
 
 type GuestRuntime = {
   generation: number;
@@ -21,6 +19,13 @@ type GuestViewState = { error: string | null; isOpening: boolean; isReady: boole
 type ResolvedPresentation =
   | { artifact: HtmlArtifactData; bounds: ArtifactPreviewBounds; pauseReason: null }
   | { artifact: null; bounds: null; pauseReason: string | null };
+
+const SLOT_OPTIONS = { minWidth: 280, minHeight: 180, clip: 'chat-scrollport' } as const;
+const BLOCK_COPY: Record<SlotBlock, string> = {
+  hidden: 'Interactive result paused.',
+  'too-small': 'Resize this pane to run the artifact.',
+  'out-of-view': 'Interactive result paused while out of view.',
+};
 
 async function closeGuestIfActive(runtime: GuestRuntime, close: () => Promise<void>) {
   if (runtime.isOpen || runtime.isOpening) await close();
@@ -45,24 +50,23 @@ async function syncGuestPresentation(
 function resolvePresentation(
   selection: HtmlArtifactData | null,
   isHostAvailable: boolean,
-  element: HTMLElement | null,
-  layers: OccludingLayers,
+  slot: NativeViewSlotState,
 ): ResolvedPresentation {
   if (!selection) return { artifact: null, bounds: null, pauseReason: null };
   if (!isHostAvailable) {
     return { artifact: null, bounds: null, pauseReason: 'Interactive result paused.' };
   }
-  if (isCoveredByLayers(element, layers)) {
+  if (slot.covered) {
     return {
       artifact: null,
       bounds: null,
       pauseReason: 'Interactive result paused while another control is open.',
     };
   }
-  if (!element) return { artifact: null, bounds: null, pauseReason: null };
-  const measurement = measureSlot(element);
-  if (!measurement.bounds) return { artifact: null, ...measurement };
-  return { artifact: selection, ...measurement };
+  if (!slot.bounds) {
+    return { artifact: null, bounds: null, pauseReason: slot.block && BLOCK_COPY[slot.block] };
+  }
+  return { artifact: selection, bounds: slot.bounds, pauseReason: null };
 }
 
 function useHostAvailability(isPaneActive: boolean) {
@@ -194,23 +198,13 @@ function usePreviewPresentation(
 ) {
   const [pauseReason, setPauseReason] = useState<string | null>(null);
   const pausedRef = useRef(false);
-  const layersRef = useRef<OccludingLayers>({ all: [], global: [], intersecting: [] });
-  const frameRef = useRef<number | null>(null);
-  const scanRef = useRef(false);
 
   const present = useCallback(
-    async (scanLayers: boolean, allowOpen = false) => {
+    async (slot: NativeViewSlotState, allowOpen = false) => {
       const runtime = guest.runtimeRef.current;
       if (runtime.hasOpenError) return;
       if (isHostAvailable === null) return;
-      const element = placeholderRef.current;
-      if (scanLayers) layersRef.current = scanOccludingLayers();
-      const presentation = resolvePresentation(
-        selection,
-        isHostAvailable,
-        element,
-        layersRef.current,
-      );
+      const presentation = resolvePresentation(selection, isHostAvailable, slot);
       if (!presentation.bounds) {
         if (presentation.pauseReason) {
           pausedRef.current = true;
@@ -224,91 +218,29 @@ function usePreviewPresentation(
       setPauseReason(null);
       await syncGuestPresentation(surfaceId, runtime, presentation, guest.open);
     },
-    [
-      guest.close,
-      guest.open,
-      guest.runtimeRef,
-      isHostAvailable,
-      placeholderRef,
-      selection,
-      surfaceId,
-    ],
+    [guest.close, guest.open, guest.runtimeRef, isHostAvailable, selection, surfaceId],
   );
-
-  const schedulePresent = useCallback(
-    (scanLayers: boolean) => {
-      scanRef.current ||= scanLayers;
-      if (frameRef.current !== null) return;
-      frameRef.current = requestAnimationFrame(() => {
-        frameRef.current = null;
-        const shouldScan = scanRef.current;
-        scanRef.current = false;
-        void present(shouldScan);
-      });
-    },
-    [present],
-  );
+  const onSlot = useCallback((slot: NativeViewSlotState) => void present(slot), [present]);
+  const slot = useNativeViewSlot(placeholderRef, onSlot, {
+    ...SLOT_OPTIONS,
+    enabled: selection !== null,
+    ignoreWithin: surfaceRef,
+  });
 
   useEffect(() => {
-    const observer = new MutationObserver((records) => {
-      if (records.every((record) => surfaceRef.current?.contains(record.target))) return;
-      schedulePresent(records.some((record) => mutationTouchesOccluder(record, layersRef.current)));
-    });
-    observer.observe(document.body, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: [
-        'role',
-        'aria-modal',
-        'aria-hidden',
-        'data-state',
-        'data-artifact-preview-occluder',
-        'open',
-        'hidden',
-        'class',
-        'style',
-      ],
-    });
     surfaceRef.current?.scrollIntoView({ block: 'nearest' });
-    schedulePresent(true);
-    return () => {
-      observer.disconnect();
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      // Clearing the handle reopens the coalescer guard: a cancelled frame never
-      // runs the callback that would otherwise reset it, wedging every later present().
-      frameRef.current = null;
-    };
-  }, [schedulePresent, surfaceRef]);
-
+  }, [present, surfaceRef]);
   useEffect(() => {
-    const element = placeholderRef.current;
-    if (!element || !selection) return;
-    const update = (): void => schedulePresent(false);
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    const chatContent = element.closest('[data-chat-container]')?.firstElementChild;
-    if (chatContent instanceof HTMLElement) observer.observe(chatContent);
-    window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
-    window.visualViewport?.addEventListener('resize', update);
-    update();
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
-      window.visualViewport?.removeEventListener('resize', update);
-      void guest.close();
-    };
-  }, [guest.close, placeholderRef, schedulePresent, selection]);
+    if (!selection) return;
+    return () => void guest.close();
+  }, [guest.close, selection]);
 
   const resume = useCallback(async () => {
     guest.resetError();
     pausedRef.current = false;
     setPauseReason(null);
-    await present(true, true);
-  }, [guest.resetError, present]);
+    await present(slot.read(), true);
+  }, [guest.resetError, present, slot.read]);
   const markPaused = useCallback((reason: string) => {
     pausedRef.current = true;
     setPauseReason(reason);

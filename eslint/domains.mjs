@@ -30,6 +30,8 @@ export const RENDERER_LIB_DOMAINS = [
   'hotkeys',
   'mascot',
   'mentions',
+  // Placing main-process native views (browser pages, HTML artifacts) over a DOM slot.
+  'native-view',
   'perf',
   'plugins',
   'query-keys',
