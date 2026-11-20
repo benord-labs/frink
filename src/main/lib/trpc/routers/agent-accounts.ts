@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import {
   AI_PROVIDER_IDS,
+  type AiProviderId,
   aiProvider,
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
@@ -12,6 +13,7 @@ import { rememberedAgentModels } from '../../agent-runner/agent-models';
 import { cancelCodexSignIn, signInToCodex } from '../../agent-runner/codex/login';
 import { findCopilotAgent } from '../../agent-runner/copilot';
 import { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
+import type { SignInOutcome } from '../../agent-runner/sign-in-outcome';
 import {
   trackAccountConnect,
   trackAccountConnectFailed,
@@ -62,6 +64,25 @@ const CURSOR_FAILURE = {
   'plan-required': 'unknown',
   failed: 'detection_error',
 } as const;
+
+// A sign-in that could not start is a damaged install, as with a missing Cursor, not a cancel.
+const SIGN_IN_FAILURE = {
+  stopped: 'cancelled',
+  unavailable: 'detection_error',
+  failed: 'unknown',
+} as const satisfies Record<Exclude<SignInOutcome, 'finished'>, AccountConnectFailReason>;
+
+/** Runs a sign-in, recording why it did not finish and saying so. */
+async function finishSignIn(
+  provider: AiProviderId,
+  name: string,
+  signIn: () => Promise<SignInOutcome>,
+): Promise<void> {
+  const outcome = await signIn();
+  if (outcome === 'finished') return;
+  trackAccountConnectFailed({ provider, reason: SIGN_IN_FAILURE[outcome] });
+  throw new Error(signInUnfinished(name));
+}
 
 /** The provider row for an agent that keeps its own sign-in, when it may be connected here. */
 function connectableAgent(type: string, deps: AgentAccountsDeps) {
@@ -131,25 +152,14 @@ export function createAgentAccountsRouter(
     /** Starts Claude's, Codex's or Cursor's own sign-in in the browser; the provider keeps what it makes. */
     signIn: publicProcedure.input(typeInput).mutation(async ({ input }) => {
       if (input.type === 'claude-code' && deps.platform !== 'win32') {
-        if (!(await deps.signInClaude())) {
-          trackAccountConnectFailed({ provider: 'claude-code', reason: 'cancelled' });
-          throw new Error(signInUnfinished('Claude'));
-        }
-        return;
+        return finishSignIn('claude-code', 'Claude', deps.signInClaude);
       }
       const runtime = connectableAgent(input.type, deps)?.runtime;
       if (runtime === 'codex' && deps.platform !== 'win32') {
-        if (!(await deps.signInCodex())) {
-          trackAccountConnectFailed({ provider: 'codex', reason: 'cancelled' });
-          throw new Error(signInUnfinished('ChatGPT'));
-        }
-        return;
+        return finishSignIn('codex', 'ChatGPT', deps.signInCodex);
       }
       if (runtime !== 'cursor') throw new Error(NOT_AVAILABLE);
-      if (!(await deps.signInCursor())) {
-        trackAccountConnectFailed({ provider: 'cursor', reason: 'cancelled' });
-        throw new Error(signInUnfinished('Cursor'));
-      }
+      return finishSignIn('cursor', 'Cursor', deps.signInCursor);
     }),
 
     /** Stops a sign-in still waiting on the browser. */

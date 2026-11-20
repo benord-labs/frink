@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -29,11 +30,20 @@ const alive = (pid: number) => {
 describe('signInToClaude', () => {
   let dir = '';
   let app = new EventEmitter();
+  const spawned: ChildProcess[] = [];
 
-  const deps = (mode: string, extra: Record<string, string> = {}) => ({
+  const deps = (
+    mode: string,
+    extra: Record<string, string> = {},
+  ): NonNullable<Parameters<typeof signInToClaude>[0]> => ({
     binaryPath: () => path.join(dir, 'claude'),
     baseEnv: () => ({ PATH: process.env.PATH ?? '', OUT: dir, FAKE_MODE: mode, ...extra }),
     app,
+    spawn: (command, args, options) => {
+      const child = spawn(command, args, options);
+      spawned.push(child);
+      return child;
+    },
   });
   const read = (name: string) => readFile(path.join(dir, name), 'utf8');
   const started = () => vi.waitFor(() => read('helper'), { timeout: 5000 });
@@ -60,7 +70,7 @@ describe('signInToClaude', () => {
       }),
     );
 
-    await expect(finished).resolves.toBe(true);
+    await expect(finished).resolves.toBe('finished');
     expect(await read('args')).toBe('auth login --claudeai\n');
     const env = (await read('env')).split('\n');
     expect(env).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR=');
@@ -83,7 +93,7 @@ describe('signInToClaude', () => {
 
     cancelClaudeSignIn();
 
-    await expect(finished).resolves.toBe(false);
+    await expect(finished).resolves.toBe('stopped');
     await vi.waitFor(() => expect(alive(helper)).toBe(false));
   });
 
@@ -105,8 +115,8 @@ describe('signInToClaude', () => {
     const second = signInToClaude(deps('done'));
 
     expect(second).not.toBe(first);
-    await expect(second).resolves.toBe(true);
-    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe('finished');
+    await expect(first).resolves.toBe('stopped');
     expect(await read('args')).toBe('auth login --claudeai\nauth login --claudeai\n');
   });
 
@@ -117,7 +127,7 @@ describe('signInToClaude', () => {
 
     vi.advanceTimersByTime(180_000);
 
-    await expect(finished).resolves.toBe(false);
+    await expect(finished).resolves.toBe('stopped');
   });
 
   it('stops when Frink quits', async () => {
@@ -126,12 +136,38 @@ describe('signInToClaude', () => {
 
     app.emit('before-quit');
 
-    await expect(finished).resolves.toBe(false);
+    await expect(finished).resolves.toBe('stopped');
   });
 
-  it('says it did not finish when Claude fails or cannot start', async () => {
-    await expect(signInToClaude(deps('fail'))).resolves.toBe(false);
+  it('says it did not finish when Claude fails', async () => {
+    await expect(signInToClaude(deps('fail'))).resolves.toBe('stopped');
+  });
+
+  it('counts an error from a running Claude, such as a stop that could not be delivered, as stopped', async () => {
+    const finished = signInToClaude(deps('wait'));
+    await started();
+    const child = spawned.at(-1);
+
+    child?.emit('error', new Error('kill EPERM'));
+
+    await expect(finished).resolves.toBe('stopped');
+    if (child?.pid) process.kill(-child.pid, 'SIGKILL');
+  });
+
+  it('says it could not start when the system ends Claude, as macOS does an unsigned binary', async () => {
+    const finished = signInToClaude(deps('wait'));
+    await started();
+    const pid = spawned.at(-1)?.pid;
+    // A pid of 0 would signal this test run's own process group.
+    if (!pid) throw new Error('Claude did not start through the given spawn');
+
+    process.kill(-pid, 'SIGKILL');
+
+    await expect(finished).resolves.toBe('unavailable');
+  });
+
+  it('says it could not start when the bundled Claude will not run', async () => {
     const missing = { ...deps('done'), binaryPath: () => path.join(dir, 'missing') };
-    await expect(signInToClaude(missing)).resolves.toBe(false);
+    await expect(signInToClaude(missing)).resolves.toBe('unavailable');
   });
 });

@@ -21,7 +21,8 @@ process.stdin.on('data', (chunk) => {
     const { id, method, params } = JSON.parse(buffer.slice(0, nl));
     buffer = buffer.slice(nl + 1);
     out('requests', JSON.stringify({ method, params }));
-    if (method === 'initialize') send({ id, result: { capabilities: { frinkHostToolPermission: 1 } } });
+    const permission = process.env.FAKE_MODE === 'old' ? {} : { frinkHostToolPermission: 1 };
+    if (method === 'initialize') send({ id, result: { capabilities: permission } });
     if (method === 'account/login/cancel' && process.env.FAKE_MODE !== 'deaf') send({ id, result: { status: 'canceled' } });
     if (method !== 'account/login/start') continue;
     send({ id, result: { type: 'chatgpt', loginId: 'login-1', authUrl: process.env.AUTH_URL } });
@@ -81,7 +82,7 @@ describe('signInToCodex', () => {
   it("asks Codex's app-server for a ChatGPT sign-in, opens its page, and ends Codex when it finishes", async () => {
     mode('done');
 
-    await expect(signInToCodex(deps())).resolves.toBe(true);
+    await expect(signInToCodex(deps())).resolves.toBe('finished');
 
     expect(await read('args')).toBe('app-server\n');
     expect(await read('codex-home')).toBe('/inherited/codex home\n');
@@ -97,7 +98,7 @@ describe('signInToCodex', () => {
 
   it('says it did not finish when Codex reports a failed or timed-out sign-in', async () => {
     mode('fail');
-    await expect(signInToCodex(deps())).resolves.toBe(false);
+    await expect(signInToCodex(deps())).resolves.toBe('stopped');
   });
 
   it('cancels the sign-in through Codex, then ends it', async () => {
@@ -108,7 +109,7 @@ describe('signInToCodex', () => {
 
     cancelCodexSignIn();
 
-    await expect(finished).resolves.toBe(false);
+    await expect(finished).resolves.toBe('stopped');
     await vi.waitFor(() => expect(alive(pid)).toBe(false));
     expect(await requests()).toContainEqual({
       method: 'account/login/cancel',
@@ -124,7 +125,7 @@ describe('signInToCodex', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
     cancelCodexSignIn();
-    await expect(finished).resolves.toBe(false);
+    await expect(finished).resolves.toBe('stopped');
     expect(alive(pid)).toBe(true);
     await vi.advanceTimersByTimeAsync(2_000);
 
@@ -153,7 +154,7 @@ describe('signInToCodex', () => {
     const second = signInToCodex(deps());
 
     expect(second).not.toBe(first);
-    await expect(second).resolves.toBe(true);
+    await expect(second).resolves.toBe('finished');
     expect(await read('args')).toBe('app-server\napp-server\n');
   });
 
@@ -165,29 +166,34 @@ describe('signInToCodex', () => {
 
     app.emit('before-quit');
 
-    await expect(finished).resolves.toBe(false);
+    await expect(finished).resolves.toBe('stopped');
     await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 1_000 });
     expect((await requests()).map((request) => request.method)).not.toContain(
       'account/login/cancel',
     );
   });
 
-  it('says it did not finish when Codex stops early', async () => {
+  it('says it failed when Codex stops before the sign-in does', async () => {
     mode('exit');
-    await expect(signInToCodex(deps())).resolves.toBe(false);
+    await expect(signInToCodex(deps())).resolves.toBe('failed');
   });
 
   it('opens only a secure web page', async () => {
     mode('wait', 'http://auth.openai.example/');
-    await expect(signInToCodex(deps())).resolves.toBe(false);
+    await expect(signInToCodex(deps())).resolves.toBe('failed');
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it('says it did not finish when the browser will not open or Codex is missing', async () => {
+  it('says it failed when the browser will not open', async () => {
     mode('wait');
     openExternal.mockRejectedValue(new Error('no browser'));
-    await expect(signInToCodex(deps())).resolves.toBe(false);
+    await expect(signInToCodex(deps())).resolves.toBe('failed');
+  });
 
-    await expect(signInToCodex({ ...deps(), binary: () => null })).resolves.toBe(false);
+  it('says it could not start when Codex is missing or will not run', async () => {
+    await expect(signInToCodex({ ...deps(), binary: () => null })).resolves.toBe('unavailable');
+    mode('old');
+    await expect(signInToCodex(deps())).resolves.toBe('unavailable');
+    expect(openExternal).not.toHaveBeenCalled();
   });
 });

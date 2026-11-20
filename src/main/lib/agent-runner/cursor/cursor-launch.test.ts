@@ -331,7 +331,7 @@ describe('signInToCursor', () => {
       FAKE_LOGIN_URL: PAGE,
     });
 
-    expect(await signedIn).toBe(true);
+    expect(await signedIn).toBe('finished');
     expect(opened).toEqual([PAGE]);
     expect(forks).toEqual([expect.objectContaining({ cwd: realHome, env: expect.anything() })]);
     expect(forks[0]?.env.HOME).toBe(realHome);
@@ -341,7 +341,7 @@ describe('signInToCursor', () => {
   it('makes no new key when Cursor is already signed in', async () => {
     const { signedIn, opened, seen } = signIn({});
 
-    expect(await signedIn).toBe(true);
+    expect(await signedIn).toBe('finished');
     expect(opened).toEqual([]);
     expect(seen).toEqual([
       { type: 'auth', status: 'logged-in' },
@@ -352,12 +352,12 @@ describe('signInToCursor', () => {
   it('signs in again when Cursor turns down the key it has stored', async () => {
     const { signedIn, opened } = signIn({ FAKE_MODELS: 'unauthenticated', FAKE_LOGIN_URL: PAGE });
 
-    expect(await signedIn).toBe(true);
+    expect(await signedIn).toBe('finished');
     expect(opened).toEqual([PAGE]);
   });
 
   it('reports a sign-in that failed, and opens only secure web pages', async () => {
-    expect(await signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN: 'fail' }).signedIn).toBe(false);
+    expect(await signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN: 'fail' }).signedIn).toBe('failed');
 
     const odd = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: 'file:///etc/hosts' });
     await odd.signedIn;
@@ -368,7 +368,7 @@ describe('signInToCursor', () => {
     const first = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: PAGE });
     const second = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: PAGE });
 
-    expect(await Promise.all([first.signedIn, second.signedIn])).toEqual([true, true]);
+    expect(await Promise.all([first.signedIn, second.signedIn])).toEqual(['finished', 'finished']);
     expect(first.forks.length + second.forks.length).toBe(1);
   });
 
@@ -380,7 +380,7 @@ describe('signInToCursor', () => {
     expect(again.opened).toEqual([PAGE]);
     expect(again.forks).toEqual([]);
     first.hosts[0]?.kill();
-    expect(await again.signedIn).toBe(false);
+    expect(await again.signedIn).toBe('failed');
   });
 
   it('answers in plain words when the host cannot start, and leaves no timer behind', async () => {
@@ -393,8 +393,21 @@ describe('signInToCursor', () => {
       status: 'failed',
       reason: "Frink couldn't reach Cursor. Try again in a moment.",
     });
-    expect(await signInToCursor({ ...deps(), forkHost })).toBe(false);
+    expect(await signInToCursor({ ...deps(), forkHost })).toBe('unavailable');
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('says it could not start when the host stops before Cursor says anything', async () => {
+    const forkHost: ForkHost = (_input, events) => {
+      setImmediate(events.exit);
+      return { send: () => undefined, kill: () => undefined };
+    };
+    expect(await signInToCursor({ ...deps(), forkHost })).toBe('unavailable');
+  });
+
+  it('says it could not start when the SDK is missing from this copy of Frink', async () => {
+    const missing = deps({}, { sdkRoot: path.join(root, 'none') });
+    expect(await signInToCursor(missing)).toBe('unavailable');
   });
 });
 
