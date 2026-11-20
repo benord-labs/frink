@@ -2,7 +2,7 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import MonacoEditor, { type EditorProps } from '@monaco-editor/react';
-import { useAtom, useAtomValue, useSetAtom } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import {
   BookOpen,
   ChevronRight,
@@ -130,7 +130,7 @@ const preventFocus = (event: Event) => event.preventDefault();
 export function UnsavedChangesPrompt(): ReactElement {
   const selectedProject = useAtomValue(selectedProjectAtom);
   const saveOpenFile = useSaveOpenFile(selectedProject?.path, triggerFileTreeRefresh);
-  // The panel puts focus back on the editor itself (see promptOpen below).
+  // The panel puts focus back on the editor itself once the prompt closes.
   return <UnsavedChangesDialog saveOpenFile={saveOpenFile} onCloseAutoFocus={preventFocus} />;
 }
 
@@ -413,12 +413,15 @@ export function CodeEditorPanel({
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
   const editorRef = useRef<import('monaco-editor').editor.IStandaloneCodeEditor | null>(null);
   // The root unsaved-changes prompt leaves focus to the panel: back to the editor once answered.
-  const promptOpen = useAtomValue(pendingCloseKeysAtom) !== null;
-  const promptWasOpen = useRef(false);
+  const store = useStore();
   useEffect(() => {
-    if (promptWasOpen.current && !promptOpen) editorRef.current?.focus();
-    promptWasOpen.current = promptOpen;
-  }, [promptOpen]);
+    let wasOpen = store.get(pendingCloseKeysAtom) !== null;
+    return store.sub(pendingCloseKeysAtom, () => {
+      const open = store.get(pendingCloseKeysAtom) !== null;
+      if (wasOpen && !open) editorRef.current?.focus();
+      wasOpen = open;
+    });
+  }, [store]);
   const lineChangeDecorationIdsRef = useRef<string[]>([]);
   const inlineDiffDecorationIdsRef = useRef<string[]>([]);
   const inlineDeletedZoneIdsRef = useRef<string[]>([]);

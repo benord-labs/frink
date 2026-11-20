@@ -16,10 +16,8 @@ type GuardWebContents = {
   isDestroyed: () => boolean;
   isCrashed: () => boolean;
   send: (channel: string, reason: LeaveReason) => void;
-  on: (
-    event: 'did-start-navigation',
-    listener: (details: { isMainFrame: boolean; isSameDocument: boolean }) => void,
-  ) => void;
+  /** Fires once a new main-frame document commits; an aborted navigation never fires it. */
+  on: (event: 'did-navigate', listener: () => void) => void;
 };
 /** The parts of the main BrowserWindow the guard uses. */
 type GuardWindow = {
@@ -131,8 +129,7 @@ export function createLeaveGuard({ app, ipc }: { app: GuardApp; ipc: GuardIpc })
       clearAck();
     });
     // A new document has no unsaved tabs until it says so; a crashed one is never waited on.
-    window.webContents.on('did-start-navigation', (details) => {
-      if (!details.isMainFrame || details.isSameDocument) return;
+    window.webContents.on('did-navigate', () => {
       // The page that showed any open prompt is gone; a prompt left pending would outrank later closes.
       hasUnsaved = false;
       pending = null;

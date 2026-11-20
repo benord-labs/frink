@@ -108,7 +108,7 @@ describe('leave guard', () => {
   it('forgets the unsaved flag when the page navigates away', () => {
     const { close, webContents, fromRenderer } = setup();
     fromRenderer('leave-guard:set-unsaved', true);
-    webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    webContents.emit('did-navigate');
     expect(close()).toBe(false);
   });
 
@@ -117,11 +117,18 @@ describe('leave guard', () => {
     fromRenderer('leave-guard:set-unsaved', true);
     quit();
     fromRenderer('leave-guard:ack');
-    webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    webContents.emit('did-navigate');
 
     fromRenderer('leave-guard:set-unsaved', true);
     expect(close()).toBe(true);
     expect(webContents.send).toHaveBeenLastCalledWith('leave-guard:request', 'close');
+  });
+
+  it('keeps asking when a navigation starts but never commits (e.g. a 204)', () => {
+    const { close, webContents, fromRenderer } = setup();
+    fromRenderer('leave-guard:set-unsaved', true);
+    webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    expect(close()).toBe(true);
   });
 
   it('ignores answers from any other webContents', () => {
