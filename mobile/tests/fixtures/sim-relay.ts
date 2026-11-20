@@ -103,7 +103,7 @@ type Input = Record<string, string> & { type: string; patch?: object };
 const FIXED: Record<string, unknown> = {
   '/pair': {
     token: 'b'.repeat(43),
-    deviceId: 'device-1',
+    deviceId: '00000000-0000-4000-8000-000000000001',
     machineName: 'Fixture Mac',
     apiVersion: 3,
   },

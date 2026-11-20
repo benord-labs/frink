@@ -134,6 +134,7 @@ function ChatList({
     <ScrollView
       testID="chat-list"
       style={{ flex: 1 }}
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: space.lg }}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
