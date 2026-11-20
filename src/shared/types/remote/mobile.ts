@@ -125,6 +125,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   // Live updates for one conversation, pushed as `evt` frames on the channel that asked.
   z.object({ type: z.literal('watchChat'), chatId: id, subChatId: id.optional() }),
   z.object({ type: z.literal('unwatchChat'), sub: z.uuid() }),
+  // The chat worktree's uncommitted changes; `summaryOnly` answers the totals with no files.
+  z.object({ type: z.literal('chatChanges'), chatId: id, summaryOnly: z.boolean().optional() }),
 ]);
 
 export type MobileRequest = z.infer<typeof mobileRequestSchema>;
@@ -368,6 +370,31 @@ export type MobileChatOp =
 /** The JSON body of an `evt` frame; frames for one watch carry seq 1, 2, 3, ... with no gaps, but a
  * resync may repeat the seq of a frame that failed to send, so obey a resync at any seq. */
 export type MobileChatEvent = { ops: MobileChatOp[] };
+export type MobileDiffLine = {
+  kind: 'add' | 'del' | 'ctx';
+  text: string;
+  oldNo?: number;
+  newNo?: number;
+};
+export type MobileChangedFile = {
+  /** Relative to the chat's worktree. */
+  path: string;
+  status: 'added' | 'deleted' | 'modified' | 'renamed';
+  additions: number;
+  deletions: number;
+  hunks: { header: string; lines: MobileDiffLine[] }[];
+  /** Why `hunks` is empty: a binary file, a file that may hold secrets, or no room left. */
+  omitted?: 'binary' | 'secret' | 'size';
+};
+/** `truncated` is true when some content was left out to keep the answer small. */
+export type MobileChatChanges = {
+  additions: number;
+  deletions: number;
+  /** Every changed file, including any `files` leaves out; a binary-only change counts no lines. */
+  fileCount: number;
+  files: MobileChangedFile[];
+  truncated: boolean;
+};
 export type MobileResponses = {
   overview: MobileOverview;
   flows: MobileFlow[];
@@ -403,6 +430,7 @@ export type MobileResponses = {
   /** `detail` is what `chat` returns; events for `sub` start at seq 1 and change that detail. */
   watchChat: { sub: string; detail: MobileChatDetail };
   unwatchChat: { ok: true };
+  chatChanges: MobileChatChanges;
 };
 
 export const MOBILE_API_VERSION = 3;
