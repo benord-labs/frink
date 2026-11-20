@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openApp } from './fixtures/app';
+import { UNKNOWN_REQUEST, openApp } from './fixtures/app';
 import { conversation, openChat, requestsOf } from './fixtures/chat';
 import { NOW, overviewFixture } from './fixtures/data';
 import { macFlows } from './fixtures/flows';
@@ -71,9 +71,13 @@ test('a chat reads readiness from the shared overview poll', async ({ page }) =>
   expect(overviews.filter((input) => 'limits' in input)).toEqual([]);
 });
 
+// Against a desktop too old to push live updates, so the chat keeps its quick polls.
 test.describe('a polled chat', () => {
   async function openPausedChat(page: Page) {
-    const state = await openApp(page, { data: { chat: conversation() } });
+    const state = await openApp(page, {
+      data: { chat: conversation() },
+      respond: (input) => (input.type === 'watchChat' ? UNKNOWN_REQUEST : undefined),
+    });
     await openChat(page);
     await expect(page.getByTestId('message-m1')).toBeVisible();
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));

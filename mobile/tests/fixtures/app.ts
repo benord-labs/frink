@@ -1,5 +1,5 @@
 import type { Page, Request } from '@playwright/test';
-import type { MobileResponses } from '@frink/shared/types/remote/mobile';
+import type { MobileChatOp, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { ROUTE_HEADER, fixtureKey, fixtureRoute, mockRelay, secondKey, secondRoute } from './relay';
 import { NOW, previewData } from './data';
 
@@ -32,6 +32,8 @@ const computerFor = (route: string | undefined) =>
 type Input = Record<string, unknown> & { type: keyof MobileResponses };
 /** Returned by `respond`: the request is lost on the way, as when the Mac drops off the network. */
 export const UNREACHABLE = Symbol('unreachable');
+/** Returned by `respond`: answered as a desktop too old to know the request answers it. */
+export const UNKNOWN_REQUEST = Symbol('unknown request');
 export type AppState = {
   offline: boolean;
   data: Partial<Record<keyof MobileResponses, unknown>>;
@@ -42,6 +44,11 @@ export type AppState = {
   /** Answer one request yourself: return a value (or a promise of one) to send it, undefined for
    *  the default. */
   respond?: (input: Input) => unknown;
+  /** Every live chat watch the relay opened, oldest first. */
+  watches: string[];
+  /** Pushes ops to a live watch (the newest by default) through the channel's real crypto; the
+   *  next seq unless `seq` says otherwise. */
+  push: (ops: MobileChatOp[], options?: { sub?: string; seq?: number }) => boolean;
 };
 
 /** A promise the test settles itself, for a Mac that takes its time to answer. */
@@ -134,10 +141,15 @@ export async function openApp(
     notifications,
     alerts: [],
     respond,
+    watches: [],
+    push: () => false,
   };
   await page.clock.install({ time: NOW });
   await page.addInitScript(drawDeviceChrome);
-  await mockRelay(page, fixtureHost);
+  const events = await mockRelay(page, fixtureHost);
+  state.watches = events.opened;
+  state.push = (ops, { sub = state.watches.at(-1), seq } = {}) =>
+    !!sub && events.push(sub, { ops }, seq);
   if (paired)
     await page.addInitScript(
       (saved) => {
@@ -179,10 +191,21 @@ export async function openApp(
     state.requests.push(input);
     const custom = await state.respond?.(input);
     if (custom === UNREACHABLE) return route.abort('connectionreset');
+    if (custom === UNKNOWN_REQUEST)
+      return route.fulfill({
+        status: 400,
+        headers: corsHeaders,
+        json: { error: 'Invalid request. Check the values and try again.' },
+      });
     if (custom instanceof Error)
       return route.fulfill({ status: 409, headers: corsHeaders, json: { error: custom.message } });
     if (custom !== undefined)
       return route.fulfill({ headers: corsHeaders, json: { data: custom } });
+    if (input.type === 'watchChat')
+      return route.fulfill({
+        headers: corsHeaders,
+        json: { data: { sub: crypto.randomUUID(), detail: state.data.chat } },
+      });
     const saved = applyComposerChange(state.data.composer as ComposerLike, input);
     if (saved) return route.fulfill({ headers: corsHeaders, json: { data: saved } });
     return route.fulfill({

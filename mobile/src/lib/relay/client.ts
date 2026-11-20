@@ -39,6 +39,18 @@ const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const FRAME_ACK_MS = 10_000;
 /** Attachment parts are large, so a slow mobile uplink gets longer before it counts as dead. */
 const UPLOAD_ACK_MS = 20_000;
+/** Receives one live chat event frame: its sequence number and decoded JSON body. */
+export type RelayEventHandler = (seq: number, body: Uint8Array) => void;
+/** The client a request to a computer travels on. Live watches belong to it and end with it. */
+export type RelayLink = {
+  /** True once retired or closed: its watches are gone, and later requests dial a new client. */
+  readonly lost: boolean;
+  /** Delivers `evt` frames for `sub` until the returned function is called or the link is lost. */
+  listen(sub: string, handler: RelayEventHandler): () => void;
+  /** Called once, just after the link is lost; `gone` when it was closed on purpose, so its
+   * computer must not be watched again. */
+  onLost(listener: (gone: boolean) => void): () => void;
+};
 const DEV = typeof __DEV__ !== 'undefined' && __DEV__;
 
 function devLog(message: string) {
@@ -56,8 +68,30 @@ function frameBytes(data: unknown): Uint8Array {
   return bytes;
 }
 
+/** Adds one response part to its request, checking the parts agree and fit. */
+function collectPart(item: Pending, part: Extract<MobileEnvelope, { t: 'res' }>) {
+  if ((item.status === undefined) !== (part.status !== undefined))
+    throw new Error('Invalid response parts.');
+  if (part.status !== undefined) item.status = part.status;
+  const bytes = fromBase64(part.body);
+  item.size += bytes.length;
+  if (bytes.length > MOBILE_ENVELOPE_PART_BYTES || item.size > MAX_RESPONSE_BYTES)
+    throw new Error('Response too large.');
+  item.chunks.push(bytes);
+}
+
+function joinChunks({ chunks, size }: Pending) {
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return body;
+}
+
 /** One authenticated session; a disconnect fails every request, never replays it. */
-class RelayClient {
+class RelayClient implements RelayLink {
   private socket: Socket;
   private session: ChannelSession | null = null;
   private ready: Promise<void>;
@@ -66,6 +100,8 @@ class RelayClient {
   private nextId = 0;
   closed = false;
   private retiring = false;
+  private events = new Map<string, RelayEventHandler>();
+  private lostListeners = new Set<(gone: boolean) => void>();
   private failHandshake: (error: Error) => void = () => {};
 
   constructor(target: RelayTarget) {
@@ -121,43 +157,62 @@ class RelayClient {
     this.socket.connect();
   }
 
-  /** `failure` is what in-flight requests get: a lost link by default, so reads may ask again. */
-  close(reason = 'closed', failure: () => ApiError = linkLost) {
+  /** A `deliberate` close fails in-flight requests outright and ends its watches for good; any
+   * other is a lost link, so reads may ask again and watches move to the next link. */
+  close(reason = 'closed', deliberate = false) {
     if (this.closed) return;
     this.closed = true;
     devLog(`closed: ${reason}`);
+    const failure = deliberate ? unreachable : linkLost;
     this.failHandshake(failure());
     this.socket.disconnect();
     for (const item of this.pending.values()) item.finish(undefined, failure());
     this.pending.clear();
+    this.loseWatches(deliberate);
   }
 
   /** Closes once in-flight requests settle; each is bounded by its own timeout. */
   retire() {
     this.retiring = true;
+    this.loseWatches(false);
     if (this.pending.size === 0) this.close('retired');
   }
 
+  get lost() {
+    return this.closed || this.retiring;
+  }
+
+  listen(sub: string, handler: RelayEventHandler) {
+    if (this.lost) return () => {};
+    this.events.set(sub, handler);
+    return () => {
+      if (this.events.get(sub) === handler) this.events.delete(sub);
+    };
+  }
+
+  onLost(listener: (gone: boolean) => void) {
+    this.lostListeners.add(listener);
+    return () => void this.lostListeners.delete(listener);
+  }
+
+  private loseWatches(gone: boolean) {
+    this.events.clear();
+    const listeners = [...this.lostListeners];
+    this.lostListeners.clear();
+    // Told once teardown has finished, so a listener that dials never re-enters it.
+    void Promise.resolve().then(() => {
+      for (const listener of listeners) listener(gone);
+    });
+  }
+
   private receive(part: MobileEnvelope) {
+    // An event for a watch no screen holds any more is dropped, as a late reply is.
+    if (part.t === 'evt') return this.events.get(part.sub)?.(part.seq, fromBase64(part.body));
     if (part.t !== 'res') throw new Error('Unexpected envelope.');
     const item = this.pending.get(part.id);
     if (!item) return; // Late reply to a cancelled request.
-    if ((item.status === undefined) !== (part.status !== undefined))
-      throw new Error('Invalid response parts.');
-    if (part.status !== undefined) item.status = part.status;
-    const bytes = fromBase64(part.body);
-    item.size += bytes.length;
-    if (bytes.length > MOBILE_ENVELOPE_PART_BYTES || item.size > MAX_RESPONSE_BYTES)
-      throw new Error('Response too large.');
-    item.chunks.push(bytes);
-    if (!part.end) return;
-    const body = new Uint8Array(item.size);
-    let offset = 0;
-    for (const chunk of item.chunks) {
-      body.set(chunk, offset);
-      offset += chunk.length;
-    }
-    item.finish({ status: item.status!, body });
+    collectPart(item, part);
+    if (part.end) item.finish({ status: item.status!, body: joinChunks(item) });
   }
 
   private send(part: MobileEnvelope, active: () => boolean, ackMs = FRAME_ACK_MS) {
@@ -236,9 +291,9 @@ let cached: { identity: string; client: RelayClient } | undefined;
 /** The computer last asked, so a returning app can dial it before its first poll. */
 let lastTarget: RelayTarget | undefined;
 
-/** A deliberate close: in-flight reads fail outright rather than redialling the computer left. */
+/** A deliberate close: in-flight reads fail outright and watches end, never redialling it. */
 export function closeMobileRelay() {
-  cached?.client.close('closed', unreachable);
+  cached?.client.close('closed', true);
   cached = undefined;
   lastTarget = undefined;
 }
@@ -253,6 +308,9 @@ function clientFor(target: RelayTarget) {
   lastTarget = target;
   return cached.client;
 }
+
+/** The link the next request to `target` travels on, dialling one if needed. */
+export const relayLink = (target: RelayTarget): RelayLink => clientFor(target);
 
 export function relayRequest(
   target: RelayTarget,

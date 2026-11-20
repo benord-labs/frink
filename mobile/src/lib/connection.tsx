@@ -26,6 +26,7 @@ import { closeMobileRelay } from './relay/client';
 import {
   cacheWriter,
   clearCache,
+  type CacheWrite,
   freshSince,
   prefetch,
   prefetched,
@@ -278,6 +279,8 @@ export function useResource<T extends MobileRequest>(
   const pulled = useRef(false);
   // An asked-for refresh reads now, even when the cached answer is younger than the interval.
   const forced = useRef(false);
+  // Counts answers that arrived another way, so a poll sent before one cannot draw over it.
+  const puts = useRef(0);
   const [state, setState] = useState<{
     key: string;
     data?: Response<T>;
@@ -320,11 +323,14 @@ export function useResource<T extends MobileRequest>(
       const controller = pending;
       if (visible) setState((old) => ({ ...old, refreshing: true }));
       const write = cacheWriter(deviceId);
+      const seen = puts.current;
       try {
         // A shared prefetch is not aborted with this screen: other screens may be waiting on it.
         const next = await (prefetched<Response<T>>(key) ??
           request(input, pending.signal, connection));
-        if (!cancelled && currentKey.current === key) {
+        if (!cancelled && currentKey.current === key && puts.current !== seen)
+          setState((old) => ({ ...old, refreshing: false }));
+        else if (!cancelled && currentKey.current === key) {
           const data = share(readCache<Response<T>>(key)?.data, next);
           const updatedAt = Date.now();
           write(key, data, updatedAt);
@@ -372,6 +378,15 @@ export function useResource<T extends MobileRequest>(
     forced.current = true;
     setRevision((v) => v + 1);
   };
+  /** Shows an answer that arrived another way, such as a live update, if `write` may store it. */
+  const put = (next: Response<T>, write: CacheWrite) => {
+    if (currentKey.current !== key) return;
+    const data = share(readCache<Response<T>>(key)?.data, next);
+    const updatedAt = Date.now();
+    if (!write(key, data, updatedAt)) return;
+    puts.current++;
+    setState({ key, data, updatedAt, refreshing: false });
+  };
   return {
     data,
     /** True while `data` is not this request's own answer: a cached one, or the previous request's. */
@@ -381,6 +396,7 @@ export function useResource<T extends MobileRequest>(
     updatedAt: shown?.updatedAt,
     refreshing: focused && current && !!state.refreshing,
     refresh,
+    put,
     pull: () => {
       pulled.current = true;
       refresh();
