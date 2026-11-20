@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, lt, type SQL, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { getDatabase } from '../../index';
 import { subChatMessages, subChats } from '../../schema';
@@ -117,6 +117,42 @@ export function readTranscripts(db: Db, subChatIds: string[]): Map<string, Messa
     rowsById.set(id, stored);
   }
   return new Map([...rowsById].map(([id, stored]) => [id, parseRows(id, stored)]));
+}
+
+/** Small, because one row can hold megabytes and a page is read whole. */
+const NEWEST_PAGE_ROWS = 8;
+
+/** The first defined `decide` result reading newest-first, parsing one row at a time, so a decision
+ * near the end of a long transcript never reads the rest. */
+export function findNewestInTranscript<T>(
+  db: Db,
+  subChatId: string,
+  decide: (message: Message) => T | undefined,
+): T | undefined {
+  const { seq, message } = subChatMessages;
+  let before: number | undefined;
+  for (;;) {
+    const page = db
+      .select({ seq, message })
+      .from(subChatMessages)
+      .where(
+        and(
+          eq(subChatMessages.subChatId, subChatId),
+          before === undefined ? undefined : lt(seq, before),
+        ),
+      )
+      .orderBy(desc(seq))
+      .limit(NEWEST_PAGE_ROWS)
+      .all();
+    for (const row of page) {
+      for (const parsed of parseRows(subChatId, [row.message])) {
+        const decided = decide(parsed);
+        if (decided !== undefined) return decided;
+      }
+    }
+    if (page.length < NEWEST_PAGE_ROWS) return undefined;
+    before = page[page.length - 1]?.seq;
+  }
 }
 
 /** Null when the sub-chat does not exist; true when it exists and no `messageId` is asked for.

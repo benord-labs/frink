@@ -247,6 +247,72 @@ describe('upsertAssistantMessage branch selection', () => {
       'appended',
     );
     expect((await getSubChatById(db, subChatId))?.messages).toHaveLength(1);
+    expect(await rawMessages(subChatId)).not.toContain('not json');
+  });
+
+  it('appends past a corrupt middle row instead of raising on it', async () => {
+    const subChatId = await seedRaw('[]');
+    seedRawRows(subChatId, ['{not json', '{"id":"user-2","role":"user","parts":[]}']);
+    expect(await upsertAssistantMessage(db, subChatId, 'assistant-3', [{ type: 'text' }], 0)).toBe(
+      'appended',
+    );
+    expect(await rawMessages(subChatId)).toBe(
+      `[{not json,{"id":"user-2","role":"user","parts":[]},${JSON.stringify({ id: 'assistant-3', role: 'assistant', parts: [{ type: 'text' }] })}]`,
+    );
+  });
+
+  it('leaves the rows and updatedAt untouched for an identical repeat checkpoint', async () => {
+    // updatedAt is the renderer's durability floor, so a no-op write must not move it.
+    // The corrupt row would be reported (and dropped) by any full transcript read.
+    captureMainException.mockClear();
+    _resetCorruptTranscriptReportsForTests();
+    const subChatId = await seedRaw('[]');
+    seedRawRows(subChatId, ['{not json', assistant('assistant-1', 'first')]);
+    const old = new Date('2020-01-01T00:00:00Z');
+    db.update(schema.subChats)
+      .set({ updatedAt: old })
+      .where(eq(schema.subChats.id, subChatId))
+      .run();
+    const before = await rawMessages(subChatId);
+
+    const same = [{ type: 'text', text: 'first' }];
+    expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', same, 0)).toBe('unchanged');
+    expect(await rawMessages(subChatId)).toBe(before);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(captureMainException).not.toHaveBeenCalled();
+    expect((await getSubChatById(db, subChatId))?.updatedAt).toEqual(old);
+  });
+
+  it('rewrites a last row whose parts match but whose role is not assistant', async () => {
+    const subChatId = await seedRaw('[]');
+    seedRawRows(subChatId, ['{"id":"assistant-1","role":"user","parts":[]}']);
+    expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', [], 0)).toBe('rewritten');
+    expect((await getSubChatById(db, subChatId))?.messages[0].role).toBe('assistant');
+  });
+
+  it('appends after a user prompt at the next seq, then patches that row', async () => {
+    const subChatId = await seedRaw('[]');
+    seedRawRows(subChatId, [
+      assistant('assistant-0', 'earlier'),
+      '{"id":"user-1","role":"user","parts":[]}',
+    ]);
+    expect(await upsertAssistantMessage(db, subChatId, 'assistant-2', [{ type: 'text' }], 0)).toBe(
+      'appended',
+    );
+    const more = [{ type: 'text', text: 'more' }];
+    expect(await upsertAssistantMessage(db, subChatId, 'assistant-2', more, 0)).toBe('patched');
+    const seqs = db
+      .select({ seq: subChatMessages.seq })
+      .from(subChatMessages)
+      .where(eq(subChatMessages.subChatId, subChatId))
+      .orderBy(asc(subChatMessages.seq))
+      .all();
+    expect(seqs.map((row) => row.seq)).toEqual([0, 1, 2]);
+    expect((await getSubChatById(db, subChatId))?.messages.map((m) => m.id)).toEqual([
+      'assistant-0',
+      'user-1',
+      'assistant-2',
+    ]);
   });
 
   it('times the write itself, not the wait for the per-sub-chat lock', async () => {

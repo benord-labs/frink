@@ -5,7 +5,7 @@ import { isFrinkPlanReadyPart, type MessagePartLike } from '../../../../shared/t
 import { recordCheckpointPersist } from '../../diagnostics/stream-cadence';
 import type { getDatabase } from '../index';
 import { type NewSubChat, type SubChat, subChats } from '../schema';
-import { patchLastAssistantParts } from './sub-chat-checkpoint';
+import { appendNewMessage, patchLastAssistantParts } from './sub-chat-checkpoint';
 import { readTranscript, writeTranscript } from './sub-chat-messages';
 import { logSessionHandleChange, writeSubChatSession } from './sub-chat-session';
 import { bumpWriteGeneration, isStaleWrite, withSubChatLock } from './sub-chat-mutex';
@@ -201,15 +201,19 @@ export async function upsertAssistantMessage(
     const startedAt = performance.now();
     const outcome = db.transaction(() => {
       if (isStaleWrite(subChatId, generation)) return 'dropped';
-      if (patchLastAssistantParts(db, subChatId, assistantMessageId, parts)) return 'patched';
+      const fast = patchLastAssistantParts(db, subChatId, assistantMessageId, parts);
+      if (fast) return fast;
 
       if (!readSubChatRow(db, subChatId)) return 'missing';
+      // checkpoints never carry metadata, and the fast paths cannot express one either
+      if (appendNewMessage(db, subChatId, { id: assistantMessageId, role: 'assistant', parts })) {
+        return 'appended';
+      }
 
       const { rows, messages } = readTranscript(db, subChatId);
       const { idx, messages: nextMessages } = placeAssistantMessage(
         messages,
         assistantMessageId,
-        // checkpoints never carry metadata, and the fast path above cannot express one either
         parts,
         undefined,
       );
