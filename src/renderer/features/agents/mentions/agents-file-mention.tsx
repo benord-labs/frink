@@ -28,7 +28,6 @@ import {
   sortFilesByRelevance,
 } from '@/lib/mentions/agents-file-mention-search-helpers';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
-import { CUT_SHORT_MENTION_REASON, isCutShortMention } from '@/lib/mentions/cut-short-mention';
 import {
   followSelection,
   groupMentionOptionsByProject,
@@ -37,6 +36,7 @@ import {
 import { useRootSearches } from '@/lib/workspace-context/use-root-searches';
 import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { MENTION_PREFIXES } from '../../../../shared/lib/mentions/mention-grammar';
+import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import {
   Tooltip,
   TooltipContent,
@@ -387,15 +387,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       )
       .map((file) => {
         const pathParts = file.filePath.split('/');
-        const fileName = pathParts.pop() || file.filePath;
-        const dirPath = pathParts.join('/') || '/';
-
+        pathParts.pop();
+        // The same file token the repo results insert, so the agent is told about the file.
         return {
-          id: `changed:${file.filePath}`,
-          label: fileName,
-          path: file.filePath,
-          repository: repository || '',
-          truncatedPath: dirPath,
+          ...pickedPathMention('file', file.filePath),
+          truncatedPath: pathParts.join('/') || '/',
           additions: file.additions,
           deletions: file.deletions,
         };
@@ -403,7 +399,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
 
     // Sort by relevance using shared function
     return sortFilesByRelevance(mapped, debouncedSearchText);
-  }, [changedFiles, debouncedSearchText, repository]);
+  }, [changedFiles, debouncedSearchText]);
 
   // Convert API results to options with truncated path
   // Exclude files that are already in changedFileOptions
@@ -960,7 +956,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                 // biome-ignore lint/style/useNamingConvention: component type variable
                 const OptionIcon = getOptionIcon(option);
                 const isCategory = option.type === 'category';
-                const cutShort = !isCategory && isCutShortMention(option);
                 const showTooltip = !isCategory && option.path;
 
                 const itemContent = (
@@ -983,7 +978,6 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                     role="option"
                     tabIndex={0}
                     aria-selected={isSelected}
-                    aria-disabled={cutShort || undefined}
                     className={cn(
                       'group inline-flex w-[calc(100%-8px)] mx-1 items-center whitespace-nowrap outline-hidden',
                       'h-7 px-1.5 justify-start text-xs rounded-md',
@@ -1013,13 +1007,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                         </span>
                       )}
                       {/* Show truncated path for files only, not for skills/agents (they show in tooltip) */}
-                      {cutShort && (
-                        <span className="text-muted-foreground flex-1 min-w-0 ml-2 truncate text-[10px]">
-                          {CUT_SHORT_MENTION_REASON}
-                        </span>
-                      )}
                       {option.truncatedPath &&
-                        !cutShort &&
                         !isCategory &&
                         option.type !== 'skill' &&
                         option.type !== 'agent' && (

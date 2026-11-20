@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CUT_SHORT_MENTION_REASON } from '@/lib/mentions/cut-short-mention';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { AgentsFileMention } from './agents-file-mention';
 
 const state = vi.hoisted(() => ({
@@ -98,6 +98,21 @@ describe('AgentsFileMention with linked projects', () => {
     );
   });
 
+  it('picks a changed file as a file the agent is told about, whole even with a stray bracket', () => {
+    state.tree.extras = [];
+    linkedSearch([]);
+    const onSelect = vi.fn();
+    const changedFiles = [
+      { filePath: 'src/a]b.ts', displayPath: 'src/a]b.ts', additions: 3, deletions: 1 },
+    ];
+    renderPicker({ onSelect, changedFiles });
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const [picked] = onSelect.mock.calls[0] ?? [];
+    expect(picked).toMatchObject({ label: 'a]b.ts', additions: 3, deletions: 1 });
+    expect(parseMention(picked?.id ?? '')).toMatchObject({ type: 'file', path: 'src/a]b.ts' });
+  });
+
   it('keeps the usual header and searches nothing more when the chat links nothing', () => {
     state.tree.extras = [];
     linkedSearch([]);
@@ -153,21 +168,6 @@ describe('AgentsFileMention with linked projects', () => {
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'file:local:/w/ros-service/src/lib/app.ts' }),
     );
-  });
-
-  it('marks a name the message would cut short, including a linked project whose folder does', () => {
-    state.mainFiles = [file('app.ts'), file('src/a]b.ts')];
-    state.tree.extras = [{ ...ROS, path: '/w/My [old] stuff' }];
-    linkedSearch([[file('a.ts')]]);
-    renderPicker();
-
-    const marked = screen
-      .getAllByRole('option')
-      .filter((row) => row.textContent?.includes(CUT_SHORT_MENTION_REASON));
-    expect(marked.map((row) => row.getAttribute('data-option-index'))).toEqual(['1', '2']);
-    expect(
-      screen.getAllByRole('option').filter((row) => row.getAttribute('aria-disabled') === 'true'),
-    ).toEqual(marked);
   });
 });
 

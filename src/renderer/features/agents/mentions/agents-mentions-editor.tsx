@@ -10,16 +10,29 @@ import {
 } from 'react';
 import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/command-block-format';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
-import { isCutShortMention, toastCutShortMention } from '@/lib/mentions/cut-short-mention';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
+import { refuseCutShortMention } from '@/lib/mentions/refuse-cut-short-mention';
 import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
 import {
   MENTION_PREFIXES,
   MENTION_TOKEN_PATTERN_SRC,
 } from '../../../../shared/lib/mentions/mention-grammar';
-import { pathLabel } from '../../../../shared/lib/mentions/parse-mention';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { cn } from '../../../lib/utils';
 import { createFileIconElement } from './agents-file-mention';
+
+/** A file or folder token's chip, read by the shared parser so encoded paths decode. */
+function filePathOption(id: string): FileMentionOption | null {
+  const parsed = parseMention(id);
+  if (parsed?.type !== 'file' && parsed?.type !== 'folder') return null;
+  return {
+    id,
+    label: parsed.label,
+    path: parsed.path,
+    repository: parsed.repository,
+    type: parsed.type,
+  };
+}
 
 // Threshold for skipping expensive trigger detection (characters)
 // Should be >= MAX_PASTE_LENGTH from paste-text.ts to avoid processing large pasted content
@@ -253,15 +266,7 @@ function buildMentionsInto(
       !option &&
       (id.startsWith(MENTION_PREFIXES.FILE) || id.startsWith(MENTION_PREFIXES.FOLDER))
     ) {
-      // Parse file/folder mention: file:repo:path or folder:repo:path
-      const parts = id.split(':');
-      if (parts.length >= 3) {
-        const type = parts[0] as 'file' | 'folder';
-        const repo = parts[1];
-        const path = parts.slice(2).join(':');
-        const name = pathLabel(path);
-        option = { id, label: name, path, repository: repo, type };
-      }
+      option = filePathOption(id);
     }
     if (!option && id.startsWith(MENTION_PREFIXES.SKILL)) {
       // Parse skill mention: skill:skill-name
@@ -544,14 +549,8 @@ export const AgentsMentionsEditor = memo(
     // Resolve mention from id for rendering
     const resolveMention = useCallback((id: string): FileMentionOption | null => {
       if (id.startsWith(MENTION_PREFIXES.FILE) || id.startsWith(MENTION_PREFIXES.FOLDER)) {
-        const parts = id.split(':');
-        if (parts.length >= 3) {
-          const type = parts[0] as 'file' | 'folder';
-          const repo = parts[1];
-          const path = parts.slice(2).join(':');
-          const name = pathLabel(path);
-          return { id, label: name, path, repository: repo, type };
-        }
+        const option = filePathOption(id);
+        if (option) return option;
       }
       if (id.startsWith(MENTION_PREFIXES.SKILL)) {
         const skillName = id.slice(MENTION_PREFIXES.SKILL.length);
@@ -1052,8 +1051,7 @@ export const AgentsMentionsEditor = memo(
 
         insertMention: (option: FileMentionOption) => {
           if (!editorRef.current) return;
-          if (isCutShortMention(option)) {
-            toastCutShortMention(option);
+          if (refuseCutShortMention(option)) {
             // As Escape does: the typed text stays, and Enter sends again.
             triggerActive.current = false;
             triggerStartIndex.current = null;

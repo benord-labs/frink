@@ -5,6 +5,7 @@ import { createRef, useEffect, useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { linkedMentionOption } from '@/lib/mentions/group-mention-options-by-project';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
+import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import { AgentsMentionsEditor, type AgentsMentionsEditorHandle } from './agents-mentions-editor';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -86,6 +87,19 @@ describe('composer mention chip', () => {
     expect(chip).toHaveTextContent('a.ts');
     expect(chip).toHaveAttribute('title', 'src/a.ts');
     expect(chip.querySelector('svg')).not.toBeNull();
+  });
+
+  it('draws and keeps a file whose name a plain token would cut short', () => {
+    const ref = createRef<AgentsMentionsEditorHandle>();
+    const { container } = render(
+      <AgentsMentionsEditor ref={ref} onTrigger={vi.fn()} onCloseTrigger={vi.fn()} />,
+    );
+    ref.current?.setValue(`see @[${pickedPathMention('file', 'src/a]b.ts').id}] now`);
+    const chip = container.querySelector<HTMLElement>('[data-mention-id]');
+
+    expect(chip).toHaveTextContent('a]b.ts');
+    expect(chip).toHaveAttribute('title', 'src/a]b.ts');
+    expect(ref.current?.getValue()).toContain(`@[${pickedPathMention('file', 'src/a]b.ts').id}]`);
   });
 
   it('names a Windows path by its file name', () => {

@@ -10,8 +10,6 @@ vi.mock('../../../lib/trpc', () => ({
 }));
 
 import { toast } from 'sonner';
-
-import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import { AgentsMentionsEditor, type AgentsMentionsEditorHandle } from './agents-mentions-editor';
 
 afterEach(() => {
@@ -407,37 +405,12 @@ describe('AgentsMentionsEditor placeholder', () => {
 
 describe('AgentsMentionsEditor.insertMention', () => {
   const toastError = vi.spyOn(toast, 'error');
+  const skill = { id: 'skill:a]b', label: 'a]b', path: '', repository: '', type: 'skill' as const };
 
-  function insertPicked(path: string) {
-    const { ref, container } = renderEditor();
-    const root = getEditorRoot(container);
-    const range = document.createRange();
-    range.selectNodeContents(root);
-    range.collapse(false);
-    window.getSelection()?.removeAllRanges();
-    window.getSelection()?.addRange(range);
-    ref.current?.insertMention(pickedPathMention('file', path));
-    return ref.current?.getValue() ?? '';
-  }
-
-  it('refuses a name the token would cut short, so the chat never gets a shorter path', () => {
-    toastError.mockClear();
-    expect(insertPicked('src/a]b.ts')).toBe('');
-    expect(toastError).toHaveBeenCalledWith(
-      "Couldn't add a]b.ts: its name has square brackets a message can't hold. Type its path instead.",
-    );
-  });
-
-  it('refuses a skill the same way without telling the user to type a path', () => {
+  it('refuses a skill whose token would read back shorter, and says so', () => {
     toastError.mockClear();
     const { ref } = renderEditor();
-    ref.current?.insertMention({
-      id: 'skill:a]b',
-      label: 'a]b',
-      path: '',
-      repository: '',
-      type: 'skill',
-    });
+    ref.current?.insertMention(skill);
     expect(ref.current?.getValue()).toBe('');
     expect(toastError).toHaveBeenCalledWith(
       "Couldn't add a]b: its name has square brackets a message can't hold.",
@@ -466,15 +439,9 @@ describe('AgentsMentionsEditor.insertMention', () => {
     window.getSelection()?.addRange(range);
     fireEvent.input(root);
 
-    ref.current?.insertMention(pickedPathMention('file', 'src/a]b.ts'));
+    ref.current?.insertMention(skill);
     expect(onCloseTrigger).toHaveBeenCalled();
     fireEvent.keyDown(root, { key: 'Enter' });
     expect(onSubmit).toHaveBeenCalledTimes(1);
-  });
-
-  it('inserts a name with a whole bracket pair', () => {
-    toastError.mockClear();
-    expect(insertPicked('app/[id]/page.tsx').trim()).toBe('@[file:local:app/[id]/page.tsx]');
-    expect(toastError).not.toHaveBeenCalled();
   });
 });
