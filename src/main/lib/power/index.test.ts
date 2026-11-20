@@ -13,8 +13,8 @@ function fakePower() {
       return () => monitor.off('on-battery', onBattery).off('on-ac', onAc);
     },
     onQuit: (listener) => {
-      monitor.on('before-quit', listener);
-      return () => monitor.off('before-quit', listener);
+      monitor.on('will-quit', listener);
+      return () => monitor.off('will-quit', listener);
     },
     readBatteryPercent: async () => null,
   };
@@ -64,7 +64,7 @@ describe('keep awake service', () => {
     const { service, blocker, monitor } = setup();
     service.start();
     reportWork('agent-turns', true);
-    monitor.emit('before-quit');
+    monitor.emit('will-quit');
     expect(blocker.stop).toHaveBeenCalledWith(11);
     expect(monitor.eventNames()).toEqual([]);
 

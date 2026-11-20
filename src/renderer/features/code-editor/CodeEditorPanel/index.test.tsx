@@ -15,7 +15,7 @@ import {
 } from '@/lib/code-editor/state';
 import { appStore } from '@/lib/jotai-store';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
-import { CodeEditorPanel } from './index';
+import { CodeEditorPanel, UnsavedChangesPrompt } from './index';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
 vi.hoisted(() => {
@@ -39,7 +39,7 @@ function StandInEditor() {
   return <div />;
 }
 
-/** The panel over two pinned tabs, with an unsaved edit in dirty.ts. */
+/** The panel (and the app's root prompt) over two pinned tabs, with an unsaved edit in dirty.ts. */
 function renderPanel() {
   for (const name of ['clean.ts', 'dirty.ts']) {
     appStore.set(openFileAtom, {
@@ -55,6 +55,7 @@ function renderPanel() {
     <Provider store={appStore}>
       <TooltipProvider>
         <CodeEditorPanel Editor={StandInEditor} />
+        <UnsavedChangesPrompt />
       </TooltipProvider>
     </Provider>,
     async () => null,

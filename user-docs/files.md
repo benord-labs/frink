@@ -68,7 +68,7 @@ A tab with unsaved changes has a blue dot. If you close it with **⌘W** or its 
 
 Moving to a chat in another project, or closing a split pane, never asks. Saved tabs close as before, and unsaved ones stay open. A tab kept this way counts as a file from another project, so it shows the same note above the editor.
 
-Quitting or reloading Frink doesn't ask yet, so save your changes first.
+Quitting Frink, closing its window, **Force Reload** (⌘⇧R), or **Restart to update** asks the same question once, covering every unsaved tab. **Save** writes them all, then goes ahead. If any save fails, Frink stays open. **Cancel** keeps Frink open with your changes. If Frink has frozen and can't show the question within 10 seconds, it goes ahead without saving.
 
 A badge that can't open still shows the file's path when you hover over it. In a worktree chat, a file in the project's main folder stays closed, because the chat works in its own worktree; the tooltip says so.
 

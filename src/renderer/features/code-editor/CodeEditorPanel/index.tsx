@@ -18,7 +18,16 @@ import {
   Loader2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { type ComponentType, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ComponentType,
+  memo,
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { MemoizedMarkdown } from '@/components/chat-markdown-renderer';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -87,6 +96,7 @@ import {
   revealPendingOnMount,
   type OpenFile,
   openFilesAtom,
+  pendingCloseKeysAtom,
   pinFileAtom,
   type RevealLineDetail,
   requestCloseFilesAtom,
@@ -113,6 +123,16 @@ import { OtherProjectNotice } from './OtherProjectNotice';
 import { ProjectGroupSeparator } from './ProjectGroupSeparator';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 import { UnsavedChangesDialog } from './UnsavedChangesDialog';
+
+const preventFocus = (event: Event) => event.preventDefault();
+
+/** The app's one unsaved-changes prompt, mounted at the root so a quit can ask from any view. */
+export function UnsavedChangesPrompt(): ReactElement {
+  const selectedProject = useAtomValue(selectedProjectAtom);
+  const saveOpenFile = useSaveOpenFile(selectedProject?.path, triggerFileTreeRefresh);
+  // The panel puts focus back on the editor itself (see promptOpen below).
+  return <UnsavedChangesDialog saveOpenFile={saveOpenFile} onCloseAutoFocus={preventFocus} />;
+}
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
 const MARKDOWN_PREVIEW_MAX_CHARS = 200_000;
@@ -392,6 +412,13 @@ export function CodeEditorPanel({
   const resizeStartWidth = useRef(0);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
   const editorRef = useRef<import('monaco-editor').editor.IStandaloneCodeEditor | null>(null);
+  // The root unsaved-changes prompt leaves focus to the panel: back to the editor once answered.
+  const promptOpen = useAtomValue(pendingCloseKeysAtom) !== null;
+  const promptWasOpen = useRef(false);
+  useEffect(() => {
+    if (promptWasOpen.current && !promptOpen) editorRef.current?.focus();
+    promptWasOpen.current = promptOpen;
+  }, [promptOpen]);
   const lineChangeDecorationIdsRef = useRef<string[]>([]);
   const inlineDiffDecorationIdsRef = useRef<string[]>([]);
   const inlineDeletedZoneIdsRef = useRef<string[]>([]);
@@ -1598,14 +1625,6 @@ export function CodeEditorPanel({
 
   return (
     <AnimatePresence>
-      <UnsavedChangesDialog
-        key="unsaved-changes"
-        saveOpenFile={saveOpenFile}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          editorRef.current?.focus();
-        }}
-      />
       {isOpen && (
         <motion.div
           key="panel"

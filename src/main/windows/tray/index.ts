@@ -113,14 +113,14 @@ export function startTray(open: OpenWindow): void {
   openWindow = open;
   if (stopTray || !getTrayEnabled()) return;
   stopTray = createTray();
-  app.once('before-quit', disposeTray);
+  app.once('will-quit', disposeTray);
 }
 
 function disposeTray(): void {
   if (!stopTray) return;
   stopTray();
   stopTray = null;
-  app.off('before-quit', disposeTray);
+  app.off('will-quit', disposeTray);
 }
 
 /** Linux keeps a removed tray icon registered until Frink restarts, so it applies there on launch. */

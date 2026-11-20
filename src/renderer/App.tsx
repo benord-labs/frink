@@ -28,6 +28,7 @@ import { useComposerSettingsSync } from './hooks/use-composer-settings-sync';
 import { useLinkedProjectsSync } from './hooks/use-linked-projects-sync';
 import { useSubChatModeSync } from './hooks/use-sub-chat-mode-sync';
 import { pendingAccountAuthAtom } from './lib/atoms';
+import { useLeaveGuard } from './lib/code-editor/leave-guard/use-leave-guard';
 import { appStore } from './lib/jotai-store';
 import { useSubagentTaskSync } from './lib/stores/use-subagent-task-sync';
 import { useWakeHoldSync } from './lib/stores/use-wake-hold-sync';
@@ -47,6 +48,10 @@ const ConnectClaudeAccountPage: LazyPage = lazy(() =>
 // ConnectAgentAccountPage connects every other provider that keeps its own sign-in.
 const ConnectAgentAccountPage = lazy(() =>
   import('./features/onboarding').then((m) => ({ default: m.ConnectAgentAccountPage })),
+);
+// Above every page so a quit can ask about unsaved editor tabs; same chunk as the editor panel.
+const UnsavedChangesPrompt: LazyPage = lazy(() =>
+  import('./features/code-editor').then((m) => ({ default: m.UnsavedChangesPrompt })),
 );
 
 // Loading fallback for lazy components.
@@ -207,6 +212,7 @@ function GlobalEventListeners() {
   useSubagentTaskSync();
   useMcpBackgroundPrefetch();
   useMcpImportInvalidation();
+  useLeaveGuard();
   return null;
 }
 
@@ -265,6 +271,9 @@ export function App() {
               </div>
               <ThemedToaster />
               <GlobalPermissionPrompt />
+              <Suspense fallback={null}>
+                <UnsavedChangesPrompt />
+              </Suspense>
               <CopyAcrossPrompt />
               <EasterEggOverlay />
               <WelcomeSplash />

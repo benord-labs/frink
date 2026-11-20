@@ -585,9 +585,9 @@ describe('registerGitWatcherIPC', () => {
         finishDispose = resolve;
       }),
     );
-    const [event, onBeforeQuit] = appOnMock.mock.calls[0];
-    expect(event).toBe('before-quit');
-    onBeforeQuit();
+    const [event, onWillQuit] = appOnMock.mock.calls[0];
+    expect(event).toBe('will-quit');
+    onWillQuit();
 
     // The shutdown handler's own call waits on that run instead of starting a second one.
     let settled = false;

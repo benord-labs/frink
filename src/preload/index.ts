@@ -14,6 +14,7 @@ import type {
 import type { TaskChatReadyData } from '../shared/types/task-chat-ready';
 import type { TrayTarget } from '../shared/types/tray';
 import { type ArtifactPreviewApi, artifactPreviewApi } from './artifact-preview';
+import { type LeaveGuardApi, leaveGuardApi } from './leave-guard';
 import { initPreloadSentry } from './sentry';
 
 void initPreloadSentry();
@@ -185,6 +186,8 @@ contextBridge.exposeInMainWorld('desktopApi', {
     ipcRenderer.on('window:focus-change', handler);
     return () => ipcRenderer.removeListener('window:focus-change', handler);
   },
+
+  ...leaveGuardApi,
 
   // Zoom controls
   zoomIn: () => ipcRenderer.invoke('window:zoom-in'),
@@ -594,7 +597,7 @@ export type UpdateProgress = {
   total: number;
 };
 
-export type DesktopApi = {
+export type DesktopApi = LeaveGuardApi & {
   platform: NodeJS.Platform;
   arch: string;
   getVersion: () => Promise<string>;

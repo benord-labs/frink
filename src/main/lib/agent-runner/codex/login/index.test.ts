@@ -93,7 +93,7 @@ describe('signInToCodex', () => {
       { method: 'account/login/start', params: { type: 'chatgpt' } },
     ]);
     await vi.waitFor(async () => expect(alive(Number(await read('pid')))).toBe(false));
-    expect(app.listenerCount('before-quit')).toBe(0);
+    expect(app.listenerCount('will-quit')).toBe(0);
   });
 
   it('says it did not finish when Codex reports a failed or timed-out sign-in', async () => {
@@ -164,7 +164,7 @@ describe('signInToCodex', () => {
     await opened();
     const pid = Number(await read('pid'));
 
-    app.emit('before-quit');
+    app.emit('will-quit');
 
     await expect(finished).resolves.toBe('stopped');
     await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 1_000 });

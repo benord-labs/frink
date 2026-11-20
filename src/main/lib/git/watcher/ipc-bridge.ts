@@ -200,11 +200,11 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
   });
 
   // Ahead of slower shutdown steps, so the stop finishes well before any forced exit
-  app.on('before-quit', () => void cleanupGitWatchers());
+  app.on('will-quit', () => void cleanupGitWatchers());
 }
 
 /**
- * Stops every watcher and refuses new ones. Starts on before-quit; later calls wait on that run,
+ * Stops every watcher and refuses new ones. Starts on will-quit; later calls wait on that run,
  * because exiting while a watcher call is in flight aborts the process.
  */
 export function cleanupGitWatchers(): Promise<void> {
