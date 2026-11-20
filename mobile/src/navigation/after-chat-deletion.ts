@@ -1,16 +1,30 @@
-import type { StackNavigationState } from '@react-navigation/native';
-import type { RootRoutes } from './routes';
+import type {
+  NavigationProp,
+  NavigationState,
+  ParamListBase,
+  Route,
+} from '@react-navigation/native';
 
-/** Clear every retained copy of the deleted chat and return a pushed detail to its origin. */
-export function afterChatDeletion(state: StackNavigationState<RootRoutes>, chatId: string) {
-  const current = state.routes[state.index];
-  const leaving = current.name === 'Chat' && current.params?.id === chatId && state.index > 0;
+type TabScreenNavigation = Pick<NavigationProp<ParamListBase>, 'getParent'>;
+
+function isDeletedChat({ name, params }: Route<string>, chatId: string) {
+  return name === 'Chat' && !!params && 'id' in params && params.id === chatId;
+}
+
+/** Drop the deleted chat from every tab's stack; each stack lands on what lay beneath it. */
+export function afterChatDeletion(state: NavigationState, chatId: string): NavigationState {
   const routes = state.routes
-    .filter((route) => !leaving || route.key !== current.key)
+    .filter((route) => !isDeletedChat(route, chatId))
     .map((route) =>
-      route.name === 'Chat' && route.params?.id === chatId
-        ? { ...route, params: undefined }
+      route.state?.stale === false
+        ? { ...route, state: afterChatDeletion(route.state, chatId) }
         : route,
     );
-  return { ...state, routes, index: leaving ? state.index - 1 : state.index };
+  return { ...state, routes, index: Math.min(state.index, routes.length - 1) };
+}
+
+/** From a screen inside a tab, closes the deleted chat in every tab at once. */
+export function closeDeletedChat(navigation: TabScreenNavigation, chatId: string) {
+  const root = navigation.getParent()?.getParent();
+  root?.reset(afterChatDeletion(root.getState(), chatId));
 }

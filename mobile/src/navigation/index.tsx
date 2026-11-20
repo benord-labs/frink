@@ -2,79 +2,69 @@ import {
   DarkTheme,
   DefaultTheme,
   NavigationContainer,
-  StackActions,
   useNavigationContainerRef,
   type NavigationContainerRefWithCurrent,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
-import { Platform, StatusBar } from 'react-native';
+import { StatusBar } from 'react-native';
 import { useConnection } from '../lib/connection';
 import { DraftProvider } from '../lib/drafts';
+import { lastChatSaver } from '../lib/last-chat';
 import { LiveActivityProvider } from '../lib/live-activity';
 import { NotificationProvider } from '../lib/notifications';
 import { usePendingAlert } from '../lib/notifications/alert-open';
 import { OverviewProvider } from '../lib/overview';
 import { onQueueLink } from '../lib/pairing-link';
-import { ChatScreen } from '../screens/Chat';
-import { FlowScreen } from '../screens/Flow';
-import { FlowsScreen } from '../screens/Flows';
-import { HistoryScreen } from '../screens/History';
-import { QueueScreen } from '../screens/Queue';
-import { RunScreen } from '../screens/Run';
+import { appStore } from '../lib/storage';
 import { SettingsScreen } from '../screens/Settings';
 import { useReduceMotion } from '../ui/glyphs';
 import { useTheme } from '../ui/theme';
-import type { RootRoutes } from './routes';
+import { alertActions, showQueue } from './open-alert';
+import type { AppRoutes } from './routes';
+import { Tabs } from './tabs';
 
-const Stack = createNativeStackNavigator<RootRoutes>();
+const Stack = createNativeStackNavigator<AppRoutes>();
+const saveLastChat = lastChatSaver(appStore);
+type Navigation = NavigationContainerRefWithCurrent<AppRoutes>;
 
 /** Mounted after the navigator is ready, including after a selected-computer switch. */
-function NavigationEvents({
-  navigation,
-}: {
-  navigation: NavigationContainerRefWithCurrent<RootRoutes>;
-}) {
+function NavigationEvents({ navigation }: { navigation: Navigation }) {
   useOpenAlertedChat(navigation);
   useOpenQueueLink(navigation);
   return null;
 }
 
 /** A tapped alert for the computer on screen opens its chat, or the Queue for a chat-less task. */
-function useOpenAlertedChat(navigation: NavigationContainerRefWithCurrent<RootRoutes>) {
+function useOpenAlertedChat(navigation: Navigation) {
   const { alert, done } = usePendingAlert(useConnection().connection?.deviceId);
-  // Reason: Notification routing has browser tests; CRAP estimates zero without their coverage map.
-  // fallow-ignore-next-line complexity
   useEffect(() => {
     if (!alert || !navigation.isReady()) return;
-    const inHistory = navigation.getCurrentRoute()?.name === 'History';
-    if (alert.target === 'queue') {
-      if (inHistory) navigation.dispatch(StackActions.replace('Queue'));
-      else navigation.navigate('Queue');
-    } else {
-      const action = inHistory ? StackActions.replace : StackActions.push;
-      navigation.dispatch(action('Chat', alert.target));
-    }
+    for (const action of alertActions(navigation.getRootState(), alert.target))
+      navigation.dispatch(action);
     done(alert);
     // `done` only clears this alert; the alert alone decides when to open.
   }, [navigation, alert]);
 }
 
 /** Tapping the Lock Screen card opens the Queue, including when the tap launched the app. */
-function useOpenQueueLink(navigation: NavigationContainerRefWithCurrent<RootRoutes>) {
+function useOpenQueueLink(navigation: Navigation) {
   useEffect(
     () =>
       onQueueLink(() => {
-        if (!navigation.isReady()) return;
-        if (navigation.getCurrentRoute()?.name === 'History')
-          navigation.dispatch(StackActions.replace('Queue'));
-        else navigation.navigate('Queue');
+        if (navigation.isReady()) navigation.dispatch(showQueue());
       }),
     [navigation],
   );
 }
 
-const ios = Platform.OS === 'ios';
+/** Remembers the conversation on screen, so the next launch reopens it. */
+function rememberChat(navigation: Navigation, deviceId: string | undefined) {
+  const route = navigation.getCurrentRoute();
+  if (!deviceId || !route || route.name === 'Settings') return;
+  const chat = route.name === 'Chat' ? route.params : undefined;
+  void saveLastChat(deviceId, chat?.id ? { id: chat.id, subChatId: chat.subChatId } : null);
+}
 
 /**
  * The app for the computer on screen. Switching computers remounts its screens, so none shows
@@ -89,26 +79,21 @@ export function Companion() {
   );
 }
 
-/** The conversation stays mounted beneath history and work destinations. */
+/** Each tab keeps its own stack; Settings opens over them as a sheet. */
 function CompanionScreens() {
-  const navigation = useNavigationContainerRef<RootRoutes>();
+  const navigation = useNavigationContainerRef<AppRoutes>();
   const t = useTheme();
   const reduceMotion = useReduceMotion();
   const [ready, setReady] = useState(false);
   const deviceId = useConnection().connection?.deviceId;
   const base = t.dark ? DarkTheme : DefaultTheme;
-  // A bar in the page's colour: the page scrolls away under its title instead of through it.
-  const solid = {
-    title: '',
-    headerTransparent: false,
-    headerStyle: { backgroundColor: t.background },
-  };
   return (
     <>
       <StatusBar barStyle={t.dark ? 'light-content' : 'dark-content'} />
       <NavigationContainer
         ref={navigation}
         onReady={() => setReady(true)}
+        onStateChange={() => rememberChat(navigation, deviceId)}
         theme={{
           ...base,
           colors: {
@@ -125,56 +110,21 @@ function CompanionScreens() {
           <NotificationProvider key={deviceId}>
             <LiveActivityProvider>
               <Stack.Navigator
-                initialRouteName="Chat"
                 screenOptions={{
                   animation: reduceMotion ? 'none' : 'default',
                   contentStyle: { backgroundColor: t.background },
-                  headerTransparent: ios,
                   headerTintColor: t.accent,
-                  headerBackButtonDisplayMode: 'minimal',
                   headerTitleAlign: 'center',
                   headerTitleStyle: { color: t.text },
-                  headerStyle: ios ? undefined : { backgroundColor: t.background },
+                  headerStyle: { backgroundColor: t.background },
                   headerShadowVisible: false,
                 }}
               >
-                {/* The transcript scrolls under the bar, so a material keeps it from showing through. */}
-                <Stack.Screen
-                  name="Chat"
-                  component={ChatScreen}
-                  options={{
-                    title: '',
-                    headerBlurEffect: t.solid ? 'none' : 'systemChromeMaterial',
-                    headerStyle: { backgroundColor: t.solid ? t.background : 'transparent' },
-                  }}
-                />
-                <Stack.Screen
-                  name="Queue"
-                  component={QueueScreen}
-                  options={{ ...solid, title: 'Queue' }}
-                />
-                <Stack.Screen
-                  name="Flows"
-                  component={FlowsScreen}
-                  options={{ ...solid, title: 'Flows' }}
-                />
+                <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
                 <Stack.Screen
                   name="Settings"
                   component={SettingsScreen}
-                  options={{ ...solid, title: 'Settings' }}
-                />
-                <Stack.Screen name="Flow" component={FlowScreen} options={solid} />
-                <Stack.Screen name="Run" component={RunScreen} options={solid} />
-                <Stack.Screen
-                  name="History"
-                  component={HistoryScreen}
-                  options={{
-                    headerShown: false,
-                    presentation: 'transparentModal',
-                    animation: reduceMotion ? 'none' : 'fade',
-                    gestureEnabled: false,
-                    contentStyle: { backgroundColor: 'transparent' },
-                  }}
+                  options={{ title: 'Settings', presentation: 'modal' }}
                 />
               </Stack.Navigator>
               {ready && <NavigationEvents navigation={navigation} />}

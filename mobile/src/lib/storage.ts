@@ -24,3 +24,6 @@ export async function readSavedComputers(): Promise<Computers> {
 export function savingComputers(stored: Computers) {
   return computerSaver(keychain, stored);
 }
+
+/** Small values this app keeps on the iPhone, in the keychain. */
+export const appStore = keychain;

@@ -1,4 +1,4 @@
-import { openHistory } from './fixtures/navigation';
+import { openTab } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
 import { openApp, type AppState } from './fixtures/app';
 import { chatsPage, NOW } from './fixtures/data';
@@ -30,7 +30,7 @@ async function openChats(page: Page, options: Parameters<typeof openApp>[1] = {}
     respond: (input) => (input.type === 'chats' ? searchChats(input) : undefined),
     ...options,
   });
-  await openHistory(page);
+  await openTab(page, 'Chats');
   return state;
 }
 
@@ -111,7 +111,7 @@ test('the list stops at the latest 200 chats and points to search', async ({ pag
   }
   await expect(note).toBeVisible();
   // The virtualised list settles its row heights as it scrolls, so wheel until the note stays put
-  // above the fixed History footer.
+  // above the tab bar.
   await expect
     .poll(async () => {
       await page.mouse.wheel(0, 4000);
@@ -189,7 +189,7 @@ test('a chat the computer won’t delete explains why', async ({ page }) => {
 
 test('no chats yet offers to start one', async ({ page }) => {
   await openApp(page, { data: { chats: { items: [], hasMore: false } } });
-  await openHistory(page);
+  await openTab(page, 'Chats');
   await expect(page.getByText('No chats yet')).toBeVisible();
   await page.screenshot({ path: 'test-results/chats-empty-dark.png' });
   await page.getByRole('button', { name: 'Start a chat', exact: true }).click();
@@ -201,7 +201,7 @@ test('offline keeps the last list and says so', async ({ page }) => {
   await expect(page.getByTestId('chat-row-chat-1')).toBeVisible();
   state.offline = true;
   await expect(
-    page.getByTestId('history-panel').getByText('Can’t reach your Mac', { exact: true }),
+    page.getByTestId('chat-list').getByText('Can’t reach your Mac', { exact: true }),
   ).toBeVisible({
     timeout: 10000,
   });

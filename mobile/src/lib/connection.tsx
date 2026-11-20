@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -174,7 +175,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     [dropRevoked],
   );
   const connection = selectedComputer(state);
-  useEffect(() => {
+  // A layout effect runs before every screen's first read, even a screen mounted in this commit.
+  useLayoutEffect(() => {
     if (connection) prefetchFirstPages(connection, request);
   }, [connection, request]);
   return (
@@ -287,6 +289,12 @@ export function useResource<T extends MobileRequest>(
     const cached = readCache<Response<T>>(key);
     return { key, data: cached?.data, updatedAt: cached?.updatedAt };
   });
+  // Coming back to an earlier request (a re-expanded list) draws its old answer as stale, not its own.
+  const [asked, setAsked] = useState(key);
+  if (asked !== key) {
+    setAsked(key);
+    if (state.key === key) setState(({ data, updatedAt }) => ({ key: '', data, updatedAt }));
+  }
   const current = state.key === key;
   // A shorter interval (a chat that starts running) brings the waiting tick forward.
   const retime = useRef<() => void>(undefined);

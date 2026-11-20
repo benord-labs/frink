@@ -735,5 +735,5 @@ test('deleting a chat from its header asks first, then leaves the chat', async (
     .poll(() => requestsOf(state, 'deleteChat'))
     .toEqual([{ type: 'deleteChat', chatId: 'chat-1' }]);
   await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Choose model', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Chats', exact: true })).toBeVisible();
 });

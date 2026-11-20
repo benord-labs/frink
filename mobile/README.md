@@ -1,6 +1,6 @@
 # Frink for iPhone
 
-A native Expo / React Native companion to the Frink desktop app. Start with a conversation. Open History to find chats and projects, or use the Queue button to review work needing attention. Execution and project files stay on your computer. This package has its own dependencies and lockfile, alongside the desktop and relay packages in the Frink repository.
+A native Expo / React Native companion to the Frink desktop app. A tab bar switches between Chats, Flows and Queue, and each tab remembers where you were. The app opens on Chats, back in the conversation you last had on screen. The computer button at the top of each tab opens Settings. Execution and project files stay on your computer. This package has its own dependencies and lockfile, alongside the desktop and relay packages in the Frink repository.
 
 ## Development
 
@@ -33,11 +33,11 @@ The connection works over cellular or other Wi-Fi networks. Keep Frink open with
 
 ## Use and recovery
 
-Open **History → Settings** to choose Light, Dark, or System appearance and one of five Transparency levels. Both choices are saved on this phone and apply to every paired computer. iOS Reduce Transparency always uses opaque material. The subtle background stays constant as transparency changes.
+Tap the computer button at the top of Chats, Flows or Queue to open **Settings** as a sheet. Choose Light, Dark, or System appearance and one of five Transparency levels. Both choices are saved on this phone and apply to every paired computer. iOS Reduce Transparency always uses opaque material. The subtle background stays constant as transparency changes.
 
 - **Queue:** see work needing attention and open its chat or Flow. Answer structured and free-text questions; allow or deny supported pending tool requests.
-- **Flows:** open from History to inspect runs and step output, read a plan before approving it, skip supported failed steps, start a run, stop it, or enable/disable its automation. Retry failed steps on desktop.
-- **History:** search recent conversations or browse projects. Close the drawer to return to the same draft and reading position. Continue conversations, load earlier messages, stop an active response, and start a chat in an existing project using the desktop's configured provider.
+- **Flows:** open the Flows tab to inspect runs and step output, read a plan before approving it, skip supported failed steps, start a run, stop it, or enable/disable its automation. Retry failed steps on desktop.
+- **Chats:** search recent conversations or browse projects, and start a new chat from the compose button. Switching tabs and back returns to the same draft and reading position. Continue conversations, load earlier messages, stop an active response, and start a chat in an existing project using the desktop's configured provider.
 - Revoke a phone from desktop Mobile settings. Disabling mobile access revokes all phones. A revoked phone must pair again.
 - Connection errors preserve the current draft. Commands are never automatically retried. After an uncertain response, refresh and check the computer's state before sending again.
 

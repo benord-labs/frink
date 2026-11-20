@@ -1,16 +1,11 @@
-import {
-  StackActions,
-  useNavigationState,
-  useRoute,
-  type RouteProp,
-} from '@react-navigation/native';
+import { StackActions, useRoute, type RouteProp } from '@react-navigation/native';
 import type {
   NativeStackHeaderItem,
   NativeStackNavigationOptions,
 } from '@react-navigation/native-stack';
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Keyboard, Platform, Pressable, ScrollView, View } from 'react-native';
-import { ChevronDown, Inbox, Menu, SquarePen, Trash2, type LucideIcon } from 'lucide-react-native';
+import { ChevronDown, Inbox, SquarePen, Trash2, type LucideIcon } from 'lucide-react-native';
 import type { MobileActivity, MobileChatDetail } from '@frink/shared/types/remote/mobile';
 import { useOverview } from '../../lib/overview';
 import { useRootNavigation, type RootRoutes } from '../../navigation/routes';
@@ -214,8 +209,13 @@ function HeaderAction({
   );
 }
 
-function ConversationActions({ onNewChat }: { onNewChat?: () => void }) {
-  const navigation = useRootNavigation();
+function ConversationActions({
+  onNewChat,
+  onQueue,
+}: {
+  onNewChat?: () => void;
+  onQueue: () => void;
+}) {
   const count = needsYouCount(useOverview().data);
   return (
     <View style={{ flexDirection: 'row' }}>
@@ -227,20 +227,19 @@ function ConversationActions({ onNewChat }: { onNewChat?: () => void }) {
         icon={Inbox}
         testID="queue-open"
         count={count}
-        onPress={() => navigation.navigate('Queue')}
+        onPress={onQueue}
       />
     </View>
   );
 }
 
-/** Root conversations open History; pushed conversations retain their native return path. */
+/** A conversation inside any tab; its Queue button switches to the Queue tab. */
 export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) | null) {
   const navigation = useRootNavigation();
   const t = useTheme();
   const count = needsYouCount(useOverview().data);
   const route = useRoute<RouteProp<RootRoutes, 'Chat'>>();
   const hasChat = !!route.params?.id;
-  const isRoot = useNavigationState((state) => state.routes[0]?.key === route.key);
   const [store] = useState(createTitleStore);
   const deleteRef = useRef(onDelete);
   deleteRef.current = onDelete;
@@ -256,47 +255,22 @@ export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) 
     const newChat = () => {
       Keyboard.dismiss();
       const state = navigation.getState();
-      const current = state.routes[state.index];
-      if (current.key !== route.key) return;
-      navigation.dispatch(
-        state.index > 0 && current.name === 'Chat' && current.params?.id
-          ? StackActions.push('Chat')
-          : StackActions.popTo('Chat'),
-      );
+      if (state.routes[state.index].key === route.key)
+        navigation.dispatch(StackActions.push('Chat'));
     };
-    const history = () => (
-      <HeaderAction
-        label="History"
-        icon={Menu}
-        testID="history-open"
-        onPress={() => navigation.navigate('History')}
-      />
+    const queue = () => {
+      Keyboard.dismiss();
+      navigation.navigate('QueueTab', { screen: 'Queue', pop: true });
+    };
+    const actions = () => (
+      <ConversationActions onNewChat={hasChat ? newChat : undefined} onQueue={queue} />
     );
-    const actions = () => <ConversationActions onNewChat={hasChat ? newChat : undefined} />;
     const options: NativeStackNavigationOptions = {
       headerTitle: () => (
         <ChatTitle store={store} onDelete={canDelete ? () => deleteRef.current?.() : undefined} />
       ),
-      headerLeft: isRoot ? history : undefined,
       headerRight: actions,
       ...(Platform.OS === 'ios' && {
-        unstable_headerLeftItems: isRoot
-          ? () => [
-              {
-                type: 'button',
-                label: 'History',
-                accessibilityLabel: 'History',
-                icon: { type: 'sfSymbol', name: 'line.3.horizontal' },
-                width: 44,
-                hidesSharedBackground: true,
-                tintColor: t.text,
-                onPress: () => {
-                  Keyboard.dismiss();
-                  navigation.navigate('History');
-                },
-              },
-            ]
-          : undefined,
         unstable_headerRightItems: () => [
           {
             type: 'button',
@@ -310,10 +284,7 @@ export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) 
             badge: count
               ? { value: count, style: { backgroundColor: t.attentionSolid, color: '#FFFFFF' } }
               : undefined,
-            onPress: () => {
-              Keyboard.dismiss();
-              navigation.navigate('Queue');
-            },
+            onPress: queue,
           },
           ...(hasChat
             ? [
@@ -333,7 +304,7 @@ export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) 
       }),
     };
     navigation.setOptions(options);
-  }, [navigation, route.key, store, canDelete, hasChat, isRoot, count, t.text, t.attentionSolid]);
+  }, [navigation, route.key, store, canDelete, hasChat, count, t.text, t.attentionSolid]);
 }
 
 /** One tab per conversation in the chat. A filled dot marks a running one, a ring one parked on

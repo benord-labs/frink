@@ -12,11 +12,11 @@ export function conversation(
   return { ...chatFixture(activity), ...overrides };
 }
 
-/** Opens a conversation through the same History row the reader uses. */
+/** Opens a conversation through the same Chats row the reader uses. */
 export async function openChat(page: Page, { id = 'chat-1' } = {}) {
   await openHistory(page);
   await page.getByTestId(`chat-row-${id}`).click();
-  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
+  await expect(page.getByTestId('chat-transcript').filter({ visible: true })).toBeVisible();
 }
 
 /**
