@@ -1,4 +1,5 @@
 import { atom } from 'jotai';
+import type { LeaveReason } from '../../../../shared/leave-reason';
 import {
   activeFilePathAtom,
   closeFileAtom,
@@ -30,6 +31,35 @@ export const requestCloseFilesAtom = atom(null, (get, set, keys: string[]) => {
   if (unsaved.length === 0) return;
   set(pendingCloseKeysAtom, unsaved);
   set(codeEditorOpenAtom, true);
+});
+
+/** Where focus goes once the unsaved-changes prompt closes: the editor panel registers its editor. */
+export const promptReturnFocusAtom = atom<{ focus: () => void } | null>(null);
+
+/** Why the window is waiting on the prompt (quit, close, reload, update); null for a tab close. */
+export const pendingLeaveAtom = atom<LeaveReason | null>(null);
+
+/**
+ * The window wants to go: the prompt covers every unsaved tab, replacing a tab-close prompt.
+ * Returns false when nothing is unsaved, so the caller lets the window go at once.
+ */
+export const requestLeaveAtom = atom(null, (get, set, reason: LeaveReason): boolean => {
+  const unsaved = get(openFilesAtom)
+    .filter((f) => f.isDirty)
+    .map((f) => fileKey(f.path, f.projectPath));
+  if (unsaved.length === 0) return false;
+  set(pendingLeaveAtom, reason);
+  set(pendingCloseKeysAtom, unsaved);
+  set(codeEditorOpenAtom, true);
+  return true;
+});
+
+/** Answers the pending leave once; later calls (e.g. an unmount after Save) do nothing. */
+export const settleLeaveAtom = atom(null, (get, set, outcome: 'confirm' | 'cancel') => {
+  if (get(pendingLeaveAtom) === null) return;
+  set(pendingLeaveAtom, null);
+  if (outcome === 'confirm') window.desktopApi?.confirmLeave();
+  else window.desktopApi?.cancelLeave();
 });
 
 export const requestCloseAllFilesAtom = atom(null, (get, set) => {

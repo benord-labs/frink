@@ -13,6 +13,7 @@ const PID_REGEX = /-(\d+)$/;
 
 import { initAnalytics, shutdown as shutdownAnalytics } from './lib/analytics';
 import { buildAppSubmenu } from './windows/app-menu';
+import { forceReloadMenuItem } from './windows/leave-guard';
 import { checkForUpdates, initAutoUpdater, setupFocusUpdateCheck } from './lib/auto-updater';
 import { getBundledClaudeVersion } from './lib/claude';
 import { parseLaunchDirectory } from './lib/cli';
@@ -323,9 +324,8 @@ if (gotTheLock) {
         {
           label: 'View',
           submenu: [
-            // Cmd+R is disabled to prevent accidental page refresh
-            // Use Cmd+Shift+R (Force Reload) for intentional reloads
-            { role: 'forceReload' },
+            // Plain Cmd+R is blocked (accidental refresh); Force Reload asks about unsaved tabs first
+            forceReloadMenuItem(getWindow),
             // Only show DevTools in dev mode or when unlocked via hidden feature
             ...(showDevTools ? [{ role: 'toggleDevTools' as const }] : []),
             { type: 'separator' },
@@ -555,11 +555,11 @@ if (gotTheLock) {
     }
   });
 
-  // Graceful shutdown: use preventDefault() to halt V8 teardown, run async
-  // cleanup, then app.exit(). Without this, native module ThreadSafeFunction
+  // Graceful shutdown on will-quit, so a window close can still cancel the quit: preventDefault()
+  // halts V8 teardown, async cleanup runs, then app.exit(). Without this, native module ThreadSafeFunction
   // callbacks (node-pty onData/onExit) fire after FreeEnvironment → SIGABRT.
   let isShuttingDown = false;
-  app.on('before-quit', async (event) => {
+  app.on('will-quit', async (event) => {
     if (isShuttingDown) {
       event.preventDefault(); // Block re-entrant quit while cleanup is in progress
       return;

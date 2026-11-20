@@ -12,7 +12,7 @@ const LOGIN_COMPLETED = z.object({ success: z.boolean() });
 
 const CANCEL_TIMEOUT_MS = 2_000;
 
-type QuitListener = (event: 'before-quit', stop: () => void) => void;
+type QuitListener = (event: 'will-quit', stop: () => void) => void;
 
 type CodexLoginDeps = {
   binary: () => string | null;
@@ -61,7 +61,7 @@ function startLogin(binary: string, deps: CodexLoginDeps): Login {
     if (finished) return;
     finished = true;
     if (running === login) running = undefined;
-    deps.app.off('before-quit', quit);
+    deps.app.off('will-quit', quit);
     resolve(outcome);
     if (cancelled) void Promise.allSettled([cancelled]).then(dispose);
     else dispose();
@@ -82,7 +82,7 @@ function startLogin(binary: string, deps: CodexLoginDeps): Login {
     }),
     stop,
   };
-  deps.app.on('before-quit', quit);
+  deps.app.on('will-quit', quit);
   openLogin(client, login, deps, end).catch((error) => {
     log.warn('[Codex sign-in] failed', error instanceof Error ? error.message : error);
     end('failed');

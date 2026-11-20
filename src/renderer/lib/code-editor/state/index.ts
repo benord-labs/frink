@@ -36,8 +36,12 @@ export { closesEditorOnEscape } from './close-on-escape';
 export {
   closePaneTabsAtom,
   pendingCloseKeysAtom,
+  pendingLeaveAtom,
+  promptReturnFocusAtom,
   requestCloseAllFilesAtom,
   requestCloseFilesAtom,
+  requestLeaveAtom,
+  settleLeaveAtom,
 } from './close-tabs';
 export { contextPathForTab, selectionFileNameForTab } from './context-file-for-tab';
 export { type CodeEditorLayout, getNextCodeEditorLayout } from './layout-cycle';

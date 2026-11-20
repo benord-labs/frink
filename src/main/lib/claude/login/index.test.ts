@@ -83,7 +83,7 @@ describe('signInToClaude', () => {
     ]) {
       expect(env.some((line) => line.startsWith(`${key}=`))).toBe(false);
     }
-    expect(app.listenerCount('before-quit')).toBe(0);
+    expect(app.listenerCount('will-quit')).toBe(0);
   });
 
   it('keeps waiting while stdin is open, and Cancel ends Claude and everything it started', async () => {
@@ -134,7 +134,7 @@ describe('signInToClaude', () => {
     const finished = signInToClaude(deps('wait'));
     await started();
 
-    app.emit('before-quit');
+    app.emit('will-quit');
 
     await expect(finished).resolves.toBe('stopped');
   });

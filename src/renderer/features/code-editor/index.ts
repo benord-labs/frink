@@ -22,4 +22,4 @@ export {
   openFilesAtom,
   tagOpenFilesWithPaneContextAtom,
 } from '@/lib/code-editor/state';
-export { CodeEditorPanel } from './CodeEditorPanel';
+export { CodeEditorPanel, UnsavedChangesPrompt } from './CodeEditorPanel';

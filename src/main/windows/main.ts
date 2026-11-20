@@ -9,6 +9,7 @@ import { registerGitWatcherIPC } from '../lib/git/watcher';
 import { shellOpenExternalGuarded } from '../lib/open-external-guarded';
 import { createAppRouter } from '../lib/trpc/routers';
 import { registerArtifactPreviewIpc } from '.';
+import { getLeaveGuard } from './leave-guard';
 import { attachAgentAbortOnRendererLifecycle } from './navigation-abort';
 import { attachMainWindowNavigationGuard, resolveRendererEntryUrl } from './navigation-guard';
 import { revealWhenReady } from './reveal';
@@ -401,6 +402,8 @@ export function createMainWindow(search = new URLSearchParams()): BrowserWindow 
 
   // Renderer crash / hard navigation (cmd+shift+r): tear down window-scoped agents only.
   attachAgentAbortOnRendererLifecycle(window.webContents);
+  // Quit, close and Force Reload ask about unsaved editor tabs first.
+  getLeaveGuard().attach(window);
 
   window.on('unresponsive', () => {
     log.error('[Window] Window became unresponsive');

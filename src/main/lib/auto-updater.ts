@@ -1,6 +1,7 @@
 import { app, type BrowserWindow, ipcMain, type MenuItemConstructorOptions } from 'electron';
 import log from 'electron-log';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
+import { getLeaveGuard } from '../windows/leave-guard';
 import { resolveUpdateFeedUrl } from './platform/update-feed';
 
 /**
@@ -273,11 +274,14 @@ function installDownloadedUpdate(): void {
     log.warn('[AutoUpdater] quitAndInstall requested but no update download is pending');
     return;
   }
-  log.info('[AutoUpdater] Installing update and restarting...');
-  downloadedUpdateVersion = null;
-  setTimeout(() => {
-    autoUpdater.quitAndInstall(false, true);
-  }, 100);
+  // Before quitAndInstall: on Windows and Linux it starts the installer before the window can ask.
+  getLeaveGuard().requestLeave('update', () => {
+    log.info('[AutoUpdater] Installing update and restarting...');
+    downloadedUpdateVersion = null;
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(false, true);
+    }, 100);
+  });
 }
 
 export async function downloadUpdate() {

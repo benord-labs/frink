@@ -87,8 +87,8 @@ const electronPower: PowerApi = {
     };
   },
   onQuit: (listener) => {
-    app.on('before-quit', listener);
-    return () => app.off('before-quit', listener);
+    app.on('will-quit', listener);
+    return () => app.off('will-quit', listener);
   },
   readBatteryPercent: async () => {
     if (process.platform !== 'darwin') return null;
