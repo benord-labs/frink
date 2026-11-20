@@ -64,10 +64,10 @@ const config = {
     ],
     build: {
       sourcemap: 'hidden',
-      lib: {
-        entry: resolve(__dirname, 'src/main/index.ts'),
-      },
       rollupOptions: {
+        // An input, not build.lib: the `?modulePath` worker bundles reuse this config, and
+        // electron-vite cannot build them while build.lib is set.
+        input: resolve(__dirname, 'src/main/index.ts'),
         external: [
           'electron',
           '@prisma/client',

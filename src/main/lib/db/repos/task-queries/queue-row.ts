@@ -7,7 +7,7 @@ import { and, sql as drizzleSql, eq, lt, or, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { getDatabase } from '../../index';
 import { chats, flowRuns, projects, type Task, tasks } from '../../schema';
-import { effectiveStatusExpr } from './flow-collapse';
+import { effectiveStatusExpr, isFlowRepresentative } from './flow-collapse';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -55,6 +55,16 @@ export function toQueueTaskRow(r: QueueSelectRow): TaskWithProjectRow {
 /** One task as the Work Queue lists it, or null when it is gone. */
 export async function getQueueTaskRow(db: Db, id: string): Promise<TaskWithProjectRow | null> {
   const [row] = await selectQueueTaskRows(db, eq(tasks.id, id)).limit(1);
+  return row ? toQueueTaskRow(row) : null;
+}
+
+/** The one row the Work Queue lists for a Flow run, or null when the run has no task. */
+export async function getQueueTaskRowForRun(
+  db: Db,
+  flowRunId: string,
+): Promise<TaskWithProjectRow | null> {
+  const where = and(eq(tasks.flowRunId, flowRunId), isFlowRepresentative);
+  const [row] = await selectQueueTaskRows(db, where).limit(1);
   return row ? toQueueTaskRow(row) : null;
 }
 

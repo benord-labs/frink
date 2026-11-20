@@ -14,20 +14,8 @@ export function getFrinkSkillsDir(): string {
   return resolve(join(frinkUserHome(), '.frink', 'skills'));
 }
 
-/**
- * The machine-local per-tool skill dirs that hold REAL COPIES projected from
- * `~/.frink/skills`: `~/.agents/skills` (universal — Cursor/opencode/Codex/Gemini),
- * `~/.claude/skills` (Claude), `~/.cursor/skills` (Cursor's shipped path). Single
- * definition of the projection targets — `skill-projection.getSkillTargetDirs`
- * and the permission checker's read-roots both consume this. Lazy for the same
- * home-per-call reason as above.
- */
-/**
- * The per-tool skill dirs under a given base: `<base>/.agents|.claude|.cursor/skills`. `base = frinkUserHome()`
- * is the machine-local universal set; `base = <projectPath>` targets a project's own tool dirs (used by the
- * user-initiated "copy across" to a project — see `provider-config-canonical-home`).
- */
-export function skillTargetDirsFor(base: string): string[] {
+/** Skill dirs READ under `base`, in precedence order (an earlier dir wins a name clash). */
+export function skillSourceDirsFor(base: string): string[] {
   return [
     join(base, '.agents', 'skills'),
     join(base, '.claude', 'skills'),
@@ -35,13 +23,25 @@ export function skillTargetDirsFor(base: string): string[] {
   ];
 }
 
+/** The machine-local skill source dirs (`skillSourceDirsFor(frinkUserHome())`). Lazy for the home-per-call reason above. */
+export function getUniversalSkillSources(): string[] {
+  return skillSourceDirsFor(frinkUserHome());
+}
+
+/** Where Frink projects REAL COPIES. Not `~/.cursor/skills`: Cursor reads these two itself, and a
+ *  copy there would shadow or outlive the original. */
 export function getUniversalSkillDirs(): string[] {
-  return skillTargetDirsFor(frinkUserHome());
+  return getUniversalSkillSources().filter((dir) => dir !== getCursorSkillsDir());
+}
+
+/** Cursor's own user skills dir: read as a source, never projected into. */
+export function getCursorSkillsDir(): string {
+  return join(frinkUserHome(), '.cursor', 'skills');
 }
 
 /**
  * The dirs the permission checker SEARCHES for a frink-shipped skill on a Read
- * auto-allow: the canonical store plus the per-tool real-copy dirs. Containment in
+ * auto-allow: the canonical store plus every per-tool skill dir. Containment in
  * one of these is necessary but NOT sufficient — the checker additionally requires
  * the skill dir to carry the frink baseline marker (`checkEdit`/`isFrinkShippedSkillRead`),
  * so a user's own skill sitting in the same dir still prompts. Once skills are real
@@ -49,5 +49,5 @@ export function getUniversalSkillDirs(): string[] {
  * which is why every home — not just the canonical store — has to be searched.
  */
 export function getSkillReadRoots(): string[] {
-  return [getFrinkSkillsDir(), ...getUniversalSkillDirs()];
+  return [getFrinkSkillsDir(), ...getUniversalSkillSources()];
 }

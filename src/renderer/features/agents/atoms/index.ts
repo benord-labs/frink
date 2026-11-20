@@ -199,6 +199,7 @@ export const focusedDiffFileAtomFamily = atomFamily((_chatId: string) => atom<st
 // Track chats with unseen changes (finished streaming but user hasn't opened them)
 // Updated by onFinish callback in Chat instances
 export const agentsUnseenChangesAtom = atom<Set<string>>(new Set<string>());
+export const hasAnyUnseenChangesAtom = atom((get) => get(agentsUnseenChangesAtom).size > 0);
 
 // Current todos state per sub-chat
 // Syncs the first (creation) todo tool with subsequent updates
@@ -271,6 +272,13 @@ export type SubChatFileChange = {
 };
 
 export const subChatFilesAtom = atom<Map<string, SubChatFileChange[]>>(new Map());
+
+/** Changed-file total across sub-chats; readers re-render only when the count moves. */
+export const totalSubChatFileCountAtom = atom((get) => {
+  let count = 0;
+  for (const files of get(subChatFilesAtom).values()) count += files.length;
+  return count;
+});
 
 // Mapping from subChatId to chatId (workspace ID) for aggregating stats
 // Map<subChatId, chatId>
@@ -822,7 +830,7 @@ export const splitViewChatIdsAtom = selectAtom(
   (a, b) => a.length === b.length && a.every((id, i) => id === b[i]),
 );
 
-/** Derived atom for active pane index only. Use in memoized ChatView so it re-renders when focus changes. */
+/** Derived atom for active pane index only. Per-pane readers use `useIsPaneActive` (a boolean) instead. */
 export const splitViewActivePaneIndexAtom = selectAtom(splitViewAtom, (sv) => sv.activePaneIndex);
 
 /** Layout mode only — subscribers update on cycleLayout, not on ratio-only drags (when layout unchanged). */

@@ -5,7 +5,12 @@ import { isFrinkPlanReadyPart, type MessagePartLike } from '../../../../shared/t
 import { recordCheckpointPersist } from '../../diagnostics/stream-cadence';
 import type { getDatabase } from '../index';
 import { type NewSubChat, type SubChat, subChats } from '../schema';
-import { patchLastAssistantParts } from './sub-chat-checkpoint';
+import {
+  appendNewMessage,
+  patchLastAssistantParts,
+  readLastAssistantIfId,
+  writeMessageRow,
+} from './sub-chat-checkpoint';
 import { readTranscript, writeTranscript } from './sub-chat-messages';
 import { logSessionHandleChange, writeSubChatSession } from './sub-chat-session';
 import { bumpWriteGeneration, isStaleWrite, withSubChatLock } from './sub-chat-mutex';
@@ -201,15 +206,19 @@ export async function upsertAssistantMessage(
     const startedAt = performance.now();
     const outcome = db.transaction(() => {
       if (isStaleWrite(subChatId, generation)) return 'dropped';
-      if (patchLastAssistantParts(db, subChatId, assistantMessageId, parts)) return 'patched';
+      const fast = patchLastAssistantParts(db, subChatId, assistantMessageId, parts);
+      if (fast) return fast;
 
       if (!readSubChatRow(db, subChatId)) return 'missing';
+      // checkpoints never carry metadata, and the fast paths cannot express one either
+      if (appendNewMessage(db, subChatId, { id: assistantMessageId, role: 'assistant', parts })) {
+        return 'appended';
+      }
 
       const { rows, messages } = readTranscript(db, subChatId);
       const { idx, messages: nextMessages } = placeAssistantMessage(
         messages,
         assistantMessageId,
-        // checkpoints never carry metadata, and the fast path above cannot express one either
         parts,
         undefined,
       );
@@ -222,6 +231,44 @@ export async function upsertAssistantMessage(
   });
 }
 
+/**
+ * A contentless finalize (aborted or silently-superseded turn) must not wipe parts that mid-stream
+ * checkpoints already persisted — finalize REPLACES, so pass the checkpoint back.
+ */
+function pickFinalParts(parts: unknown[], checkpointed: Message['parts'] | undefined): unknown[] {
+  if (!isContentlessParts(parts)) return parts;
+  return Array.isArray(checkpointed) && !isContentlessParts(checkpointed) ? checkpointed : parts;
+}
+
+/** The finalised message only: the transcript is not read when it is the last row. */
+export type SubChatFinalized = SubChatRow & { message: Message };
+
+/** Writes the finalised message, reading only its row when it is the last one. */
+function storeFinalMessage(db: Db, subChatId: string, final: Message): Message {
+  const last = readLastAssistantIfId(db, subChatId, final.id);
+  if (last) {
+    const finalParts = pickFinalParts(final.parts, last.message.parts);
+    const {
+      messages: [next],
+    } = placeAssistantMessage([last.message], final.id, finalParts, final.metadata);
+    if (JSON.stringify(next) !== JSON.stringify(last.message)) {
+      writeMessageRow(db, subChatId, last.seq, next);
+    }
+    return next;
+  }
+
+  const { rows, messages: existing } = readTranscript(db, subChatId);
+  const checkpointed = existing.find((m) => m.id === final.id)?.parts;
+  const { idx, messages: next } = placeAssistantMessage(
+    existing,
+    final.id,
+    pickFinalParts(final.parts, checkpointed),
+    final.metadata,
+  );
+  writeTranscript(db, subChatId, rows, next);
+  return next[idx === -1 ? next.length - 1 : idx];
+}
+
 export async function finalizeAssistantMessage(
   db: Db,
   subChatId: string,
@@ -230,31 +277,19 @@ export async function finalizeAssistantMessage(
   sessionId: string | null,
   metadata?: unknown,
   generation?: number, // finalize APPENDS, so a rolled-away turn must not put its message back
-): Promise<SubChatHydrated | null> {
+): Promise<SubChatFinalized | null> {
   return withSubChatLock(subChatId, async () => {
     return db.transaction(() => {
       if (isStaleWrite(subChatId, generation)) return null;
       const row = readSubChatRow(db, subChatId);
       if (!row) return null;
 
-      const { rows, messages: existing } = readTranscript(db, subChatId);
-      // A contentless finalize (aborted or silently-superseded turn) must not wipe parts that
-      // mid-stream checkpoints already persisted — finalize REPLACES, so pass the checkpoint back.
-      let finalParts = parts;
-      if (isContentlessParts(parts)) {
-        const checkpointed = existing.find((m) => m.id === assistantMessageId)?.parts;
-        if (Array.isArray(checkpointed) && !isContentlessParts(checkpointed)) {
-          finalParts = checkpointed;
-        }
-      }
-
-      const { messages: next } = placeAssistantMessage(
-        existing,
-        assistantMessageId,
-        finalParts,
+      const message = storeFinalMessage(db, subChatId, {
+        id: assistantMessageId,
+        role: 'assistant',
+        parts,
         metadata,
-      );
-      writeTranscript(db, subChatId, rows, next);
+      });
       const nextSessionId = sessionId ?? row.sessionId;
       logSessionHandleChange(subChatId, row.sessionId, nextSessionId, 'finalize');
 
@@ -269,7 +304,7 @@ export async function finalizeAssistantMessage(
 
       return {
         ...row,
-        messages: next,
+        message,
         sessionId: nextSessionId,
         streamId: null,
       };

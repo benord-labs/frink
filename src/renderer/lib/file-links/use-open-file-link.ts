@@ -7,8 +7,7 @@ import { trpc } from '@/lib/trpc';
 import {
   type FileLinkOpenInput,
   type FileLinkTarget,
-  findShortenedPath,
-  isBareRelativePath,
+  resolveFileLinkClick,
 } from './file-link-target';
 
 // A click reads the project as it is now, never an answer kept from an earlier click.
@@ -24,21 +23,16 @@ export function useOpenFileLink(
   return useCallback(
     async ({ projectName, ...input }, target) => {
       const { projectPath } = input;
-      const typeAt = (relativePath: string) =>
-        utils.files.entryType.fetch({ projectPath, relativePath }, FRESH);
-      let { path } = input;
-      let type = await typeAt(path);
-      // Only a bare relative path can be a shortened one. The search proposes; the disk decides.
-      if (!type && isBareRelativePath(target.path)) {
-        const entries = await utils.files.search.fetch({ projectPath, query: path }, FRESH);
-        path = findShortenedPath(path, entries) ?? path;
-        if (path !== input.path) type = await typeAt(path);
-      }
-      if (type === 'folder') return;
-      if (!type) {
-        toast.error(`Couldn't find ${input.name} in ${projectName ?? 'this project'}`);
+      const click = await resolveFileLinkClick(input, target, projectName, {
+        typeAt: (relativePath) => utils.files.entryType.fetch({ projectPath, relativePath }, FRESH),
+        search: (query) => utils.files.search.fetch({ projectPath, query }, FRESH),
+      });
+      if (!click) return;
+      if ('problem' in click) {
+        toast.error(click.problem);
         return;
       }
+      const path = click.open;
       openFile({ ...input, path, sourcePaneIndex });
       const filePath = getFullPath(projectPath, path);
       const { line } = target;

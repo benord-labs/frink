@@ -93,9 +93,19 @@ describe('ExtraProjectContentSearch', () => {
       { id: 'web', name: 'web', path: '/w/web' },
     ]);
 
+    // Each section sends its pane's key (main adds the folder), so sections never stop each other's
+    // search, and a section shown again sends the same input, so it reads its cached results.
     for (const projectPath of ['/w/api', '/w/web']) {
       expect(api.searchContent).toHaveBeenCalledWith(
-        { projectPath, query: 'useOrders', limit: 200, ...OPTIONS },
+        {
+          projectPath,
+          query: 'useOrders',
+          limit: 200,
+          ...OPTIONS,
+          includeGlobs: '',
+          excludeGlobs: '',
+          searchKey: 'pane:1',
+        },
         expect.objectContaining({ enabled: true }),
       );
     }
@@ -136,6 +146,13 @@ describe('ExtraProjectContentSearch', () => {
       MISSING_FOLDER,
       true,
     ],
+    [
+      "says the folder's drive isn't answering rather than that it is gone",
+      { matches: [], invalidRegex: false },
+      { data: 'unavailable', isSuccess: true },
+      "api's folder isn't answering. Its drive may be disconnected or asleep.",
+      true,
+    ],
   ])('%s, under its Linked heading', (_, data, folderType, message, asksDisk) => {
     api.state.search = { data, isLoading: false };
     api.state.folderType = folderType;
@@ -146,7 +163,7 @@ describe('ExtraProjectContentSearch', () => {
     // Only an empty search asks the disk whether the folder is still there.
     expect(api.entryType).toHaveBeenLastCalledWith(
       { projectPath: '/w/', relativePath: 'api' },
-      { enabled: asksDisk },
+      expect.objectContaining({ enabled: asksDisk }),
     );
   });
 
@@ -158,7 +175,24 @@ describe('ExtraProjectContentSearch', () => {
       expect.anything(),
       expect.objectContaining({ enabled: false }),
     );
-    expect(api.entryType).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
+    expect(api.entryType).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ enabled: false }),
+    );
+  });
+
+  it("asks the disk again while the folder's drive isn't answering, and stops once it answers", () => {
+    api.state.search = { data: { matches: [], invalidRegex: false }, isLoading: false };
+    renderSections('use(');
+    const [, options] = api.entryType.mock.lastCall ?? [];
+    // SAFETY: the folder query is handed react-query options, whose refetchInterval reads the query.
+    const { refetchInterval } = options as {
+      refetchInterval: (query: { state: { data?: unknown } }) => number | false;
+    };
+
+    expect(refetchInterval({ state: { data: 'unavailable' } })).toBeGreaterThan(0);
+    expect(refetchInterval({ state: { data: 'folder' } })).toBe(false);
+    expect(refetchInterval({ state: { data: null } })).toBe(false);
   });
 
   it('asks the disk nothing when something matches', () => {
@@ -166,7 +200,10 @@ describe('ExtraProjectContentSearch', () => {
     renderSections('useOrders');
 
     expect(screen.getByText('1 results in 1 files')).toBeInTheDocument();
-    expect(api.entryType).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
+    expect(api.entryType).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ enabled: false }),
+    );
   });
 
   it.each([

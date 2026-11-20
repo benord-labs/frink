@@ -4,8 +4,9 @@ import {
   MESSAGE_PROVENANCE_RULE,
   type MessageProvenance,
 } from '../../../../../shared/lib/message-markers/message-provenance';
+import { withTimeout } from '../../../platform/with-timeout';
 import { captureMainException } from '../../../sentry/init';
-import { type CodexAppServerClient, withTimeout } from '../app-server-client';
+import type { CodexAppServerClient } from '../app-server-client';
 
 /**
  * How a thread holds the rule. `durable`: in its developer instructions, which survive compaction.

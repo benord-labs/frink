@@ -15,10 +15,13 @@ describe('isGenericFlowPatchTool', () => {
 });
 
 describe('isRootFlowPatchToolPart', () => {
-  it('accepts native and MCP-qualified root patches', () => {
+  it('accepts native and MCP-qualified root patches, including saved ones under the earlier key', () => {
     expect(isRootFlowPatchToolPart({ type: 'tool-frink_flows_patch', toolCallId: 'root' })).toBe(
       true,
     );
+    expect(
+      isRootFlowPatchToolPart({ type: 'tool-mcp__frink__frink_flows_patch', toolCallId: 'root' }),
+    ).toBe(true);
     expect(
       isRootFlowPatchToolPart({
         type: 'tool-mcp__frink_dynamic_chat__frink_flows_patch',

@@ -9,6 +9,7 @@ vi.mock('../../../lib/trpc', () => ({
   trpc: {},
 }));
 
+import { toast } from 'sonner';
 import { AgentsMentionsEditor, type AgentsMentionsEditorHandle } from './agents-mentions-editor';
 
 afterEach(() => {
@@ -399,5 +400,48 @@ describe('AgentsMentionsEditor placeholder', () => {
     );
     const placeholder = getEditorRoot(container).parentElement?.firstElementChild;
     expect(placeholder?.className).toMatch(/(^|\s)text-muted-foreground(\s|$)/);
+  });
+});
+
+describe('AgentsMentionsEditor.insertMention', () => {
+  const toastError = vi.spyOn(toast, 'error');
+  const skill = { id: 'skill:a]b', label: 'a]b', path: '', repository: '', type: 'skill' as const };
+
+  it('refuses a skill whose token would read back shorter, and says so', () => {
+    toastError.mockClear();
+    const { ref } = renderEditor();
+    ref.current?.insertMention(skill);
+    expect(ref.current?.getValue()).toBe('');
+    expect(toastError).toHaveBeenCalledWith(
+      "Couldn't add a]b: its name has square brackets a message can't hold.",
+    );
+  });
+
+  it('closes the @ trigger on a refused pick, so Enter sends the message again', () => {
+    const ref = createRef<AgentsMentionsEditorHandle>();
+    const onSubmit = vi.fn();
+    const onCloseTrigger = vi.fn();
+    const { container } = render(
+      <AgentsMentionsEditor
+        ref={ref}
+        onTrigger={vi.fn()}
+        onCloseTrigger={onCloseTrigger}
+        onSubmit={onSubmit}
+      />,
+    );
+    const root = getEditorRoot(container);
+    const typed = document.createTextNode('@a]b');
+    root.replaceChildren(typed);
+    const range = document.createRange();
+    range.setStart(typed, 4);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    fireEvent.input(root);
+
+    ref.current?.insertMention(skill);
+    expect(onCloseTrigger).toHaveBeenCalled();
+    fireEvent.keyDown(root, { key: 'Enter' });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

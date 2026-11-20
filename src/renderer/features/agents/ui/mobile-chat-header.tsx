@@ -6,13 +6,7 @@ import { cn } from '../../../lib/utils';
 import { loadingSubChatsAtom } from '../atoms';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
 
-type DiffStats = {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-  isLoading: boolean;
-  hasChanges: boolean;
-};
+type DiffStats = { isLoading: boolean; hasChanges: boolean };
 
 type MobileChatHeaderProps = {
   onBackToChats?: () => void;

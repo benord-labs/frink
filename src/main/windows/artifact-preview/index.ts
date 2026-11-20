@@ -19,6 +19,7 @@ import {
   type ArtifactPreviewClosedEvent,
   type ArtifactPreviewOpenRequest,
 } from '../../../shared/types/artifacts/html-artifact';
+import { assertMainFrameSender, scaleViewBounds } from '../native-view';
 import { artifactDataUrl } from './artifact-document';
 
 const ARTIFACT_PREVIEW_PARTITION = 'artifact-preview';
@@ -139,19 +140,6 @@ function previewHostFor(window: BrowserWindow): ArtifactPreviewHost {
 
 const policySessions = new WeakSet<ArtifactPreviewSession>();
 
-function scaledBounds(
-  bounds: ArtifactPreviewBounds,
-  zoom: number,
-  host: ArtifactPreviewHost,
-): Electron.Rectangle {
-  const content = host.getContentBounds();
-  const x = Math.min(Math.max(0, Math.round(bounds.x * zoom)), Math.max(0, content.width - 1));
-  const y = Math.min(Math.max(0, Math.round(bounds.y * zoom)), Math.max(0, content.height - 1));
-  const width = Math.max(1, Math.min(Math.round(bounds.width * zoom), content.width - x));
-  const height = Math.max(1, Math.min(Math.round(bounds.height * zoom), content.height - y));
-  return { x, y, width, height };
-}
-
 function protocolOf(value: string): string {
   try {
     return new URL(value).protocol;
@@ -268,7 +256,7 @@ export class ArtifactPreviewManager {
       throw new Error('Artifact preview owner window is inactive');
     }
     host.contentView.addChildView(view);
-    view.setBounds(scaledBounds(bounds, ownerSender.getZoomFactor(), host));
+    view.setBounds(scaleViewBounds(bounds, ownerSender.getZoomFactor(), host.getContentBounds()));
   }
 
   private activateLoadedSurface(surface: Surface): void {
@@ -291,7 +279,9 @@ export class ArtifactPreviewManager {
     const { sender } = this.trustedOwner(event);
     if (!isArtifactPreviewBoundsRequest(value)) throw new TypeError('Invalid preview bounds');
     const surface = this.ownedSurface(sender, value.surfaceId);
-    surface.view.setBounds(scaledBounds(value.bounds, sender.getZoomFactor(), surface.host));
+    surface.view.setBounds(
+      scaleViewBounds(value.bounds, sender.getZoomFactor(), surface.host.getContentBounds()),
+    );
   }
 
   close(event: ArtifactPreviewIpcEvent, value: ArtifactPreviewPayload): void {
@@ -313,22 +303,15 @@ export class ArtifactPreviewManager {
   }
 
   private trustedOwner(event: ArtifactPreviewIpcEvent): PreviewOwner {
-    const sender = event.sender;
-    if (sender.isDestroyed() || !event.senderFrame || event.senderFrame !== sender.mainFrame) {
-      throw new Error('Artifact preview requires the main renderer frame');
-    }
-
-    const expectedHost = this.deps.getExpectedHost();
-    const senderHost = this.deps.fromSender(sender);
-    if (
-      !expectedHost ||
-      expectedHost.isDestroyed() ||
-      senderHost !== expectedHost ||
-      expectedHost.webContents !== sender
-    ) {
-      throw new Error('Artifact preview owner window is unavailable');
-    }
-    return { host: expectedHost, sender };
+    const { sender } = event;
+    const expected = this.deps.getExpectedHost();
+    const host = assertMainFrameSender(
+      event,
+      expected,
+      this.deps.fromSender(sender),
+      'Artifact preview',
+    );
+    return { host, sender };
   }
 
   private installGuestPolicy(surface: Surface): void {

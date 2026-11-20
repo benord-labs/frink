@@ -158,8 +158,24 @@ describe('dispatchFlowToolCall', () => {
     expect(state.handleFlowsToolCall).not.toHaveBeenCalled();
   });
 
+  it('reads the live plan phase over the send-start mode', async () => {
+    let planning = true;
+    const ctx = makeCtx({ isPlanPhase: () => planning });
+
+    const refused = await dispatch({ name: 'frink_flows_list', mode: 'plan', ctx });
+    expect(resultText(refused)).toBe(PLAN_MODE_REFUSAL);
+    // An auto-approved plan implements in the same turn: the snapshot still says 'plan'.
+    planning = false;
+    expect((await dispatch({ name: 'frink_flows_list', mode: 'plan', ctx }))?.isError).toBe(false);
+    expect((await dispatch({ mode: 'plan', ctx }))?.isError).toBe(false);
+    expect(state.handleFlowsToolCall).toHaveBeenCalledTimes(2);
+    // A mid-turn EnterPlanMode plans on an 'agent' snapshot.
+    planning = true;
+    expect(resultText(await dispatch({ name: 'frink_flows_list', ctx }))).toBe(PLAN_MODE_REFUSAL);
+  });
+
   it('preserves an explicit deny message in the structured agent-facing result', async () => {
-    const message = 'Denied by project rule mcp__frink_dynamic_chat__frink_flows_patch';
+    const message = 'Denied by project rule mcp__frink__frink_flows_patch';
     state.validateToolPermission.mockResolvedValue({ allowed: false, message });
     const result = await dispatch();
 
@@ -272,8 +288,8 @@ describe('dispatchFlowToolCall', () => {
       'execution-1',
       '/project',
       // frink_flows_patch edits rather than executes, so it never asks for
-      // per-flow consent and carries none.
-      { invocationConsented: false },
+      // per-flow consent and carries none; the sub-chat id scopes its read-version tracking.
+      { invocationConsented: false, sessionId: 'sub-1' },
     );
   });
 
@@ -286,58 +302,58 @@ describe('dispatchFlowToolCall', () => {
   it.each(['claude', 'codex'] as const)(
     'authorizes the captured registration snapshot at dynamic dispatch for %s',
     async (runtime) => {
-    const args = { packagePath: 'read-colocated-image' };
-    const presentation = {
-      type: 'custom-node-registration' as const,
-      packagePath: args.packagePath,
-      action: 'create' as const,
-      node: { name: 'read-colocated-image', entrypoint: 'index.js' },
-      source: { current: "console.log('ok');" },
-      modules: [],
-      resources: [{ path: 'cinder.png', bytes: 5795, change: 'added' as const }],
-      credentialNames: [],
-      packageDigest: 'a'.repeat(64),
-      packageBytes: 6000,
-      warning: 'Runs unsandboxed and may execute unattended from a Flow.',
-    };
-    state.handleFlowsToolCall.mockImplementationOnce(
-      async (
-        name: string,
-        toolArgs: Record<string, JsonValue>,
-        executionId: string,
-        projectPath: string,
-        options: {
-          registerNode: {
-            chatScoped?: boolean;
-            authorize: (value: typeof presentation) => Promise<{ allowed: boolean }>;
-            isExecutionCurrent?: () => boolean;
-          };
+      const args = { packagePath: 'read-colocated-image' };
+      const presentation = {
+        type: 'custom-node-registration' as const,
+        packagePath: args.packagePath,
+        action: 'create' as const,
+        node: { name: 'read-colocated-image', entrypoint: 'index.js' },
+        source: { current: "console.log('ok');" },
+        modules: [],
+        resources: [{ path: 'cinder.png', bytes: 5795, change: 'added' as const }],
+        credentialNames: [],
+        packageDigest: 'a'.repeat(64),
+        packageBytes: 6000,
+        warning: 'Runs unsandboxed and may execute unattended from a Flow.',
+      };
+      state.handleFlowsToolCall.mockImplementationOnce(
+        async (
+          name: string,
+          toolArgs: Record<string, JsonValue>,
+          executionId: string,
+          projectPath: string,
+          options: {
+            registerNode: {
+              chatScoped?: boolean;
+              authorize: (value: typeof presentation) => Promise<{ allowed: boolean }>;
+              isExecutionCurrent?: () => boolean;
+            };
+          },
+        ) => {
+          expect([name, toolArgs, executionId, projectPath]).toEqual([
+            'frink_register_node',
+            args,
+            'execution-1',
+            '/project',
+          ]);
+          expect(options.registerNode.isExecutionCurrent?.()).toBe(true);
+          expect(options.registerNode.chatScoped).toBe(true);
+          await expect(options.registerNode.authorize(presentation)).resolves.toEqual({
+            allowed: true,
+          });
+          return FLOW_RESULT;
         },
-      ) => {
-        expect([name, toolArgs, executionId, projectPath]).toEqual([
-          'frink_register_node',
-          args,
-          'execution-1',
-          '/project',
-        ]);
-        expect(options.registerNode.isExecutionCurrent?.()).toBe(true);
-        expect(options.registerNode.chatScoped).toBe(true);
-        await expect(options.registerNode.authorize(presentation)).resolves.toEqual({
-          allowed: true,
-        });
-        return FLOW_RESULT;
-      },
-    );
+      );
 
-    await expect(
-      dispatch({
-        name: 'frink_register_node',
-        args,
-        ctx: makeCtx({ runtime }),
-        isExecutionCurrent: () => true,
-        providerPreapproved: runtime === 'codex',
-      }),
-    ).resolves.toBe(FLOW_RESULT);
+      await expect(
+        dispatch({
+          name: 'frink_register_node',
+          args,
+          ctx: makeCtx({ runtime }),
+          isExecutionCurrent: () => true,
+          providerPreapproved: runtime === 'codex',
+        }),
+      ).resolves.toBe(FLOW_RESULT);
 
       expect(state.validateToolPermission).toHaveBeenCalledOnce();
       expect(state.validateToolPermission.mock.calls[0]?.at(-1)).toEqual(presentation);
@@ -416,7 +432,7 @@ describe('gateFlowWrite', () => {
     ).resolves.toEqual({ allowed: true });
 
     expect(state.validateToolPermission).toHaveBeenCalledWith(
-      'mcp__frink_dynamic_chat__frink_flows_patch',
+      'mcp__frink__frink_flows_patch',
       args,
       '/project',
       'chat-1',
@@ -595,7 +611,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
       { flowId: 'flow-1' },
       'execution-1',
       '/project',
-      { invocationConsented: false },
+      { invocationConsented: false, sessionId: 'sub-1' },
     );
   });
 
@@ -614,7 +630,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
       { flowId: 'flow-1' },
       'execution-1',
       '/project',
-      { invocationConsented: true },
+      { invocationConsented: true, sessionId: 'sub-1' },
     );
     expect(state.updateFlow).not.toHaveBeenCalled();
   });
@@ -1019,7 +1035,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
       { flowId: 'flow-1' },
       'execution-1',
       '/project',
-      { invocationConsented: false },
+      { invocationConsented: false, sessionId: 'sub-1' },
     );
     expect(result).toBe(FLOW_RESULT);
   });
@@ -1096,7 +1112,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
   it('still reports a rule denial as a decline, since the user wrote the rule', async () => {
     state.validateToolPermission.mockResolvedValue({
       allowed: false,
-      message: 'Denied by project rule mcp__frink_dynamic_chat__frink_flows_run',
+      message: 'Denied by project rule mcp__frink__frink_flows_run',
     });
 
     const result = await dispatch({ name: 'frink_flows_run' });

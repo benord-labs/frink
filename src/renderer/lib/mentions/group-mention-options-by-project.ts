@@ -2,6 +2,7 @@
  * The @ picker's rows, grouped by project when the chat links others: the chat's own project
  * first, then each linked project in link order, each under its name.
  */
+import { pathMentionId } from '../../../shared/lib/mentions/parse-mention';
 import { matchesMultiWordSearch, sortFilesByRelevance } from './agents-file-mention-search-helpers';
 import type { FileMentionOption } from './agents-mentions-types';
 
@@ -34,7 +35,7 @@ export function linkedMentionOption(
 ): FileMentionOption {
   const path = `${root.path}/${entry.path}`;
   return {
-    id: `${entry.type}:local:${path}`,
+    id: pathMentionId(entry.type, 'local', path),
     label: entry.label,
     path,
     repository: 'local',
@@ -68,6 +69,13 @@ export function linkedMentionGroups(
 const isProjectEntry = (option: FileMentionOption) =>
   option.type === undefined || option.type === 'file' || option.type === 'folder';
 
+/** The picker's sections, its options in keyboard order, and each option's row key in that order. */
+type GroupedMentionOptions = {
+  sections: MentionSection[];
+  options: FileMentionOption[];
+  keys: string[];
+};
+
 /**
  * The sections to show and, in the same order, the options the arrow keys move through, each
  * with a key. With no linked project the list is `main`'s options alone, under the picker's
@@ -78,7 +86,7 @@ const isProjectEntry = (option: FileMentionOption) =>
 export function groupMentionOptionsByProject(
   main: MentionProjectGroup,
   linked: MentionProjectGroup[],
-): { sections: MentionSection[]; options: FileMentionOption[]; keys: string[] } {
+): GroupedMentionOptions {
   const runs: Array<[group: MentionProjectGroup, name: string | null, of: FileMentionOption[]]> =
     linked.length === 0
       ? [[main, null, main.options]]

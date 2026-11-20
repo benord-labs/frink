@@ -149,7 +149,7 @@ describe('PromptBody — MCP branch', () => {
     render(
       <PromptBody
         prompt={makePrompt({
-          tool: 'mcp__frink_dynamic_chat__frink_register_node',
+          tool: 'mcp__frink__frink_register_node',
           presentation: makeRegistrationPresentation(),
         })}
         isBash={false}
@@ -199,7 +199,7 @@ describe('PromptBody — MCP branch', () => {
     render(
       <PromptBody
         prompt={makePrompt({
-          tool: 'mcp__frink_dynamic_chat__frink_register_node',
+          tool: 'mcp__frink__frink_register_node',
           presentation: malformedPresentation,
         })}
         isBash={false}
@@ -218,7 +218,7 @@ describe('PromptBody — MCP branch', () => {
     const { container } = render(
       <PromptBody
         prompt={makePrompt({
-          tool: 'mcp__frink_dynamic_chat__frink_flows_patch',
+          tool: 'mcp__frink__frink_flows_patch',
           input: {
             flowId: 'flow-1',
             operations: [
@@ -278,7 +278,7 @@ describe('PromptBody — MCP branch', () => {
     render(
       <PromptBody
         prompt={makePrompt({
-          tool: 'mcp__frink_dynamic_chat__frink_flows_patch',
+          tool: 'mcp__frink__frink_flows_patch',
           input: {
             name: 'Release automation',
             operations: [{ op: 'add_node' }, { op: 'add_node' }, { op: 'add_edge' }],
@@ -301,7 +301,7 @@ describe('PromptBody — MCP branch', () => {
     const { container } = render(
       <PromptBody
         prompt={makePrompt({
-          tool: 'mcp__frink_dynamic_chat__frink_flows_patch',
+          tool: 'mcp__frink__frink_flows_patch',
           input: {
             flowId: 'private-flow-id',
             operations: [

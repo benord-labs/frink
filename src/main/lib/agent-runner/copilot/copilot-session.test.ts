@@ -19,6 +19,7 @@ import {
 } from './copilot-session';
 import { CLIENT_ONLY_POLICY, fakeCopilotClient } from './copilot-test-fixtures';
 import { COPILOT_TOOLS, createCopilotGate } from './index';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 const VERSIONS = { floor: '1.0.96', below: '1.1.0' };
 const SIGNED_OUT =
@@ -47,6 +48,7 @@ const SAFETY_KEYS: (keyof SessionConfigBase)[] = [
   'managedSettings',
   'hooks',
   'onPermissionRequest',
+  'mcpServers',
 ];
 
 let root = '';
@@ -61,7 +63,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function sessionOptions(onEvent: (event: SessionEvent) => void = () => {}): SessionConfig {
+const FRINK_TOOLS = { name: FRINK_MCP_KEY, url: 'http://127.0.0.1:9/?channel=c' };
+
+function sessionOptions(
+  onEvent: (event: SessionEvent) => void = () => {},
+  frinkTools?: typeof FRINK_TOOLS,
+): SessionConfig {
   const gate = createCopilotGate({
     cwd: root,
     tools: COPILOT_TOOLS,
@@ -74,6 +81,7 @@ function sessionOptions(onEvent: (event: SessionEvent) => void = () => {}): Sess
     tools: COPILOT_TOOLS,
     gate,
     onEvent,
+    frinkTools,
   });
 }
 
@@ -129,6 +137,20 @@ describe('copilotSessionOptions', () => {
           disableAssistedPermissionsMode: true,
         },
       },
+    });
+  });
+
+  it("offers MCP tools only from Frink's own server, and only when the turn has it", () => {
+    expect(sessionOptions(undefined, FRINK_TOOLS)).toMatchObject({
+      availableTools: [...Object.keys(COPILOT_TOOLS), 'mcp:*'],
+      mcpServers: { [FRINK_TOOLS.name]: { type: 'http', url: FRINK_TOOLS.url, tools: ['*'] } },
+    });
+    expect(Object.keys(sessionOptions(undefined, FRINK_TOOLS).mcpServers ?? {})).toEqual([
+      FRINK_TOOLS.name,
+    ]);
+    expect(sessionOptions()).toMatchObject({
+      availableTools: Object.keys(COPILOT_TOOLS),
+      mcpServers: undefined,
     });
   });
 

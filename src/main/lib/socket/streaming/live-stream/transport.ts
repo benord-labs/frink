@@ -113,8 +113,7 @@ export function createLiveStreamTransport(input: { broadcast: Broadcast }) {
       }
       // Reads the parts finalize actually stored (a contentless finalize keeps checkpointed parts)
       // and runs before stream-settled is broadcast, so the renderer's settle refetch sees the PR.
-      const stored = finalized.messages.find((m) => m.id === payload.assistantMessageId);
-      await recordPrUrl(getDatabase(), payload.chatId, stored?.parts ?? []);
+      await recordPrUrl(getDatabase(), payload.chatId, finalized.message.parts);
       return { durability: 'committed' };
     } catch (err) {
       log.error('[Socket] Local finalize failed:', err);

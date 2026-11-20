@@ -164,6 +164,7 @@ const ActivePermissionPrompt = memo(function ActivePermissionPrompt({
       className="fixed bottom-4 right-4 z-100 max-w-md"
       aria-live="polite"
       aria-label="Permission requests"
+      data-native-view-intersecting=""
     >
       <PermissionPrompt
         key={currentRequest.requestId}

@@ -116,10 +116,8 @@ export function getToolStatus(part: MessagePart, chatStatus?: string, subChatId?
 }
 
 /**
- * Resolve a part's type to a registry key. MCP tools arrive with a fully-qualified
- * name like `tool-mcp__frink_dynamic_chat__frink_flows_patch` but the registry
- * keys use the short form `tool-frink_flows_patch`. This strips the MCP server
- * prefix so lookups succeed for both built-in and MCP tools.
+ * Resolve a part's type to a registry key: MCP tools arrive as `tool-mcp__<server>__<tool>` while
+ * registry keys use the short `tool-<tool>`, so the server prefix is stripped before lookup.
  */
 export function resolveRegistryKey(partType: string): string {
   if (partType in AgentToolRegistry) return partType;

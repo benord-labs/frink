@@ -1,11 +1,14 @@
 import type { SessionUpdate, ToolCallUpdate } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 import { assistantPartsStateFromChunks } from '../../../../shared/lib/assistant-parts';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
 import type { UIMessageChunk } from '../../claude/types';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
+import { ACTED_UNASKED_TEXT } from './acp-runner';
 import {
   collectChunks,
   fakeAcpAgent,
+  RECORDED_ACP_FRINK_TOOL,
   RECORDED_OUTSIDE_DIRECTORY,
   RECORDED_REJECTED_COMMAND,
   RECORDED_REJECTED_WRITE,
@@ -166,5 +169,32 @@ describe('tool cards', () => {
     expect(types.indexOf('text-end')).toBeLessThan(types.indexOf('tool-input-start'));
     const textIds = chunks.flatMap((chunk) => (chunk.type === 'text-start' ? [chunk.id] : []));
     expect(new Set(textIds).size).toBe(2);
+  });
+});
+
+describe("Frink's own tools on OpenCode", () => {
+  const FRINK_TOOLS = { name: FRINK_MCP_KEY, url: 'http://127.0.0.1:9/?channel=c' };
+  const replay = (frinkTools?: typeof FRINK_TOOLS) => {
+    const { script } = replayTurn(RECORDED_ACP_FRINK_TOOL);
+    return collectChunks(runAcpAgent(runnerParams({ frinkTools }), fakeAcpAgent(script).start));
+  };
+
+  it('shows a recorded call as the Frink tool card, its text result intact', async () => {
+    const chunks = await replay(FRINK_TOOLS);
+    expect(cardOf(chunks)).toEqual({
+      toolName: frinkToolPartName('searchProjects'),
+      input: { query: '' },
+    });
+    expect(chunks).toContainEqual({
+      type: 'tool-output-available',
+      toolCallId: 'call_1',
+      output: { content: [{ type: 'text', text: '{\n  "projects": []\n}' }] },
+    });
+    expect(chunks.filter((chunk) => chunk.type === 'error')).toEqual([]);
+  });
+
+  it('stops the turn when such a call finishes unasked in a turn that offered no Frink tools', async () => {
+    const chunks = await replay();
+    expect(chunks).toContainEqual({ type: 'error', errorText: ACTED_UNASKED_TEXT });
   });
 });

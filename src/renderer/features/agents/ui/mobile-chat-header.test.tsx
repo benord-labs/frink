@@ -6,7 +6,7 @@ import { MobileChatHeader } from './mobile-chat-header';
 
 afterEach(cleanup);
 
-const diffStats = { fileCount: 1, additions: 2, deletions: 0, isLoading: false, hasChanges: true };
+const diffStats = { isLoading: false, hasChanges: true };
 
 describe('MobileChatHeader actions', () => {
   it('shows only the projects button when no panel can open', () => {

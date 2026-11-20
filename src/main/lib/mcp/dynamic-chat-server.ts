@@ -2,7 +2,7 @@
 /**
  * In-process HTTP MCP server for dynamic chat tools.
  * Exposes searchProjects, fetchAllProjects, requestSwitchProject to the agent.
- * Bound to 127.0.0.1 only. No auth required (localhost).
+ * Bound to 127.0.0.1; refuses web-page callers (an Origin header or a foreign Host).
  */
 
 import fs from 'node:fs';
@@ -14,6 +14,7 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import type { AgentRuntime } from '../../../shared/lib/ai-providers';
+import { FRINK_MCP_KEY } from '../../../shared/lib/mcp-tool-name';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { getDatabase } from '../db';
 import { dropLinksOverlapping } from '../db/repos/chat-linked-projects';
@@ -23,10 +24,7 @@ import {
   parseWorktreeHistory,
   updateChat,
 } from '../db/repos/chats';
-import {
-  getProjectById as getProjectByIdLocal,
-  listRealProjects,
-} from '../db/repos/projects';
+import { getProjectById as getProjectByIdLocal, listRealProjects } from '../db/repos/projects';
 import { gitCache } from '../git/cache';
 import { resolveTargetWorktreeForMove } from '../git/resolve-target-worktree';
 import { getCurrentBranch } from '../git/worktree';
@@ -55,6 +53,8 @@ import {
   resetFlowsRunCount,
   resetRegisterNodeCount,
 } from './flows-tools';
+import { resetRunControlCount } from './flows-tools/gating/session-call-limiters';
+import { isLocalMcpCaller } from './local-caller';
 import {
   dispatchFlowToolCall,
   type FlowConsentStore,
@@ -67,7 +67,8 @@ import {
   consumeCodexFlowPreapproval,
   createFlowExecutionLiveness,
 } from './flows-tools/permissions';
-import { resolveInitializeProtocolVersion } from './protocol-version';
+import { filterProjectsByQuery } from './project-query-filter';
+import { earlyJsonRpcReply, resolveInitializeProtocolVersion } from './protocol-version';
 import { handleTaskSignalToolCall, type RecordedTaskSignal } from './task-signal-tool';
 import { type McpToolResult, toolResult } from './tool-result';
 
@@ -114,6 +115,7 @@ type ExecutionContext = {
   /** Per-send Auto consent; never inherited across sends. */
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
+  isPlanPhase?: () => boolean;
   /** Flow-dispatched turn — threads flow-specific steering into permission-timeout messages. */
   isFlowDrivenTurn?: boolean;
   /** Controller for the exact turn that registered this context. */
@@ -191,6 +193,7 @@ export function setCurrentExecutionChat(
   abortSignal?: AbortSignal,
   planAutoDenyFloor?: () => boolean,
   signalTaskId?: string | null,
+  isPlanPhase?: () => boolean,
 ): string {
   sweepNavigationSessions();
   const resolvedExecutionId = executionId ?? crypto.randomUUID();
@@ -198,8 +201,7 @@ export function setCurrentExecutionChat(
   const resolvedNavigationSessionId =
     navigationSessionId ??
     previous?.navigationSessionId ??
-    subChatToNavigationSessionId.get(subChatId) ??
-    undefined;
+    subChatToNavigationSessionId.get(subChatId);
   executionContexts.set(resolvedExecutionId, {
     chatId,
     subChatId,
@@ -214,6 +216,7 @@ export function setCurrentExecutionChat(
     // re-calls) — a new execution id starts from the value its registering turn passes.
     autoReviewTools: autoReviewTools ?? previous?.autoReviewTools ?? false,
     planAutoDenyFloor: planAutoDenyFloor ?? previous?.planAutoDenyFloor,
+    isPlanPhase: isPlanPhase ?? previous?.isPlanPhase,
     isFlowDrivenTurn: isFlowDrivenTurn ?? previous?.isFlowDrivenTurn ?? false,
     abortSignal: abortSignal ?? previous?.abortSignal,
   });
@@ -262,21 +265,27 @@ export function setLatestTaskSignal(
   return true;
 }
 
+/** Per-execution budgets, cleared for one execution or (no id) all. */
+const PER_EXECUTION_COUNTER_RESETS: ReadonlyArray<(executionId?: string) => void> = [
+  resetFlowsAddStageRunsCount,
+  resetDefineStagesCount,
+  resetStartBatchCount,
+  resetFlowsRunCount,
+  resetFlowsPatchCount,
+  resetFlowsPatchCreateCount,
+  resetFlowsGetRunCount,
+  resetFlowsGetBatchCount,
+  resetFlowsListTemplatesCount,
+  resetListPluginToolsCount,
+  resetRegisterNodeCount,
+  resetRunControlCount,
+];
+
 export function clearCurrentExecutionChat(executionId?: string): void {
   if (executionId) {
     const context = executionContexts.get(executionId);
     executionContexts.delete(executionId);
-    resetFlowsAddStageRunsCount(executionId);
-    resetDefineStagesCount(executionId);
-    resetStartBatchCount(executionId);
-    resetFlowsRunCount(executionId);
-    resetFlowsPatchCount(executionId);
-    resetFlowsPatchCreateCount(executionId);
-    resetFlowsGetRunCount(executionId);
-    resetFlowsGetBatchCount(executionId);
-    resetFlowsListTemplatesCount(executionId);
-    resetListPluginToolsCount(executionId);
-    resetRegisterNodeCount(executionId);
+    for (const reset of PER_EXECUTION_COUNTER_RESETS) reset(executionId);
     if (context) {
       const mappedExecutionId = subChatToExecutionId.get(context.subChatId);
       if (mappedExecutionId === executionId) {
@@ -286,17 +295,7 @@ export function clearCurrentExecutionChat(executionId?: string): void {
   } else {
     executionContexts.clear();
     subChatToExecutionId.clear();
-    resetFlowsAddStageRunsCount();
-    resetDefineStagesCount();
-    resetStartBatchCount();
-    resetFlowsRunCount();
-    resetFlowsPatchCount();
-    resetFlowsPatchCreateCount();
-    resetFlowsGetRunCount();
-    resetFlowsGetBatchCount();
-    resetFlowsListTemplatesCount();
-    resetListPluginToolsCount();
-    resetRegisterNodeCount();
+    for (const reset of PER_EXECUTION_COUNTER_RESETS) reset();
   }
   sweepNavigationSessions();
 }
@@ -358,32 +357,6 @@ function buildProjectName(projectId: string | null, fallback = 'Unknown Project'
   return projectId ? fallback : 'General Chats';
 }
 
-/** Project fields the chat agent sees from searchProjects / fetchAllProjects. */
-type ProjectHit = { id: string; name: string; path: string; description: string | null };
-
-const WHITESPACE_REGEX = /\s+/;
-
-/**
- * Filter local projects by a free-form query: every whitespace-delimited word must appear
- * (case-insensitive) in the project's name, description, or path. Empty query → all rows.
- * Single-user local DB has few projects, so an in-memory filter is cheaper than a SQL pass.
- */
-function filterProjectsByQuery(
-  rows: Array<{ id: string; name: string; path: string; description: string | null }>,
-  query: string,
-  limit: number,
-): ProjectHit[] {
-  const words = query.toLowerCase().split(WHITESPACE_REGEX).filter(Boolean);
-  const matched = rows.filter((p) => {
-    if (words.length === 0) return true;
-    const haystack = `${p.name} ${p.description ?? ''} ${p.path}`.toLowerCase();
-    return words.every((w) => haystack.includes(w));
-  });
-  return matched
-    .slice(0, limit)
-    .map((p) => ({ id: p.id, name: p.name, path: p.path, description: p.description ?? null }));
-}
-
 function createNavigationSession(origin: NavigationSnapshot): NavigationSession {
   return {
     sessionId: crypto.randomUUID(),
@@ -419,7 +392,7 @@ async function handleToolsCall(
   params: unknown,
   executionId?: string,
   channelAddressed?: boolean,
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError: boolean }> {
+): Promise<McpToolResult> {
   const {
     name,
     arguments: args,
@@ -833,7 +806,8 @@ async function handleToolsCall(
   }
 
   if (name === 'frink_task_signal' || name === 'frink_request_secret') {
-    if (!executionId || !ctx) return toolResult(`${name} requires an active execution context.`, true);
+    if (!executionId || !ctx)
+      return toolResult(`${name} requires an active execution context.`, true);
     const handler = name === 'frink_task_signal' ? handleTaskSignalToolCall : handleRequestSecret;
     return handler(ctx, a);
   }
@@ -880,7 +854,7 @@ async function processMethod(
       return {
         protocolVersion: clientVersion,
         capabilities: { tools: {} },
-        serverInfo: { name: 'frink-dynamic-chat', version: '1.0.0' },
+        serverInfo: { name: FRINK_MCP_KEY, version: '1.0.0' },
       };
     }
     case 'initialized':
@@ -949,22 +923,20 @@ export async function getOrStartDynamicChatMcpUrl(): Promise<string | null> {
 function startDynamicChatMcpServer(): Promise<{ url: string; server: Server }> {
   return new Promise((resolve, reject) => {
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      if (!isLocalMcpCaller(req.headers, server.address()))
+        return sendJson(res, 403, { error: 'Forbidden' });
       const pathname = req.url?.split('?')[0] ?? '';
       const isSsePath = pathname === '/' || pathname === '/sse';
 
       if (req.method === 'GET' && isSsePath) {
         const baseUrl = dynamicChatServer?.url;
-        if (baseUrl) {
-          sendSseStream(req, res, baseUrl, parseExecutionIdentity(req.url));
-        } else {
-          sendJson(res, 503, { error: 'Server not ready' });
-        }
+        if (baseUrl) sendSseStream(req, res, baseUrl, parseExecutionIdentity(req.url));
+        else sendJson(res, 503, { error: 'Server not ready' });
         return;
       }
 
-      if (req.method !== 'POST' || req.url === undefined || req.url === '') {
-        sendJson(res, 405, { error: 'Method Not Allowed' });
-        return;
+      if (req.method !== 'POST' || !req.url) {
+        return sendJson(res, 405, { error: 'Method Not Allowed' });
       }
 
       let body = '';
@@ -976,22 +948,16 @@ function startDynamicChatMcpServer(): Promise<{ url: string; server: Server }> {
         try {
           reqJson = JSON.parse(body) as JsonRpcRequest;
         } catch {
-          sendJson(res, 400, {
+          return sendJson(res, 400, {
             jsonrpc: '2.0',
             id: null,
             error: { code: -32700, message: 'Parse error' },
           });
-          return;
         }
 
-        if (reqJson.jsonrpc !== '2.0' || reqJson.id === undefined || !reqJson.method) {
-          sendJson(res, 200, {
-            jsonrpc: '2.0',
-            id: reqJson.id ?? null,
-            error: { code: -32600, message: 'Invalid Request' },
-          });
-          return;
-        }
+        const early = earlyJsonRpcReply(reqJson);
+        if (early?.body) return sendJson(res, early.status, early.body);
+        if (early) return void res.writeHead(early.status).end();
 
         const identity = parseExecutionIdentity(req.url);
         const executionId = resolveExecutionId(identity);

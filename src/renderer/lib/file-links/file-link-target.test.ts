@@ -12,6 +12,7 @@ import {
   isBareRelativePath,
   isFileNameLabel,
   parseFileLinkTarget,
+  resolveFileLinkClick,
 } from './file-link-target';
 
 describe('parseFileLinkTarget', () => {
@@ -419,5 +420,41 @@ describe('findShortenedPath', () => {
   it('reads entries listed with Windows separators', () => {
     const windows = [{ path: 'src\\main\\lib\\store.ts' }, { path: 'src\\renderer\\store.ts' }];
     expect(findShortenedPath('lib/store.ts', windows)).toBe('src\\main\\lib\\store.ts');
+  });
+});
+
+describe('resolveFileLinkClick', () => {
+  type Answers = Record<string, 'file' | 'folder' | 'unavailable' | null>;
+  const click = async (path: string, answers: Answers, searchHits: string[] = []) => {
+    const searched: string[] = [];
+    const result = await resolveFileLinkClick({ path, name: 'notes.md' }, { path }, 'app', {
+      typeAt: async (at) => answers[at] ?? null,
+      search: async (query) => {
+        searched.push(query);
+        return searchHits.map((hit) => ({ path: hit }));
+      },
+    });
+    return { result, searched };
+  };
+
+  it("says a file whose drive isn't answering isn't answering, and searches nothing for it", async () => {
+    expect(await click('nas/notes.md', { 'nas/notes.md': 'unavailable' })).toEqual({
+      result: { problem: "notes.md isn't answering. Its drive may be disconnected or asleep." },
+      searched: [],
+    });
+  });
+
+  it('opens a shortened path at the only project entry that ends with it', async () => {
+    const { result } = await click('lib/notes.md', { 'src/lib/notes.md': 'file' }, [
+      'src/lib/notes.md',
+    ]);
+    expect(result).toEqual({ open: 'src/lib/notes.md' });
+  });
+
+  it("says it couldn't find a file that is nowhere, and does nothing for a folder", async () => {
+    expect((await click('gone.md', {})).result).toEqual({
+      problem: "Couldn't find notes.md in app",
+    });
+    expect((await click('docs', { docs: 'folder' })).result).toBeNull();
   });
 });

@@ -110,6 +110,8 @@ export const patchArgsSchema = z
     description: z.string().optional(),
     /** Optional project UUID for the new flow (only used when creating with `name`). */
     projectId: z.string().optional(),
+    /** Version the caller last read (`version_number` from frink_flows_get; null means 0). */
+    expectedVersionNumber: z.number().int().min(0).nullable().optional(),
     operations: z
       .array(patchOpSchema)
       .min(1, 'operations must contain at least one operation')
@@ -125,6 +127,10 @@ export const patchArgsSchema = z
   .refine((data) => !(data.flowId !== undefined && data.name !== undefined), {
     message: 'Provide either flowId or name, not both',
     path: ['name'],
+  })
+  .refine((data) => !(data.name !== undefined && data.expectedVersionNumber !== undefined), {
+    message: 'expectedVersionNumber applies only when modifying a flow with flowId',
+    path: ['expectedVersionNumber'],
   });
 
 export type PatchOperation = z.infer<typeof patchOpSchema>;

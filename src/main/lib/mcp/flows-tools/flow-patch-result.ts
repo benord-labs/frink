@@ -54,6 +54,8 @@ type BuildFlowPatchResultParams = {
   webhookSetup: string[];
   /** True when an operation set a node position or reset the layout. */
   positionsTouched?: boolean;
+  /** Another session's saves this patch was applied on top of (no overlap with its targets). */
+  concurrentChanges?: Record<string, unknown>;
 };
 
 type RollbackCreatedFlowParams = {
@@ -90,10 +92,11 @@ export function flowPatchError(
   );
 }
 
-function flowPatchVersionConflictError(
+export function flowPatchVersionConflictError(
   message: string,
   persistence?: 'none',
   recoveryFlowId?: string,
+  details?: Record<string, unknown>,
 ): McpToolResult {
   return toolResult(
     JSON.stringify({
@@ -102,6 +105,7 @@ function flowPatchVersionConflictError(
       errorCode: FLOW_PATCH_VERSION_CONFLICT_CODE,
       ...(recoveryFlowId ? { flowId: recoveryFlowId } : {}),
       message,
+      ...details,
     }),
     true,
   );
@@ -241,7 +245,7 @@ function buildPartialFlowPatchResult(params: ReceiptResultParams): McpToolResult
   const retryOps = retryOperationIndexes(patch.failed, patch.skipped);
   const retryNote =
     retryOps.length > 0
-      ? " Re-send the operations listed in retryOps using 'flowId' (not 'name') to complete the update, correcting any whose cause is named in failed[] — an operation that failed on its own terms fails again if re-sent unchanged."
+      ? ` Re-send the operations listed in retryOps using 'flowId' (not 'name') and expectedVersionNumber: ${receipt.versionNumber} to complete the update, correcting any whose cause is named in failed[] — an operation that failed on its own terms fails again if re-sent unchanged.`
       : ' Nothing needs retrying — the remaining operations were already satisfied by earlier operations in this batch.';
   return toolResult(
     JSON.stringify(
@@ -258,6 +262,7 @@ function buildPartialFlowPatchResult(params: ReceiptResultParams): McpToolResult
         failed: patch.failed,
         skipped: patch.skipped,
         retryOps,
+        ...(params.concurrentChanges ? { concurrentChanges: params.concurrentChanges } : {}),
         message: `Flow "${params.name}" partially patched (${patch.applied.length}/${params.operationCount} operations applied).${receipt.versionSaved ? '' : ' The durable graph was already current, so no new version was saved.'}${retryNote}${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${suppressedWarningsNote(params.receiptWarnings)}`,
         ...optionalPresentationFields(
           partialWarnings(params.receiptWarnings, retryOps.length > 0),
@@ -301,6 +306,7 @@ function buildSuccessfulFlowPatchResult(params: ReceiptResultParams): McpToolRes
         failed: patch.failed,
         skipped: patch.skipped,
         ...(params.createdFlow ? { agentInvocable: false } : {}),
+        ...(params.concurrentChanges ? { concurrentChanges: params.concurrentChanges } : {}),
         message: `Flow "${params.name}" ${action} successfully (${versionMessage}).${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${runHint} A visual flow preview is already rendered in the chat automatically — do NOT describe the flow layout, draw a Mermaid diagram, or list the nodes/edges again. Just confirm what changed. The graph above is topology only — call frink_flows_get for full node config.${suppressedWarningsNote(params.receiptWarnings)}`,
         ...optionalPresentationFields(
           params.receiptWarnings,

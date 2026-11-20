@@ -18,7 +18,7 @@ vi.mock('./batch-stage-detail', () => ({ listBatchStageDetail: vi.fn() }));
 import { createFlow } from '../db/repos/flows';
 import { seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb } from '../db/test-utils/fresh-db';
-import { createFlowVersion, getFlowRun, startFlowRun } from './mcp-cloud-shim';
+import { createFlowVersion, getFlowRun, getFlowVersionGraph, startFlowRun } from './mcp-cloud-shim';
 import { type FlowVersionCommittedEvent, subscribeFlowVersionCommitted } from './version-events';
 
 const RUN = {
@@ -139,5 +139,16 @@ describe('MCP flow version save announces itself', () => {
     expect(events).toEqual([
       { flowId: flow.id, versionNumber: saved.version_number, source: 'agent' },
     ]);
+  });
+
+  it('reads back an earlier version by number, and null for one never saved', async () => {
+    const db = freshDb();
+    Object.assign(mocks, { db });
+    const flow = await createFlow(db, { name: 'F' });
+    const first = await createFlowVersion(flow.id, { graph: graph('first') });
+    await createFlowVersion(flow.id, { graph: graph('second') });
+
+    expect(await getFlowVersionGraph(flow.id, first.version_number)).toEqual(graph('first'));
+    expect(await getFlowVersionGraph(flow.id, 99)).toBeNull();
   });
 });

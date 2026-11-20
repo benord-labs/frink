@@ -7,7 +7,7 @@ import {
   type Route,
   type StackNavigationState,
 } from '@react-navigation/routers';
-import { alertActions, SHOW_QUEUE } from './open-alert';
+import { alertActions, showQueue } from './open-alert';
 
 const stackOptions = {
   routeNames: ['Chats', 'Queue', 'Chat', 'Run', 'Flow'],
@@ -93,12 +93,24 @@ describe('opening a tapped alert', () => {
   });
 
   it('returns the Queue tab to its list for a chat-less alert', () => {
-    expect(alertActions(root(stack('chats-stack', []), 'ChatsTab'), 'queue')).toEqual([SHOW_QUEUE]);
-    expect(SHOW_QUEUE).toMatchObject({
+    expect(alertActions(root(stack('chats-stack', []), 'ChatsTab'), 'queue')).toEqual([
+      showQueue(),
+    ]);
+    expect(showQueue()).toMatchObject({
       payload: {
         name: 'Tabs',
         params: { screen: 'QueueTab', params: { screen: 'Queue', pop: true } },
       },
     });
+  });
+
+  it('builds new params for every Queue alert, so a second one is not taken as already applied', () => {
+    const paramsOf = (action: ReturnType<typeof showQueue>) =>
+      action.type === 'NAVIGATE' ? action.payload.params : undefined;
+    const first = showQueue();
+    const second = showQueue();
+    expect(second).toEqual(first);
+    expect(paramsOf(first)).toBeDefined();
+    expect(paramsOf(second)).not.toBe(paramsOf(first));
   });
 });
