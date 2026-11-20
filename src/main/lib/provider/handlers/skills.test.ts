@@ -33,13 +33,15 @@ describe('deliverSkills (PCH-2)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('projects a user skill to the other universal targets', async () => {
-    await mkSkill(path.join(tmp, '.cursor', 'skills', 'mine'));
+  it('projects a Cursor-folder skill to the universal targets and leaves the original alone', async () => {
+    const own = path.join(tmp, '.cursor', 'skills', 'mine');
+    await mkSkill(own);
     const res = await deliverSkills({ mode: 'copy', ctx });
     expect(res.status).toBe('delivered');
     expect(res.detail).toContain('1');
     expect(existsSync(path.join(tmp, '.claude', 'skills', 'mine', 'SKILL.md'))).toBe(true);
     expect(existsSync(path.join(tmp, '.agents', 'skills', 'mine', 'SKILL.md'))).toBe(true);
+    expect(await fs.readdir(own)).toEqual(['SKILL.md']);
   });
 
   it('excludes frink-shipped (.baseline.json) and our own projections (.frink-projected)', async () => {
@@ -53,10 +55,15 @@ describe('deliverSkills (PCH-2)', () => {
     expect(res.detail).toContain('0');
   });
 
-  it('dedups a skill present in multiple source dirs', async () => {
-    await mkSkill(path.join(tmp, '.cursor', 'skills', 'dup'));
-    await mkSkill(path.join(tmp, '.claude', 'skills', 'dup'));
+  it('dedups a same-name skill: the ~/.agents copy wins over the Cursor folder', async () => {
+    await mkSkill(path.join(tmp, '.cursor', 'skills', 'dup'), { 'ref.md': 'cursor\n' });
+    await mkSkill(path.join(tmp, '.agents', 'skills', 'dup'), { 'ref.md': 'agents\n' });
     const res = await deliverSkills({ mode: 'copy', ctx });
     expect(res.detail).toContain('1');
+    const claudeRef = path.join(tmp, '.claude', 'skills', 'dup', 'ref.md');
+    expect(await fs.readFile(claudeRef, 'utf8')).toBe('agents\n');
+    expect(await fs.readFile(path.join(tmp, '.cursor', 'skills', 'dup', 'ref.md'), 'utf8')).toBe(
+      'cursor\n',
+    );
   });
 });

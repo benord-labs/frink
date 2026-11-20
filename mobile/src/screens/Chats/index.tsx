@@ -36,9 +36,17 @@ function useReopenLastChat() {
   const deviceId = useConnection().connection?.deviceId;
   useEffect(() => {
     if (!deviceId) return;
+    let left = false;
+    // Leaving the list before the saved chat is read means the user already chose where to go.
+    const off = navigation.addListener('blur', () => (left = true));
     void readLastChat(appStore, deviceId).then((chat) => {
-      if (chat && navigation.isFocused()) navigation.navigate('Chat', chat);
+      off();
+      if (chat && !left && navigation.isFocused()) navigation.navigate('Chat', chat);
     });
+    return () => {
+      left = true;
+      off();
+    };
     // Only the first mount reopens; later visits to the list stay on the list.
   }, []);
 }

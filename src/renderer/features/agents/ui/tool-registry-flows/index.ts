@@ -1,4 +1,4 @@
-import { Eye, List, ListTodo, MessageSquare, Play, Plus, Workflow } from 'lucide-react';
+import { CircleStop, Eye, List, ListTodo, MessageSquare, Play, Plus, Workflow } from 'lucide-react';
 import { TERMINAL_TOOL_PART_STATES } from '../../../../../shared/types/assistant-message';
 import type { MessagePart } from '../../stores/message-store';
 import {
@@ -94,6 +94,20 @@ export const FLOWS_TOOL_ENTRIES: Record<string, ToolMeta> = {
   'tool-frink_flows_get_run': {
     icon: Eye,
     title: phase('Inspecting Run...', 'Inspected Run'),
+    subtitle: idOf('runId'),
+    variant: 'simple',
+  },
+
+  'tool-frink_flows_continue_run': {
+    icon: Play,
+    title: phase('Continuing Run...', 'Continued Run'),
+    subtitle: idOf('runId'),
+    variant: 'simple',
+  },
+
+  'tool-frink_flows_cancel_run': {
+    icon: CircleStop,
+    title: phase('Cancelling Run...', 'Cancelled Run'),
     subtitle: idOf('runId'),
     variant: 'simple',
   },

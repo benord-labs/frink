@@ -1,6 +1,11 @@
 import { decodeUriPath } from '../path-normalization';
-import { MENTION_PREFIXES, OPEN_EDITOR_FILE_SOURCE, PICKED_PATH_SOURCE } from './mention-grammar';
-import { decodeFromMentionToken } from './mention-token-codec';
+import {
+  isWholeMentionId,
+  MENTION_PREFIXES,
+  OPEN_EDITOR_FILE_SOURCE,
+  PICKED_PATH_SOURCE,
+} from './mention-grammar';
+import { decodeFromMentionToken, encodeForMentionToken } from './mention-token-codec';
 
 export type ParsedMention = {
   id: string;
@@ -40,12 +45,35 @@ function decodeFullText(encodedText: string, preview: string): string {
   return encodedText ? decodeFromMentionToken(encodedText) : preview;
 }
 
-/** `file:<repository>:<path>` or `folder:<repository>:<path>`; the path may contain colons. */
+/** Ends the source of a file or folder token whose path is written in base64. */
+const ENCODED_PATH_SUFFIX = '64';
+const ENCODED_PATH_SOURCES = new Set(
+  [PICKED_PATH_SOURCE, OPEN_EDITOR_FILE_SOURCE].map((source) => source + ENCODED_PATH_SUFFIX),
+);
+
+/**
+ * The id of a file or folder token. The path is written as is, unless the token grammar would read
+ * it back shorter (a stray `]`, or brackets before a space); then it goes in base64 under `<source>64`.
+ */
+export function pathMentionId(type: 'file' | 'folder', source: string, path: string): string {
+  const plain = `${type}:${source}:${path}`;
+  if (isWholeMentionId(plain)) return plain;
+  return `${type}:${source}${ENCODED_PATH_SUFFIX}:${encodeForMentionToken(path)}`;
+}
+
+/** `file:<repository>:<path>` or `folder:<repository>:<path>`; the path may contain colons. A
+ * `<source>64` repository holds the path in base64 (see pathMentionId). */
 function parseFileOrFolderMention(id: string, type: 'file' | 'folder'): ParsedMention | null {
   const parts = id.split(':');
   if (parts.length < 3) return null;
-  const path = parts.slice(2).join(':');
-  return { id, label: pathLabel(path), path, repository: parts[1], type };
+  const rest = parts.slice(2).join(':');
+  if (!ENCODED_PATH_SOURCES.has(parts[1])) {
+    return { id, label: pathLabel(rest), path: rest, repository: parts[1], type };
+  }
+  const path = decodeFromMentionToken(rest);
+  if (!path) return null;
+  const repository = parts[1].slice(0, -ENCODED_PATH_SUFFIX.length);
+  return { id, label: pathLabel(path), path, repository, type };
 }
 
 /** `skill:<name>` */
@@ -152,7 +180,7 @@ export function isOpenEditorFile(mention: ParsedMention): boolean {
 /** The mention for a file or folder the user picked, as the @ menu and the file tree insert it. */
 export function pickedPathMention(type: 'file' | 'folder', path: string) {
   return {
-    id: `${type}:${PICKED_PATH_SOURCE}:${path}`,
+    id: pathMentionId(type, PICKED_PATH_SOURCE, path),
     label: pathLabel(path),
     path,
     repository: PICKED_PATH_SOURCE,

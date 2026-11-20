@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import log from 'electron-log';
-import { getUniversalSkillDirs } from '../../frink-skills-dir';
+import { getUniversalSkillSources } from '../../frink-skills-dir';
 import { isFrinkProjection, isFrinkShipped, projectSkill } from '../../skills/skill-projection';
 import type { CategoryHandler } from './types';
 
@@ -13,8 +13,7 @@ import type { CategoryHandler } from './types';
  * from the source set so a projection is never re-read as a fresh source on the
  * next run. Provider-agnostic. (Provider config hub, epic 831.)
  *
- * The discovery sources are the same per-tool dirs the projection writes to
- * (`getUniversalSkillDirs`) — a skill authored in any one follows to the rest.
+ * Discovery reads every per-tool dir (`getUniversalSkillSources`), `~/.cursor/skills` included.
  *
  * Codex (`skills: 'copy'`) needs NO dedicated target: its primary user-skills root is
  * `~/.agents/skills` (verified in core-skills loader; `~/.codex/skills` is its DEPRECATED
@@ -33,7 +32,7 @@ function isUserSkill(dir: string): boolean {
 export const deliverSkills: CategoryHandler = async ({ mode, ctx }) => {
   const seen = new Set<string>();
   let projected = 0;
-  for (const base of getUniversalSkillDirs()) {
+  for (const base of getUniversalSkillSources()) {
     let names: string[];
     try {
       names = await readdir(base);

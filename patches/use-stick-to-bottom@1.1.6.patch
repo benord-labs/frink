@@ -1,0 +1,310 @@
+diff --git a/dist/useStickToBottom.js b/dist/useStickToBottom.js
+index 7d659edace3f497dc867d3ce24d31180e18cf909..5049252ad05f34d5783ae717b133dbe0c029ced1 100644
+--- a/dist/useStickToBottom.js
++++ b/dist/useStickToBottom.js
+@@ -28,6 +28,8 @@ const DEFAULT_SPRING_ANIMATION = {
+ const STICK_TO_BOTTOM_OFFSET_PX = 70;
+ const SIXTY_FPS_INTERVAL_MS = 1000 / 60;
+ const RETAIN_ANIMATION_DURATION_MS = 350;
++/** [frink patch] Settle a native glide this long after its last scroll event. */
++const GLIDE_IDLE_MS = 320;
+ let mouseDown = false;
+ globalThis.document?.addEventListener("mousedown", () => {
+     mouseDown = true;
+@@ -61,6 +63,11 @@ export const useStickToBottom = (options = {}) => {
+         updateIsAtBottom(isAtBottom);
+     }, []);
+     const setEscapedFromLock = useCallback((escapedFromLock) => {
++        // [frink patch] A release ends the glide, so the user's next downward
++        // scroll is not mistaken for one of its frames and can re-lock.
++        if (escapedFromLock) {
++            glide.cancel();
++        }
+         state.escapedFromLock = escapedFromLock;
+         updateEscapedFromLock(escapedFromLock);
+     }, []);
+@@ -79,17 +86,21 @@ export const useStickToBottom = (options = {}) => {
+             },
+             set scrollTop(scrollTop) {
+                 if (scrollRef.current) {
+-                    // Override CSS scroll-behavior so programmatic scrollTop
+-                    // assignments take effect immediately and aren't intercepted
+-                    // by the browser's smooth scrolling.
+-                    const { scrollBehavior } = getComputedStyle(scrollRef.current);
+-                    if (scrollBehavior !== "auto") {
+-                        scrollRef.current.style.scrollBehavior = "auto";
++                    // [frink patch] An instant write aborts any native glide, so
++                    // its in-flight state is dropped here and cannot get stuck.
++                    cancelGlide();
++                    // [frink patch] The CSS value is read once on attach, not per
++                    // write: getComputedStyle here forced a recalc every frame.
++                    const { style } = scrollRef.current;
++                    const inline = style.scrollBehavior;
++                    const smooth = (inline || state.cssScrollBehavior) === "smooth";
++                    if (smooth) {
++                        style.scrollBehavior = "auto";
+                     }
+                     scrollRef.current.scrollTop = scrollTop;
+                     state.ignoreScrollToTop = scrollRef.current.scrollTop;
+-                    if (scrollBehavior !== "auto") {
+-                        scrollRef.current.style.scrollBehavior = scrollBehavior;
++                    if (smooth) {
++                        style.scrollBehavior = inline;
+                     }
+                 }
+             },
+@@ -128,6 +139,92 @@ export const useStickToBottom = (options = {}) => {
+             },
+         };
+     }, []);
++    // [frink patch] `resize: "smooth"` follows content growth with ONE native
++    // smooth scroll per glide instead of the per-frame spring. Growth that lands
++    // mid-glide is picked up when the glide settles (its promise, `scrollend`, or
++    // an idle timer re-armed by each scroll event), at most once per glide.
++    // biome-ignore lint/correctness/useExhaustiveDependencies: not needed
++    const glide = useMemo(() => {
++        let generation = 0;
++        let waitingForMouseUp = false;
++        const onMouseUp = () => {
++            waitingForMouseUp = false;
++            start();
++        };
++        const cancel = () => {
++            if (!state.glide) {
++                return;
++            }
++            clearTimeout(state.glide.timer);
++            state.glide = undefined;
++        };
++        const settle = (settled) => {
++            if (state.glide?.generation !== settled) {
++                return;
++            }
++            cancel();
++            start();
++        };
++        const armIdle = () => {
++            const current = state.glide;
++            if (!current) {
++                return;
++            }
++            clearTimeout(current.timer);
++            current.timer = setTimeout(() => settle(current.generation), GLIDE_IDLE_MS);
++        };
++        const start = () => {
++            const scroll = scrollRef.current;
++            // `escapedFromLock` is not checked: the library leaves it set after
++            // its own scrollToBottom(), which would end following after a jump.
++            if (!scroll || state.glide || state.animation || !state.isAtBottom) {
++                return;
++            }
++            if (isSelecting()) {
++                // Like the spring, wait out a drag-selection, then catch up.
++                if (!waitingForMouseUp) {
++                    waitingForMouseUp = true;
++                    document.addEventListener("mouseup", onMouseUp, { once: true });
++                }
++                return;
++            }
++            // A 1px tolerance: at fractional zoom a glide can settle a sub-pixel
++            // short, which must not re-issue forever.
++            if (state.scrollDifference < 1) {
++                return;
++            }
++            const started = ++generation;
++            const top = state.calculatedTargetScrollTop;
++            state.glide = { generation: started, timer: undefined };
++            armIdle();
++            const result = scroll.scrollTo({ top, behavior: "smooth" });
++            if (result instanceof Promise) {
++                const finish = () => {
++                    // Settling short of its target means a user scroll cut it off,
++                    // which may not have dispatched yet: hold rather than re-issue.
++                    if (state.glide?.generation === started && top - state.scrollTop >= 1) {
++                        hold();
++                        return;
++                    }
++                    settle(started);
++                };
++                result.then(finish, finish);
++            }
++        };
++        // A glide that issues no scroll: it settles like one, then follows if still locked.
++        const hold = () => {
++            cancel();
++            state.glide = { generation: ++generation, timer: undefined };
++            armIdle();
++        };
++        const detach = () => {
++            cancel();
++            waitingForMouseUp = false;
++            document.removeEventListener("mouseup", onMouseUp);
++        };
++        return { cancel, settle, armIdle, start, hold, detach };
++    }, []);
++    const cancelGlide = glide.cancel;
+     const scrollToBottom = useCallback((scrollOptions = {}) => {
+         if (typeof scrollOptions === "string") {
+             scrollOptions = { animation: scrollOptions };
+@@ -195,6 +292,14 @@ export const useStickToBottom = (options = {}) => {
+                  * up another scroll to the bottom with the last
+                  * requested animation.
+                  */
++                if (state.scrollTop < state.calculatedTargetScrollTop &&
++                    optionsRef.current.resize === "smooth" &&
++                    !ignoreEscapes) {
++                    // [frink patch] Hand later growth to the native glide: a
++                    // re-queued spring chases a live stream for its whole length.
++                    glide.start();
++                    return state.isAtBottom;
++                }
+                 if (state.scrollTop < state.calculatedTargetScrollTop) {
+                     return scrollToBottom({
+                         animation: mergeAnimations(optionsRef.current, optionsRef.current.resize),
+@@ -226,6 +331,19 @@ export const useStickToBottom = (options = {}) => {
+         setEscapedFromLock(true);
+         setIsAtBottom(false);
+     }, [setEscapedFromLock, setIsAtBottom]);
++    // [frink patch] An explicit gesture releases at once, like the wheel. The
++    // deferred check below skips any scroll that lands inside a resize window,
++    // which during a stream is most of them.
++    const releaseByGesture = useCallback(() => {
++        const scroll = scrollRef.current;
++        if (!scroll ||
++            scroll.scrollHeight <= scroll.clientHeight ||
++            state.animation?.ignoreEscapes) {
++            return;
++        }
++        setEscapedFromLock(true);
++        setIsAtBottom(false);
++    }, [setEscapedFromLock, setIsAtBottom, state]);
+     const handleScroll = useCallback(({ target }) => {
+         if (target !== scrollRef.current) {
+             return;
+@@ -234,6 +352,11 @@ export const useStickToBottom = (options = {}) => {
+         let { lastScrollTop = scrollTop } = state;
+         state.lastScrollTop = scrollTop;
+         state.ignoreScrollToTop = undefined;
++        // [frink patch] A native glide's frames are untagged scroll events.
++        const gliding = Boolean(state.glide);
++        if (gliding) {
++            glide.armIdle();
++        }
+         if (ignoreScrollToTop && ignoreScrollToTop > scrollTop) {
+             /**
+              * When the user scrolls up while the animation plays, the `scrollTop` may
+@@ -242,6 +365,21 @@ export const useStickToBottom = (options = {}) => {
+              */
+             lastScrollTop = ignoreScrollToTop;
+         }
++        // [frink patch] Moving up while pressing the scroller itself (its scrollbar)
++        // is a gesture.
++        if (state.pressingScroller &&
++            scrollTop < lastScrollTop &&
++            scrollTop !== ignoreScrollToTop) {
++            releaseByGesture();
++        }
++        // [frink patch] Upward movement is never the glide's own. Hold glides until
++        // it settles, so none cancels a user's scroll before the release check sees it.
++        if (scrollTop < lastScrollTop &&
++            scrollTop !== ignoreScrollToTop &&
++            state.isAtBottom &&
++            optionsRef.current.resize === "smooth") {
++            glide.hold();
++        }
+         setIsNearBottom(state.isNearBottom);
+         /**
+          * Scroll events may come before a ResizeObserver event,
+@@ -257,6 +395,14 @@ export const useStickToBottom = (options = {}) => {
+             if (state.resizeDifference || scrollTop === ignoreScrollToTop) {
+                 return;
+             }
++            /**
++             * [frink patch] A downward step of our own glide is not user intent.
++             * Checked before isSelecting(), so a drag-selection started mid-glide
++             * pauses following instead of releasing it.
++             */
++            if (gliding && scrollTop >= lastScrollTop) {
++                return;
++            }
+             if (isSelecting()) {
+                 setEscapedFromLock(true);
+                 setIsAtBottom(false);
+@@ -301,11 +447,61 @@ export const useStickToBottom = (options = {}) => {
+             setIsAtBottom(false);
+         }
+     }, [setEscapedFromLock, setIsAtBottom, state]);
++    // [frink patch] Keyboard, scrollbar and touch gestures, which fire no wheel.
++    const handleKeyDown = useCallback(({ key, shiftKey, target }) => {
++        const editable = target.isContentEditable ||
++            ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
++        const up = ["ArrowUp", "PageUp", "Home"].includes(key) || (key === " " && shiftKey);
++        if (up && !editable) {
++            releaseByGesture();
++        }
++    }, [releaseByGesture]);
++    const handlePointerDown = useCallback(({ target, button }) => {
++        if (target !== scrollRef.current || button !== 0) {
++            return;
++        }
++        state.pressingScroller = true;
++        document.addEventListener("pointerup", () => {
++            state.pressingScroller = false;
++        }, { once: true });
++    }, [state]);
++    const handleTouchStart = useCallback(({ touches }) => {
++        state.touchY = touches[0]?.clientY;
++    }, [state]);
++    const handleTouchMove = useCallback(({ touches }) => {
++        const y = touches[0]?.clientY;
++        // A finger moving down scrolls the content up.
++        if (y !== undefined && state.touchY !== undefined && y > state.touchY) {
++            releaseByGesture();
++        }
++        state.touchY = y;
++    }, [releaseByGesture, state]);
++    // [frink patch] `scrollend` settles the current native glide.
++    const handleScrollEnd = useCallback(() => {
++        if (state.glide) {
++            glide.settle(state.glide.generation);
++        }
++    }, [glide, state]);
+     const scrollRef = useRefCallback((scroll) => {
+         scrollRef.current?.removeEventListener("scroll", handleScroll);
+         scrollRef.current?.removeEventListener("wheel", handleWheel);
++        scrollRef.current?.removeEventListener("scrollend", handleScrollEnd);
++        scrollRef.current?.removeEventListener("keydown", handleKeyDown);
++        scrollRef.current?.removeEventListener("pointerdown", handlePointerDown);
++        scrollRef.current?.removeEventListener("touchstart", handleTouchStart);
++        scrollRef.current?.removeEventListener("touchmove", handleTouchMove);
++        state.pressingScroller = false;
++        glide.detach();
++        state.cssScrollBehavior = scroll
++            ? getComputedStyle(scroll).scrollBehavior
++            : undefined;
+         scroll?.addEventListener("scroll", handleScroll, { passive: true });
+         scroll?.addEventListener("wheel", handleWheel, { passive: true });
++        scroll?.addEventListener("scrollend", handleScrollEnd, { passive: true });
++        scroll?.addEventListener("keydown", handleKeyDown);
++        scroll?.addEventListener("pointerdown", handlePointerDown, { passive: true });
++        scroll?.addEventListener("touchstart", handleTouchStart, { passive: true });
++        scroll?.addEventListener("touchmove", handleTouchMove, { passive: true });
+     }, []);
+     const contentRef = useRefCallback((content) => {
+         state.resizeObserver?.disconnect();
+@@ -326,7 +522,14 @@ export const useStickToBottom = (options = {}) => {
+                 state.scrollTop = state.targetScrollTop;
+             }
+             setIsNearBottom(state.isNearBottom);
+-            if (difference >= 0) {
++            if (difference >= 0 &&
++                previousHeight &&
++                optionsRef.current.resize === "smooth") {
++                // [frink patch] Native glide, checked before mergeAnimations,
++                // which would turn "smooth" into the default spring.
++                glide.start();
++            }
++            else if (difference >= 0) {
+                 /**
+                  * If it's a positive resize, scroll to the bottom when
+                  * we're already at the bottom.

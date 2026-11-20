@@ -37,6 +37,8 @@ const STOP_GRACE_MS = 1500;
 const PING_MS = 1000;
 /** How long Copilot gets to list its models before the saved list stands in. */
 const LIST_MODELS_MS = 3000;
+/** How long a resumed session's history gets to arrive before the turn goes on without it. */
+const HISTORY_MS = 3000;
 // An organisation-required plugin being installed; this SDK release has no type for it yet.
 const MANAGED_PLUGIN_PROGRESS = 'session.managed_plugin_progress';
 const SETTINGS_LOST =
@@ -57,6 +59,7 @@ export type CopilotTurnSession = CheckedSession & {
   sessionId: string;
   send(options: MessageOptions): Promise<string>;
   abort(): Promise<void>;
+  getEvents(): Promise<SessionEvent[]>;
 };
 
 /** The parts of a Copilot client one turn uses. */
@@ -97,6 +100,8 @@ export type CopilotRunnerDeps = {
   gateWrapper?: (hook: PreToolUseHandler) => PreToolUseHandler;
   /** Tests only: how long Copilot gets to list its models. */
   listModelsMs?: number;
+  /** Tests only: how long a resumed session's history gets to arrive. */
+  historyMs?: number;
 };
 
 type CopilotSdk = typeof import('@github/copilot-sdk');
@@ -145,6 +150,23 @@ async function offeredModels(client: CopilotTurnClient, waitMs: number): Promise
   if (rows.length > 0) return rows;
   log.warn('[Copilot] Got no models in time; checking the saved list');
   return rememberedAgentModels('copilot');
+}
+
+/** The calls a resumed session's history started but never finished, or none if it can't be read. */
+async function openToolCalls(session: CopilotTurnSession, waitMs: number): Promise<Set<string>> {
+  try {
+    const events = await Promise.race([session.getEvents(), delay(waitMs, null, { ref: false })]);
+    if (!events) throw new Error('timed out');
+    const open = new Set<string>();
+    for (const event of events) {
+      if (event.type === 'tool.execution_start') open.add(event.data.toolCallId);
+      if (event.type === 'tool.execution_complete') open.delete(event.data.toolCallId);
+    }
+    return open;
+  } catch (error) {
+    log.warn("[Copilot] Couldn't read the resumed session's history", error);
+    return new Set();
+  }
 }
 
 type ModelChoice = { model?: string; reasoningEffort?: ClaudeSdkEffortLevel; refusal?: string };
@@ -366,6 +388,10 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
     versions: launch.versions,
   });
   if (!opened.ok) return turn.halt(opened.reason);
+  if (opened.resumed) {
+    // Before the session is set, while its events are still dropped, so no repair arrives unseeded.
+    turn.gate.noteInterrupted(await openToolCalls(opened.session, deps.historyMs ?? HISTORY_MS));
+  }
   if (turn.isOver) return;
   turn.session = opened.session;
   turn.stream.queue.push({

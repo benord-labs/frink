@@ -1,6 +1,6 @@
 /**
- * Skill projection — copy a skill dir into the three universal, machine-local
- * targets so it "follows" the user across the big-5 coding tools. REAL COPIES, not
+ * Skill projection — copy a skill dir into the universal, machine-local targets
+ * (`~/.agents/skills`, `~/.claude/skills`) so it "follows" the user across tools. REAL COPIES, not
  * symlinks: symlinks dangle on uninstall and pollute committed repos (ruling in the
  * provider-config-canonical-home decision, docs/decisions/).
  *
@@ -12,8 +12,19 @@
  */
 
 import { existsSync } from 'node:fs';
-import { cp, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import {
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { Mutex } from 'async-mutex';
 import log from 'electron-log';
 import { getUniversalSkillDirs } from '../frink-skills-dir';
@@ -39,15 +50,7 @@ import {
   type Provenance,
   readProvenance,
 } from './skill-projection-compare';
-import {
-  copyFiles,
-  dirHash,
-  dirHashOf,
-  dirStatSig,
-  fileMap,
-  readTree,
-  replaceDir,
-} from './skill-fs';
+import { copyFiles, dirHashOf, dirStatSig, fileMap, readTree, replaceDir } from './skill-fs';
 
 /**
  * Marker file written INSIDE a projected skill dir, recording at projection time:
@@ -62,12 +65,12 @@ import {
 export const PROVENANCE_MARKER = '.frink-projected';
 /** Frink-shipped marker (written by the boot provisioner into the canonical store). */
 const BASELINE_MARKER = '.baseline.json';
-const EXCLUDE_FROM_HASH: ReadonlySet<string> = new Set([PROVENANCE_MARKER]);
-const projectionMutex = new Mutex();
+export const EXCLUDE_FROM_HASH: ReadonlySet<string> = new Set([PROVENANCE_MARKER]);
+export const projectionMutex = new Mutex();
 /** Crash-debris names: `<name>.staging-<pid>-<ts>` (copyInto) and `<name>.old-<ts>` (replaceDir). */
 export const ORPHAN_NAME = /\.(?:staging-\d+-\d+|old-\d+)$/;
 
-/** The three machine-local universal skill targets (single definition in frink-skills-dir). */
+/** The machine-local universal skill targets (single definition in frink-skills-dir). */
 const getSkillTargetDirs = getUniversalSkillDirs;
 
 /** A projected dir is one we wrote (carries the provenance marker). */
@@ -148,7 +151,7 @@ function unreadableSource(paths: string[]): Error {
 /** Baseline for a marker without `files`: every file of a copy matching the recorded hash,
  *  else the files untouched since that marker was written. Change time, unlike modification
  *  time, cannot be set back, so an edit with a restored timestamp still counts as touched. */
-async function legacyBaseline(
+export async function legacyBaseline(
   target: string,
   storedHash: string,
   live: FileHashes,
@@ -421,7 +424,7 @@ async function projectToTarget(
 }
 
 /**
- * Project one skill dir (REAL COPY) into all three universal targets. Mutex-serialized,
+ * Project one skill dir (REAL COPY) into every universal target. Mutex-serialized,
  * idempotent, best-effort per target (a single target failure is logged, not thrown).
  */
 export async function projectSkill(skillName: string, sourceDir: string): Promise<void> {
@@ -453,23 +456,33 @@ export async function copyUserSkill(
   if (skillName.includes('..') || skillName.includes('/') || skillName.includes('\\')) {
     throw new Error(`Invalid skill name: ${skillName}`);
   }
-  // A vanished source must fail loudly: `dirHash` swallows ENOENT (hashes to empty), which would
+  // A vanished source must fail loudly: hashing swallows ENOENT (hashes to empty), which would
   // otherwise be mistaken for a divergent target and reported as "kept your edited copy".
   if (!existsSync(sourceDir)) throw new Error(`Skill source missing: ${sourceDir}`);
   let wrote = 0;
   let kept = 0;
+  // The copy is the user's: Frink's markers at the skill's top stay behind, so both sides are
+  // compared without them. A linked source is copied from where it really lives.
+  const mine = new Set([PROVENANCE_MARKER, BASELINE_MARKER]);
+  const userHash = async (dir: string) => {
+    const tree = await readTree(dir);
+    const files = Object.entries(tree.files).filter(([rel]) => !mine.has(rel));
+    return contentHash(fileMap(files), tree.links);
+  };
   await projectionMutex.runExclusive(async () => {
-    const srcHash = await dirHash(sourceDir, EXCLUDE_FROM_HASH);
+    const top = await realpath(sourceDir);
+    const srcHash = await userHash(top);
     for (const targetBase of targetSkillsDirs) {
       const target = join(targetBase, skillName);
       if (target === sourceDir) continue; // copying onto itself
       if (existsSync(target)) {
         // Present already — preserve a hand-edited copy (never clobber); identical copies are a no-op.
-        if ((await dirHash(target, EXCLUDE_FROM_HASH)) !== srcHash) kept++;
+        if ((await userHash(target)) !== srcHash) kept++;
         continue;
       }
       await ensureDirExistsAsync(targetBase);
-      await cp(sourceDir, target, { recursive: true });
+      const ownMarker = (src: string) => dirname(resolve(src)) === top && mine.has(basename(src));
+      await cp(top, target, { recursive: true, filter: (src) => !ownMarker(src) });
       wrote++;
     }
   });

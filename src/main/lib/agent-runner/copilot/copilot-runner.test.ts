@@ -24,6 +24,7 @@ import {
   TASKS_CHANGED,
   thinks,
   toolEnds,
+  toolInterrupted,
   toolStarts,
 } from './copilot-test-fixtures';
 import {
@@ -415,6 +416,7 @@ describe('runCopilotAgent', () => {
     const result = await run(fake, params).chunks;
 
     expect(fake.opened.map(({ how }) => how)).toEqual(['resume']);
+    expect(fake.calls).toContain('getEvents');
     expect(fake.sent[0]?.prompt).toBe('hello');
     expect(result.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'earlier' } });
   });
@@ -429,6 +431,7 @@ describe('runCopilotAgent', () => {
     await run(fake, params).chunks;
 
     expect(fake.opened.map(({ how }) => how)).toEqual(['resume', 'create']);
+    expect(fake.calls).not.toContain('getEvents');
     expect(fake.sent[0]?.prompt).toBe('history');
   });
 
@@ -515,6 +518,77 @@ describe('runCopilotAgent', () => {
     expect(errorsOf(result)).toEqual([ACTED_UNASKED]);
     expect(textOf(result)).toBe('');
     await vi.waitFor(() => expect(fake.calls).toEqual(['start', 'abort', 'stop']));
+  });
+
+  describe('a call the last Copilot process left open', () => {
+    // Built per test, once beforeAll has set root, so the config folder is inside the temp folder.
+    const resumed = (overrides: Partial<CopilotRunnerParams> = {}) =>
+      runnerParams({ resumeSessionId: 'earlier', ...overrides });
+    const leftOpen = [toolStarts('old', 'bash', { command: 'sleep 30' })];
+
+    it.each([{ when: 'while the history is read' }, { when: 'after the prompt' }])(
+      'is closed by the resume without stopping the turn, $when',
+      async ({ when }) => {
+        const early = when === 'while the history is read';
+        const fake = fakeCopilotClient({
+          history: async ({ emit }) => {
+            if (early) emit(toolInterrupted('old'));
+            return leftOpen;
+          },
+          turn: ({ emit }) => {
+            if (!early) emit(toolInterrupted('old'));
+            emit(says('Back'));
+            emit(IDLE);
+          },
+        });
+
+        const result = await run(fake, resumed()).chunks;
+
+        expect(errorsOf(result)).toEqual([]);
+        expect(textOf(result)).toBe('Back');
+      },
+    );
+
+    it.each([
+      { history: 'fails', read: () => Promise.reject(new Error('Connection is closed.')) },
+      { history: 'never arrives', read: () => new Promise<never>(() => {}) },
+    ])('still stops the turn on its close when the history $history', async ({ read }) => {
+      const fake = fakeCopilotClient({
+        history: read,
+        turn: ({ emit }) => emit(toolInterrupted('old')),
+      });
+
+      const result = await run(fake, resumed(), { historyMs: 20 }).chunks;
+
+      expect(fake.sent).toHaveLength(1);
+      expect(errorsOf(result)).toEqual([ACTED_UNASKED]);
+    });
+
+    it('still stops the turn on an interrupted close of a call the history saw finish', async () => {
+      const fake = fakeCopilotClient({
+        history: async () => [...leftOpen, toolEnds('old', true)],
+        turn: ({ emit }) => emit(toolInterrupted('old')),
+      });
+
+      expect(errorsOf(await run(fake, resumed()).chunks)).toEqual([ACTED_UNASKED]);
+    });
+
+    it('sends nothing when the turn is stopped while the history is read', async () => {
+      let answer = (_events: never[]) => {};
+      const fake = fakeCopilotClient({
+        history: () => new Promise((resolve) => (answer = resolve)),
+      });
+      const abortController = new AbortController();
+      const pending = run(fake, resumed({ abortController })).chunks;
+      await vi.waitFor(() => expect(fake.calls).toContain('getEvents'));
+
+      abortController.abort();
+      expect(typesOf(await pending).at(-1)).toBe('finish');
+      answer([]);
+      await delay(50);
+
+      expect(fake.sent).toEqual([]);
+    });
   });
 
   it('aborts the session when the user stops, then stops the client', async () => {

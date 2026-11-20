@@ -4,6 +4,7 @@ import { createStore, Provider } from 'jotai';
 import type { ReactNode } from 'react';
 import { Toaster } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { type PendingComposerInput, pendingComposerInputAtomFamily } from './pending-input';
 import { usePendingInputIntake } from './use-pending-input-intake';
 
@@ -106,21 +107,11 @@ describe('usePendingInputIntake', () => {
     ]);
   });
 
-  it('says so instead of adding a name the message would cut short', async () => {
-    render(<Toaster />);
-    const { editor } = setup([
-      {
-        kind: 'paths',
-        items: [
-          { path: 'src/a]b.ts', type: 'file' },
-          { path: 'src/ok.ts', type: 'file' },
-        ],
-      },
-    ]);
-    expect(editor?.insertMention.mock.calls.map(([option]) => option.id)).toEqual([
-      'file:local:src/ok.ts',
-    ]);
-    expect(await screen.findByText(/Couldn't add a\]b\.ts/)).toBeTruthy();
+  it('adds a name with a stray bracket under its whole path', () => {
+    const { editor } = setup([{ kind: 'paths', items: [{ path: 'src/a]b.ts', type: 'file' }] }]);
+    const [option] = editor?.insertMention.mock.calls[0] ?? [];
+    expect(option?.path).toBe('src/a]b.ts');
+    expect(parseMention(option?.id ?? '')?.path).toBe('src/a]b.ts');
   });
 
   it('keeps what was sent after the render and before the intake ran', () => {

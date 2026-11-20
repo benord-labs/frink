@@ -721,6 +721,12 @@ If the chat the flow started in has been **deleted**, Retry is refused with "Thi
 
 The Work Queue row menu offers the same single action (**Continue task** or **Retry task**) once the run has paused or settled. It works for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see *Re-running a terminal batch*).
 
+### Letting an agent continue or cancel a run
+
+An agent in a Frink chat can do the same from the chat, for example once it has fixed whatever stopped a batch of runs. `frink_flows_continue_run` is the row's **Continue** / **Retry**, or, given a message, the reply you would type in the step's chat. `frink_flows_cancel_run` is the row's **Cancel**. Each asks your permission like any other Frink tool that changes something.
+
+An agent cannot answer what only you can: an Approval, a plan review, a held run's **Start**, a secret request, or a Retry that may repeat what a step already did. It cannot stop its own run either. A message an agent sends shows in the step's chat as if you had typed it.
+
 ### Usage-limit and API-error pauses
 
 A flow can also pause without anything failing: if an agent node's chat hits the provider's usage limit (e.g. Claude's "You've hit your limit · resets 2:20pm"), the node parks at **Needs Attention** and the run pauses rather than failing — the interruption is resumable, not an error. The run panel shows the limit message (including the reset time) as the pause reason, with the same Continue (or Retry) and Skip controls. Once the limit resets, resume by sending a follow-up message in the agent's chat or pressing the node's **Continue** (or **Retry**) button.

@@ -104,6 +104,10 @@ describe('isWholeMentionId', () => {
     ['folder:local:docs/10:30 notes', true],
     ['file:local:src/a]b.ts', false],
     ['file:local:app/[id] notes/page.tsx', false],
+    ['file:local:app/[[...slug]]/page.tsx', true],
+    ['file:local:app\\[id] x\\a.ts', false],
+    ['file:local:C:\\Users\\x\\[id]\\a.ts', true],
+    ['folder:local:x[/y', false],
   ])('%s → %s', (id, whole) => {
     expect(isWholeMentionId(id)).toBe(whole);
   });

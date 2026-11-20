@@ -48,8 +48,11 @@ export function findMentionTokens(text: string): MentionToken[] {
   }));
 }
 
-/** Whether `id` reads back as one whole `@[id]` token; some paths with brackets do not. */
+/** Whether `id` reads back as one whole `@[id]` token; some paths with brackets do not. A `/` typed
+ * right after the token lets a bracket pair in the id take its closing `]`, so that is checked too. */
 export function isWholeMentionId(id: string): boolean {
   const tokens = findMentionTokens(`@[${id}]`);
-  return tokens.length === 1 && tokens[0].id === id;
+  return (
+    tokens.length === 1 && tokens[0].id === id && findMentionTokens(`@[${id}]/]`)[0]?.id === id
+  );
 }

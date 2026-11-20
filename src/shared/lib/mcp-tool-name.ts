@@ -87,6 +87,8 @@ export function isFrinkOwnedMcpTool(fullName: string): boolean {
 export const FRINK_MUTATING_FLOW_TOOLS: ReadonlySet<string> = new Set([
   'frink_flows_patch',
   'frink_flows_run',
+  'frink_flows_continue_run',
+  'frink_flows_cancel_run',
   'frink_register_node',
   'frink_batch_message',
   'frink_flows_define_stages',

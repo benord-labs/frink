@@ -1,4 +1,4 @@
-import type { ZodError, ZodType, z } from 'zod';
+import { type ZodError, type ZodType, z } from 'zod';
 import { type McpToolResult, toolResult } from '../../tool-result';
 
 /**
@@ -59,6 +59,9 @@ export const resetStartBatchCount = startBatchLimiter.reset;
  */
 export const defineStagesLimiter = createSessionCallLimiter(20, '__global_define_stages__');
 export const resetDefineStagesCount = defineStagesLimiter.reset;
+/** 20 continue/cancel run calls per session, shared by both tools: each acts on one run. */
+export const runControlLimiter = createSessionCallLimiter(20, '__global_run_control__');
+export const resetRunControlCount = runControlLimiter.reset;
 /**
  * 15 plugin tool-list calls per session — the only bound on a 15s vendor probe.
  * The renderer picker dedupes through React Query; an MCP caller cannot.
@@ -95,3 +98,11 @@ export function invalidArgsResult(error: ZodError): McpToolResult {
     true,
   );
 }
+
+/**
+ * Local flow entity IDs (flows, runs, node-runs) are cuid2 short IDs, not UUIDs.
+ * Validate non-empty rather than UUID format. `batchId` is the exception — it is the
+ * randomUUID-minted graph.settings.currentBatchId and keeps `.uuid()`.
+ */
+export const localIdField = (name: string) =>
+  z.string().trim().min(1, `${name} must be a non-empty string`);

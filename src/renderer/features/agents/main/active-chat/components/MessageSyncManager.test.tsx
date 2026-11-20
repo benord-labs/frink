@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, renderHook } from '@testing-library/react';
+import { getDefaultStore } from 'jotai';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeListeners } from '../../../../../lib/stores/active-transport-registry';
-import { getEffectiveStatus } from './MessageSyncManager';
+import { chatSearchMatchesAtom } from '../../../search/chat-search-atoms';
+import { getEffectiveStatus, useSearchScrollManager } from './MessageSyncManager';
 
 const SUB = 'sub-effective-status';
 
@@ -34,5 +37,34 @@ describe('getEffectiveStatus', () => {
 
   it('passes ready through untouched when nothing is live', () => {
     expect(getEffectiveStatus('ready', SUB, false)).toBe('ready');
+  });
+});
+
+describe('useSearchScrollManager', () => {
+  afterEach(() => {
+    cleanup();
+    getDefaultStore().set(chatSearchMatchesAtom, []);
+    document.body.replaceChildren();
+    vi.useRealTimers();
+  });
+
+  // Without the release, a streaming chat's follow pulls the view back to the bottom.
+  it('releases the follow before jumping to the current match', async () => {
+    vi.useFakeTimers();
+    const container = document.createElement('div');
+    const match = document.createElement('span');
+    match.className = 'search-highlight-current';
+    container.append(match);
+    document.body.append(container);
+    const calls: string[] = [];
+    Object.defineProperty(match, 'scrollIntoView', { value: () => calls.push('jump') });
+    getDefaultStore().set(chatSearchMatchesAtom, [
+      { id: 'm:0:0', messageId: 'm', partIndex: 0, partType: 'text', offset: 0, length: 1 },
+    ]);
+
+    renderHook(() => useSearchScrollManager({ current: container }, () => calls.push('release')));
+    await act(() => vi.advanceTimersByTimeAsync(200));
+
+    expect(calls).toEqual(['release', 'jump']);
   });
 });
