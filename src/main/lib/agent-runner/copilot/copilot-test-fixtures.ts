@@ -70,6 +70,13 @@ export const toolEnds = (toolCallId: string, success: boolean, text = 'done'): S
     : { toolCallId, success, error: { message: text } },
 });
 
+/** How a resume closes a call an earlier Copilot process never finished. */
+export const toolInterrupted = (toolCallId: string): SessionEvent => ({
+  ...EVENT_BASE,
+  type: 'tool.execution_complete',
+  data: { toolCallId, success: false, error: { code: 'interrupted', message: 'interrupted' } },
+});
+
 export const IDLE: SessionEvent = { ...EVENT_BASE, type: 'session.idle', data: {} };
 
 /** Copilot CLI 1.0.97 calling Frink's own searchProjects, recorded offline against Frink's real
@@ -149,6 +156,8 @@ type FakeCopilotSetup = {
   /** The command listing answers only once this settles, even after the client stopped. */
   listedLate?: Promise<void>;
   models?: ModelInfo[];
+  /** The session's history when asked; it may emit events, throw or never answer. */
+  history?: (play: Omit<FakeTurn, 'message'>) => Promise<SessionEvent[]>;
 };
 
 type TaskInfo = Awaited<ReturnType<CopilotTurnSession['rpc']['tasks']['list']>>['tasks'][number];
@@ -231,6 +240,10 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
     },
     abort: async () => {
       calls.push('abort');
+    },
+    getEvents: async () => {
+      calls.push('getEvents');
+      return setup.history?.(play) ?? [];
     },
   };
   const open = (config: SessionConfigBase, sessionId: string) => {

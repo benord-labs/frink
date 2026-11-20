@@ -107,8 +107,11 @@ const deny = (reason: string): PreToolUseHookOutput => ({
   permissionDecisionReason: reason,
 });
 
-/** How Copilot reports a finished call; code `denied` means a refusal stopped it before it ran. */
-type CallEnd = { error?: { code?: string } };
+/**
+ * How Copilot reports a finished call. Code `denied` means a refusal stopped it before it ran, and
+ * `interrupted` is the failure a resume records for a call an earlier process never finished.
+ */
+type CallEnd = { success?: boolean; error?: { code?: string } };
 
 type GateOptions = {
   cwd: string;
@@ -178,8 +181,13 @@ export function createCopilotGate(opts: GateOptions) {
   const allowed = new Map<string, number>();
   // The key each started call must match, or null for a quiet tool.
   const started = new Map<string, string | null>();
+  // Calls a resumed session's history left open, which Copilot closes without running them again.
+  const interrupted = new Set<string>();
 
   return {
+    noteInterrupted(toolCallIds: Iterable<string>): void {
+      for (const id of toolCallIds) interrupted.add(id);
+    },
     async onPreToolUse(hook: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
       if (turnOver.aborted) return deny(TURN_OVER);
       let key: string | undefined;
@@ -206,6 +214,8 @@ export function createCopilotGate(opts: GateOptions) {
       args: JsonValue | undefined,
       mcpServerName?: string,
     ): void {
+      // A call that runs again in this turn is judged on this run, never as one left open.
+      interrupted.delete(toolCallId);
       // A Frink tool run by any other server was never allowed, so it trips the stop.
       if (copilotFrinkTool(toolName) && opts.frinkTools) {
         if (mcpServerName === FRINK_MCP_KEY) started.set(toolCallId, null);
@@ -220,6 +230,8 @@ export function createCopilotGate(opts: GateOptions) {
     actedUnasked(toolCallId: string, end: CallEnd): boolean {
       const key = started.get(toolCallId);
       started.delete(toolCallId);
+      const repaired = key === undefined && interrupted.delete(toolCallId);
+      if (repaired && end.success === false && end.error?.code === 'interrupted') return false;
       if (key === null || end.error?.code === 'denied') return false;
       const left = key === undefined ? 0 : (allowed.get(key) ?? 0);
       if (key !== undefined && left > 0) allowed.set(key, left - 1);

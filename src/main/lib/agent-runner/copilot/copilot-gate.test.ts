@@ -432,6 +432,7 @@ describe('createCopilotGate', () => {
 const SUCCEEDED = {};
 const FAILED = { error: { code: 'failure', message: 'exit 1' } };
 const REFUSED = { error: { code: 'denied', message: 'Denied by preToolUse hook: no' } };
+const INTERRUPTED = { success: false, error: { code: 'interrupted', message: 'interrupted' } };
 
 describe('the stop on an unasked action', () => {
   it('does not trip when a parent and a child run the same command and one was denied', async () => {
@@ -520,6 +521,33 @@ describe('the stop on an unasked action', () => {
     gate.noteExecutionStart('a', 'lsp', { operation: 'hover' });
     expect(gate.actedUnasked('a', SUCCEEDED)).toBe(true);
     expect(gate.actedUnasked('unseen', SUCCEEDED)).toBe(true);
+  });
+
+  it('lets a resume close each call an earlier process left open, once and only as interrupted', () => {
+    const { gate } = testGate(() => ALLOW);
+    gate.noteInterrupted(['a', 'b', 'c', 'd']);
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(false);
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(true);
+    expect(gate.actedUnasked('b', INTERRUPTED)).toBe(false);
+    expect(gate.actedUnasked('c', { success: true })).toBe(true);
+    expect(gate.actedUnasked('d', { ...FAILED, success: false })).toBe(true);
+    expect(gate.actedUnasked('unseen', INTERRUPTED)).toBe(true);
+  });
+
+  it('judges a call left open as usual when it runs again in this turn', () => {
+    const { gate } = testGate(() => ALLOW);
+    gate.noteInterrupted(['a']);
+    gate.noteExecutionStart('a', 'bash', { command: 'touch m.txt' });
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(true);
+  });
+
+  it('no longer lets a call left open close as interrupted once it has run again', async () => {
+    const { gate, decide } = testGate(() => ALLOW);
+    gate.noteInterrupted(['a']);
+    await decide('bash', { command: 'touch m.txt' });
+    gate.noteExecutionStart('a', 'bash', { command: 'touch m.txt' });
+    expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(true);
   });
 });
 
