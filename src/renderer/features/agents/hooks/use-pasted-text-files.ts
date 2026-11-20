@@ -60,38 +60,9 @@ export function usePastedTextFiles(
   pastedTextsRef.current = pastedTexts;
 
   const writePastedTextMutation = trpc.files.writePastedText.useMutation();
-
-  const addPastedText = useCallback(
-    async (text: string, options?: PastedTextOptions) => {
-      try {
-        const result = await writePastedTextMutation.mutateAsync({
-          subChatId,
-          text,
-          kind: options?.kind,
-        });
-
-        // Create preview from first 50 chars, replace newlines with spaces
-        const preview = text.slice(0, 50).replace(/\n/g, ' ');
-        const newPasted: PastedTextFile = {
-          id: newChipId(),
-          filePath: result.filePath,
-          filename: result.filename,
-          size: result.size,
-          preview: options?.label ?? (preview.length < text.length ? `${preview}...` : preview),
-          createdAt: new Date(),
-        };
-
-        setPastedTexts((prev) => [...prev, newPasted]);
-      } catch (error) {
-        // Rethrown so the paste handler can fall back to inline text: the default paste was
-        // cancelled, so swallowing this dropped the pasted text entirely (sc-3666).
-        throw error instanceof Error ? error : new Error('Failed to save pasted text');
-      }
-    },
-    [subChatId, writePastedTextMutation],
-  );
-
   const attachPastedFileMutation = trpc.files.attachPastedFile.useMutation();
+  const subChatIdRef = useRef(subChatId);
+  subChatIdRef.current = subChatId;
   const targetRef = useRef(target);
   targetRef.current = target;
   const targetKey = target?.key ?? null;
@@ -110,15 +81,55 @@ export function usePastedTextFiles(
     return registerPastedChipSink(targetKey, sink);
   }, [targetKey]);
 
-  /** Copies each file into the chat's pasted folder, one chip per file, delivered to the slot it
-   *  was dropped into even if this composer has gone or moved to another slot meanwhile. */
+  /** Snapshots the slot a paste or drop starts in, so its chips land there even if this composer
+   *  has gone or moved to another slot meanwhile. `beginCopy` holds Send for that slot. */
+  const snapshotSlot = useCallback(() => {
+    const dropTarget = targetRef.current;
+    const origin = sinkRef.current;
+    const atSubChatId = subChatIdRef.current;
+    const deliver = dropTarget
+      ? (chip: PastedTextFile) => deliverPastedChip(dropTarget, chip, atSubChatId, origin)
+      : (chip: PastedTextFile) => setPastedTexts((prev) => [...prev, chip]);
+    const beginCopy = () => beginPastedCopy(dropTarget?.key ?? null);
+    return { subChatId: atSubChatId, deliver, beginCopy };
+  }, []);
+
+  const addPastedText = useCallback(
+    async (text: string, options?: PastedTextOptions) => {
+      const { subChatId: atSubChatId, deliver, beginCopy } = snapshotSlot();
+      const endCopy = beginCopy();
+      try {
+        const result = await writePastedTextMutation.mutateAsync({
+          subChatId: atSubChatId,
+          text,
+          kind: options?.kind,
+        });
+
+        // Create preview from first 50 chars, replace newlines with spaces
+        const preview = text.slice(0, 50).replace(/\n/g, ' ');
+        deliver({
+          id: newChipId(),
+          filePath: result.filePath,
+          filename: result.filename,
+          size: result.size,
+          preview: options?.label ?? (preview.length < text.length ? `${preview}...` : preview),
+          createdAt: new Date(),
+        });
+      } catch (error) {
+        // Rethrown so the paste handler can fall back to inline text: the default paste was
+        // already cancelled, so swallowing this would drop the pasted text entirely.
+        throw error instanceof Error ? error : new Error('Failed to save pasted text');
+      } finally {
+        endCopy();
+      }
+    },
+    [snapshotSlot, writePastedTextMutation],
+  );
+
+  /** Copies each file into the chat's pasted folder, one chip per file. */
   const addPastedFiles = useCallback(
     async (files: File[]) => {
-      const dropTarget = targetRef.current;
-      const origin = sinkRef.current;
-      const deliver = dropTarget
-        ? (chip: PastedTextFile) => deliverPastedChip(dropTarget, chip, subChatId, origin)
-        : (chip: PastedTextFile) => setPastedTexts((prev) => [...prev, chip]);
+      const { subChatId: atSubChatId, deliver, beginCopy } = snapshotSlot();
       for (const file of files) {
         const sourcePath = window.webUtils?.getPathForFile(file) ?? '';
         const refusal = whyNotAttachable(file, sourcePath);
@@ -126,9 +137,12 @@ export function usePastedTextFiles(
           toast.error(`Couldn't attach ${file.name}`, { description: refusal });
           continue;
         }
-        const endCopy = beginPastedCopy(dropTarget?.key ?? null);
+        const endCopy = beginCopy();
         try {
-          const saved = await attachPastedFileMutation.mutateAsync({ subChatId, sourcePath });
+          const saved = await attachPastedFileMutation.mutateAsync({
+            subChatId: atSubChatId,
+            sourcePath,
+          });
           deliver({ ...saved, id: newChipId(), preview: file.name, createdAt: new Date() });
         } catch (error) {
           toast.error(`Couldn't attach ${file.name}`, {
@@ -139,7 +153,7 @@ export function usePastedTextFiles(
         }
       }
     },
-    [subChatId, attachPastedFileMutation],
+    [snapshotSlot, attachPastedFileMutation],
   );
 
   const removePastedText = useCallback((id: string) => {
