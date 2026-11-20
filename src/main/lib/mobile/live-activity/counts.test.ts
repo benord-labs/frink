@@ -117,4 +117,23 @@ describe('readAgentCounts', () => {
       ]),
     );
   });
+
+  it('names a chat’s permission request only when it is the sole one and the phone can answer it', async () => {
+    fixture.permissions.mockReturnValue([
+      { chatId: 'one', subChatId: 'one-sub', requestId: 'perm_one' },
+      { chatId: 'two', subChatId: 'two-sub', requestId: 'perm_a' },
+      { chatId: 'two', subChatId: 'two-sub', requestId: 'perm_b' },
+      { chatId: 'grant', subChatId: 'grant-sub', requestId: 'perm_g', type: 'flow_consent' },
+      { chatId: 'moving', subChatId: 'moving-sub', requestId: 'perm_m' },
+    ]);
+    fixture.moves.mockReturnValue([{ chatId: 'moving', subChatId: 'moving-sub', requestId: 'm' }]);
+    const waiting = await readWaitingChats();
+    expect(waiting.get('one')).toEqual({
+      kind: 'permission',
+      subChatId: 'one-sub',
+      requestId: 'perm_one',
+    });
+    for (const chatId of ['two', 'grant', 'moving'])
+      expect(waiting.get(chatId)).not.toHaveProperty('requestId');
+  });
 });
