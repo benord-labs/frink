@@ -187,9 +187,9 @@ The auto-allow is scoped to the current chat's folder and runs after the system 
 
 ## Skills auto-allow
 
-Frink-shipped skills (e.g. `frink-flows`) are **first-party assets Frink writes and maintains**, so the agent **reading** one is auto-allowed — no "external path" prompt. Frink installs them as **real copies** into each tool's skills dir (`~/.agents/skills`, `~/.claude/skills`, `~/.cursor/skills`) from the canonical `~/.frink/skills/`, and they carry a `.baseline.json` marker — that marker, not the location, is what grants the auto-allow.
+Frink-shipped skills (e.g. `frink-flows`) are **first-party assets Frink writes and maintains**, so the agent **reading** one is auto-allowed — no "external path" prompt. Frink installs them as **real copies** into the shared skills dirs (`~/.agents/skills`, `~/.claude/skills`) from the canonical `~/.frink/skills/`, and they carry a `.baseline.json` marker — that marker, not the location, is what grants the auto-allow.
 
-Your **own** skills follow you across tools too: Frink projects them (real copies) into each tool's skills dir when you spawn an agent. But because they're **yours, not first-party**, the agent reading one still prompts the first time — allow it once (or add a `Read` rule) and you're set. Anything copied in from another tool is treated the same way: it runs through your approval because Frink didn't author it.
+Your **own** skills follow you across tools too: Frink projects them (real copies) into the shared skills dirs (`~/.agents/skills`, `~/.claude/skills`) when you spawn an agent. But because they're **yours, not first-party**, the agent reading one still prompts the first time — allow it once (or add a `Read` rule) and you're set. Anything copied in from another tool is treated the same way: it runs through your approval because Frink didn't author it.
 
 The auto-allow is **Read-only** (editing or writing a skill file always prompts) and runs **after** the system deny list — a secret smuggled into a skills dir (e.g. a `.env`) is still blocked.
 

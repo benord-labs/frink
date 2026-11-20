@@ -26,3 +26,13 @@ export async function ensureDirExistsAsync(dirPath: string): Promise<void> {
     await fs.mkdir(dirPath, { recursive: true });
   }
 }
+
+/** True when `file` is a regular file this process may use with `mode` (`constants.R_OK`, `X_OK`…). */
+export async function isFileWith(file: string, mode: number): Promise<boolean> {
+  try {
+    await fs.access(file, mode);
+    return (await fs.stat(file)).isFile();
+  } catch {
+    return false;
+  }
+}
