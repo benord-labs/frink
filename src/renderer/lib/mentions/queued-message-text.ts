@@ -5,6 +5,7 @@ import {
   OPEN_EDITOR_FILE_SOURCE,
 } from '../../../shared/lib/mentions/mention-grammar';
 import { encodeForMentionToken } from '../../../shared/lib/mentions/mention-token-codec';
+import { pathMentionId } from '../../../shared/lib/mentions/parse-mention';
 
 const PREVIEW_LENGTH = 50;
 
@@ -82,7 +83,7 @@ export function attachedContextFile<T>(
 }
 
 function fileToken(source: string, path: string): string {
-  return `@[${MENTION_PREFIXES.FILE}${source}:${path}]`;
+  return `@[${pathMentionId('file', source, path)}]`;
 }
 
 /** Open-file token for a message; null for `/compact` (see isCompactCommand) and when `text`

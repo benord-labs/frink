@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseMention } from '../../../shared/lib/mentions/parse-mention';
 import type { FileMentionOption } from './agents-mentions-types';
 import {
   followSelection,
@@ -26,10 +27,10 @@ const skill = (name: string): FileMentionOption => ({
   repository: '',
   type: 'skill',
 });
-const main = (...options: Array<string | FileMentionOption>) => ({
+const main = (...options: FileMentionOption[]) => ({
   path: '/w/owners-web',
   name: 'owners-web',
-  options: options.map((each) => (typeof each === 'string' ? mainOption(each) : each)),
+  options,
 });
 const linked = (root: string, ...paths: string[]) => {
   const project = { path: root, name: root.split('/').pop() ?? root };
@@ -60,6 +61,11 @@ describe('linkedMentionOption', () => {
       treePath: 'ros-service/docs/api',
     });
   });
+
+  it('sends the whole path of a file in a project whose folder has brackets and a space', () => {
+    const option = linkedMentionOption({ ...ROS, path: '/w/My [old] stuff' }, entry('a.ts'));
+    expect(parseMention(option.id)?.path).toBe('/w/My [old] stuff/a.ts');
+  });
 });
 
 describe('linkedMentionGroups', () => {
@@ -88,7 +94,7 @@ describe('linkedMentionGroups', () => {
 describe('groupMentionOptionsByProject', () => {
   it('leaves the list as it is, under the usual header, when the chat links nothing', () => {
     const { sections, options, keys } = groupMentionOptionsByProject(
-      main(skill('review'), 'a.ts'),
+      main(skill('review'), mainOption('a.ts')),
       [],
     );
     expect(outline(sections)).toEqual(['Results', 0, 1]);
@@ -97,7 +103,7 @@ describe('groupMentionOptionsByProject', () => {
   });
 
   it('puts the chat’s own project first, then each linked one in link order', () => {
-    const { sections, options } = groupMentionOptionsByProject(main('app.ts'), [
+    const { sections, options } = groupMentionOptionsByProject(main(mainOption('app.ts')), [
       linked(ROS.path, 'src/app.ts', 'lib/app.ts'),
       linked('/w/billing', 'app.ts'),
     ]);
@@ -121,7 +127,7 @@ describe('groupMentionOptionsByProject', () => {
   it('keeps skills, agents, tools and categories under the usual header, above the projects', () => {
     const category: FileMentionOption = { ...skill('Files'), id: 'files', type: 'category' };
     const { sections, options } = groupMentionOptionsByProject(
-      main('app.ts', skill('apply'), category),
+      main(mainOption('app.ts'), skill('apply'), category),
       [linked(ROS.path, 'app.ts')],
     );
     expect(outline(sections)).toEqual([
@@ -150,7 +156,7 @@ describe('groupMentionOptionsByProject', () => {
   });
 
   it('keeps one relative path in two projects apart, and a file under two nested links', () => {
-    const { sections, options, keys } = groupMentionOptionsByProject(main('src/a.ts'), [
+    const { sections, options, keys } = groupMentionOptionsByProject(main(mainOption('src/a.ts')), [
       linked(ROS.path, 'src/a.ts'),
       linked(`${ROS.path}/src`, 'a.ts'),
     ]);
