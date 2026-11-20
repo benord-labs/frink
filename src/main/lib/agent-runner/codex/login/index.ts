@@ -1,8 +1,9 @@
 import { app, shell } from 'electron';
 import log from 'electron-log';
 import { z } from 'zod';
-import { CodexAppServerClient, withTimeout } from '../app-server-client';
+import { withTimeout } from '../../../platform/with-timeout';
 import type { SignInOutcome } from '../../sign-in-outcome';
+import { CodexAppServerClient } from '../app-server-client';
 import { resolveCodexBinary } from '../codex-binary';
 
 // The chatgpt login's wire shapes in codex-rs app-server-protocol v2/account.rs.

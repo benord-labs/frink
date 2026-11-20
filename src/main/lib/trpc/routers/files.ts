@@ -39,7 +39,7 @@ import { captureMainException } from '../../sentry/init';
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
 import { copyEntry, listAllFiles } from './copy-entry';
-import { direntKind, findEntryType } from './entry-type';
+import { direntKind, type EntryKinds, findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
 import { resolveNamesProcedure } from './resolve-file-names';
 import { findSymlinkEscape } from './symlink-escape';
@@ -487,18 +487,19 @@ function normalizePathForGit(path: string): string {
  * List immediate children of a directory (single level, no recursion)
  * Used for lazy loading - only fetches one level at a time like VSCode
  */
-async function listDirectoryContents(
+export async function listDirectoryContents(
   dirPath: string,
   rootPath: string,
   gitStatusMap?: Map<string, FileStatus>,
   gitIgnoredSet?: Set<string>,
+  kindOfRow: EntryKinds['direntKind'] = direntKind,
 ): Promise<FileEntry[]> {
   const entries: FileEntry[] = [];
 
   try {
     const dirEntries = await readdir(dirPath, { withFileTypes: true });
     const kinds = await Promise.all(
-      dirEntries.map((entry) => direntKind(entry, join(dirPath, entry.name))),
+      dirEntries.map((entry) => kindOfRow(entry, join(dirPath, entry.name), rootPath)),
     );
 
     for (const [index, entry] of dirEntries.entries()) {
@@ -561,8 +562,13 @@ async function listDirectoryContents(
 const MAX_SCAN_ENTRIES = 200_000;
 
 /** A directory row's kind in name search, or null when it is ignored or a broken link. */
-async function listedKind(entry: Dirent, fullPath: string): Promise<FileEntry['type'] | null> {
-  const kind = await direntKind(entry, fullPath);
+async function listedKind(
+  entry: Dirent,
+  fullPath: string,
+  rootPath: string,
+  kindOfRow: EntryKinds['direntKind'],
+): Promise<FileEntry['type'] | null> {
+  const kind = await kindOfRow(entry, fullPath, rootPath);
   if (kind === 'folder') return isIgnoredDirectory(entry.name) ? null : kind;
   return kind === 'file' && !isIgnoredFileByName(entry.name) ? kind : null;
 }
@@ -571,8 +577,9 @@ async function listedKind(entry: Dirent, fullPath: string): Promise<FileEntry['t
  * Recursively scan a directory and return all file and folder paths
  * Used for search mode - scans entire tree to find matches
  */
-async function scanDirectory(
+export async function scanDirectory(
   rootPath: string,
+  kindOfRow: EntryKinds['direntKind'] = direntKind,
   currentPath: string = rootPath,
   depth: number = 0,
   maxDepth: number = 15,
@@ -588,13 +595,15 @@ async function scanDirectory(
     for (const entry of dirEntries) {
       if (budget.remaining <= 0) break;
       const fullPath = join(currentPath, entry.name);
-      const type = await listedKind(entry, fullPath);
+      const type = await listedKind(entry, fullPath, rootPath, kindOfRow);
       if (!type) continue;
       entries.push({ path: relative(rootPath, fullPath), type });
       budget.remaining--;
       // A link is listed by its target's kind but never walked into, as in the tree.
       if (type === 'folder' && !entry.isSymbolicLink()) {
-        entries.push(...(await scanDirectory(rootPath, fullPath, depth + 1, maxDepth, budget)));
+        entries.push(
+          ...(await scanDirectory(rootPath, kindOfRow, fullPath, depth + 1, maxDepth, budget)),
+        );
       }
     }
   } catch {

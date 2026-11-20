@@ -39,6 +39,7 @@ import {
   type MessageReader,
   type MessageWriter,
 } from 'vscode-jsonrpc/node';
+import { withTimeout } from '../../platform/with-timeout';
 import { captureMainException } from '../../sentry/init';
 import { adoptAgentProcess, createChildProcessCloseBarrier } from '../process-settlement';
 import { APPROVAL_REQUEST_METHODS, declineApprovalResponse } from './codex-events';
@@ -218,24 +219,6 @@ function bindStartedTurn(subs: Set<SubState>, method: string, turnId: string | n
 
 function canDeliverToTurn(sub: SubState, turnId: string | null): boolean {
   return sub.turnId === null || turnId === null || sub.turnId === turnId;
-}
-
-/** Reject `promise` if it doesn't settle within `ms` (the timer never holds the event loop). */
-export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
-    timer.unref?.();
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
 }
 
 /**
