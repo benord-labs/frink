@@ -198,7 +198,7 @@ describe('executeMobileRequest', () => {
       });
       for (const channelId of ['unknown', undefined])
         await expect(executeMobileRequest(request, { streams, channelId })).rejects.toMatchObject({
-          status: 400,
+          status: 409,
         });
     } finally {
       streams.dispose();
