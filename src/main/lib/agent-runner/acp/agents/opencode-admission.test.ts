@@ -7,6 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../../shared/lib/mcp-tool-name';
+import type { UIMessageChunk } from '../../../claude/types';
+import * as dynamicChat from '../../../mcp/dynamic-chat-server';
+import { type FrinkToolsServer, frinkToolsServer } from '../../../mcp/runtime/frink-tools-server';
 import type { CodexApprovalRequest } from '../../codex/codex-events';
 import * as database from '../../../db';
 import { freshDb } from '../../../db/test-utils/fresh-db';
@@ -37,7 +41,12 @@ const SECRET_TEXT = 'outside-secret-5c1e';
 const UNSAFE_SETTINGS =
   "Settings from an organisation, sign-in provider or administrator can change how OpenCode asks for permission, so Frink can't run it safely.";
 
-type Turn = { questions: CodexApprovalRequest[]; errors: string[]; requests: string[] };
+type Turn = {
+  questions: CodexApprovalRequest[];
+  errors: string[];
+  requests: string[];
+  chunks: UIMessageChunk[];
+};
 
 /** Every setting or module a hostile project, user or environment could use to stop the asking. */
 const ALLOW_ALL = { '*': 'allow', bash: 'allow', edit: 'allow', webfetch: 'allow', 'b*': 'allow' };
@@ -189,6 +198,7 @@ describe.runIf(BIN)('OpenCode admission', () => {
     allow: boolean,
     extra = {},
     prompt = '',
+    frinkTools?: FrinkToolsServer,
   ): Promise<Turn> {
     model.scripts.set(id, steps);
     model.requests.delete(id);
@@ -206,6 +216,7 @@ describe.runIf(BIN)('OpenCode admission', () => {
         agentName: 'OpenCode',
         cwd: project,
         prompt: `${prompt}Run the steps. case:${id}`,
+        frinkTools,
         abortController: new AbortController(),
         checkApproval: async (question) => {
           questions.push(question);
@@ -215,7 +226,7 @@ describe.runIf(BIN)('OpenCode admission', () => {
     );
     await tidied;
     const errors = chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : []));
-    return { questions, errors, requests: model.requests.get(id) ?? [] };
+    return { questions, errors, requests: model.requests.get(id) ?? [], chunks };
   }
 
   const bash = (command: string, extra: Record<string, string> = {}): Step => ({
@@ -434,6 +445,61 @@ describe.runIf(BIN)('OpenCode admission', () => {
       TURN_MS,
     );
   });
+
+  it(
+    "lists Frink's own tools on the first turn and runs one without asking",
+    async () => {
+      const subChatId = 'sub-frink-tools';
+      const baseUrl = await dynamicChat.getOrStartDynamicChatMcpUrl();
+      dynamicChat.setCurrentExecutionChat(
+        'chat',
+        subChatId,
+        project,
+        'agent',
+        undefined,
+        undefined,
+        false,
+        'acp',
+      );
+      const frinkTools = frinkToolsServer({
+        baseUrl,
+        subChatId,
+        runtime: 'acp',
+        hasSignalTask: false,
+      });
+      const call = { tool: `${FRINK_MCP_KEY}_searchProjects`, args: { query: '' } };
+      const updates = vi.spyOn(acpUpdates, 'mapSessionUpdate');
+      const replies = vi.spyOn(acpUpdates, 'mapPromptResponse');
+      const result = await turn('frink-tool', [call], false, {}, '', frinkTools);
+      dynamicChat.clearCurrentExecutionChat();
+      // Tees this real turn as the conformance grid's RECORDED OpenCode Frink-tool fixture.
+      const recordTo = process.env.FRINK_RECORD_ACP_FRINK_TOOL;
+      const messages = updates.mock.calls.map(([update]) => ({ update }));
+      const recorded = { messages, response: replies.mock.calls[0]?.[0] };
+      if (recordTo) await writeFile(recordTo, JSON.stringify(recorded, null, 2));
+      updates.mockRestore();
+      replies.mockRestore();
+      expect(result.requests[0]).toContain(`"${call.tool}"`);
+      expect(result.requests[0]).not.toContain(`"${FRINK_MCP_KEY}_frink_task_signal"`);
+      expect({ questions: result.questions, errors: result.errors }).toEqual({
+        questions: [],
+        errors: [],
+      });
+      expect(result.chunks).toContainEqual(
+        expect.objectContaining({
+          type: 'tool-input-available',
+          toolName: frinkToolPartName('searchProjects'),
+        }),
+      );
+      expect(result.chunks).toContainEqual(
+        expect.objectContaining({
+          type: 'tool-output-available',
+          output: { content: [{ type: 'text', text: expect.any(String) }] },
+        }),
+      );
+    },
+    TURN_MS,
+  );
 
   registerCanaryRows(
     'opencode',

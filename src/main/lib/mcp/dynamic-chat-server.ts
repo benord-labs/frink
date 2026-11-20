@@ -2,7 +2,7 @@
 /**
  * In-process HTTP MCP server for dynamic chat tools.
  * Exposes searchProjects, fetchAllProjects, requestSwitchProject to the agent.
- * Bound to 127.0.0.1 only. No auth required (localhost).
+ * Bound to 127.0.0.1; refuses web-page callers (an Origin header or a foreign Host).
  */
 
 import fs from 'node:fs';
@@ -53,6 +53,7 @@ import {
   resetFlowsRunCount,
   resetRegisterNodeCount,
 } from './flows-tools';
+import { isLocalMcpCaller } from './local-caller';
 import {
   dispatchFlowToolCall,
   type FlowConsentStore,
@@ -65,7 +66,7 @@ import {
   consumeCodexFlowPreapproval,
   createFlowExecutionLiveness,
 } from './flows-tools/permissions';
-import { resolveInitializeProtocolVersion } from './protocol-version';
+import { earlyJsonRpcReply, resolveInitializeProtocolVersion } from './protocol-version';
 import { handleTaskSignalToolCall, type RecordedTaskSignal } from './task-signal-tool';
 import { type McpToolResult, toolResult } from './tool-result';
 
@@ -196,8 +197,7 @@ export function setCurrentExecutionChat(
   const resolvedNavigationSessionId =
     navigationSessionId ??
     previous?.navigationSessionId ??
-    subChatToNavigationSessionId.get(subChatId) ??
-    undefined;
+    subChatToNavigationSessionId.get(subChatId);
   executionContexts.set(resolvedExecutionId, {
     chatId,
     subChatId,
@@ -260,21 +260,26 @@ export function setLatestTaskSignal(
   return true;
 }
 
+/** Per-execution budgets, cleared for one execution or (no id) all. */
+const PER_EXECUTION_COUNTER_RESETS: ReadonlyArray<(executionId?: string) => void> = [
+  resetFlowsAddStageRunsCount,
+  resetDefineStagesCount,
+  resetStartBatchCount,
+  resetFlowsRunCount,
+  resetFlowsPatchCount,
+  resetFlowsPatchCreateCount,
+  resetFlowsGetRunCount,
+  resetFlowsGetBatchCount,
+  resetFlowsListTemplatesCount,
+  resetListPluginToolsCount,
+  resetRegisterNodeCount,
+];
+
 export function clearCurrentExecutionChat(executionId?: string): void {
   if (executionId) {
     const context = executionContexts.get(executionId);
     executionContexts.delete(executionId);
-    resetFlowsAddStageRunsCount(executionId);
-    resetDefineStagesCount(executionId);
-    resetStartBatchCount(executionId);
-    resetFlowsRunCount(executionId);
-    resetFlowsPatchCount(executionId);
-    resetFlowsPatchCreateCount(executionId);
-    resetFlowsGetRunCount(executionId);
-    resetFlowsGetBatchCount(executionId);
-    resetFlowsListTemplatesCount(executionId);
-    resetListPluginToolsCount(executionId);
-    resetRegisterNodeCount(executionId);
+    for (const reset of PER_EXECUTION_COUNTER_RESETS) reset(executionId);
     if (context) {
       const mappedExecutionId = subChatToExecutionId.get(context.subChatId);
       if (mappedExecutionId === executionId) {
@@ -284,17 +289,7 @@ export function clearCurrentExecutionChat(executionId?: string): void {
   } else {
     executionContexts.clear();
     subChatToExecutionId.clear();
-    resetFlowsAddStageRunsCount();
-    resetDefineStagesCount();
-    resetStartBatchCount();
-    resetFlowsRunCount();
-    resetFlowsPatchCount();
-    resetFlowsPatchCreateCount();
-    resetFlowsGetRunCount();
-    resetFlowsGetBatchCount();
-    resetFlowsListTemplatesCount();
-    resetListPluginToolsCount();
-    resetRegisterNodeCount();
+    for (const reset of PER_EXECUTION_COUNTER_RESETS) reset();
   }
   sweepNavigationSessions();
 }
@@ -417,7 +412,7 @@ async function handleToolsCall(
   params: unknown,
   executionId?: string,
   channelAddressed?: boolean,
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError: boolean }> {
+): Promise<McpToolResult> {
   const {
     name,
     arguments: args,
@@ -948,22 +943,20 @@ export async function getOrStartDynamicChatMcpUrl(): Promise<string | null> {
 function startDynamicChatMcpServer(): Promise<{ url: string; server: Server }> {
   return new Promise((resolve, reject) => {
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      if (!isLocalMcpCaller(req.headers, server.address()))
+        return sendJson(res, 403, { error: 'Forbidden' });
       const pathname = req.url?.split('?')[0] ?? '';
       const isSsePath = pathname === '/' || pathname === '/sse';
 
       if (req.method === 'GET' && isSsePath) {
         const baseUrl = dynamicChatServer?.url;
-        if (baseUrl) {
-          sendSseStream(req, res, baseUrl, parseExecutionIdentity(req.url));
-        } else {
-          sendJson(res, 503, { error: 'Server not ready' });
-        }
+        if (baseUrl) sendSseStream(req, res, baseUrl, parseExecutionIdentity(req.url));
+        else sendJson(res, 503, { error: 'Server not ready' });
         return;
       }
 
-      if (req.method !== 'POST' || req.url === undefined || req.url === '') {
-        sendJson(res, 405, { error: 'Method Not Allowed' });
-        return;
+      if (req.method !== 'POST' || !req.url) {
+        return sendJson(res, 405, { error: 'Method Not Allowed' });
       }
 
       let body = '';
@@ -975,22 +968,16 @@ function startDynamicChatMcpServer(): Promise<{ url: string; server: Server }> {
         try {
           reqJson = JSON.parse(body) as JsonRpcRequest;
         } catch {
-          sendJson(res, 400, {
+          return sendJson(res, 400, {
             jsonrpc: '2.0',
             id: null,
             error: { code: -32700, message: 'Parse error' },
           });
-          return;
         }
 
-        if (reqJson.jsonrpc !== '2.0' || reqJson.id === undefined || !reqJson.method) {
-          sendJson(res, 200, {
-            jsonrpc: '2.0',
-            id: reqJson.id ?? null,
-            error: { code: -32600, message: 'Invalid Request' },
-          });
-          return;
-        }
+        const early = earlyJsonRpcReply(reqJson);
+        if (early?.body) return sendJson(res, early.status, early.body);
+        if (early) return void res.writeHead(early.status).end();
 
         const identity = parseExecutionIdentity(req.url);
         const executionId = resolveExecutionId(identity);

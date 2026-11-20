@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { USER_ABORT_ERROR_PATTERNS } from '../../../shared/lib/user-abort-error';
+import { FRINK_MCP_KEY } from '../../../shared/lib/mcp-tool-name';
 import type { TaskResultRecord } from '../db/repos/tasks';
 import {
   registerClaudePrewarmTests,
@@ -2394,8 +2395,12 @@ describe('socket file permission edge cases', () => {
     expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
     expect(acpTurn).not.toHaveBeenCalled();
     expect(turns[0]).toMatchObject({ mode: 'plan', resumeSessionId: undefined });
+    // Copilot reaches Frink's own server on its channel URL, so its calls count as Frink's.
+    expect(turns[0]).toMatchObject({
+      frinkTools: { name: FRINK_MCP_KEY, url: expect.stringContaining('127.0.0.1') },
+    });
     expect(permissionCheck).toHaveBeenCalledWith(
-      expect.objectContaining({ autoReview: false, frinkMcpInjected: false }),
+      expect.objectContaining({ autoReview: false, frinkMcpInjected: true }),
     );
     expect(vi.mocked(socketClient.sendExecuteCompleteDirect)).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'cp-session-1' }),

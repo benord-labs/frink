@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
 import type { UIMessageChunk } from '../../claude/types';
+import type { JsonValue } from '../path-questions';
 import { type CursorSdkMessage, createCursorEventState, mapCursorMessage } from './cursor-events';
 import { sdk } from './cursor-test-fixtures';
 
@@ -98,6 +100,50 @@ describe('mapCursorMessage', () => {
         type: 'message-metadata',
         messageMetadata: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
       },
+    ]);
+  });
+});
+
+// SCRIPTED from the SDK's McpToolCall type: no signed-in Cursor run has recorded one yet.
+describe("Frink's own tools on Cursor", () => {
+  const args = {
+    providerIdentifier: FRINK_MCP_KEY,
+    toolName: 'browser_status',
+    args: {},
+  };
+  const blocks: JsonValue[] = [
+    { text: { text: '{"pages":[]}' } },
+    { image: { data: 'iVBOR', mimeType: 'image/png' } },
+  ];
+
+  it('shows the Frink tool card with its text result and no image data', () => {
+    const toolName = frinkToolPartName('browser_status');
+    expect(
+      mapAll([
+        sdk.runs('m', 'mcp', args),
+        sdk.ran('m', 'mcp', args, {
+          status: 'success',
+          value: { content: blocks, isError: false },
+        }),
+      ]),
+    ).toEqual([
+      { type: 'tool-input-start', toolCallId: 'm', toolName },
+      { type: 'tool-input-available', toolCallId: 'm', toolName, input: {} },
+      {
+        type: 'tool-output-available',
+        toolCallId: 'm',
+        output: { content: [{ type: 'text', text: '{"pages":[]}' }] },
+      },
+    ]);
+  });
+
+  it("shows a Frink tool's own error as the card's error", () => {
+    const failed = {
+      status: 'success',
+      value: { content: [{ text: { text: 'No page' } }], isError: true },
+    };
+    expect(mapAll([sdk.ran('m', 'mcp', args, failed)])).toEqual([
+      { type: 'tool-output-error', toolCallId: 'm', errorText: 'No page' },
     ]);
   });
 });

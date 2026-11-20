@@ -76,6 +76,13 @@ describe('startCursorTurn', () => {
     vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
   });
 
+  it("hands the runner Frink's own tool server for the turn", async () => {
+    const { deps, runs } = fakeDeps();
+    const frinkTools = { name: 'frink-tools', url: 'http://127.0.0.1:9/?channel=c' };
+    await collect(startCursorTurn(turnParams({ frinkTools }), deps));
+    expect(runs[0]?.frinkTools).toEqual(frinkTools);
+  });
+
   it("runs the chat's own launch in the chat folder and streams what Cursor sends", async () => {
     const { deps, runs, resolve } = fakeDeps();
     const chunks = await collect(startCursorTurn(turnParams(), deps));

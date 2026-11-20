@@ -1,12 +1,15 @@
 import type {
+  AgentCapabilities,
   ClientConnection,
   InitializeResponse,
+  McpServer,
   SessionConfigOption,
   SessionConfigSelectGroup,
   SessionConfigSelectOption,
 } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
 import { z } from 'zod';
+import type { FrinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import { rememberAgentModels } from '../agent-models';
 
 /** Starting an agent may include a first-run download; a prompt itself has no deadline. */
@@ -23,6 +26,7 @@ type AcpSessionInputs = {
   model?: string;
   mode?: string;
   hasImages: boolean;
+  frinkTools?: FrinkToolsServer;
 };
 
 type OpenedSession = {
@@ -64,19 +68,33 @@ async function choose(
   return changed.configOptions;
 }
 
+/** Frink's own server, only, for an agent that takes MCP servers over HTTP. */
+function sessionMcpServers(
+  capabilities: AgentCapabilities | undefined,
+  frinkTools: FrinkToolsServer | undefined,
+): McpServer[] {
+  if (!frinkTools) return [];
+  if (!capabilities?.mcpCapabilities?.http) {
+    log.info("[ACP] The agent can't reach MCP servers over HTTP; it runs without Frink's tools");
+    return [];
+  }
+  return [{ type: 'http', name: frinkTools.name, url: frinkTools.url, headers: [] }];
+}
+
 /** Continues the earlier session when the agent can, else opens a new one. */
 async function resumeOrCreate(
   connection: ClientConnection,
   inputs: AcpSessionInputs,
-  canResume: boolean,
+  capabilities: AgentCapabilities | undefined,
 ) {
   const { resumeSessionId, cwd } = inputs;
-  if (resumeSessionId && canResume) {
+  const mcpServers = sessionMcpServers(capabilities, inputs.frinkTools);
+  if (resumeSessionId && capabilities?.sessionCapabilities?.resume) {
     try {
       const resumed = await connection.agent.request('session/resume', {
         sessionId: resumeSessionId,
         cwd,
-        mcpServers: [],
+        mcpServers,
       });
       return { sessionId: resumeSessionId, options: resumed.configOptions, lostHistory: false };
     } catch (error) {
@@ -84,7 +102,7 @@ async function resumeOrCreate(
       log.warn('[ACP] Could not continue the earlier session; starting a new one', error);
     }
   }
-  const created = await connection.agent.request('session/new', { cwd, mcpServers: [] });
+  const created = await connection.agent.request('session/new', { cwd, mcpServers });
   const lostHistory = resumeSessionId !== undefined;
   return { sessionId: created.sessionId, options: created.configOptions, lostHistory };
 }
@@ -154,8 +172,8 @@ export async function openSession(
     if (inputs.hasImages && !capabilities?.promptCapabilities?.image) {
       throw new Error(`${inputs.agentName} can't take images.`);
     }
-    const canResume = Boolean(capabilities?.sessionCapabilities?.resume);
-    const { sessionId, options, lostHistory } = await resumeOrCreate(connection, inputs, canResume);
+    const opened = await resumeOrCreate(connection, inputs, capabilities);
+    const { sessionId, options, lostHistory } = opened;
     await applyChoices(connection, sessionId, options ?? [], inputs);
     return { sessionId, lostHistory, agentVersion: reportedVersion(initialized) };
   } finally {

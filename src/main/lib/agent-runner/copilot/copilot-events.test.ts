@@ -1,8 +1,16 @@
 import type { JsonValue, SessionEvent } from '@github/copilot-sdk';
 import { describe, expect, it } from 'vitest';
+import { frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
 import type { UIMessageChunk } from '../../claude/types';
 import { createCopilotEventState, mapCopilotEvent } from './copilot-events';
-import { IDLE, says, thinks, toolEnds, toolStarts } from './copilot-test-fixtures';
+import {
+  IDLE,
+  RECORDED_COPILOT_FRINK_TOOL,
+  says,
+  thinks,
+  toolEnds,
+  toolStarts,
+} from './copilot-test-fixtures';
 
 function mapAll(events: SessionEvent[]): UIMessageChunk[] {
   const state = createCopilotEventState();
@@ -188,5 +196,32 @@ describe('mapCopilotEvent', () => {
     expect(mapAll([error, IDLE])).toEqual([
       { type: 'error', errorText: 'You have used your monthly quota.' },
     ]);
+  });
+});
+
+describe("Frink's own tools on Copilot", () => {
+  it("shows a recorded call as the Frink tool card with Copilot's text result, never its blocks", () => {
+    const toolName = frinkToolPartName('searchProjects');
+    expect(mapAll(RECORDED_COPILOT_FRINK_TOOL)).toEqual([
+      { type: 'tool-input-start', toolCallId: 'call_frink-tool_0', toolName },
+      {
+        type: 'tool-input-available',
+        toolCallId: 'call_frink-tool_0',
+        toolName,
+        input: { query: '' },
+      },
+      {
+        type: 'tool-output-available',
+        toolCallId: 'call_frink-tool_0',
+        output: { content: [{ type: 'text', text: '{"projects":[]}' }] },
+      },
+    ]);
+  });
+
+  it("shows a Frink-named tool from any other server as Copilot's own", () => {
+    const [start] = RECORDED_COPILOT_FRINK_TOOL;
+    if (start?.type !== 'tool.execution_start') throw new Error('fixture');
+    const other: SessionEvent = { ...start, data: { ...start.data, mcpServerName: 'impostor' } };
+    expect(mapAll([other])).toContainEqual(expect.objectContaining({ toolName: 'AgentTool' }));
   });
 });

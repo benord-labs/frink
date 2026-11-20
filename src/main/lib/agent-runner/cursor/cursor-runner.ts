@@ -6,6 +6,7 @@ import type { SDKModel, SettingSource } from '@cursor/sdk';
 import { utilityProcess } from 'electron';
 import log from 'electron-log';
 import type { UIMessageChunk } from '../../claude/types';
+import type { FrinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import { trackAgentProcess } from '../process-settlement';
@@ -40,6 +41,10 @@ const NOT_STARTED = "Frink couldn't start Cursor, so this turn didn't run.";
 // Messages Cursor may send before it asks Frink's check about the prompt.
 const BEFORE_CANARY = new Set(['status', 'system']);
 
+/** Off until a signed-in run proves an MCP call reaches the hook with its server's address,
+ * a missing address and a dead hook both refuse, and no other MCP source loads. */
+export const CURSOR_FRINK_TOOLS = false;
+
 // Keyed by the SDK's SettingSource, so a source Cursor adds or removes fails typecheck here.
 // Only the chat's private home loads: it holds the hook that asks Frink before every change.
 export const CURSOR_SETTING_SOURCES = {
@@ -60,6 +65,7 @@ export type HostAgentOptions = {
   tools: string[];
   local: { cwd: string; settingSources: ['user'] };
   storeDir: string;
+  mcpServers?: Record<string, { type: 'http'; url: string }>;
 };
 type CursorUserMessage = { text: string; images?: { data: string; mimeType: string }[] };
 type RunError = { message: string; code?: string };
@@ -122,6 +128,8 @@ export type CursorRunnerParams = {
   images?: { data: string; mimeType: string }[];
   abortController: AbortController;
   checkApproval: CodexApprovalCheck;
+  /** Frink's own MCP server for this turn; left out when it did not start. */
+  frinkTools?: FrinkToolsServer;
 };
 
 export type CursorRunnerDeps = {
@@ -153,14 +161,22 @@ export function cursorAgentOptions(input: {
   storeDir: string;
   tools: readonly string[];
   model?: CursorModel;
+  frinkTools?: FrinkToolsServer;
 }): HostAgentOptions {
+  const { frinkTools } = input;
   return {
     model: input.model ?? { id: 'default' },
-    tools: [...input.tools],
+    // `mcp` unlocks MCP tools, and the one server passed in is Frink's own.
+    tools: frinkTools ? [...input.tools, 'mcp'] : [...input.tools],
     local: { cwd: input.cwd, settingSources: ['user'] },
     storeDir: input.storeDir,
+    ...(frinkTools && { mcpServers: { [frinkTools.name]: { type: 'http', url: frinkTools.url } } }),
   };
 }
+
+/** Frink's server for a Cursor turn, while Cursor's own check for it is unproven: none. */
+const cursorFrinkTools = (params: CursorRunnerParams) =>
+  CURSOR_FRINK_TOOLS ? params.frinkTools : undefined;
 
 /** Cursor's error in plain words; its own text goes only to the log. */
 function errorText(error: RunError | undefined): string {
@@ -203,6 +219,7 @@ class CursorTurn {
       checkApproval: params.checkApproval,
       turnOver: this.over.signal,
       onStop: (reason) => this.halt(reason),
+      frinkToolsUrl: cursorFrinkTools(params)?.url,
     });
   }
 
@@ -268,7 +285,13 @@ class CursorTurn {
     if (images?.length) message.images = images;
     this.host?.send({
       type: 'start',
-      options: cursorAgentOptions({ cwd: params.cwd, storeDir, tools, model: params.model }),
+      options: cursorAgentOptions({
+        cwd: params.cwd,
+        storeDir,
+        tools,
+        model: params.model,
+        frinkTools: cursorFrinkTools(params),
+      }),
       message,
       mode: params.mode,
       resumeAgentId: resumeId,

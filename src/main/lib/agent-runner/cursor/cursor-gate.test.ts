@@ -7,6 +7,7 @@ import type { ApprovalOutcome, CodexApprovalRequest } from '../codex/codex-event
 import type { JsonValue } from '../path-questions';
 import { CURSOR_RIPGREP } from './cursor-test-fixtures';
 import { CURSOR_TOOL_NAMES, type CursorHookAnswer, createCursorGate } from './index';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 let root = '';
 let cwd = '';
@@ -96,6 +97,7 @@ function testGate(
   answer: (request: CodexApprovalRequest) => ApprovalOutcome,
   folder = cwd,
   ripgrep = CURSOR_RIPGREP,
+  frinkToolsUrl?: string,
 ) {
   const asked: CodexApprovalRequest[] = [];
   const stops: string[] = [];
@@ -113,6 +115,7 @@ function testGate(
     checkApproval,
     turnOver: turn.signal,
     onStop: (reason) => stops.push(reason),
+    frinkToolsUrl,
   });
   const decideText = async (body: string): Promise<CursorHookAnswer> => {
     const output = await gate.answer(body);
@@ -823,5 +826,51 @@ describe('the stop on an unasked action', () => {
       'updateTodos',
       'readTodos',
     ]);
+  });
+});
+
+describe("Frink's own MCP server", () => {
+  const URL = 'http://127.0.0.1:9/?channel=c&toolset=nosignal';
+  type McpHookBody = {
+    hook_event_name: string;
+    cursor_version: string;
+    tool_name: string;
+    tool_input: string;
+    url?: string;
+  };
+  const mcp = (url?: string): McpHookBody => {
+    const body: McpHookBody = {
+      hook_event_name: 'beforeMCPExecution',
+      cursor_version: VERSION,
+      tool_name: 'searchProjects',
+      tool_input: '{"query":""}',
+    };
+    if (url !== undefined) body.url = url;
+    return body;
+  };
+  const ran = (providerIdentifier: string) => ({
+    name: 'mcp',
+    args: { providerIdentifier, toolName: 'searchProjects', args: { query: '' } },
+    result: OK,
+  });
+
+  it("allows a call only to this turn's exact address, asking nothing", async () => {
+    const { asked, decide } = testGate(() => ALLOW_ALL, cwd, CURSOR_RIPGREP, URL);
+    expect(await decide(mcp(URL))).toEqual(ALLOW);
+    for (const url of [undefined, `${URL}&x=1`, 'http://127.0.0.1:9/']) {
+      expect(await decide(mcp(url))).toEqual(deny(CANT_CHECK));
+    }
+    expect(asked).toEqual([]);
+    const offered = testGate(() => ALLOW_ALL);
+    expect(await offered.decide(mcp(URL))).toEqual(deny(CANT_CHECK));
+  });
+
+  it('lets each allowed call run once, and trips on one to any other server', async () => {
+    const { gate, decide } = testGate(() => ALLOW_ALL, cwd, CURSOR_RIPGREP, URL);
+    await decide(mcp(URL));
+    expect(gate.actedUnasked(ran(FRINK_MCP_KEY))).toBe(false);
+    expect(gate.actedUnasked(ran(FRINK_MCP_KEY))).toBe(true);
+    await decide(mcp(URL));
+    expect(gate.actedUnasked(ran('other'))).toBe(true);
   });
 });

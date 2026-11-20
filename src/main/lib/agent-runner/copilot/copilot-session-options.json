@@ -53,7 +53,7 @@
   "includeSubAgentStreamingEvents": "default-reviewed",
   "mcpOAuthTokenStorage": "default-reviewed",
   "authClientIdMetadataUrl": "default-reviewed",
-  "mcpServers": "default-reviewed",
+  "mcpServers": "frink-sets",
   "customAgents": "default-reviewed",
   "defaultAgent": "default-reviewed",
   "agent": "default-reviewed",

@@ -68,6 +68,13 @@ async function collect(stream: AsyncGenerator<UIMessageChunk, void, undefined>) 
 }
 
 describe('startCopilotTurn', () => {
+  it("hands the runner Frink's own tool server for the turn", async () => {
+    const { deps, runs } = fakeDeps();
+    const frinkTools = { name: 'frink-tools', url: 'http://127.0.0.1:9/?channel=c' };
+    await collect(startCopilotTurn(turnParams({ frinkTools }), deps));
+    expect(runs[0]?.frinkTools).toEqual(frinkTools);
+  });
+
   it('runs the resolved launch in the chat folder and streams what Copilot sends', async () => {
     const { deps, runs } = fakeDeps();
     const chunks = await collect(startCopilotTurn(turnParams(), deps));

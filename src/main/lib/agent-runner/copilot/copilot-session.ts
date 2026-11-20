@@ -10,6 +10,7 @@ import type {
   SessionEvent,
 } from '@github/copilot-sdk';
 import log from 'electron-log';
+import type { FrinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import type { createCopilotGate } from './copilot-gate';
 import sessionOptionRoutes from './copilot-session-options.json';
 import type { CopilotTools } from './copilot-tools';
@@ -76,11 +77,17 @@ export function copilotSessionOptions(input: {
   onEvent: (event: SessionEvent) => void;
   model?: string;
   reasoningEffort?: SessionConfig['reasoningEffort'];
+  frinkTools?: FrinkToolsServer;
 }): SessionConfig {
+  const { frinkTools } = input;
   return {
     workingDirectory: input.cwd,
     configDirectory: input.configDirectory,
-    availableTools: Object.keys(input.tools),
+    // MCP tools come only from Frink's server; the gate names each Frink tool it lets through.
+    availableTools: [...Object.keys(input.tools), ...(frinkTools ? ['mcp:*'] : [])],
+    mcpServers: frinkTools && {
+      [frinkTools.name]: { type: 'http', url: frinkTools.url, tools: ['*'] },
+    },
     enableFileHooks: false,
     enableConfigDiscovery: false,
     remoteSession: 'off',
