@@ -502,8 +502,8 @@ if (gotTheLock) {
     });
 
     // Provision Frink-managed skills (`~/.frink/skills/<name>/`) and project REAL
-    // COPIES into the per-tool skill dirs (`~/.agents/skills`, `~/.claude/skills`,
-    // `~/.cursor/skills`) so IDE agents discover them. Awaited (~15-20ms cold) so the
+    // COPIES into the per-tool skill dirs (`~/.agents/skills`, `~/.claude/skills`)
+    // so IDE agents discover them. Awaited (~15-20ms cold) so the
     // agent executor that starts on the 2s setTimeout below cannot race the first
     // projection. Boot-only; failures are logged but never abort startup. 5s hard
     // timeout guards against a stalled copy / fs resolution hanging boot.

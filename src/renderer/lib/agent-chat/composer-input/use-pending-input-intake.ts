@@ -1,7 +1,6 @@
 import { useAtomValue, useStore } from 'jotai';
 import { type RefObject, useEffect } from 'react';
 import { toast } from 'sonner';
-import { isWholeMentionId } from '../../../../shared/lib/mentions/mention-grammar';
 import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
 import { type PendingPath, pendingComposerInputAtomFamily } from './pending-input';
@@ -24,7 +23,6 @@ type Params = {
 
 /**
  * One mention chip per path, skipping paths already in the composer or added earlier in this drain.
- * A name the token grammar would cut short is not added: the chat would get a different path.
  */
 function insertPaths(editor: Editor, items: PendingPath[]) {
   editor.focus();
@@ -32,11 +30,7 @@ function insertPaths(editor: Editor, items: PendingPath[]) {
   const added = new Set<string>();
   for (const { path, type } of items) {
     const option = pickedPathMention(type, path);
-    if (!isWholeMentionId(option.id)) {
-      toast.error(
-        `Couldn't add ${option.label}: its name has square brackets a message can't hold. Type its path instead.`,
-      );
-    } else if (!added.has(option.id) && !text.includes(`@[${option.id}]`)) {
+    if (!added.has(option.id) && !text.includes(`@[${option.id}]`)) {
       added.add(option.id);
       editor.insertMention(option);
     }

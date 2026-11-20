@@ -19,6 +19,7 @@ import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-f
 import { unreadableWebhookFilterMessage } from '../../../../shared/lib/webhook-match';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
 import { patchTemplateWarnings } from './patch-template-warnings';
+import { handleCancelRun, handleContinueRun } from './run-control';
 import {
   addStageRunsLimiter,
   defineStagesLimiter,
@@ -26,6 +27,7 @@ import {
   getRunLimiter,
   invalidArgsResult,
   listTemplatesLimiter,
+  localIdField,
   parseAndAcquire,
   startBatchLimiter,
 } from './gating/session-call-limiters';
@@ -135,14 +137,6 @@ async function resolveProjectPath(projectId: string): Promise<string | null> {
   if (!row?.path || row.path.startsWith('virtual://')) return null;
   return row.path;
 }
-
-/**
- * Local flow entity IDs (flows, runs, node-runs) are cuid2 short IDs, not UUIDs.
- * Validate non-empty rather than UUID format. `batchId` is the exception — it is the
- * randomUUID-minted graph.settings.currentBatchId and keeps `.uuid()`.
- */
-const localIdField = (name: string) =>
-  z.string().trim().min(1, `${name} must be a non-empty string`);
 
 const commandsListArgsSchema = z.object({
   flowId: localIdField('flowId').optional(),
@@ -502,6 +496,10 @@ export async function handleFlowsToolCall(
       return handleRun(args, executionId, options);
     case 'frink_flows_get_run':
       return handleGetRun(args, executionId);
+    case 'frink_flows_continue_run':
+      return handleContinueRun(args, { executionId, sessionId: options?.sessionId });
+    case 'frink_flows_cancel_run':
+      return handleCancelRun(args, { executionId, sessionId: options?.sessionId });
 
     case 'frink_register_node':
       if (!options?.registerNode) {

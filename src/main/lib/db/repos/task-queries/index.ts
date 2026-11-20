@@ -8,6 +8,7 @@ export { getWorkQueueSectionFilter, type WorkQueueSection } from './work-queue-o
 export {
   beforeQueueCursor,
   getQueueTaskRow,
+  getQueueTaskRowForRun,
   selectQueueTaskRows,
   type TaskListCursor,
   type TaskWithProjectRow,

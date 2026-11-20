@@ -16,6 +16,19 @@ export function taskMenuRecovery(task: RecoverableTask, status: string): Recover
   return canRecover ? task.recoveryKind : undefined;
 }
 
+/** A Flow row's Continue / Retry, by the Work Queue menu's rule on its display status. A Retry that
+ *  needs a confirm is offered only to a caller that can ask for one. */
+export function flowRowRecovery(
+  task: RecoverableTask & { status: string; confirmSideEffects?: boolean },
+  status: string,
+  confirmsSideEffects: boolean,
+): RecoveryKind | undefined {
+  const kind = taskMenuRecovery({ ...task, status }, status);
+  if (!kind || !assessRowRetry({ ...task, effectiveStatus: status }).canRetry) return undefined;
+  if (kind === 'retry' && task.confirmSideEffects && !confirmsSideEffects) return undefined;
+  return kind;
+}
+
 /** A row its run recovers (interrupted, or failed on a later step) shows an earlier step's raw
  * status, so only a row whose own task stopped is assessed. */
 export function assessRowRetry(

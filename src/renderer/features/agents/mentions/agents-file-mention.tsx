@@ -36,6 +36,7 @@ import {
 import { useRootSearches } from '@/lib/workspace-context/use-root-searches';
 import { useTreeProjects } from '@/lib/workspace-context/use-tree-projects';
 import { MENTION_PREFIXES } from '../../../../shared/lib/mentions/mention-grammar';
+import { pickedPathMention } from '../../../../shared/lib/mentions/parse-mention';
 import {
   Tooltip,
   TooltipContent,
@@ -386,15 +387,11 @@ export const AgentsFileMention = memo(function AgentsFileMention({
       )
       .map((file) => {
         const pathParts = file.filePath.split('/');
-        const fileName = pathParts.pop() || file.filePath;
-        const dirPath = pathParts.join('/') || '/';
-
+        pathParts.pop();
+        // The same file token the repo results insert, so the agent is told about the file.
         return {
-          id: `changed:${file.filePath}`,
-          label: fileName,
-          path: file.filePath,
-          repository: repository || '',
-          truncatedPath: dirPath,
+          ...pickedPathMention('file', file.filePath),
+          truncatedPath: pathParts.join('/') || '/',
           additions: file.additions,
           deletions: file.deletions,
         };
@@ -402,7 +399,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
 
     // Sort by relevance using shared function
     return sortFilesByRelevance(mapped, debouncedSearchText);
-  }, [changedFiles, debouncedSearchText, repository]);
+  }, [changedFiles, debouncedSearchText]);
 
   // Convert API results to options with truncated path
   // Exclude files that are already in changedFileOptions

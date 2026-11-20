@@ -48,6 +48,7 @@ import {
   FRINK_HOST_TOOL_PERMISSION_METHOD,
   FRINK_HOST_TOOL_PERMISSION_VERSION,
 } from './codex-host-permissions';
+import { reportLaunchLockFailure, verifyLaunchLocks } from './launch-locks';
 
 /** Strips a trailing CR so CRLF-framed lines parse (hoisted per biome useTopLevelRegex). */
 const TRAILING_CR = /\r$/;
@@ -154,6 +155,7 @@ export type CodexAppServerClientOptions = {
   /** Awaited before the spawn, e.g. so the server starts on the user's login-shell PATH. */
   beforeSpawn?: () => Promise<void>;
   adoptProcess?: typeof adoptAgentProcess;
+  captureException?: typeof captureMainException;
 };
 
 /** Hard cap on the initialize handshake so a hung/wrong binary can't wedge a turn forever. */
@@ -296,6 +298,11 @@ export class CodexAppServerClient {
     }
     // Codex expects the `initialized` notification before any thread/turn calls.
     await connection.sendNotification('initialized');
+    await verifyLaunchLocks(connection, this.options.args ?? [], this.options.cwd).catch((err) => {
+      reportLaunchLockFailure(err, this.disposed, this.options.captureException);
+      this.dispose();
+      throw err;
+    });
     const extraRoots = this.options.extraSkillRoots ?? [];
     if (extraRoots.length > 0) {
       // Replaces the process-global root set (Frink is its sole client), awaited before thread/start.

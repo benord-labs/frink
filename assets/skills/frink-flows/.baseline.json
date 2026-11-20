@@ -1,6 +1,6 @@
 {
-  "generatedAt": "content-09e366e34d3e",
-  "version": "content-09e366e34d3e",
+  "generatedAt": "content-bafbca2a87be",
+  "version": "content-bafbca2a87be",
   "files": {
     "SKILL.md": {
       "sha256": "18da75d578adf5a18d279b16392403f6fc40048fafdefdd6817bcbc772aa5533",
@@ -31,8 +31,8 @@
       "bytes": 5547
     },
     "references/inspecting-runs.md": {
-      "sha256": "11b3cffe0cfae4f105300d5b1ff3d3e136779de5ba7acf21bf129d30a1b0ccc6",
-      "bytes": 2966
+      "sha256": "d6c64dac9e308047ffc7e4f57bc11a6ed1dc78c497c5ece061ba423e22965caf",
+      "bytes": 3583
     },
     "references/template-variables.md": {
       "sha256": "6a6ae3f4cbf7b998438fabed98d24ac646affb21ade0bba09f4aa8fa42ea5a9b",
