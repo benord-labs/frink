@@ -74,6 +74,22 @@ describe('isFrinkOwnedMcpTool', () => {
     expect(isFrinkOwnedMcpTool('mcp__frinkx__browser_open')).toBe(false);
   });
 
+  it('is false for a server whose own name starts with the key and an underscore', () => {
+    // Each of these splits at its first `__`, which reads as Frink's server.
+    const lookalikes = [
+      ['frink__evil', 'read'],
+      ['frink_', 'read'],
+      ['frink__', 'read'],
+      ['frink___', 'read'],
+      ['frink_', '_read'],
+    ];
+    for (const [server, tool] of lookalikes) {
+      expect(isFrinkOwnedMcpTool(`mcp__${server}__${tool}`)).toBe(false);
+    }
+    expect(isFrinkMutatingFlowTool('mcp__frink__evil__frink_flows_patch')).toBe(false);
+    expect(isFrinkMutatingFlowTool('mcp__frink___frink_flows_patch')).toBe(false);
+  });
+
   it('is false for a server whose name merely contains "frink" (substring trap)', () => {
     expect(isFrinkOwnedMcpTool('mcp__shortcut-frink__stories-list')).toBe(false);
   });

@@ -72,10 +72,20 @@ export function isFrinkMcpServerInHistory(serverName: string): boolean {
   return FRINK_OWNED_MCP_SERVERS.has(serverName) || FRINK_MCP_HISTORY_KEYS.has(serverName);
 }
 
+/** A name splits at its first `__`, so a server named `frink_` or `frink__x` leaves a tool
+ * part that starts with `_` or holds `__`. No Frink tool is named that way. */
+function canBeFrinkToolName(toolName: string): boolean {
+  return !toolName.startsWith('_') && !toolName.includes('__');
+}
+
 /** True for a bare `mcp__<frink-server>__<tool>` fullname. */
 export function isFrinkOwnedMcpTool(fullName: string): boolean {
   const parsed = parseMcpToolFullName(fullName);
-  return parsed !== null && FRINK_OWNED_MCP_SERVERS.has(parsed.serverName);
+  return (
+    parsed !== null &&
+    FRINK_OWNED_MCP_SERVERS.has(parsed.serverName) &&
+    canBeFrinkToolName(parsed.toolName)
+  );
 }
 
 /**
