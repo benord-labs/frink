@@ -13,6 +13,7 @@ import { FlowsScreen } from '../screens/Flows';
 import { QueueScreen } from '../screens/Queue';
 import { needsYouCount } from '../screens/Queue/queue-view';
 import { RunScreen } from '../screens/Run';
+import { VoiceModeScreen } from '../screens/VoiceMode';
 import { useReduceMotion } from '../ui/glyphs';
 import { useTheme } from '../ui/theme';
 import { ComputerButton } from './computer-button';
@@ -48,11 +49,12 @@ function useStackOptions() {
     headerBlurEffect: t.solid ? 'none' : 'systemChromeMaterial',
     headerStyle: { backgroundColor: t.solid ? t.background : 'transparent' },
   };
-  return { screenOptions, solid, chat };
+  const voice: NativeStackNavigationOptions = { ...solid, title: 'Voice' };
+  return { screenOptions, solid, chat, voice };
 }
 
 function ChatsStack() {
-  const { screenOptions, solid, chat } = useStackOptions();
+  const { screenOptions, solid, chat, voice } = useStackOptions();
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen
@@ -61,12 +63,13 @@ function ChatsStack() {
         options={{ ...solid, headerRight: computer }}
       />
       <Stack.Screen name="Chat" component={ChatScreen} options={chat} />
+      <Stack.Screen name="Voice" component={VoiceModeScreen} options={voice} />
     </Stack.Navigator>
   );
 }
 
 function FlowsStack() {
-  const { screenOptions, solid, chat } = useStackOptions();
+  const { screenOptions, solid, chat, voice } = useStackOptions();
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen
@@ -77,12 +80,13 @@ function FlowsStack() {
       <Stack.Screen name="Flow" component={FlowScreen} options={solid} />
       <Stack.Screen name="Run" component={RunScreen} options={solid} />
       <Stack.Screen name="Chat" component={ChatScreen} options={chat} />
+      <Stack.Screen name="Voice" component={VoiceModeScreen} options={voice} />
     </Stack.Navigator>
   );
 }
 
 function QueueStack() {
-  const { screenOptions, solid, chat } = useStackOptions();
+  const { screenOptions, solid, chat, voice } = useStackOptions();
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen
@@ -91,6 +95,7 @@ function QueueStack() {
         options={{ ...solid, headerRight: computer }}
       />
       <Stack.Screen name="Chat" component={ChatScreen} options={chat} />
+      <Stack.Screen name="Voice" component={VoiceModeScreen} options={voice} />
       <Stack.Screen name="Run" component={RunScreen} options={solid} />
       <Stack.Screen name="Flow" component={FlowScreen} options={solid} />
     </Stack.Navigator>
@@ -110,9 +115,10 @@ export const TABS = [
   { name: 'QueueTab', title: 'Queue', component: QueueStack, symbol: 'tray', icon: Inbox },
 ] as const;
 
-/** A conversation keeps the whole height for its transcript and composer. */
+/** A conversation keeps the whole height for its transcript and composer, as does voice mode. */
 export function tabBarHidden(route: RouteProp<TabRoutes>) {
-  return getFocusedRouteNameFromRoute(route) === 'Chat';
+  const name = getFocusedRouteNameFromRoute(route);
+  return name === 'Chat' || name === 'Voice';
 }
 
 /** The Queue tab's badge: how many items need you, or none. */
