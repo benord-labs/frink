@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/command-block-format';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
+import { isCutShortMention, toastCutShortMention } from '@/lib/mentions/cut-short-mention';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
 import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
 import {
@@ -1051,6 +1052,14 @@ export const AgentsMentionsEditor = memo(
 
         insertMention: (option: FileMentionOption) => {
           if (!editorRef.current) return;
+          if (isCutShortMention(option)) {
+            toastCutShortMention(option);
+            // As Escape does: the typed text stays, and Enter sends again.
+            triggerActive.current = false;
+            triggerStartIndex.current = null;
+            onCloseTrigger();
+            return;
+          }
 
           const sel = window.getSelection();
           if (!sel || sel.rangeCount === 0) return;

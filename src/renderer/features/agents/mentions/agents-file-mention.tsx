@@ -28,6 +28,7 @@ import {
   sortFilesByRelevance,
 } from '@/lib/mentions/agents-file-mention-search-helpers';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
+import { CUT_SHORT_MENTION_REASON, isCutShortMention } from '@/lib/mentions/cut-short-mention';
 import {
   followSelection,
   groupMentionOptionsByProject,
@@ -959,6 +960,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                 // biome-ignore lint/style/useNamingConvention: component type variable
                 const OptionIcon = getOptionIcon(option);
                 const isCategory = option.type === 'category';
+                const cutShort = !isCategory && isCutShortMention(option);
                 const showTooltip = !isCategory && option.path;
 
                 const itemContent = (
@@ -981,6 +983,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                     role="option"
                     tabIndex={0}
                     aria-selected={isSelected}
+                    aria-disabled={cutShort || undefined}
                     className={cn(
                       'group inline-flex w-[calc(100%-8px)] mx-1 items-center whitespace-nowrap outline-hidden',
                       'h-7 px-1.5 justify-start text-xs rounded-md',
@@ -1010,7 +1013,13 @@ export const AgentsFileMention = memo(function AgentsFileMention({
                         </span>
                       )}
                       {/* Show truncated path for files only, not for skills/agents (they show in tooltip) */}
+                      {cutShort && (
+                        <span className="text-muted-foreground flex-1 min-w-0 ml-2 truncate text-[10px]">
+                          {CUT_SHORT_MENTION_REASON}
+                        </span>
+                      )}
                       {option.truncatedPath &&
+                        !cutShort &&
                         !isCategory &&
                         option.type !== 'skill' &&
                         option.type !== 'agent' && (
