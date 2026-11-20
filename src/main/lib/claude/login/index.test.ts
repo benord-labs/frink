@@ -157,7 +157,9 @@ describe('signInToClaude', () => {
   it('says it could not start when the system ends Claude, as macOS does an unsigned binary', async () => {
     const finished = signInToClaude(deps('wait'));
     await started();
-    const pid = spawned.at(-1)?.pid ?? 0;
+    const pid = spawned.at(-1)?.pid;
+    // A pid of 0 would signal this test run's own process group.
+    if (!pid) throw new Error('Claude did not start through the given spawn');
 
     process.kill(-pid, 'SIGKILL');
 
