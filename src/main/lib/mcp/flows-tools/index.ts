@@ -57,6 +57,7 @@ import {
   deleteFlow,
   getFlow,
   getFlowRun,
+  getFlowVersionGraph,
   listBatchPlanTemplates,
   listFlowBatchRuns,
   listFlowBatchStages,
@@ -71,6 +72,11 @@ import { handleIntegrationsList, handleNodesList, handleProjectsList } from './c
 import { expandAgentCommandsInGraph, formatExpansionFailures } from './expand-commands';
 import { applyPatchOperations, patchArgsSchema, seedDefaultProject } from './flow-patch';
 import { PATCH_OPERATIONS_INPUT_SCHEMA } from './patch';
+import {
+  checkFlowVersionGuard,
+  queueOwnFlowPatch,
+  recordKnownFlowVersion,
+} from './patch/version-guard';
 import {
   buildFlowPatchReceipt,
   buildFlowPatchResult,
@@ -398,7 +404,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_patch',
     description:
-      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and a topology-only graph (node ids, labels, block types, edges) are included in every response; call frink_flows_get for full node config. If a result is missing, cut short, or replaced by a note such as \"saved to <path>\", the call may have finished: check with frink_flows_get (or frink_flows_list after a create) before retrying, and never resend a create — a repeated name-create in the same chat is rejected. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
+      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. When modifying, pass expectedVersionNumber (version_number from frink_flows_get, then the versionNumber each patch returns) so a save another session made in between is never overwritten. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and a topology-only graph (node ids, labels, block types, edges) are included in every response; call frink_flows_get for full node config. If a result is missing, cut short, or replaced by a note such as \"saved to <path>\", the call may have finished: check with frink_flows_get (or frink_flows_list after a create) before retrying, and never resend a create — a repeated name-create in the same chat is rejected. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -420,6 +426,11 @@ export const FLOWS_TOOLS = [
           type: 'string',
           description:
             'Optional project id for the new flow (only used when creating with name). Also seeds the flow\'s default project (settings.defaultProjectId), which start_task/run_command nodes inherit. When omitted, defaults to the current session\'s project when resolvable (the response states the outcome); discover ids with frink_flows_list_catalog({ kind: "projects" }).',
+        },
+        expectedVersionNumber: {
+          type: ['integer', 'null'],
+          description:
+            'Version your edits are based on: version_number from frink_flows_get, or the versionNumber your last patch returned. When the flow has moved past it, nothing is saved and the result has errorCode FLOW_VERSION_CONFLICT with the current version and what changed; re-read the flow and re-apply your edits. Only with flowId.',
         },
         operations: PATCH_OPERATIONS_INPUT_SCHEMA,
       },
@@ -809,6 +820,8 @@ export type FlowInvocationOptions = {
 export type FlowToolCallOptions = FlowInvocationOptions & {
   /** Required by frink_register_node: the authorization callback for its captured snapshot. */
   registerNode?: RegisterNodeOptions;
+  /** The calling chat (subChatId); scopes which flow versions it has read or written. */
+  sessionId?: string;
 };
 
 export async function handleFlowsToolCall(
@@ -820,11 +833,11 @@ export async function handleFlowsToolCall(
 ): Promise<McpToolResult | null> {
   switch (toolName) {
     case 'frink_flows_patch':
-      return handlePatch(args, executionId, sessionProjectPath);
+      return handlePatch(args, executionId, sessionProjectPath, options?.sessionId);
     case 'frink_flows_list':
       return handleList(args);
     case 'frink_flows_get':
-      return handleGet(args);
+      return handleGet(args, options?.sessionId);
     case 'frink_flows_run':
       return handleRun(args, executionId, options);
     case 'frink_flows_get_run':
@@ -888,6 +901,7 @@ async function handlePatch(
   args: Record<string, unknown>,
   executionId?: string,
   sessionProjectPath?: string,
+  sessionId?: string,
 ): Promise<McpToolResult> {
   const parsed = patchArgsSchema.safeParse(args);
   if (!parsed.success) {
@@ -898,6 +912,7 @@ async function handlePatch(
   }
 
   const { flowId: existingFlowId, name, description, projectId, operations } = parsed.data;
+  const callerExpectedVersion = parsed.data.expectedVersionNumber;
   const sessionKey = executionId ?? GLOBAL_PATCH_SESSION_KEY;
 
   if (!tryAcquirePatchSlot(sessionKey)) {
@@ -913,6 +928,7 @@ async function handlePatch(
   let persistenceCompleted = false;
   // Session-scoped name claim; skipped without an executionId (the global key spans chats).
   let claimedName: string | null = null;
+  let releaseOwnPatch = () => {};
 
   try {
     let flowId: string;
@@ -920,6 +936,7 @@ async function handlePatch(
     let flowName: string;
     let expectedVersionNumber: number;
     let flowProjectId: string | undefined;
+    let concurrentChanges: Record<string, unknown> | undefined;
 
     if (name !== undefined) {
       if (executionId !== undefined) {
@@ -967,6 +984,7 @@ async function handlePatch(
       // existingFlowId is guaranteed non-null here by the Zod .refine() that requires
       // either flowId or name (not both, not neither).
       flowId = existingFlowId ?? '';
+      releaseOwnPatch = await queueOwnFlowPatch(sessionId, flowId);
       let existing: Awaited<ReturnType<typeof getFlow>>;
       try {
         existing = await getFlow(flowId);
@@ -985,6 +1003,17 @@ async function handlePatch(
       // flow) — seeded with the flow's project as the runtime default, like creation.
       baseGraph = existing.graph ?? seedDefaultProject({ nodes: [], edges: [] }, flowProjectId);
       expectedVersionNumber = existing.version_number ?? 0;
+      const guard = await checkFlowVersionGuard({
+        flowId,
+        latestVersion: expectedVersionNumber,
+        latestGraph: baseGraph,
+        expected: callerExpectedVersion,
+        sessionId,
+        operations,
+        loadVersionGraph: getFlowVersionGraph,
+      });
+      if (!guard.ok) return guard.result;
+      concurrentChanges = guard.concurrentChanges;
     }
 
     const applied = applyPatchOperations(baseGraph, operations);
@@ -1063,6 +1092,7 @@ async function handlePatch(
           expectedVersionNumber,
         });
         persistenceCompleted = true;
+        recordKnownFlowVersion(sessionId, flowId, version.version_number, true);
         const receipt = buildFlowPatchReceipt({
           mode: name !== undefined ? 'create' : 'update',
           baseGraph,
@@ -1089,6 +1119,7 @@ async function handlePatch(
           templateWarnings,
           webhookSetup,
           positionsTouched: operationsTouchPositions(operations),
+          concurrentChanges,
         });
       }
     }
@@ -1109,6 +1140,7 @@ async function handlePatch(
       persistenceAttempted,
     });
   } finally {
+    releaseOwnPatch();
     releasePatchInFlight(sessionKey);
     releaseUnsavedFlowName(sessionKey, claimedName, persistenceCompleted);
   }
@@ -1195,13 +1227,17 @@ async function handleList(args: Record<string, unknown>): Promise<McpToolResult>
 }
 
 
-async function handleGet(args: Record<string, unknown>): Promise<McpToolResult> {
+async function handleGet(
+  args: Record<string, unknown>,
+  sessionId?: string,
+): Promise<McpToolResult> {
   const parsed = getArgsSchema.safeParse(args);
   if (!parsed.success) return invalidArgsResult(parsed.error);
 
   const { flowId } = parsed.data;
   try {
     const flow = await getFlow(flowId);
+    recordKnownFlowVersion(sessionId, flow.id, flow.version_number ?? 0);
 
     return toolResult(
       JSON.stringify(

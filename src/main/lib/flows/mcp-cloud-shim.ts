@@ -13,7 +13,8 @@ import {
   type NewStageWithRuns,
 } from '../db/repos/batch-stages';
 import { getFlowRun as getFlowRunRow, listFlowRunsForFlow } from '../db/repos/flow-runs';
-import { getLatestVersion, getVersion } from '../db/repos/flow-versions';
+import { getLatestVersion, getVersion, getVersionByNumber } from '../db/repos/flow-versions';
+import { normalizeFlowGraph } from '../../../shared/lib/validate-flow-graph';
 import {
   createFlow as createFlowLocal,
   getFlowById,
@@ -111,6 +112,12 @@ export async function createFlowVersion(
     'agent',
   );
   return toDbFlowVersion(row);
+}
+
+/** The graph saved as `versionNumber`, or null when that version does not exist. */
+export async function getFlowVersionGraph(flowId: string, versionNumber: number) {
+  const row = getVersionByNumber(getDatabase(), flowId, versionNumber);
+  return row ? normalizeFlowGraph(row.graph) : null;
 }
 
 // ============ flow runs ============

@@ -68,6 +68,7 @@ vi.mock('../../flows/mcp-cloud-shim', () => ({
   deleteFlow: state.deleteFlow,
   listFlows: state.listFlows,
   getFlow: state.getFlow,
+  getFlowVersionGraph: vi.fn(),
   getFlowRun: state.getFlowRun,
   listFlowRuns: state.listFlowRuns,
   listFlowRunsForFlow: state.listFlowRunsForFlow,

@@ -272,8 +272,8 @@ describe('dispatchFlowToolCall', () => {
       'execution-1',
       '/project',
       // frink_flows_patch edits rather than executes, so it never asks for
-      // per-flow consent and carries none.
-      { invocationConsented: false },
+      // per-flow consent and carries none; the sub-chat id scopes its read-version tracking.
+      { invocationConsented: false, sessionId: 'sub-1' },
     );
   });
 
@@ -595,7 +595,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
       { flowId: 'flow-1' },
       'execution-1',
       '/project',
-      { invocationConsented: false },
+      { invocationConsented: false, sessionId: 'sub-1' },
     );
   });
 
@@ -614,7 +614,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
       { flowId: 'flow-1' },
       'execution-1',
       '/project',
-      { invocationConsented: true },
+      { invocationConsented: true, sessionId: 'sub-1' },
     );
     expect(state.updateFlow).not.toHaveBeenCalled();
   });
@@ -1019,7 +1019,7 @@ describe('gateFlowInvocation (per-flow agent-run consent)', () => {
       { flowId: 'flow-1' },
       'execution-1',
       '/project',
-      { invocationConsented: false },
+      { invocationConsented: false, sessionId: 'sub-1' },
     );
     expect(result).toBe(FLOW_RESULT);
   });
