@@ -123,6 +123,63 @@ describe('removeFrinkCursorSkills', () => {
     expect((await fs.lstat(cursor('linked'))).isSymbolicLink()).toBe(true);
   });
 
+  it('keeps a store link when the other copy is only a link through it', async () => {
+    const store = path.join(tmp, '.frink', 'skills', 'reviewer');
+    await fs.mkdir(store, { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), SKILL);
+    await fs.mkdir(path.join(tmp, '.cursor', 'skills'), { recursive: true });
+    await fs.mkdir(path.join(tmp, '.agents', 'skills'), { recursive: true });
+    await fs.symlink(store, cursor());
+    await fs.symlink(cursor(), path.join(tmp, '.agents', 'skills', 'reviewer'));
+    await removeFrinkCursorSkills();
+    expect((await fs.lstat(cursor())).isSymbolicLink()).toBe(true);
+    expect(existsSync(path.join(tmp, '.agents', 'skills', 'reviewer', 'SKILL.md'))).toBe(true);
+  });
+
+  it('copies across a linked source as a real folder without its markers, and compares nested files', async () => {
+    const store = path.join(tmp, '.frink', 'skills', 'linked');
+    await fs.mkdir(path.join(store, 'references'), { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), SKILL);
+    await fs.writeFile(path.join(store, 'references', '.baseline.json'), 'a\n');
+    const files = { 'SKILL.md': { sha256: sha256(SKILL), bytes: SKILL.length } };
+    await fs.writeFile(
+      path.join(store, '.baseline.json'),
+      JSON.stringify({ generatedAt: 'x', version: '1', files }),
+    );
+    await fs.mkdir(path.join(tmp, '.agents', 'skills'), { recursive: true });
+    const linked = path.join(tmp, '.agents', 'skills', 'linked');
+    await fs.symlink(store, linked);
+    const cursorDir = path.join(tmp, '.cursor', 'skills');
+    expect(await copyUserSkill('linked', linked, [cursorDir])).toEqual({ wrote: 1, kept: 0 });
+    expect((await fs.lstat(cursor('linked'))).isDirectory()).toBe(true);
+    expect(existsSync(path.join(cursor('linked'), '.baseline.json'))).toBe(false);
+    expect(
+      await fs.readFile(path.join(cursor('linked'), 'references', '.baseline.json'), 'utf8'),
+    ).toBe('a\n');
+    await fs.writeFile(path.join(cursor('linked'), 'references', '.baseline.json'), 'b\n');
+    expect(await copyUserSkill('linked', linked, [cursorDir])).toEqual({ wrote: 0, kept: 1 });
+    await removeFrinkCursorSkills();
+    expect(existsSync(path.join(cursor('linked'), 'SKILL.md'))).toBe(true);
+  });
+
+  it('puts back a folder that replaced a store link just before it was removed', async () => {
+    const store = path.join(tmp, '.frink', 'skills', 'reviewer');
+    await fs.mkdir(store, { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), SKILL);
+    await fs.cp(store, path.join(tmp, '.agents', 'skills', 'reviewer'), { recursive: true });
+    await fs.mkdir(path.join(tmp, '.cursor', 'skills'), { recursive: true });
+    await fs.symlink(store, cursor());
+    const real = guardedWrite.moveAside;
+    vi.spyOn(guardedWrite, 'moveAside').mockImplementationOnce(async (target, dest) => {
+      await fs.unlink(cursor());
+      await userSkill('reviewer');
+      return real(target, dest);
+    });
+    await removeFrinkCursorSkills();
+    expect((await fs.lstat(cursor())).isDirectory()).toBe(true);
+    expect(existsSync(path.join(cursor(), 'SKILL.md'))).toBe(true);
+  });
+
   it("never removes a user's Copy across of a Frink copy or a shipped skill", async () => {
     await oldFrinkCopy();
     const shipped = path.join(tmp, '.agents', 'skills', 'shipped');
@@ -159,6 +216,17 @@ describe('removeFrinkCursorSkills', () => {
     await removeFrinkCursorSkills();
     expect(await fs.readdir(path.join(tmp, '.cursor', 'skills'))).toEqual(['reviewer']);
     expect(await fs.readFile(path.join(dir, 'ref.md'), 'utf8')).toBe('my edit\n');
+  });
+
+  it('puts an old store link a stopped run left moved aside back under its name', async () => {
+    const store = path.join(tmp, '.frink', 'skills', 'reviewer');
+    await fs.mkdir(store, { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), SKILL);
+    await fs.mkdir(path.join(tmp, '.cursor', 'skills'), { recursive: true });
+    await fs.symlink(store, cursor('reviewer.frink-aside-123e4567-e89b-12d3-a456-426614174000'));
+    await removeFrinkCursorSkills();
+    expect(await fs.readdir(path.join(tmp, '.cursor', 'skills'))).toEqual(['reviewer']);
+    expect((await fs.lstat(cursor())).isSymbolicLink()).toBe(true);
   });
 
   it("leaves a Cursor skills folder linked to Frink's store or a projection target alone", async () => {
@@ -222,6 +290,17 @@ describe('removeFrinkCursorSkills', () => {
     const dir = await oldFrinkCopy();
     await fs.rm(path.join(tmp, '.agents', 'skills', 'reviewer'), { recursive: true });
     await fs.rm(path.join(tmp, '.claude', 'skills', 'reviewer'), { recursive: true });
+    await removeFrinkCursorSkills();
+    expect(existsSync(path.join(dir, 'SKILL.md'))).toBe(true);
+  });
+
+  it('keeps a copy when the other folders hold a SKILL.md that is not a readable file', async () => {
+    const dir = await oldFrinkCopy();
+    for (const tool of ['.agents', '.claude']) {
+      const other = path.join(tmp, tool, 'skills', 'reviewer', 'SKILL.md');
+      await fs.rm(other);
+      await fs.mkdir(other);
+    }
     await removeFrinkCursorSkills();
     expect(existsSync(path.join(dir, 'SKILL.md'))).toBe(true);
   });

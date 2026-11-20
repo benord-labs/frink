@@ -12,7 +12,18 @@
  */
 
 import { existsSync } from 'node:fs';
-import { cp, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Mutex } from 'async-mutex';
 import log from 'electron-log';
@@ -39,15 +50,7 @@ import {
   type Provenance,
   readProvenance,
 } from './skill-projection-compare';
-import {
-  copyFiles,
-  dirHash,
-  dirHashOf,
-  dirStatSig,
-  fileMap,
-  readTree,
-  replaceDir,
-} from './skill-fs';
+import { copyFiles, dirHashOf, dirStatSig, fileMap, readTree, replaceDir } from './skill-fs';
 
 /**
  * Marker file written INSIDE a projected skill dir, recording at projection time:
@@ -453,27 +456,33 @@ export async function copyUserSkill(
   if (skillName.includes('..') || skillName.includes('/') || skillName.includes('\\')) {
     throw new Error(`Invalid skill name: ${skillName}`);
   }
-  // A vanished source must fail loudly: `dirHash` swallows ENOENT (hashes to empty), which would
+  // A vanished source must fail loudly: hashing swallows ENOENT (hashes to empty), which would
   // otherwise be mistaken for a divergent target and reported as "kept your edited copy".
   if (!existsSync(sourceDir)) throw new Error(`Skill source missing: ${sourceDir}`);
   let wrote = 0;
   let kept = 0;
+  // The copy is the user's: Frink's markers at the skill's top stay behind, so both sides are
+  // compared without them. A linked source is copied from where it really lives.
+  const mine = new Set([PROVENANCE_MARKER, BASELINE_MARKER]);
+  const userHash = async (dir: string) => {
+    const tree = await readTree(dir);
+    const files = Object.entries(tree.files).filter(([rel]) => !mine.has(rel));
+    return contentHash(fileMap(files), tree.links);
+  };
   await projectionMutex.runExclusive(async () => {
-    // The copy is the user's: Frink's markers stay behind, so both sides are compared without them.
-    const mine = new Set([PROVENANCE_MARKER, BASELINE_MARKER]);
-    const srcHash = await dirHash(sourceDir, mine);
+    const top = await realpath(sourceDir);
+    const srcHash = await userHash(top);
     for (const targetBase of targetSkillsDirs) {
       const target = join(targetBase, skillName);
       if (target === sourceDir) continue; // copying onto itself
       if (existsSync(target)) {
         // Present already — preserve a hand-edited copy (never clobber); identical copies are a no-op.
-        if ((await dirHash(target, mine)) !== srcHash) kept++;
+        if ((await userHash(target)) !== srcHash) kept++;
         continue;
       }
       await ensureDirExistsAsync(targetBase);
-      const top = resolve(sourceDir);
       const ownMarker = (src: string) => dirname(resolve(src)) === top && mine.has(basename(src));
-      await cp(sourceDir, target, { recursive: true, filter: (src) => !ownMarker(src) });
+      await cp(top, target, { recursive: true, filter: (src) => !ownMarker(src) });
       wrote++;
     }
   });

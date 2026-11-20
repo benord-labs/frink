@@ -1,11 +1,12 @@
 /** Removes the copies Frink used to write into `~/.cursor/skills`, which Cursor's own reads of
  *  `~/.agents` and `~/.claude` made redundant. Only unedited Frink copies go; runs every boot. */
 
-import { existsSync } from 'node:fs';
-import { readdir, readlink, rm, unlink } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { readdir, readlink, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import log from 'electron-log';
 import { getCursorSkillsDir, getFrinkSkillsDir, getUniversalSkillDirs } from '../frink-skills-dir';
+import { isFileWith } from '../fs-helpers';
 import { readTree } from './skill-fs';
 import { lstatOrNull, moveAside, putBack } from './skill-guarded-write';
 import {
@@ -26,7 +27,7 @@ type Outcome = 'removed' | 'kept' | 'skipped';
 
 /** Frink's crash-debris suffix (a millisecond stamp), stripped only to find the skill it came from. */
 const DEBRIS_SUFFIX = /\.(?:staging-\d+-\d{13,}|old-\d{13,})$/;
-/** A whole skill folder a stopped run moved aside; put back by name, never deleted by it. */
+/** A skill folder or old store link a stopped run moved aside; put back by name, never deleted by it. */
 const STRANDED_ASIDE = /^(.+)\.frink-aside-[0-9a-f-]{36}$/;
 
 /** What Frink recorded writing into `dir`; null when that cannot be proven (no marker, or one
@@ -49,9 +50,13 @@ async function unedited(dir: string, stored: Provenance): Promise<boolean> {
 }
 
 /** Cursor still reads the skill from a projection target, so this copy is not its last one. */
-function readableElsewhere(dir: string): boolean {
+async function readableElsewhere(dir: string): Promise<boolean> {
   const name = basename(dir).replace(DEBRIS_SUFFIX, '');
-  return getUniversalSkillDirs().some((target) => existsSync(join(target, name, 'SKILL.md')));
+  for (const target of getUniversalSkillDirs()) {
+    // A folder or unreadable entry named SKILL.md is not a skill Cursor can load.
+    if (await isFileWith(join(target, name, 'SKILL.md'), constants.R_OK)) return true;
+  }
+  return false;
 }
 
 /** An old install's link into Frink's own store; links anywhere else are the user's. */
@@ -60,29 +65,38 @@ async function isStoreLink(dir: string): Promise<boolean> {
   return resolve(dirname(dir), text).startsWith(getFrinkSkillsDir() + sep);
 }
 
-async function removeOne(dir: string): Promise<Outcome> {
-  const st = await lstatOrNull(dir);
-  if (st?.isSymbolicLink()) {
-    if (!(await isStoreLink(dir)) || !readableElsewhere(dir)) return 'skipped';
-    await unlink(dir);
-    return 'removed';
-  }
-  if (!st?.isDirectory()) return 'skipped';
-  const stored = await frinkRecord(dir);
-  if (!stored || !readableElsewhere(dir)) return 'skipped';
-  if (!(await unedited(dir, stored))) return 'kept';
-  // Checked again once moved aside: an edit saved meanwhile, or another copy that was only a link
-  // into this one (it now dangles) or was deleted meanwhile, puts it back.
+/** Move `dir` aside and check it again there (an edit saved meanwhile, or another copy that was
+ *  only a link into it or was deleted meanwhile); remove it only if it still passes. */
+async function removeAfterRecheck(dir: string, stillUnedited: (aside: string) => Promise<boolean>) {
   const aside = await moveAside(dir, dir);
-  if (!aside) return 'skipped';
+  if (!aside) return false;
   let clean = false;
   try {
-    clean = (await unedited(aside, stored)) && readableElsewhere(dir);
+    clean = (await stillUnedited(aside)) && (await readableElsewhere(dir));
   } finally {
     if (clean) await rm(aside, { recursive: true, force: true });
     else await putBack(aside, dir);
   }
-  return clean ? 'removed' : 'kept';
+  return clean;
+}
+
+async function removeStoreLink(dir: string): Promise<Outcome> {
+  if (!(await isStoreLink(dir)) || !(await readableElsewhere(dir))) return 'skipped';
+  const text = await readlink(dir);
+  // The moved entry must still be that same link: a folder swapped in meanwhile is put back.
+  const sameLink = async (aside: string) =>
+    Boolean((await lstatOrNull(aside))?.isSymbolicLink()) && (await readlink(aside)) === text;
+  return (await removeAfterRecheck(dir, sameLink)) ? 'removed' : 'skipped';
+}
+
+async function removeOne(dir: string): Promise<Outcome> {
+  const st = await lstatOrNull(dir);
+  if (st?.isSymbolicLink()) return removeStoreLink(dir);
+  if (!st?.isDirectory()) return 'skipped';
+  const stored = await frinkRecord(dir);
+  if (!stored || !(await readableElsewhere(dir))) return 'skipped';
+  if (!(await unedited(dir, stored))) return 'kept';
+  return (await removeAfterRecheck(dir, (aside) => unedited(aside, stored))) ? 'removed' : 'kept';
 }
 
 /** True when Cursor's folder is, through a link, Frink's store or a folder Frink projects into. */
@@ -98,7 +112,8 @@ async function restoreStranded(base: string, names: string[]): Promise<void> {
     const original = STRANDED_ASIDE.exec(name)?.[1];
     if (!original) continue;
     try {
-      if ((await lstatOrNull(join(base, name)))?.isDirectory()) {
+      const st = await lstatOrNull(join(base, name));
+      if (st?.isDirectory() || st?.isSymbolicLink()) {
         await putBack(join(base, name), join(base, original));
       }
     } catch (err) {
