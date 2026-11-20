@@ -93,6 +93,8 @@ const READS = new Set([
   'flow',
   'run',
   'composer',
+  'watchChat',
+  'unwatchChat',
 ]);
 /** The messages sent to the chat this session made. */
 const sent: unknown[] = [];
@@ -137,6 +139,8 @@ const HANDLERS: Record<string, (input: Input) => unknown> = {
   setMode: changeComposer,
   setAccount: changeComposer,
   chat: (input) => chatFor(String(input.id)),
+  // A snapshot only: this stand-in never pushes, so the phone falls back on its slow poll.
+  watchChat: (input) => ({ sub: crypto.randomUUID(), detail: chatFor(String(input.chatId)) }),
   createChat: () => {
     sent.length = 0;
     return { chatId: 'chat-new', subChatId: 'sub-new' };
