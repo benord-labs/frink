@@ -132,7 +132,7 @@ type HostTalk<T> = {
   fail(text: string, value?: T): void;
 };
 
-/** What a host gives up with: `failure`, or `unstarted` and `crashed` when it never ran or stopped early. */
+/** What a host gives up with: `failure`, or `unstarted` before its first message and `crashed` after it. */
 type HostGive<T> = { failure: T; unstarted?: T; crashed?: T; ms: number; what: string };
 
 /** Starts a host and settles on what `onMessage` decides, or on what `give` says if the host gives up. */
@@ -145,6 +145,7 @@ function talkToHost<T>(
   return new Promise((resolve) => {
     let host: ReturnType<ForkHost> | undefined;
     let settled = false;
+    let heard = false;
     const settle = (value: T) => {
       settled = true;
       clearTimeout(timer);
@@ -161,8 +162,11 @@ function talkToHost<T>(
     const talk: HostTalk<T> = { send: (request) => host?.send(request), settle, fail };
     try {
       host = forkHost(input, {
-        message: (message) => onMessage(message, talk),
-        exit: () => fail('the host stopped', give.crashed),
+        message: (message) => {
+          heard = true;
+          onMessage(message, talk);
+        },
+        exit: () => fail('the host stopped', heard ? give.crashed : give.unstarted),
       });
     } catch (error) {
       fail(String(error), give.unstarted);

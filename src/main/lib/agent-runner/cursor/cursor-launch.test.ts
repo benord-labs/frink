@@ -397,6 +397,14 @@ describe('signInToCursor', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('says it could not start when the host stops before Cursor says anything', async () => {
+    const forkHost: ForkHost = (_input, events) => {
+      setImmediate(events.exit);
+      return { send: () => undefined, kill: () => undefined };
+    };
+    expect(await signInToCursor({ ...deps(), forkHost })).toBe('unavailable');
+  });
+
   it('says it could not start when the SDK is missing from this copy of Frink', async () => {
     const missing = deps({}, { sdkRoot: path.join(root, 'none') });
     expect(await signInToCursor(missing)).toBe('unavailable');
