@@ -11,6 +11,7 @@ import {
   type PromptResponse,
   type RequestPermissionOutcome,
   RequestError,
+  type ResumeSessionRequest,
   type SessionConfigOption,
   type SessionUpdate,
   type ToolCallUpdate,
@@ -19,6 +20,7 @@ import type { UIMessageChunk } from '../../claude/types';
 import type { AcpAgentRules } from './acp-permissions';
 import type { AcpAgentLaunch, AcpAgentProcess } from './acp-process';
 import type { AcpRunnerParams } from './index';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 type FakeTurn = {
   client: AgentContext;
@@ -65,6 +67,7 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
   const launches: AcpAgentLaunch[] = [];
   const requests: string[] = [];
   const opened: NewSessionRequest[] = [];
+  const resumed: ResumeSessionRequest[] = [];
   let cancel = () => {};
   const cancelled = new Promise<void>((resolve) => {
     cancel = resolve;
@@ -99,6 +102,7 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
     })
     .onRequest('session/resume', async ({ params, client }) => {
       requests.push(`session/resume ${params.sessionId}`);
+      resumed.push(params);
       signedIn('session/resume');
       if (setup.resumeFails) throw RequestError.resourceNotFound(params.sessionId);
       await report('session/resume', client, params.sessionId);
@@ -139,6 +143,8 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
     requests,
     /** What each `session/new` was sent. */
     opened,
+    /** What each `session/resume` was sent. */
+    resumed,
     wasDisposed: () => disposed,
   };
 }
@@ -422,4 +428,44 @@ export const RECORDED_OUTSIDE_DIRECTORY: RecordedTurn = {
     },
   ],
   response: { stopReason: 'end_turn' },
+};
+
+/** OpenCode 1.19.0 calling Frink's own searchProjects, teed offline against Frink's real server on
+ * 2026-11-20; its command list is left out. */
+export const RECORDED_ACP_FRINK_TOOL: RecordedTurn = {
+  messages: [
+    {
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_1',
+        title: `${FRINK_MCP_KEY}_searchProjects`,
+        kind: 'other',
+        status: 'pending',
+        locations: [],
+        rawInput: {},
+      },
+    },
+    {
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_1',
+        kind: 'other',
+        status: 'in_progress',
+        title: `${FRINK_MCP_KEY}_searchProjects`,
+        locations: [],
+        rawInput: { query: '' },
+      },
+    },
+    {
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_1',
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: '{\n  "projects": []\n}' } }],
+        rawOutput: { output: '{\n  "projects": []\n}', metadata: { truncated: false } },
+      },
+    },
+    { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } } },
+  ],
+  response: { stopReason: 'end_turn', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } },
 };

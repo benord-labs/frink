@@ -1,6 +1,6 @@
 # MCP servers
 
-MCP (Model Context Protocol) servers give your AI assistants extra tools, like "search Linear" or "spin up a Neon branch." Frink manages MCPs centrally so you configure them once and they're available across every chat and every provider (Claude, Codex) you use through Frink.
+MCP (Model Context Protocol) servers give your AI assistants extra tools, like "search Linear" or "spin up a Neon branch." Frink manages MCPs centrally so you configure them once and they're available across every Claude and Codex chat you run through Frink. OpenCode, GitHub Copilot and Cursor chats don't get your MCP servers yet.
 
 This guide explains how Frink imports MCPs from your existing tools, where they are stored, and how the day-to-day mechanics work.
 
@@ -24,6 +24,20 @@ Frink supports both.
 - Native configs (`~/.claude.json`, `~/.cursor/mcp.json`) are left untouched. Your CLI tools keep working.
 - Credentials are stored encrypted and never leave this computer.
 - Delete an imported MCP from Frink and it stays deleted, even on reboot.
+
+## Frink's own tools
+
+Frink also has a server of its own. It gives agents Frink's chat tools: project search, moving a chat to another project, and building and running Flows. You don't add or configure it, and it doesn't show in Settings.
+
+| AI tool | Frink's own tools |
+|---|---|
+| Claude | Yes |
+| Codex | Yes, in project chats (not in a general chat) |
+| OpenCode | Yes |
+| GitHub Copilot | Yes |
+| Cursor | Not yet |
+
+Frink checks every call to its own tools itself, with your rules and the same cards, whichever tool the chat uses. Tools that only read run without a card; tools that change your Flows ask unless Auto is on.
 
 ## Where Frink stores MCPs
 

@@ -9,6 +9,7 @@ import {
   FEATURES,
   type Feature,
 } from '../../../../../shared/lib/ai-providers/capabilities';
+import * as frinkTools from '../../../mcp/runtime/frink-tools-server';
 import * as frinkServers from '../../../mcp/runtime/resolve-frink-servers';
 import * as hookLaunch from '../../../provider/hooks/store/launch';
 import * as providerDelivery from '../../execution/provider-delivery';
@@ -61,15 +62,19 @@ function rowsPass(
 }
 
 /** One row per provider: its launch is handed exactly the categories its capability row claims,
- * and it holds exactly the feature flags its runtime's grid rows pass. */
+ * and it holds exactly the feature flags its runtime's grid rows pass. Every provider is offered
+ * Frink's own tools through the one shared seam, whatever its user setup gets. */
 export function registerCapabilityRows(h: GridHarness, scenarios: readonly Scenario[]): void {
   it.each(AI_PROVIDER_IDS)('conformance: delivery x %s', async (id) => {
     const { runtime, capabilities } = AI_PROVIDERS[id];
     const handed = spyOnLaunchSeams();
+    const offered = vi.spyOn(frinkTools, 'frinkToolsServer');
+    onTestFinished(() => offered.mockRestore());
     // Claude keeps the suite's own account; every other provider runs on its own.
     const row = startRow(h, runtime, id === 'claude-code' ? undefined : id);
     await row.turn(SIMPLE_TURN[runtime].turn);
     expect(handed()).toEqual(claimed(capabilities));
+    expect(offered).toHaveBeenCalledWith(expect.objectContaining({ runtime }));
   });
 
   it.each(AI_PROVIDER_IDS)('conformance: features x %s', (id) => {

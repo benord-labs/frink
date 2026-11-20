@@ -21,7 +21,7 @@ Helper agents are off for now in OpenAI chats. Frink doesn't offer them to Codex
 
 OpenCode is a free, open-source coding agent that can use many AI providers, including free models. Frink runs the OpenCode you install yourself.
 
-**OpenCode is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet. More under "Not in OpenCode chats yet" below.
+**OpenCode is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, your MCP servers and your hooks don't work with it yet. More under "Not in OpenCode chats yet" below.
 
 1. Install OpenCode 1.19 in your terminal: `npm install -g opencode-ai@1.19`. Check it with `opencode --version`.
 2. Optional: run `opencode auth login` to add your own AI provider. Without it you get OpenCode's free models.
@@ -33,7 +33,8 @@ What to know:
 
 - **Frink ignores your OpenCode config files while it runs OpenCode, for safety.** Your settings could let OpenCode act without asking, so Frink starts it with its own. Your sign-ins and your instructions files (`AGENTS.md`, `CLAUDE.md`) still apply.
 - **OpenCode asks Frink before every command, file change, web fetch or web search**, and you answer on the same cards as any other chat. Frink also holds each command until it has been allowed. Reading and searching files in the chat's folder doesn't ask (in a general chat that folder is your home folder). Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. Searching the folder doesn't ask, so a search can still show lines from a `.env` file. If OpenCode ever finishes an action without asking, Frink stops the chat. More in [Permissions](./permissions.md#opencode).
-- **Not in OpenCode chats yet:** Auto, Flows, MCP servers, Frink's own chat tools (such as building a Flow from a chat), adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first), Debug mode and OpenCode's own slash commands. Plan mode uses OpenCode's own plan mode.
+- **Frink's own chat tools work**, such as project search and building a Flow from a chat. Frink checks each call itself, with the same rules and cards as any other chat.
+- **Not in OpenCode chats yet:** Auto, Flows, MCP servers, adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first), Debug mode and OpenCode's own slash commands. Plan mode uses OpenCode's own plan mode.
 - **OpenCode chats aren't counted in the Usage tab.** They also show up in OpenCode's own list of past sessions.
 - **macOS and Linux for now.** Windows isn't supported yet.
 - **On Linux, if `npm install -g` fails with a permission error**, use OpenCode's own installer instead: `curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0`. It puts OpenCode in `~/.opencode/bin`, where Frink looks for it.
@@ -46,7 +47,7 @@ What to know:
 
 GitHub Copilot is GitHub's coding agent. Frink runs the Copilot you install yourself, signed in with your own GitHub account, including the free plan.
 
-**GitHub Copilot is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet. More under "Not in Copilot chats yet" below.
+**GitHub Copilot is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, your MCP servers and your hooks don't work with it yet. More under "Not in Copilot chats yet" below.
 
 1. Install Copilot in your terminal: `npm install -g @github/copilot`. Check it with `copilot --version`.
 2. Sign in: run `copilot login` and finish in your browser.
@@ -60,7 +61,8 @@ What to know:
 - **Inside Frink, your own Copilot hooks, MCP servers and saved approvals don't apply, for safety.** They could let Copilot act without asking, so Frink starts Copilot with its own settings. Your sign-in still applies, and Copilot in your terminal is unchanged.
 - **GitHub Copilot asks Frink before every command, file change, web fetch or web search**, and before it reads anything outside the chat's folder. You answer on the same cards as any other chat. Reading and searching files in the chat's folder doesn't ask (in a general chat that folder is your home folder). Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file. If Copilot ever finishes an action without asking, Frink stops the chat. More in [Permissions](./permissions.md#github-copilot).
 - **Plan mode uses Copilot's own plan mode.** Copilot saves its plan to a file in Frink's own Copilot folder, and Frink lets that one file through without a question. You may still see a card when Copilot first writes or reads it. The plan shows as Copilot's reply, not as a plan card.
-- **Not in Copilot chats yet:** Auto, Flows, MCP servers, Frink's own chat tools (such as building a Flow from a chat), adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first) and Debug mode.
+- **Frink's own chat tools work**, such as project search and building a Flow from a chat. Frink checks each call itself, with the same rules and cards as any other chat.
+- **Not in Copilot chats yet:** Auto, Flows, MCP servers, adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first) and Debug mode.
 - **Organisation-managed and GitHub Enterprise Server accounts aren't supported yet.** Frink won't start Copilot when an organisation or your device manages its settings.
 - **Copilot chats use your Copilot plan, the same as in the terminal.** They aren't counted in the Usage tab.
 - **macOS and Linux for now.** Windows isn't supported yet.

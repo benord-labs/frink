@@ -245,6 +245,7 @@ OpenCode chats (macOS and Linux) use the same cards and the same rules as any ot
 - **Frink also holds every command until its check has allowed it**, so no command runs that Frink didn't allow.
 - **If OpenCode ever finishes an action without asking, Frink stops the chat.**
 - **Frink ignores your OpenCode config files while it runs OpenCode, for safety**, and won't start OpenCode at all when an organisation, company sign-in or administrator sends it settings.
+- **Frink's own tools are checked by Frink itself**, with the same rules and cards as in any other chat.
 - **Auto and hooks don't apply to OpenCode chats yet.**
 
 ## GitHub Copilot
@@ -259,6 +260,7 @@ GitHub Copilot chats (macOS and Linux) use the same cards and the same rules as 
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Copilot is told and usually tries another way.
 - **If Copilot ever finishes an action without asking, Frink stops the chat.**
 - **Your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety**, and Frink won't start Copilot at all when an organisation or your device manages its settings.
+- **Frink's own tools are checked by Frink itself**, with the same rules and cards as in any other chat.
 - **Auto and Frink's hooks don't apply to Copilot chats yet.**
 
 ## Cursor
@@ -274,6 +276,7 @@ Cursor chats (macOS and Linux) use the same cards and the same rules as any othe
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Web fetch, web search and helper agents aren't offered to Cursor at all for now.
 - **If Cursor ever finishes an action without asking, or doesn't load Frink's check, Frink stops the chat.**
 - **Your own Cursor hooks, MCP servers, rules and skills, and the project's `AGENTS.md` and `.cursor/rules`, don't apply inside Frink, for safety.**
+- **Frink's own tools aren't offered to Cursor yet.**
 - **Auto and Frink's hooks don't apply to Cursor chats yet.**
 
 ## Agent tool limits

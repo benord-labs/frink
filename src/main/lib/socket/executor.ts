@@ -51,6 +51,7 @@ import { projects as projectsTable } from '../db/schema';
 import { stageContinuationResume } from '../flows/admission/terminal-resume/continuation';
 import { createRollbackStash } from '../git/stash';
 import { resolveFrinkMcpServers } from '../mcp/runtime';
+import { frinkToolsServer } from '../mcp/runtime/frink-tools-server';
 import type { createClaudeMcpConfigTransport } from '../mcp/runtime/mcp-config-transport';
 import { hooksForLaunch } from '../provider/hooks/store';
 import { captureMainMessage } from '../sentry/init';
@@ -849,15 +850,11 @@ export async function handleRemoteExecute(
         }
       }
 
-      const codexDynamicChatMcpUrl = isCodex
-        ? buildCodexDynamicChatMcpUrl({
-            baseUrl: dynamicChatMcpUrl,
-            subChatId,
-            projectPath,
-            hasSignalTask: Boolean(signalTaskId),
-          })
-        : null;
-      const frinkMcpInjected = codexDynamicChatMcpUrl !== null;
+      const hasSignalTask = Boolean(signalTaskId);
+      const mcpAt = { baseUrl: dynamicChatMcpUrl, subChatId, projectPath, hasSignalTask };
+      const codexDynamicChatMcpUrl = isCodex ? buildCodexDynamicChatMcpUrl(mcpAt) : null;
+      const frinkMcp = isCodex ? undefined : frinkToolsServer({ ...mcpAt, runtime: agentRuntime });
+      const frinkMcpInjected = Boolean(codexDynamicChatMcpUrl ?? frinkMcp);
 
       // A card opened in this turn closes when the turn ends, even if the app-server just died.
       const turnDone = new AbortController();
@@ -899,6 +896,7 @@ export async function handleRemoteExecute(
           composerNotes: composer.notes.map((note) => note.text),
           abortController,
           checkApproval,
+          frinkTools: frinkMcp,
         };
         if (agentRuntime === 'acp') {
           stream = deps.startAcpTurn({

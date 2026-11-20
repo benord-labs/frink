@@ -8,7 +8,8 @@ import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
 import { editQuestion, pathSchema, readQuestions, textSchema } from '../path-questions';
 import { PATCH_TOOL, readPatch } from './copilot-patch';
-import type { CopilotToolRule, CopilotTools } from './copilot-tools';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
+import { type CopilotToolRule, type CopilotTools, copilotFrinkTool } from './copilot-tools';
 
 export type PreToolUseHookInput = Parameters<NonNullable<SessionHooks['onPreToolUse']>>[0];
 /** Frink always answers, and never with ask or changed arguments. */
@@ -116,6 +117,8 @@ type GateOptions = {
   turnOver: AbortSignal;
   /** Where Copilot keeps the open session's plan, which it may write without a question. */
   plan?: { configDirectory: string; sessionId: () => string | undefined };
+  /** Frink's own tools are offered this turn; Frink's server decides each of their calls. */
+  frinkTools?: boolean;
 };
 
 /** True when an edit names only the open session's plan file, spelled exactly, as a plain file. */
@@ -144,8 +147,9 @@ async function editsOwnPlan(toolArgs: JsonValue | undefined, plan: GateOptions['
 async function judge(
   toolName: string,
   toolArgs: JsonValue | undefined,
-  { cwd, tools, checkApproval, turnOver, plan }: GateOptions,
+  { cwd, tools, checkApproval, turnOver, plan, frinkTools }: GateOptions,
 ): Promise<PreToolUseHookOutput> {
+  if (frinkTools && copilotFrinkTool(toolName)) return ALLOW;
   const verdict = questionsForCopilotTool(toolName, toolArgs, cwd, tools);
   if (verdict.kind === 'refuse') {
     log.warn(`[Copilot] Refused a ${toolName} call Frink can't check`);
@@ -196,7 +200,18 @@ export function createCopilotGate(opts: GateOptions) {
       }
       return output;
     },
-    noteExecutionStart(toolCallId: string, toolName: string, args: JsonValue | undefined): void {
+    noteExecutionStart(
+      toolCallId: string,
+      toolName: string,
+      args: JsonValue | undefined,
+      mcpServerName?: string,
+    ): void {
+      // A Frink tool run by any other server was never allowed, so it trips the stop.
+      if (copilotFrinkTool(toolName) && opts.frinkTools) {
+        if (mcpServerName === FRINK_MCP_KEY) started.set(toolCallId, null);
+        else started.delete(toolCallId);
+        return;
+      }
       // Judged by name and input, so a refused call that runs anyway still trips the stop.
       const quiet = questionsForCopilotTool(toolName, args, cwd, tools).kind === 'quiet';
       started.set(toolCallId, quiet ? null : callKey(toolName, args));

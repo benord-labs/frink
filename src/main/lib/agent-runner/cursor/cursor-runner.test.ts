@@ -23,6 +23,8 @@ import {
   disposeAllCursorHosts,
   runCursorAgent,
 } from './index';
+import { CURSOR_FRINK_TOOLS } from './cursor-runner';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 const ACTED_UNASKED =
   'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
@@ -196,6 +198,18 @@ describe('runCursorAgent', () => {
       message: { text: 'hello', images: [{ data: 'aGk=', mimeType: 'image/png' }] },
       mode: 'plan',
     });
+  });
+
+  it("offers no MCP tools while Cursor's check of Frink's server is unproven", async () => {
+    const fake = fakeCursorHost();
+    const frinkTools = { name: FRINK_MCP_KEY, url: 'http://127.0.0.1:9/?channel=c' };
+    await run(fake, runnerParams({ frinkTools }));
+    expect(CURSOR_FRINK_TOOLS).toBe(false);
+    expect(fake.received[0]).toMatchObject({
+      type: 'start',
+      options: { tools: CURSOR_TOOL_NAMES },
+    });
+    expect(fake.received[0]).not.toHaveProperty('options.mcpServers');
   });
 
   it('continues an earlier agent in its folder, with the fallback prompt for when it is gone', async () => {
@@ -531,6 +545,20 @@ describe('cursorAgentOptions', () => {
       tools: CURSOR_TOOL_NAMES,
       local: { cwd: '/p', settingSources: ['user'] },
       storeDir: '/s',
+    });
+  });
+
+  it("unlocks MCP for Frink's own server alone when a turn is given it", () => {
+    const frinkTools = { name: FRINK_MCP_KEY, url: 'http://127.0.0.1:9/?channel=c' };
+    const options = cursorAgentOptions({
+      cwd: '/p',
+      storeDir: '/s',
+      tools: CURSOR_TOOL_NAMES,
+      frinkTools,
+    });
+    expect(options.tools).toEqual([...CURSOR_TOOL_NAMES, 'mcp']);
+    expect(options.mcpServers).toEqual({
+      [frinkTools.name]: { type: 'http', url: frinkTools.url },
     });
   });
 
