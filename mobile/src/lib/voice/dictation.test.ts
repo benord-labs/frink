@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   Dictation,
   NOTICES,
   SILENCE_MS,
+  START_TIMEOUT_MS,
   STOP_GRACE_MS,
   errorNotice,
   type DictationState,
@@ -14,7 +15,11 @@ type Harness = {
   dictation: Dictation;
   draft: { text: string };
   states: DictationState[];
-  recognizer: Recognizer & { events: RecognitionEvents | null; listening: boolean };
+  recognizer: Recognizer & {
+    events: RecognitionEvents | null;
+    stop: Mock<() => void>;
+    abort: Mock<() => void>;
+  };
   grant: (granted: boolean) => void;
 };
 
@@ -24,16 +29,11 @@ function harness(initial = ''): Harness {
   let grant: (granted: boolean) => void = () => {};
   const recognizer: Harness['recognizer'] = {
     events: null,
-    listening: false,
     requestPermission: () => new Promise<boolean>((resolve) => (grant = resolve)),
-    listen(events) {
+    start: vi.fn((events: RecognitionEvents) => {
       recognizer.events = events;
-      recognizer.listening = true;
-      return () => {
-        recognizer.listening = false;
-      };
-    },
-    start: vi.fn(),
+      return { stop: recognizer.stop, abort: recognizer.abort };
+    }),
     stop: vi.fn(),
     abort: vi.fn(),
   };
@@ -51,6 +51,7 @@ async function listening(initial = ''): Promise<Harness> {
   const started = h.dictation.start();
   h.grant(true);
   await started;
+  h.recognizer.events!.started();
   return h;
 }
 
@@ -79,7 +80,6 @@ describe('Dictation', () => {
     h.recognizer.events!.end();
     expect(h.draft.text).toBe('Last words');
     expect(h.dictation.phase).toBe('idle');
-    expect(h.recognizer.listening).toBe(false);
   });
 
   it('gives up on a stop whose end never arrives', async () => {
@@ -157,7 +157,6 @@ describe('Dictation', () => {
     const h = await listening();
     h.recognizer.events!.error('audio-capture');
     expect(h.states.at(-1)).toEqual({ phase: 'idle', notice: NOTICES.failed });
-    expect(h.recognizer.listening).toBe(false);
   });
 
   it('starts only one session at a time and can start again once idle', async () => {
@@ -171,11 +170,58 @@ describe('Dictation', () => {
     expect(h.recognizer.start).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps words already shown when a result arrives empty', async () => {
+    const h = await listening();
+    h.recognizer.events!.result('fix the login', false);
+    h.recognizer.events!.result('', false);
+    expect(h.draft.text).toBe('Fix the login');
+    h.recognizer.events!.result(' ', true);
+    h.recognizer.events!.result('page', false);
+    expect(h.draft.text).toBe('Fix the login page');
+  });
+
   it('does nothing when stopped or aborted while idle', () => {
     const h = harness();
     h.dictation.stop();
     h.dictation.abort();
     expect(h.states).toEqual([]);
+  });
+});
+
+describe('Dictation start', () => {
+  it('waits for the recognizer to report listening before timing silence', async () => {
+    const h = harness();
+    const started = h.dictation.start();
+    h.grant(true);
+    await started;
+    expect(h.dictation.phase).toBe('starting');
+    h.recognizer.events!.started();
+    expect(h.dictation.phase).toBe('listening');
+  });
+
+  it('returns to idle with a notice when the recognizer fails to start', async () => {
+    const h = harness();
+    h.recognizer.start = () => {
+      throw new Error('unavailable');
+    };
+    const started = h.dictation.start();
+    h.grant(true);
+    await started;
+    expect(h.states.at(-1)).toEqual({ phase: 'idle', notice: NOTICES.failed });
+  });
+
+  it('gives up on a start that never reports listening or failing', async () => {
+    const h = harness();
+    const started = h.dictation.start();
+    h.grant(true);
+    await started;
+    vi.advanceTimersByTime(START_TIMEOUT_MS - 1);
+    expect(h.dictation.phase).toBe('starting');
+    vi.advanceTimersByTime(1);
+    expect(h.recognizer.abort).toHaveBeenCalled();
+    expect(h.states.at(-1)).toEqual({ phase: 'idle', notice: NOTICES.failed });
+    h.recognizer.events!.started();
+    expect(h.dictation.phase).toBe('idle');
   });
 });
 
@@ -188,6 +234,7 @@ describe('errorNotice', () => {
   it('names the fix for permission and language problems', () => {
     expect(errorNotice('not-allowed')).toBe(NOTICES.denied);
     expect(errorNotice('language-not-supported')).toBe(NOTICES.language);
+    expect(errorNotice('busy')).toBe(NOTICES.busy);
     expect(errorNotice('network')).toBe(NOTICES.failed);
   });
 });
@@ -197,7 +244,8 @@ describe('Dictation exits', () => {
     const h = harness();
     h.dictation.toggle();
     h.grant(true);
-    await vi.waitFor(() => expect(h.dictation.phase).toBe('listening'));
+    await vi.waitFor(() => expect(h.recognizer.events).not.toBeNull());
+    h.recognizer.events!.started();
     h.dictation.toggle();
     expect(h.dictation.phase).toBe('stopping');
   });
@@ -208,6 +256,7 @@ describe('Dictation exits', () => {
     h.dictation.appStateChanged('inactive');
     h.grant(true);
     await started;
+    h.recognizer.events!.started();
     expect(h.dictation.phase).toBe('listening');
     h.dictation.appStateChanged('background');
     expect(h.dictation.phase).toBe('idle');
