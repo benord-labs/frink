@@ -28,11 +28,11 @@ function sixRunning(newest: string) {
 test('Flows reopens with its last rows even when the Mac is unreachable', async ({ page }) => {
   const state = await openApp(page, { data: { flows: macFlows() } });
   await openDestination(page, 'Flows');
-  await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
+  await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
   await openDestination(page, 'Settings');
   state.offline = true;
   await openDestination(page, 'Flows');
-  await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
+  await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
 });
 
 test('Flows opens warm on first visit', async ({ page }) => {
@@ -41,7 +41,7 @@ test('Flows opens warm on first visit', async ({ page }) => {
   await expect.poll(() => requestsOf(state, 'flows').length).toBe(1);
   state.offline = true;
   await openTab(page, 'Flows');
-  await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
+  await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
 });
 
 test('re-expanding a Queue section shows the live rows, not an earlier expansion', async ({
