@@ -4,7 +4,12 @@
 import { dirname, isAbsolute, join } from 'node:path';
 import ts from 'typescript';
 import { z } from 'zod';
-import { type DefinitionLocation, findImportBindingAt, locateExport } from './definition-locator';
+import {
+  buildSourceOverlay,
+  type DefinitionLocation,
+  findImportBindingAt,
+  locateExport,
+} from './definition-locator';
 import { clearTsconfigOwnerCache, findOwningCompilerOptions, isWithin } from './tsconfig-owner';
 
 const TS_PATHS_TRAILING_GLOB = /\*$/;
@@ -17,6 +22,9 @@ export type ResolveDefinitionInput = {
   offset?: number;
   /** A quoted module specifier the user clicked. */
   specifier?: string;
+  /** Unsaved text of other open files by absolute path, read instead of the file on disk; `null`
+   * for one too large to send. */
+  openBuffers?: Record<string, string | null>;
 };
 
 function fileStart(path: string): DefinitionLocation {
@@ -26,7 +34,7 @@ function fileStart(path: string): DefinitionLocation {
 /** Where the clicked import or specifier is defined: the exact declaration when it can be found in
  * the target, otherwise the top of the target file. Null when nothing resolves. */
 export function resolveDefinition(input: ResolveDefinitionInput): DefinitionLocation | null {
-  const { projectPath, containingFile, fileContent, offset, specifier } = input;
+  const { projectPath, containingFile, fileContent, offset, specifier, openBuffers } = input;
   if (specifier) {
     const path = resolveModuleSpecifier(projectPath, containingFile, specifier);
     return path ? fileStart(path) : null;
@@ -46,7 +54,8 @@ export function resolveDefinition(input: ResolveDefinitionInput): DefinitionLoca
       ? resolveInProject(projectPath, fromFile, next)
       : resolveWithOptions(clickedOptions, fromFile, next);
   };
-  return locateExport(target, binding.importedName, resolveFrom) ?? fileStart(target);
+  const overlay = buildSourceOverlay({ ...openBuffers, [containingFile]: fileContent });
+  return locateExport(target, binding.importedName, resolveFrom, overlay) ?? fileStart(target);
 }
 
 /** Resolves a specifier with the owning tsconfig, falling back to probing for non-TS assets. */

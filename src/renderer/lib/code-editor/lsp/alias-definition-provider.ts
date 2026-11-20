@@ -4,7 +4,7 @@
 import type * as Monaco from 'monaco-editor';
 import { encodeFileUri } from '@/lib/code-editor/files';
 import { trpcClient } from '@/lib/trpc';
-import { resolveAliasDefinition } from './resolve-alias-definition';
+import { openTabBuffers, resolveAliasDefinition } from './resolve-alias-definition';
 
 const SUPPORTED_LANGUAGES = [
   'typescript',
@@ -26,8 +26,13 @@ export function registerAliasDefinitionProvider(
 ): Monaco.IDisposable {
   return monaco.languages.registerDefinitionProvider(SUPPORTED_LANGUAGES, {
     async provideDefinition(model, position, token) {
-      const found = await resolveAliasDefinition(model, position, token, projectPath, (input) =>
-        trpcClient.files.resolveDefinition.query(input),
+      const found = await resolveAliasDefinition(
+        model,
+        position,
+        token,
+        projectPath,
+        (input) => trpcClient.files.resolveDefinition.query(input),
+        openTabBuffers,
       );
       return found && { uri: monaco.Uri.parse(encodeFileUri(found.path)), range: found.range };
     },

@@ -258,7 +258,7 @@ describe('canUseTool on a turn a secret request parks', () => {
     };
     const canUseTool = buildClaudeSessionCallbacks(scope, session).canUseTool;
     const verdict = await canUseTool(
-      'mcp__frink_dynamic_chat__frink_task_signal',
+      'mcp__frink__frink_task_signal',
       { state: 'done', summary: 'Done' },
       { signal, toolUseID: 'tool-1', requestId: 'request-1' },
     );
@@ -353,7 +353,7 @@ describe('a call Claude Auto review gave up on', () => {
     const { canUseTool, validate } = autoGate({ flow: true });
     const signalCall = { state: 'awaiting_input', summary: 'Approve this?' };
     const call = await canUseTool(
-      'mcp__frink_dynamic_chat__frink_task_signal',
+      'mcp__frink__frink_task_signal',
       signalCall,
       asked(GAVE_UP_IN_A_ROW),
     );
@@ -409,7 +409,7 @@ describe("an MCP call reaching Claude's permission callback", () => {
   };
 
   it('lets frink_register_node through without checking any rule', async () => {
-    const { ask, validate } = mcpCall(allowRule, 'mcp__frink_dynamic_chat__frink_register_node');
+    const { ask, validate } = mcpCall(allowRule, 'mcp__frink__frink_register_node');
     expect(await ask()).toEqual({ behavior: 'allow', updatedInput: {} });
     expect(validate).not.toHaveBeenCalled();
   });

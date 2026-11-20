@@ -1,3 +1,6 @@
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
+import { frinkToolNames } from '../../mcp/runtime/frink-tools-server';
+
 /** How Frink's gate reads one GitHub Copilot tool; a tool without a question runs quietly. */
 export type CopilotToolRule = {
   question?: 'Bash' | 'Edit' | 'Read' | 'WebFetch' | 'WebSearch';
@@ -81,3 +84,10 @@ export const COPILOT_TOOLS = {
   },
   task_complete: { keys: ['summary'] },
 } satisfies CopilotTools;
+
+/** The Frink tool a call runs, named exactly as Copilot names an MCP tool: `<server>-<tool>`. */
+export function copilotFrinkTool(toolName: string): string | undefined {
+  const prefix = `${FRINK_MCP_KEY}-`;
+  const tool = toolName.startsWith(prefix) ? toolName.slice(prefix.length) : undefined;
+  return tool && frinkToolNames().includes(tool) ? tool : undefined;
+}

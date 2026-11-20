@@ -38,7 +38,7 @@ export function registerCustomNodeTransportTest({
       hookResult = await getPreToolUseHook(queryInput)(
         {
           hook_event_name: 'PreToolUse',
-          tool_name: 'mcp__frink_dynamic_chat__frink_register_node',
+          tool_name: 'mcp__frink__frink_register_node',
           tool_input: { packagePath: 'examples/custom-nodes/read-colocated-image' },
         },
         'tool-register-node-1',
@@ -67,7 +67,7 @@ export function registerCustomNodeTransportTest({
       const canUseTool = queryInput.options?.canUseTool;
       if (!canUseTool) throw new Error('Missing canUseTool callback');
       decision = await canUseTool(
-        'mcp__frink_dynamic_chat__frink_register_node',
+        'mcp__frink__frink_register_node',
         { packagePath: 'examples/custom-nodes/read-colocated-image' },
         { toolUseID: 'tool-register-node-fallback-1' },
       );
@@ -92,7 +92,7 @@ export function registerCustomNodePermissionTests({
 }: ExecutorPermissionHarness): void {
   it('attaches only the trusted host registration presentation to the permission prompt', async () => {
     const { checkPermission } = await import('../../permissions/v2/check');
-    const tool = 'mcp__frink_dynamic_chat__frink_register_node';
+    const tool = 'mcp__frink__frink_register_node';
     const input = { packagePath: 'examples/custom-nodes/read-colocated-image' };
     const presentation = {
       type: 'custom-node-registration' as const,
@@ -200,7 +200,7 @@ export function registerCustomNodePermissionTests({
 
     await expect(
       validateToolPermission(
-        'mcp__frink_dynamic_chat__frink_register_node',
+        'mcp__frink__frink_register_node',
         { packagePath: 'nodes/read-image' },
         '/proj',
         'flow-chat-register',

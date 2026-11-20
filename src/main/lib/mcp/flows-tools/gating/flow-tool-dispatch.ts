@@ -1,6 +1,6 @@
 import {
-  FRINK_DYNAMIC_CHAT_MCP_KEY,
   FRINK_MUTATING_FLOW_TOOLS,
+  frinkToolPartName,
 } from '../../../../../shared/lib/mcp-tool-name';
 import type { AgentRuntime } from '../../../../../shared/lib/ai-providers';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
@@ -54,6 +54,8 @@ export type FlowGateContext = {
   runtime?: AgentRuntime;
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
+  /** The turn's live plan phase; `mode` is the send-start snapshot, stale after an in-turn approval. */
+  isPlanPhase?: () => boolean;
   isFlowDrivenTurn?: boolean;
   abortSignal?: AbortSignal;
 };
@@ -152,7 +154,7 @@ export async function gateFlowWrite(
   const permissionRoot = presentation ? FRINK_CUSTOM_NODES_DIR : ctx.projectPath;
   if (!permissionRoot) return { allowed: false, message: MISSING_FLOW_PROJECT_MESSAGE };
   const permissionArgs = [
-    `mcp__${FRINK_DYNAMIC_CHAT_MCP_KEY}__${toolName}`,
+    frinkToolPartName(toolName),
     args,
     permissionRoot,
     ctx.chatId,
@@ -165,7 +167,7 @@ export async function gateFlowWrite(
   ] as const;
   const result = presentation
     ? await validateWrite(
-        `mcp__${FRINK_DYNAMIC_CHAT_MCP_KEY}__${toolName}`,
+        frinkToolPartName(toolName),
         args,
         permissionRoot,
         ctx.chatId,
@@ -202,12 +204,14 @@ export function dispatchFlowToolCall(
 
 function flowUnavailableReason({
   mode,
+  ctx,
   flowsEnabled,
 }: DispatchFlowToolCallOptions): string | undefined {
   if (!flowsEnabled) {
     return 'Flow tools are not available in this version.';
   }
-  return mode === 'plan'
+  const planning = ctx?.isPlanPhase ? ctx.isPlanPhase() : mode === 'plan';
+  return planning
     ? 'Flow tools are not available in plan mode. Put the Flow change in your plan instead; it can run once the plan is approved.'
     : undefined;
 }

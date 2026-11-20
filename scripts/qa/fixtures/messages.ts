@@ -109,7 +109,7 @@ export const FIXTURE_MESSAGES = [
     role: 'assistant',
     parts: [
       {
-        type: 'tool-mcp__frink_dynamic_chat__frink_flows_patch',
+        type: 'tool-mcp__frink__frink_flows_patch',
         toolCallId: 'qa-flow-patch-root',
         state: 'output-available',
         input: {

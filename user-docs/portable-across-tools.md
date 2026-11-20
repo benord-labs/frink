@@ -18,7 +18,8 @@ Each chat stays on the tool it started with. A new chat uses its project's accou
 
 | Setup                  | Follows you?                                                           |
 | ---------------------- | ---------------------------------------------------------------------- |
-| MCP servers            | Yes                                                                    |
+| MCP servers            | Yes on Claude and Codex; not yet on OpenCode, GitHub Copilot or Cursor |
+| Frink's own tools      | Yes, except on Cursor and in Codex general chats — project search, Flow building |
 | Skills                 | Yes                                                                    |
 | Commands               | Yes                                                                    |
 | Custom agents          | Yes on Claude; Codex chats run without helper agents for now           |
@@ -63,9 +64,9 @@ Frink tells you what changed when you switch tools. The agent itself (its name a
 
 **Hooks** (like _"block dangerous commands"_) you set up for Claude in your own settings, or in a project's `.claude/settings.local.json`, also run in Codex chats. Frink keeps its own copy in `~/.frink/hooks` and picks up any change you make to those files. Codex runs only command hooks, and only on the events it shares with Claude, so a hook for a Claude-only event (such as a notification) stays with Claude. A hook written for Claude's tool names may not act on Codex's (Codex calls file edits `apply_patch`). Hooks committed in a project stay with the project and are not copied.
 
-**OpenCode** chats don't take your setup yet. MCP servers, commands, custom agents and hooks don't reach them, and Frink ignores your own OpenCode config files while it runs OpenCode, for safety. OpenCode still reads your instructions files (`AGENTS.md`, `CLAUDE.md`) and the skills in `~/.claude/skills`.
+**OpenCode** chats don't take your setup yet. Your MCP servers, commands, custom agents and hooks don't reach them (Frink's own tools do), and Frink ignores your own OpenCode config files while it runs OpenCode, for safety. OpenCode still reads your instructions files (`AGENTS.md`, `CLAUDE.md`) and the skills in `~/.claude/skills`.
 
-**GitHub Copilot** chats don't take your setup yet either. MCP servers, commands, custom agents, skills and hooks don't reach them, and your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety. Copilot in your terminal keeps all of them.
+**GitHub Copilot** chats don't take your setup yet either. Your MCP servers, commands, custom agents, skills and hooks don't reach them (Frink's own tools do), and your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety. Copilot in your terminal keeps all of them.
 
 **Cursor** chats don't take your setup yet either. MCP servers, commands, custom agents, skills, hooks and instructions files don't reach them, and your own Cursor hooks, MCP servers, rules and skills, and the project's `AGENTS.md` and `.cursor/rules`, don't apply inside Frink, for safety. The Cursor editor keeps all of them.
 

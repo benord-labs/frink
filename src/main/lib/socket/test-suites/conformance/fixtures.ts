@@ -2,9 +2,15 @@ import path from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionEvent } from '@github/copilot-sdk';
 import type { AgentRuntime } from '../../../../../shared/lib/ai-providers';
-import { type RecordedTurn, says as acpSays } from '../../../agent-runner/acp/acp-test-fixtures';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../../shared/lib/mcp-tool-name';
+import {
+  RECORDED_ACP_FRINK_TOOL as ACP_FRINK_TOOL,
+  type RecordedTurn,
+  says as acpSays,
+} from '../../../agent-runner/acp/acp-test-fixtures';
 import type { mapNotificationToChunks } from '../../../agent-runner/codex/codex-events';
 import {
+  RECORDED_COPILOT_FRINK_TOOL as COPILOT_FRINK_TOOL,
   says as copilotSays,
   toolEnds,
   toolStarts,
@@ -239,4 +245,167 @@ export const STOPPED_TURN: ScenarioFixtures = {
   },
   copilot: { source: 'SCRIPTED', turn: [copilotSays(PARTIAL), WRITE_FILE.copilot.turn[0]] },
   cursor: { source: 'SCRIPTED', turn: [cursor.says(PARTIAL), WRITE_FILE.cursor.turn[0]] },
+};
+
+/** The Frink tool every runtime's fixture calls, and a word its text result carries. */
+export const FRINK_TOOL = { tool: 'searchProjects', resultWord: 'projects' };
+const FRINK_CALL = 'call-frink';
+const FRINK_TEXT = '{"projects":[]}';
+const FRINK_RESULT = [{ type: 'text', text: FRINK_TEXT }];
+const CODEX_FRINK_CALL = {
+  type: 'mcpToolCall',
+  id: FRINK_CALL,
+  server: FRINK_MCP_KEY,
+  tool: FRINK_TOOL.tool,
+  arguments: { query: '' },
+};
+const CURSOR_FRINK_ARGS = {
+  providerIdentifier: FRINK_MCP_KEY,
+  toolName: FRINK_TOOL.tool,
+  args: { query: '' },
+};
+
+/** The agent calls one of Frink's own tools; OpenCode and Copilot were recorded against Frink's
+ * real server, the others are scripted in their vendor's shapes. */
+export const FRINK_TOOL_CALL: ScenarioFixtures = {
+  claude: {
+    source: 'SCRIPTED',
+    // SAFETY: the transformer and the Claude session loop read only these fields of an SDK frame.
+    turn: [
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: FRINK_CALL,
+              name: frinkToolPartName(FRINK_TOOL.tool),
+              input: { query: '' },
+            },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: FRINK_CALL, content: FRINK_RESULT }],
+        },
+      },
+      { type: 'result', subtype: 'success', is_error: false, result: '', session_id: SESSION_ID },
+    ] as SDKMessage[],
+  },
+  codex: {
+    source: 'SCRIPTED',
+    turn: {
+      notifications: [
+        ['item/started', { item: { ...CODEX_FRINK_CALL, status: 'inProgress' } }],
+        [
+          'item/completed',
+          { item: { ...CODEX_FRINK_CALL, status: 'completed', result: { content: FRINK_RESULT } } },
+        ],
+        CODEX_TURN_DONE,
+      ],
+    },
+  },
+  acp: { source: 'RECORDED', turn: ACP_FRINK_TOOL },
+  copilot: { source: 'RECORDED', turn: COPILOT_FRINK_TOOL },
+  cursor: {
+    source: 'SCRIPTED',
+    turn: [
+      cursor.runs(FRINK_CALL, 'mcp', CURSOR_FRINK_ARGS),
+      cursor.ran(FRINK_CALL, 'mcp', CURSOR_FRINK_ARGS, {
+        status: 'success',
+        value: { content: [{ text: { text: FRINK_TEXT } }], isError: false },
+      }),
+    ],
+  },
+};
+
+/** The text of a Frink tool's refusal, e.g. a site the user did not allow. */
+export const FRINK_TOOL_ERROR = 'Ask the user to allow example.com.';
+const FRINK_ERROR_RESULT = [{ type: 'text', text: FRINK_TOOL_ERROR }];
+
+/** The same call answered with an isError result, each runtime in its own vendor's shape. */
+export const FRINK_TOOL_FAILED: ScenarioFixtures = {
+  claude: {
+    source: 'SCRIPTED',
+    // SAFETY: the transformer and the Claude session loop read only these fields of an SDK frame.
+    turn: [
+      FRINK_TOOL_CALL.claude.turn[0],
+      {
+        type: 'user',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: FRINK_CALL,
+              is_error: true,
+              content: FRINK_TOOL_ERROR,
+            },
+          ],
+        },
+      },
+      FRINK_TOOL_CALL.claude.turn[2],
+    ] as SDKMessage[],
+  },
+  codex: {
+    source: 'SCRIPTED',
+    turn: {
+      notifications: [
+        ['item/started', { item: { ...CODEX_FRINK_CALL, status: 'inProgress' } }],
+        [
+          'item/completed',
+          {
+            item: {
+              ...CODEX_FRINK_CALL,
+              status: 'failed',
+              result: { content: FRINK_ERROR_RESULT },
+              error: null,
+            },
+          },
+        ],
+        CODEX_TURN_DONE,
+      ],
+    },
+  },
+  acp: {
+    source: 'SCRIPTED',
+    turn: {
+      ...ACP_FRINK_TOOL,
+      messages: [
+        ...ACP_FRINK_TOOL.messages.slice(0, 2),
+        {
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'call_1',
+            status: 'failed',
+            content: [{ type: 'content', content: { type: 'text', text: FRINK_TOOL_ERROR } }],
+          },
+        },
+        ...ACP_FRINK_TOOL.messages.slice(3),
+      ],
+    },
+  },
+  copilot: {
+    source: 'SCRIPTED',
+    turn: [
+      ...COPILOT_FRINK_TOOL.slice(0, 1),
+      toolEnds('call_frink-tool_0', false, FRINK_TOOL_ERROR),
+    ],
+  },
+  cursor: {
+    source: 'SCRIPTED',
+    turn: [
+      cursor.runs(FRINK_CALL, 'mcp', CURSOR_FRINK_ARGS),
+      cursor.ran(FRINK_CALL, 'mcp', CURSOR_FRINK_ARGS, {
+        status: 'success',
+        value: { content: [{ text: { text: FRINK_TOOL_ERROR } }], isError: true },
+      }),
+    ],
+  },
 };

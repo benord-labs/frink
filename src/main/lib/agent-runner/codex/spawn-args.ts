@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { getChannelToken, withChannelQuery } from '../../mcp/execution-identity';
+import { frinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 
 /** Codex shells drop `*KEY*`/`*SECRET*`/`*TOKEN*` vars; last in the args so no override undoes it.
  * Why: docs/decisions/child-process-env-secrets.md */
@@ -48,7 +48,7 @@ type CodexMcpConfigParams = {
 /** Build the channel-scoped dynamic-chat URL included in Codex's canonical MCP table. */
 export function buildCodexDynamicChatMcpUrl(params: CodexMcpConfigParams): string | null {
   const { baseUrl, subChatId, projectPath, hasSignalTask } = params;
-  const eligible = baseUrl && projectPath && projectPath !== os.homedir();
-  if (!eligible) return null;
-  return withChannelQuery(baseUrl, getChannelToken(subChatId, 'codex'), hasSignalTask);
+  const server = frinkToolsServer({ baseUrl, subChatId, runtime: 'codex', hasSignalTask });
+  const eligible = server && projectPath && projectPath !== os.homedir();
+  return eligible ? server.url : null;
 }
