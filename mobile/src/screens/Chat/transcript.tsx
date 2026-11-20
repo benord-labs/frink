@@ -106,7 +106,7 @@ export function Transcript({
   return (
     <View style={{ gap: 28 }}>
       {targetResolved && (
-        <Note>This was already answered on your Mac. The chat is up to date.</Note>
+        <Note>This was already answered on your computer. The chat is up to date.</Note>
       )}
       {data.hasMore && !history.done && (
         <EarlierButton
@@ -119,7 +119,7 @@ export function Transcript({
         <EmptyState
           icon={MessageSquare}
           title="No messages yet"
-          detail="Send a message and Frink gets to work on your Mac."
+          detail="Send a message and Frink gets to work on your computer."
         />
       )}
       {messages.map((message) => (

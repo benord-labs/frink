@@ -33,7 +33,7 @@ function FileIcon({ name, size }: { name: string; size: number }) {
   return <Iconify icon={fileTypeIcon(name) ?? defaultFileIcon} size={size} color={t.secondary} />;
 }
 
-// The desktop's glyph for each kind of mention that is not a file. A kind a newer Mac adds, which
+// The desktop's glyph for each kind of mention that is not a file. A kind a newer desktop app adds, which
 // this build has never seen, gets the file icon rather than nothing.
 const KIND_ICONS = new Map<string, typeof Bot>([
   ['folder', FolderOpen],

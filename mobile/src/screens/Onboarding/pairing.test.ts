@@ -14,7 +14,7 @@ const code = (version = 3) =>
   });
 
 describe('readPairing', () => {
-  it('reads the Mac a valid code points at', () => {
+  it('reads the computer a valid code points at', () => {
     expect(readPairing(`  ${code()}\n`)).toEqual({
       ok: true,
       text: code(),
@@ -56,7 +56,7 @@ describe('readPairing', () => {
 describe('pairingFailure', () => {
   it('names the cause and the fix in plain words', () => {
     expect(pairingFailure(new ApiError('offline', 0))).toMatch(
-      /Can’t reach your Mac. Keep Frink open/,
+      /Can’t reach your computer. Keep Frink open/,
     );
     expect(pairingFailure(new ApiError('expired', 401))).toMatch(/expired or was already used/);
     expect(pairingFailure(new ApiError('slow down', 429))).toMatch(/Too many tries/);

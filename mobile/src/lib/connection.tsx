@@ -58,7 +58,7 @@ const Context = createContext<Session | null>(null);
 
 const UNREADABLE = 'This iPhone couldn’t read its saved computers. Pair your computer again.';
 const REVOKED =
-  'Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.';
+  'Your computer stopped accepting it. Make a new code in Frink on your computer: Settings → Mobile.';
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<Computers>(NO_COMPUTERS);

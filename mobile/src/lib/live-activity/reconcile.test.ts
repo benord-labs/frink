@@ -68,7 +68,7 @@ it('starts a card for chats that need you even when nothing is running', async (
   );
 });
 
-it('leaves a running card to the Mac and ends any extras', async () => {
+it('leaves a running card to the computer and ends any extras', async () => {
   const [first, extra] = [card('one'), card('two')];
   widget.getInstances.mockReturnValue([first, extra]);
   await reconcile(session, host, true, { running: 1, needsYou: 3 });
@@ -78,7 +78,7 @@ it('leaves a running card to the Mac and ends any extras', async () => {
   expect(extra.end).toHaveBeenCalledWith('immediate');
 });
 
-it('ends a card the Mac reports as idle', async () => {
+it('ends a card the computer reports as idle', async () => {
   const shown = card();
   widget.getInstances.mockReturnValue([shown]);
   await reconcile(session, host, true, { running: 0, needsYou: 0 });
@@ -135,7 +135,7 @@ it('turned off while the token is still being sent: clears it once that lands', 
   expect(session.sent).toBeNull();
 });
 
-it('unpaired: stops listening, ends every card and clears the token on the old Mac', () => {
+it('unpaired: stops listening, ends every card and clears the token on the old computer', () => {
   const shown = card();
   const remove = vi.fn();
   widget.getInstances.mockReturnValue([shown]);

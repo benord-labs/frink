@@ -100,36 +100,12 @@ export function NotReadyNotice() {
       <MonitorOff size={20} color={t.muted} />
       <View style={{ flex: 1, gap: 2 }}>
         <Text variant="secondary" style={{ fontWeight: '600' }}>
-          Open Frink on your Mac to run chats
+          Open Frink on your computer to run chats
         </Text>
         <Text variant="secondary" color="muted">
           You can still see everything here. New work starts once Frink is open.
         </Text>
       </View>
-    </View>
-  );
-}
-
-/** "Benji's MacBook Pro" with a dot: green while the Mac answers, grey while it doesn't. */
-export function MacEyebrow({ name, online }: { name: string; online: boolean }) {
-  const t = useTheme();
-  return (
-    <View
-      accessible
-      accessibilityLabel={`${name}, ${online ? 'connected' : 'not reachable'}`}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-    >
-      <View
-        style={{
-          width: 7,
-          height: 7,
-          borderRadius: 4,
-          backgroundColor: online ? t.live : t.offline,
-        }}
-      />
-      <Text variant="label" color="muted" numberOfLines={1}>
-        {name}
-      </Text>
     </View>
   );
 }

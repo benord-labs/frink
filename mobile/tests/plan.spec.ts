@@ -78,7 +78,7 @@ test.describe('a plan waiting for review', () => {
       expect(errors).toEqual([]);
     });
 
-  test('Approve asks the Mac to build this exact plan', async ({ page }) => {
+  test('Approve asks the computer to build this exact plan', async ({ page }) => {
     const state = await openApp(page, { data: { chat: planChat() } });
     await openChat(page, { id: 'chat-4' });
     await button(page, 'Approve').click();

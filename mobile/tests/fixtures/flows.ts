@@ -71,7 +71,7 @@ export const triageDefinition: MobileFlowDefinition = {
 };
 
 /**
- * The Flows list exactly as the Mac sends it: `status` is the live run's display status
+ * The Flows list exactly as the computer sends it: `status` is the live run's display status
  * ("awaiting_input" for a run parked on a decision), while `lastRun` keeps the engine's raw
  * status, which is "paused" for that same run.
  */

@@ -82,7 +82,7 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
       onDone();
     } catch {
       setFailure(
-        'This iPhone couldn’t save the connection. Make a new code on your Mac and try again.',
+        'This iPhone couldn’t save the connection. Make a new code on your computer and try again.',
       );
       setBusy(false);
     }

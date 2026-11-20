@@ -184,7 +184,7 @@ export function ModeMenu({
         {
           title: 'Mode',
           value: mode,
-          options: modes.map(({ id, label }) => ({ id, label })),
+          options: modes.map(({ id, label, detail }) => ({ id, label, detail })),
           onPick: (id) => onMode(id as MobileChatMode),
         },
       ]}
