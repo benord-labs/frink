@@ -1,4 +1,6 @@
-import { useState, type ReactNode } from 'react';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -14,7 +16,9 @@ import type {
   MobileChatMode,
   MobileComposer,
 } from '@frink/shared/types/remote/mobile';
+import { withReference } from '../../../lib/changes/view';
 import { useDraft } from '../../../lib/drafts';
+import type { RootRoutes } from '../../../navigation/routes';
 import { GlassSurface } from '../../../ui/material';
 import { space, useTheme } from '../../../ui/theme';
 import {
@@ -93,6 +97,17 @@ function ActionButton({
   );
 }
 
+/** Adds text another screen asked for, such as a line picked in Changes, to the draft once. */
+function useAskedText(value: string, update: (value: string) => void) {
+  const navigation = useNavigation<NativeStackNavigationProp<RootRoutes, 'Chat'>>();
+  const ask = useRoute<RouteProp<RootRoutes, 'Chat'>>().params?.ask;
+  useEffect(() => {
+    if (!ask) return;
+    update(withReference(value, ask));
+    navigation.setParams({ ask: undefined });
+  }, [ask]);
+}
+
 export function Composer({
   activity,
   executionReady,
@@ -137,6 +152,7 @@ export function Composer({
   const t = useTheme();
   const line = useLine();
   const { value, update } = useDraft(draft, '');
+  useAskedText(value, update);
   const [contentHeight, setContentHeight] = useState(LINE);
   const sizing = messageInputSizing(Platform.OS === 'web', line, contentHeight, !!value);
   const mode = composerMode(

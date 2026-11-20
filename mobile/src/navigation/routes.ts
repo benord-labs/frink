@@ -12,10 +12,19 @@ export type RootRoutes = {
   Chats: undefined;
   Queue: undefined;
   Flows: undefined;
-  /** No `id` is a new chat: a blank conversation that is made on the Mac when it is first used. */
+  /** No `id` is a new chat: a blank conversation that is made on the computer when it is first used.
+   *  `ask` is text the composer adds to its draft once, such as a line picked in Changes. */
   Chat:
-    | { id?: string; subChatId?: string; decisionTarget?: DecisionTarget; projectId?: string }
+    | {
+        id?: string;
+        subChatId?: string;
+        decisionTarget?: DecisionTarget;
+        projectId?: string;
+        ask?: string;
+      }
     | undefined;
+  /** What the agent changed in a chat's worktree. */
+  Changes: { chatId: string };
   Flow: { id: string };
   Run: { id: string };
 };

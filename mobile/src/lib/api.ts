@@ -106,6 +106,7 @@ const READ_TYPES: ReadonlySet<MobileRequest['type']> = new Set([
   'projects',
   'chat',
   'composer',
+  'chatChanges',
 ]);
 
 export async function requestMobile<T extends MobileRequest>(

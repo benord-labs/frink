@@ -61,7 +61,7 @@ function useOpenQueueLink(navigation: Navigation) {
 /** Remembers the conversation on screen, so the next launch reopens it. */
 function rememberChat(navigation: Navigation, deviceId: string | undefined) {
   const route = navigation.getCurrentRoute();
-  if (!deviceId || !route || route.name === 'Settings') return;
+  if (!deviceId || !route || route.name === 'Settings' || route.name === 'Changes') return;
   const chat = route.name === 'Chat' ? route.params : undefined;
   void saveLastChat(deviceId, chat?.id ? { id: chat.id, subChatId: chat.subChatId } : null);
 }
