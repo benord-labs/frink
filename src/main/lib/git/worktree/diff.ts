@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import simpleGit, { type StatusResult } from 'simple-git';
 import { getDefaultBranch, refExistsLocally } from '../worktree';
@@ -32,21 +32,31 @@ const isLockfile = (file: string) => file.endsWith('.lock') || file.includes('-l
 const listedOnlyStanza = (file: string) =>
   `diff --git a/${file} b/${file}\nnew file mode 100644\nBinary files /dev/null and b/${file} differ`;
 
-type SizedFile = { file: string; size: number; mtimeMs: number; mode: number; isFile: boolean };
+/** `other` is anything that cannot be read as text: a nested repository's directory, a pipe, a device. */
+type SizedFile = {
+  file: string;
+  size: number;
+  mtimeMs: number;
+  mode: number;
+  kind: 'file' | 'link' | 'other';
+};
 
 /** The untracked files worth a real diff: under the size cap, newest first, up to the file cap. */
 function pickFilesToDiff(sized: SizedFile[]): Set<string> {
   const newestFirst = sized
-    // Reading a pipe or device would block, and a directory cannot be read as text
-    .filter((entry) => entry.isFile && entry.size <= MAX_UNTRACKED_DIFF_SIZE)
+    .filter((entry) => entry.kind !== 'other' && entry.size <= MAX_UNTRACKED_DIFF_SIZE)
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   return new Set(newestFirst.slice(0, MAX_UNTRACKED_DIFFED_FILES).map((entry) => entry.file));
 }
 
-/** The stanza `git diff --no-index /dev/null <file>` prints, minus its unread `index` line. */
-async function newFileStanza(worktreePath: string, file: string, mode: number): Promise<string> {
-  const buf = await readFile(join(worktreePath, file));
-  const fileMode = mode & 0o100 ? '100755' : '100644';
+/** The stanza `git diff --no-index /dev/null <file>` prints, minus its unread `index` line. A
+ * symlink is shown as git shows it, by its target path, and is never followed. */
+async function newFileStanza(worktreePath: string, entry: SizedFile): Promise<string> {
+  const { file } = entry;
+  const path = join(worktreePath, file);
+  const isLink = entry.kind === 'link';
+  const buf = isLink ? Buffer.from(await readlink(path)) : await readFile(path);
+  const fileMode = isLink ? '120000' : entry.mode & 0o100 ? '100755' : '100644';
   const header = `diff --git a/${file} b/${file}\nnew file mode ${fileMode}`;
   if (buf.length === 0) return header;
   // git's own binary heuristic: a NUL byte in the first 8000 bytes
@@ -71,14 +81,10 @@ async function diffUntrackedFiles(worktreePath: string, files: string[]): Promis
   const sized: SizedFile[] = [];
   for (const file of files) {
     try {
-      const stats = await stat(join(worktreePath, file));
-      sized.push({
-        file,
-        size: stats.size,
-        mtimeMs: stats.mtimeMs,
-        mode: stats.mode,
-        isFile: stats.isFile(),
-      });
+      // lstat, so a symlink is measured and shown as itself, never as the file it points at
+      const stats = await lstat(join(worktreePath, file));
+      const kind = stats.isSymbolicLink() ? 'link' : stats.isFile() ? 'file' : 'other';
+      sized.push({ file, size: stats.size, mtimeMs: stats.mtimeMs, mode: stats.mode, kind });
     } catch {
       // Gone since `git status` listed it: nothing to show.
     }
@@ -86,11 +92,11 @@ async function diffUntrackedFiles(worktreePath: string, files: string[]): Promis
 
   const toDiff = pickFilesToDiff(sized);
   const stanzas: string[] = [];
-  for (const { file, mode } of sized) {
+  for (const entry of sized) {
     // Gone since the stat: nothing to show
-    const stanza = toDiff.has(file)
-      ? await newFileStanza(worktreePath, file, mode).catch(() => null)
-      : listedOnlyStanza(file);
+    const stanza = toDiff.has(entry.file)
+      ? await newFileStanza(worktreePath, entry).catch(() => null)
+      : listedOnlyStanza(entry.file);
     if (stanza) stanzas.push(stanza);
   }
   return stanzas.join('\n');

@@ -1,13 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import simpleGit from 'simple-git';
@@ -125,24 +117,29 @@ describe('getWorktreeDiff untracked files', () => {
     expect(files.at(-1)).toMatchObject({ isBinary: false, additions: 1 });
   });
 
-  // Reading a pipe blocks until something writes to it, which would hang every refresh.
-  it('lists an untracked symlink to a directory or a pipe without reading it', async () => {
-    mkdirSync(path.join(repo, 'target'));
-    write('target/inside.txt', 'x\n');
-    execFileSync('git', ['add', 'target'], { cwd: repo });
-    symlinkSync('target', path.join(repo, 'dir-link'));
+  // git lists a nested repository as one directory entry, which cannot be read as a file.
+  it('lists an untracked nested repository without reading it', async () => {
+    const nested = path.join(repo, 'nested');
+    execFileSync('git', ['init', '-q', nested]);
+    writeFileSync(path.join(nested, 'inside.txt'), 'x\n');
+    write('beside.txt', 'y\n');
+
+    const result = await getWorktreeDiff(repo, undefined, { onlyUncommitted: true });
+
+    expect(result.diff).toContain('Binary files /dev/null and b/nested/ differ');
+    expect(diffedPaths(result.diff)).toContain('beside.txt');
+  });
+
+  // git itself reads through a link to a pipe, which blocks until something writes to it.
+  it('shows an untracked link to a pipe by its target path, without opening the pipe', async () => {
     execFileSync('mkfifo', [path.join(repo, 'pipe')]);
     symlinkSync('pipe', path.join(repo, 'pipe-link'));
 
     const result = await getWorktreeDiff(repo, undefined, { onlyUncommitted: true });
 
-    const links = splitUnifiedDiffByFile(result.diff ?? '').filter((f) =>
-      f.newPath.endsWith('-link'),
+    expect(result.diff).toContain(
+      'diff --git a/pipe-link b/pipe-link\nnew file mode 120000\n--- /dev/null\n+++ b/pipe-link\n@@ -0,0 +1 @@\n+pipe\n',
     );
-    expect(links.map((f) => [f.newPath, f.isBinary])).toEqual([
-      ['dir-link', true],
-      ['pipe-link', true],
-    ]);
   });
 
   it('prints each untracked file exactly as `git diff --no-index /dev/null` does', async () => {
@@ -157,6 +154,9 @@ describe('getWorktreeDiff untracked files', () => {
     };
     for (const [name, content] of Object.entries(samples)) write(name, content);
     chmodSync(path.join(repo, 'run.sh'), 0o755);
+    // A link is shown by its target path and never followed: its target may sit outside the worktree.
+    const links = { 'file-link': 'lines.txt', 'outside-link': '/etc/hosts' };
+    for (const [name, target] of Object.entries(links)) symlinkSync(target, path.join(repo, name));
     const withoutIndex = (stanza: string) =>
       stanza
         .split('\n')
@@ -189,7 +189,7 @@ describe('getWorktreeDiff untracked files', () => {
       .split(/\n(?=diff --git )/)
       .map(withoutIndex)
       .sort();
-    expect(stanzas).toEqual(Object.keys(samples).map(gitStanza).sort());
+    expect(stanzas).toEqual([...Object.keys(samples), ...Object.keys(links)].map(gitStanza).sort());
   });
 });
 
