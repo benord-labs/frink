@@ -566,8 +566,9 @@ async function listedKind(
   entry: Dirent,
   fullPath: string,
   rootPath: string,
+  kindOfRow: EntryKinds['direntKind'],
 ): Promise<FileEntry['type'] | null> {
-  const kind = await direntKind(entry, fullPath, rootPath);
+  const kind = await kindOfRow(entry, fullPath, rootPath);
   if (kind === 'folder') return isIgnoredDirectory(entry.name) ? null : kind;
   return kind === 'file' && !isIgnoredFileByName(entry.name) ? kind : null;
 }
@@ -576,8 +577,9 @@ async function listedKind(
  * Recursively scan a directory and return all file and folder paths
  * Used for search mode - scans entire tree to find matches
  */
-async function scanDirectory(
+export async function scanDirectory(
   rootPath: string,
+  kindOfRow: EntryKinds['direntKind'] = direntKind,
   currentPath: string = rootPath,
   depth: number = 0,
   maxDepth: number = 15,
@@ -593,13 +595,15 @@ async function scanDirectory(
     for (const entry of dirEntries) {
       if (budget.remaining <= 0) break;
       const fullPath = join(currentPath, entry.name);
-      const type = await listedKind(entry, fullPath, rootPath);
+      const type = await listedKind(entry, fullPath, rootPath, kindOfRow);
       if (!type) continue;
       entries.push({ path: relative(rootPath, fullPath), type });
       budget.remaining--;
       // A link is listed by its target's kind but never walked into, as in the tree.
       if (type === 'folder' && !entry.isSymbolicLink()) {
-        entries.push(...(await scanDirectory(rootPath, fullPath, depth + 1, maxDepth, budget)));
+        entries.push(
+          ...(await scanDirectory(rootPath, kindOfRow, fullPath, depth + 1, maxDepth, budget)),
+        );
       }
     }
   } catch {

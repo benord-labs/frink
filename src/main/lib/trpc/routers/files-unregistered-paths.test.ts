@@ -286,7 +286,10 @@ describe('filesRouter symlinked entries', () => {
     ]);
   });
 
-  it('lists the folder without a link whose target never answers', async () => {
+  it.each([
+    ['lists the folder', 'listing'],
+    ['searches the project', 'search'],
+  ] as const)('%s without a link whose target never answers', async (_, entry) => {
     await writeFile(join(projectPath, 'readme.md'), 'x', 'utf8');
     await linkFolder(outside, join(projectPath, 'nas'));
     const nas = join(projectPath, 'nas');
@@ -300,20 +303,18 @@ describe('filesRouter symlinked entries', () => {
       lstat: (path) => lstat(path),
       readlink: (path) => readlink(path),
     });
-    const { listDirectoryContents } = await import('./files');
+    const { listDirectoryContents, scanDirectory } = await import('./files');
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const rows = listDirectoryContents(
-        projectPath,
-        projectPath,
-        undefined,
-        undefined,
-        kinds.direntKind,
-      );
+      const rows =
+        entry === 'listing'
+          ? listDirectoryContents(projectPath, projectPath, undefined, undefined, kinds.direntKind)
+          : scanDirectory(projectPath, kinds.direntKind);
       await vi.waitFor(() => expect(nasAsked).toBe(true));
       await vi.advanceTimersByTimeAsync(STAT_TIMEOUT_MS);
 
-      expect((await rows).map((row) => [row.path, row.type])).toEqual([
+      const found = (await rows).map((row) => [row.path, row.type]);
+      expect(found.sort()).toEqual([
         ['linked', 'folder'],
         ['readme.md', 'file'],
       ]);
