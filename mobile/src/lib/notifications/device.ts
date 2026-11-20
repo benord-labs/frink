@@ -1,6 +1,8 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
+import { PERMISSION_ALERT_CATEGORY } from '@frink/shared/types/remote/notifications';
 import { AppState } from 'react-native';
+import { isPermissionButton, PERMISSION_BUTTONS } from './actions';
 
 let shownComputer: string | null = null;
 /** The paired computer the app is showing; its alerts stay quiet while Frink is open. */
@@ -24,6 +26,11 @@ Notifications.setNotificationHandler({
   },
 });
 
+// Without the buttons registered, a permission alert still opens its chat when tapped.
+Notifications.setNotificationCategoryAsync(PERMISSION_ALERT_CATEGORY, PERMISSION_BUTTONS).catch(
+  () => undefined,
+);
+
 /** Whether alerts are allowed; only `ask` shows the system prompt. Provisional counts as allowed. */
 export async function permission(ask = false): Promise<boolean> {
   const result = ask
@@ -43,17 +50,20 @@ export function onTokenChanged(refresh: () => void) {
   return () => listener.remove();
 }
 
-/** Calls `open` once per tapped alert, including the one that launched the app. */
-export function onNotificationOpened(open: (data: unknown) => void) {
+/** Calls `open` once per tapped alert or alert button, including the one that launched the app. */
+export function onNotificationOpened(open: (data: unknown, action: string) => void) {
   let handled: string | undefined;
   const consume = (response: Notifications.NotificationResponse) => {
+    const action = response.actionIdentifier;
+    // One alert can be answered again with another button, so the same tap is what repeats.
+    const tap = `${response.notification.request.identifier}\n${action}`;
     if (
-      response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER ||
-      handled === response.notification.request.identifier
+      (action !== Notifications.DEFAULT_ACTION_IDENTIFIER && !isPermissionButton(action)) ||
+      handled === tap
     )
       return;
-    handled = response.notification.request.identifier;
-    open(response.notification.request.content.data);
+    handled = tap;
+    open(response.notification.request.content.data, action);
     Notifications.clearLastNotificationResponse();
   };
   const listener = Notifications.addNotificationResponseReceivedListener(consume);

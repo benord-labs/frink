@@ -10,6 +10,6 @@ export function onTokenChanged(_refresh: () => void) {
   return () => {};
 }
 export function setShownComputer(_deviceId: string | null) {}
-export function onNotificationOpened(_open: (data: unknown) => void) {
+export function onNotificationOpened(_open: (data: unknown, action: string) => void) {
   return () => {};
 }
