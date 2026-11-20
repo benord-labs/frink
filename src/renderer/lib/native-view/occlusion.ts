@@ -1,5 +1,5 @@
 const GLOBAL_OCCLUDING_LAYER_SELECTOR = [
-  '[data-artifact-preview-occluder]',
+  '[data-native-view-occluder]',
   '[class~="fixed"][class~="inset-0"]:not([class~="pointer-events-none"])',
   '[class~="z-99999"]',
   'dialog[open]',
@@ -8,7 +8,10 @@ const GLOBAL_OCCLUDING_LAYER_SELECTOR = [
   '[role="alertdialog"][aria-modal="true"]',
   '[role="alertdialog"][data-state="open"]',
 ].join(',');
+// `data-native-view-intersecting`: fixed app UI, such as the permission card, that a native view
+// must not cover where they overlap.
 const INTERSECTING_LAYER_SELECTOR = [
+  '[data-native-view-intersecting]',
   '[role="menu"][data-state="open"]',
   '[role="listbox"][data-state="open"]',
   '[role="tooltip"][data-state="open"]',
