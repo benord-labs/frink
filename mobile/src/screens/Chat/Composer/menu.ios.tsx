@@ -1,4 +1,4 @@
-import { Button, Host, HStack, Image, Menu, Section, Text } from '@expo/ui/swift-ui';
+import { Button, Host, HStack, Image, Label, Menu, Section, Text } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel as labelled,
   disabled as inert,
@@ -39,14 +39,19 @@ export function MenuChip({ label, accessibilityLabel, groups, disabled = false }
       >
         {groups.map((group, index) => (
           <Section key={group.title ?? index} title={group.title}>
-            {group.options.map((option) => (
-              <Button
-                key={option.id}
-                label={option.label}
-                systemImage={option.id === group.value ? 'checkmark' : undefined}
-                onPress={() => option.id !== group.value && group.onPick(option.id)}
-              />
-            ))}
+            {group.options.map((option) => {
+              const check = option.id === group.value ? 'checkmark' : undefined;
+              const pick = () => option.id !== group.value && group.onPick(option.id);
+              // A second Text in a menu button's label is drawn as the system subtitle.
+              return option.detail ? (
+                <Button key={option.id} onPress={pick}>
+                  <Label title={option.label} systemImage={check} />
+                  <Text>{option.detail}</Text>
+                </Button>
+              ) : (
+                <Button key={option.id} label={option.label} systemImage={check} onPress={pick} />
+              );
+            })}
           </Section>
         ))}
       </Menu>

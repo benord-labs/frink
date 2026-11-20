@@ -6,7 +6,8 @@ export type MenuGroup = {
   title?: string;
   /** The chosen option's id; a group of plain actions has none. */
   value?: string;
-  options: Array<{ id: string; label: string }>;
+  /** `detail` is a short line under the option's name. */
+  options: Array<{ id: string; label: string; detail?: string }>;
   onPick: (id: string) => void;
 };
 export type MenuChipProps = {
@@ -35,6 +36,7 @@ export function MenuChip({ label, accessibilityLabel, groups, disabled = false }
                 <OptionRow
                   key={option.id}
                   title={option.label}
+                  subtitle={option.detail}
                   selected={option.id === group.value}
                   onPress={() => {
                     setOpen(false);

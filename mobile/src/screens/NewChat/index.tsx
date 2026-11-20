@@ -1,6 +1,6 @@
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, Image, KeyboardAvoidingView, Platform, View } from 'react-native';
+import { AppState, KeyboardAvoidingView, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { deliver } from '../../lib/chat/deliver';
 import { addPending, changePending, pendingKey, type PendingEntry } from '../../lib/chat/pending';
@@ -10,7 +10,7 @@ import { readPreferences, savePreferences, type NewChatPreferences } from '../..
 import { useRootNavigation } from '../../navigation/routes';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Text } from '../../ui/text';
-import { GUTTER, space, useTheme } from '../../ui/theme';
+import { GUTTER, space } from '../../ui/theme';
 import { Composer, useComposerAttachments, useComposerState } from '../Chat/Composer';
 import { ChipButton } from '../Chat/Composer/chip';
 import { ModeMenu, ModelMenus } from '../Chat/Composer/controls';
@@ -18,26 +18,20 @@ import { MenuChip } from '../Chat/Composer/menu';
 import { Sheet } from '../Chat/Composer/sheet';
 import { useExecutionReady, useKeyboardShown } from '../Chat/environment';
 import { useChatHeader } from '../Chat/header';
-import { chosenProject, creationChoiceChanged, PLAN_HELP, WORK_HELP } from './new-chat-options';
+import { chosenProject, creationChoiceChanged, PLACES } from './new-chat-options';
 import { ProjectPicker } from './project-picker';
 import { useStartChat } from './use-start-chat';
 
 const ios = Platform.OS === 'ios';
-const mark = require('../../../assets/frink-mark.png');
-const NO_PROJECTS = 'Add a project in Frink on your Mac to start a chat.';
+const NO_PROJECTS = 'Add a project in Frink on your computer to start a chat.';
 const DRAFT = 'new-chat';
-const PLACES = [
-  { id: 'worktree', label: 'Worktree' },
-  { id: 'local', label: 'Local' },
-];
 
 /**
  * A new chat is a blank conversation: the same message box as any chat, with the project, where
- * it works, the mode and the model chosen in it. The chat is made on the Mac by the first message,
+ * it works, the mode and the model chosen in it. The chat is made on the computer by the first message,
  * or by asking for the models, since the model list belongs to a chat.
  */
 export function NewChat({ requestedProjectId }: { requestedProjectId?: string }) {
-  const t = useTheme();
   const navigation = useRootNavigation();
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
@@ -67,7 +61,7 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
       ),
     );
   }, [requestedProjectId]);
-  // Leaving after only looking at the models would strand an empty chat on the Mac.
+  // Leaving after only looking at the models would strand an empty chat on the computer.
   const leave = useRef(chat.leave);
   leave.current = chat.leave;
   useEffect(() => () => leave.current(), []);
@@ -131,39 +125,11 @@ export function NewChat({ requestedProjectId }: { requestedProjectId?: string })
         }}
       >
         {!keyboard && (
-          <View
-            style={{
-              flex: 1,
-              justifyContent: 'center',
-              alignItems: 'center',
-              gap: space.md,
-              paddingHorizontal: GUTTER,
-            }}
-          >
-            <Image
-              source={mark}
-              style={{ width: 32, height: 38, tintColor: t.accent }}
-              resizeMode="contain"
-            />
+          <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: GUTTER }}>
             <Text style={{ textAlign: 'center' }}>What would you like to work on?</Text>
-            <Text variant="secondary" color="muted" style={{ textAlign: 'center' }}>
-              Choose a project, then start a conversation.
-            </Text>
           </View>
         )}
         <ResourceStatus {...projects} />
-        {choice && project && (
-          <View style={{ gap: space.xs, paddingHorizontal: GUTTER - 10 }}>
-            <Text variant="secondary" color="muted">
-              {WORK_HELP[choice.useWorktree ? 'worktree' : 'local']}
-            </Text>
-            {choice.mode === 'plan' && !created && (
-              <Text variant="secondary" color="muted">
-                {PLAN_HELP}
-              </Text>
-            )}
-          </View>
-        )}
         {choice && (
           <View testID="composer" style={{ width: '100%', maxWidth: 720, alignSelf: 'center' }}>
             <Composer

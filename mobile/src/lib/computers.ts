@@ -13,7 +13,7 @@ export function selectedComputer({ computers, selected }: Computers): Connection
   return computers.find((c) => c.deviceId === selected) ?? null;
 }
 
-/** Another paired computer with this name — usually the same Mac after its access was reset. */
+/** Another paired computer with this name — usually the same computer after its access was reset. */
 export function namesake(
   computers: Connection[],
   pairing: Pick<Connection, 'route' | 'key'> & { machine: string },

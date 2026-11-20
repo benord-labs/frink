@@ -27,7 +27,7 @@ async function pasteCode(page: Page, code = pairingCode()) {
   await page.getByRole('textbox', { name: 'Pairing code', exact: true }).fill(code);
 }
 
-/** Replaces the mocked Mac's answer to the pairing request. */
+/** Replaces the mocked computer's answer to the pairing request. */
 function answerPair(page: Page, answer: (route: Route) => Promise<void>) {
   return page.route(`${fixtureHost}/pair`, (route) =>
     route.request().method() === 'OPTIONS'
@@ -36,13 +36,13 @@ function answerPair(page: Page, answer: (route: Route) => Promise<void>) {
   );
 }
 
-test('pairs by pasting a code, naming the Mac before connecting', async ({ page }) => {
+test('pairs by pasting a code, naming the computer before connecting', async ({ page }) => {
   await openApp(page, { paired: false });
-  await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
-  await expect(page.getByText('Open Frink on your Mac')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Frink, in your pocket' })).toBeVisible();
+  await expect(page.getByText('Open Frink on your computer')).toBeVisible();
   await shot(page, 'connect');
   await page.getByRole('button', { name: 'Paste pairing code' }).click();
-  await expect(page.getByText('Open Frink on your Mac')).toHaveCount(0);
+  await expect(page.getByText('Open Frink on your computer')).toHaveCount(0);
   await shot(page, 'paste');
   const pairBody = page.waitForRequest(
     (request) => request.url().endsWith('/pair') && request.method() === 'POST',
@@ -52,7 +52,7 @@ test('pairs by pasting a code, naming the Mac before connecting', async ({ page 
   await expect(
     page.getByText('End-to-end encrypted via mobile-fixture.example.test', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText('Only connect if this is your Mac.')).toBeVisible();
+  await expect(page.getByText('Only connect if this is your computer.')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'This iPhone’s name' })).toHaveValue('My iPhone');
   await shot(page, 'confirm');
   await page.getByRole('textbox', { name: 'This iPhone’s name' }).fill('Benji’s iPhone');
@@ -61,7 +61,7 @@ test('pairs by pasting a code, naming the Mac before connecting', async ({ page 
   await expect(tabButton(page, 'Chats')).toBeVisible();
 });
 
-test('a pairing link opens straight onto confirming the Mac, and connects only on Connect', async ({
+test('a pairing link opens straight onto confirming the computer, and connects only on Connect', async ({
   page,
 }) => {
   let pairs = 0;
@@ -109,7 +109,7 @@ test('a new link from a computer already paired re-pairs it', async ({ page }) =
   await expect(page.getByText('Re-pairs mobile-fixture')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
   await page.waitForTimeout(500); // the sheet's slide-in
-  await shot(page, 'link-same-mac');
+  await shot(page, 'link-same-computer');
 });
 
 test('a reset computer with the same name replaces its old pairing unless both are kept', async ({
@@ -143,17 +143,19 @@ test('explains a paste that is not a full code, and a code from another Frink ve
   page,
 }) => {
   await openApp(page, { paired: false });
-  await pasteCode(page, '{"version":2,"url":"https://mac.test/"');
+  await pasteCode(page, '{"version":2,"url":"https://computer.test/"');
   await expect(page.getByText(/This isn’t a full pairing code/)).toBeVisible();
   await shot(page, 'paste-invalid');
   await page
     .getByRole('textbox', { name: 'Pairing code', exact: true })
     .fill(JSON.stringify({ version: 1, url: `${fixtureHost}/`, code: 'a'.repeat(43) }));
-  await expect(page.getByText('Update Frink on your Mac, then make a new code.')).toBeVisible();
+  await expect(
+    page.getByText('Update Frink on your computer, then make a new code.'),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toHaveCount(0);
 });
 
-test('an unreachable Mac is named in plain words and the code is kept to retry', async ({
+test('an unreachable computer is named in plain words and the code is kept to retry', async ({
   page,
 }) => {
   await openApp(page, { paired: false });
@@ -162,7 +164,7 @@ test('an unreachable Mac is named in plain words and the code is kept to retry',
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(
     page.getByText(
-      'Can’t reach your Mac. Keep Frink open and your Mac awake and online, then try again.',
+      'Can’t reach your computer. Keep Frink open and your computer awake and online, then try again.',
     ),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
@@ -182,11 +184,11 @@ test('an expired code asks for a new one, and back returns to the first step', a
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByText(/This code has expired or was already used/)).toBeVisible();
   await page.getByRole('button', { name: 'Use a different code' }).click();
-  await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Frink, in your pocket' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Pairing code', exact: true })).toHaveValue('');
 });
 
-test('a Mac on another Frink version asks for an update', async ({ page }) => {
+test('a computer on another Frink version asks for an update', async ({ page }) => {
   await openApp(page, { paired: false });
   await answerPair(page, (route) =>
     route.fulfill({
@@ -196,7 +198,9 @@ test('a Mac on another Frink version asks for an update', async ({ page }) => {
   );
   await pasteCode(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByText('Update Frink on your Mac, then make a new code.')).toBeVisible();
+  await expect(
+    page.getByText('Update Frink on your computer, then make a new code.'),
+  ).toBeVisible();
 });
 
 test('a revoked iPhone lands back on pairing with the reason', async ({ page }) => {
@@ -211,7 +215,7 @@ test('a revoked iPhone lands back on pairing with the reason', async ({ page }) 
   await expect(page.getByText('This iPhone was disconnected')).toBeVisible();
   await expect(
     page.getByText(
-      'Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.',
+      'Your computer stopped accepting it. Make a new code in Frink on your computer: Settings → Mobile.',
     ),
   ).toBeVisible();
   await expect(tabButton(page, 'Chats')).toHaveCount(0);
@@ -273,7 +277,7 @@ test.describe('with a clipboard', () => {
   const copy = (page: Page, text: string) =>
     page.evaluate((value) => navigator.clipboard.writeText(value), text);
 
-  test('a copied code goes straight to confirming the Mac', async ({ page }) => {
+  test('a copied code goes straight to confirming the computer', async ({ page }) => {
     await openApp(page, { paired: false });
     await copy(page, pairingCode());
     await page.getByRole('button', { name: 'Paste pairing code' }).click();
@@ -311,7 +315,7 @@ test.describe('on a small iPhone', () => {
 test('light appearance', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await openApp(page, { paired: false });
-  await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Frink, in your pocket' })).toBeVisible();
   await shot(page, 'connect', 'light');
   await pasteCode(page);
   await shot(page, 'confirm', 'light');
@@ -338,10 +342,10 @@ test.describe('with a camera', () => {
   test('the scanner shows the viewfinder, and closes back to the first step', async ({ page }) => {
     await openApp(page, { paired: false });
     await page.getByRole('button', { name: 'Scan pairing code' }).click();
-    await expect(page.getByText('Scan the code on your Mac')).toBeVisible();
+    await expect(page.getByText('Scan the code on your computer')).toBeVisible();
     await page.waitForTimeout(500);
     await shot(page, 'scanner');
     await page.getByRole('button', { name: 'Close' }).click();
-    await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Frink, in your pocket' })).toBeVisible();
   });
 });

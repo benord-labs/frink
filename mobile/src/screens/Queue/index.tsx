@@ -23,7 +23,7 @@ import {
   type QueueTarget,
   rowRequest,
 } from './queue-view';
-import { actionItem, MacEyebrow, NotReadyNotice, QueueListRow } from './row';
+import { actionItem, NotReadyNotice, QueueListRow } from './row';
 
 /**
  * The shared overview poll serves the collapsed Queue (and the Queue badge). Once a section is
@@ -57,18 +57,10 @@ export function QueueScreen() {
   const insets = useSafeAreaInsets();
   const t = useTheme();
   const navigation = useRootNavigation();
-  const { connection, request } = useConnection();
+  const { request } = useConnection();
   const { resource, shared, grown, sections, expanded, toggle } = useQueueOverview();
   const { data, error } = resource;
-  const { header } = useScreenHeader({
-    title: 'Queue',
-    eyebrow: (
-      <MacEyebrow
-        name={data?.machineName ?? connection?.machineName ?? 'Your Mac'}
-        online={!!data && !error}
-      />
-    ),
-  });
+  useScreenHeader({ title: 'Queue' });
   const open = (target: QueueTarget) =>
     target.screen === 'Run'
       ? navigation.navigate('Run', { id: target.id })
@@ -107,7 +99,6 @@ export function QueueScreen() {
           />
         }
       >
-        {header}
         <ResourceStatus {...resource} refresh={resource.pull} />
         {data && !data.executionReady && <NotReadyNotice />}
         {sections.map((section) => {
@@ -138,7 +129,7 @@ export function QueueScreen() {
           (data ? (
             <EmptyState
               title="You’re all caught up"
-              detail="Questions, approvals and finished work from your Mac will show up here."
+              detail="Questions, approvals and finished work from your computer will show up here."
             />
           ) : (
             !error && <ActivityIndicator color={t.muted} style={{ marginTop: space.xxl * 2 }} />

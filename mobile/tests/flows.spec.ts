@@ -133,7 +133,9 @@ test.describe('Flows tab', () => {
     await expect(page.getByTestId('flow-row-flow-1')).toBeVisible();
     state.offline = true;
     await page.clock.runFor(6000);
-    await expect(page.getByTestId('flows-screen').getByText('Can’t reach your Mac')).toBeVisible();
+    await expect(
+      page.getByTestId('flows-screen').getByText('Can’t reach your computer'),
+    ).toBeVisible();
     await expect(page.getByTestId('flow-row-flow-1')).toBeVisible();
     await shot(page, 'offline-dark');
   });
@@ -250,7 +252,9 @@ test.describe('Flow detail', () => {
     await expect(decision).toContainText('No work needed: Publish summary');
     await expect(page.getByTestId('outline-step-summary')).toContainText('Joins from');
     await expect(page.getByTestId('outline-step-review')).not.toContainText('Then');
-    await expect(page.getByText('Version 4. Change steps in Frink on your Mac.')).toBeVisible();
+    await expect(
+      page.getByText('Version 4. Change steps in Frink on your computer.'),
+    ).toBeVisible();
     const show = page.getByRole('button', { name: 'Show instructions for Check incoming issues' });
     await expect(show).toHaveAttribute('aria-expanded', 'false');
     await show.click();
@@ -359,7 +363,7 @@ test.describe('Run detail', () => {
     });
     await page.getByRole('button', { name: 'View current run' }).click();
     const step = page.getByTestId('run-step-nr-plan');
-    await expect(step).toContainText('Open Frink on your Mac to continue this run.');
+    await expect(step).toContainText('Open Frink on your computer to continue this run.');
     await expect(
       page.getByRole('button', { name: 'Approve Plan the announcement' }),
     ).toBeDisabled();

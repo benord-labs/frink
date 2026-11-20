@@ -115,7 +115,7 @@ function Viewfinder({
       >
         <View style={{ gap: space.xs, alignItems: 'center' }}>
           <Text variant="headline" style={{ color: WHITE }}>
-            Scan the code on your Mac
+            Scan the code on your computer
           </Text>
           <Text
             variant="secondary"
@@ -126,7 +126,7 @@ function Viewfinder({
             }}
           >
             {problem ??
-              'In Frink on your Mac, open Settings → Mobile and scan the code shown there.'}
+              'In Frink on your computer, open Settings → Mobile and scan the code shown there.'}
           </Text>
         </View>
         <GlassSurface style={{ borderRadius: radius.pill }}>

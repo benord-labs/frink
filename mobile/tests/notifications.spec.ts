@@ -21,7 +21,7 @@ test('offers chat-finished alerts in Settings, off until asked', async ({ page }
   await expect(page.getByText('Notifications', { exact: true })).toBeVisible();
   await expect(page.getByText('Alerts', { exact: true })).toBeVisible();
   await expect(
-    page.getByText(/needs you or finishes\. Your prompts and code stay on your Mac/),
+    page.getByText(/needs you or finishes\. Your prompts and code stay on your computer/),
   ).toBeVisible();
   await expect(alertSwitch(page)).not.toBeChecked();
   // Opening Settings only reads the registration; it never registers or prompts.
@@ -42,7 +42,7 @@ test('a refused permission says where to allow alerts', async ({ page, context }
   await shot(page, 'blocked');
 });
 
-test('says when the Mac could not reach this iPhone', async ({ page }) => {
+test('says when the computer could not reach this iPhone', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await openApp(page, {
     notifications: {
@@ -55,7 +55,7 @@ test('says when the Mac could not reach this iPhone', async ({ page }) => {
   await shot(page, 'delivery-failed', 'light');
 });
 
-test('forgetting the Mac also asks it to stop alerts', async ({ page }) => {
+test('forgetting the computer also asks it to stop alerts', async ({ page }) => {
   // Removal is only sent while the Mac has this iPhone registered, which needs alerts allowed;
   // headless Chromium denies notifications, so the page reports them as allowed.
   await page.addInitScript(() =>
@@ -64,7 +64,7 @@ test('forgetting the Mac also asks it to stop alerts', async ({ page }) => {
   const state = await openApp(page, { notifications: { enabled: true, error: null } });
   await openDestination(page, 'Settings');
   page.once('dialog', (dialog) => void dialog.accept());
-  await page.getByRole('button', { name: 'Forget this Mac' }).click();
-  await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
+  await page.getByRole('button', { name: 'Forget this computer' }).click();
+  await expect(page.getByRole('heading', { name: 'Frink, in your pocket' })).toBeVisible();
   await expect.poll(() => state.alerts.at(-1)).toEqual({ token: null });
 });

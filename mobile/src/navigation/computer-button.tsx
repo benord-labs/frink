@@ -1,20 +1,18 @@
-import { Keyboard, Pressable, View } from 'react-native';
+import { Keyboard, Pressable } from 'react-native';
 import { useConnection } from '../lib/connection';
 import { useOverview } from '../lib/overview';
-import { macStatus } from '../screens/Settings/settings-view';
+import { computerStatus } from '../screens/Settings/settings-view';
+import { StatusDot } from '../ui/glyphs';
 import { Text } from '../ui/text';
-import { useTheme } from '../ui/theme';
 import { useRootNavigation } from './routes';
 
 /** The computer on screen and how it is doing; opens Settings as a sheet. */
 export function ComputerButton() {
-  const t = useTheme();
   const navigation = useRootNavigation();
   const overview = useOverview();
   const { connection } = useConnection();
   const name = overview.data?.machineName ?? connection?.machineName ?? 'Your computer';
-  const status = macStatus(overview);
-  const tones = { live: t.live, attention: t.attention, quiet: t.muted };
+  const status = computerStatus(overview);
   return (
     <Pressable
       testID="computer-button"
@@ -34,7 +32,7 @@ export function ComputerButton() {
         opacity: pressed ? 0.6 : 1,
       })}
     >
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tones[status.tone] }} />
+      <StatusDot tone={status.tone} />
       <Text variant="secondary" numberOfLines={1} style={{ flexShrink: 1 }}>
         {name}
       </Text>

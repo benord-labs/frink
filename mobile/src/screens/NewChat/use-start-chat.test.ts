@@ -8,7 +8,10 @@ vi.mock('react', () => ({
 }));
 vi.mock('../../lib/connection', () => ({
   useAction: () => ({ run: harness.run, busy: false, error: null }),
-  useConnection: () => ({ connection: { deviceId: 'original-Mac' }, request: harness.request }),
+  useConnection: () => ({
+    connection: { deviceId: 'original-computer' },
+    request: harness.request,
+  }),
 }));
 vi.mock('../../lib/api', () => ({
   requestMobile: vi.fn((_connection: unknown, input: unknown) => harness.request(input)),
@@ -32,7 +35,7 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('new-chat ownership across navigation', () => {
-  it('asks the original Mac once to remove an unused chat and never retries a failure', async () => {
+  it('asks the original computer once to remove an unused chat and never retries a failure', async () => {
     vi.useFakeTimers();
     harness.request.mockRejectedValue(new Error('Offline'));
     const chat = setup();
@@ -40,7 +43,7 @@ describe('new-chat ownership across navigation', () => {
     chat.leave();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(vi.mocked(requestMobile).mock.calls).toEqual([
-      [{ deviceId: 'original-Mac' }, { type: 'deleteChat', chatId: created.chatId }],
+      [{ deviceId: 'original-computer' }, { type: 'deleteChat', chatId: created.chatId }],
     ]);
     expect(vi.getTimerCount()).toBe(0);
   });

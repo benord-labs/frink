@@ -34,7 +34,10 @@ claims. Measurements are visual estimates at a 390 by 844 logical viewport.
    a JavaScript tab bar in the web preview. Launch opens Chats and reopens the last
    conversation once. Recent and Projects preserve search, paging, project creation and
    swipe deletion. The tab bar hides inside a conversation, whose header keeps the Queue
-   button and needs-you badge. The computer button on each tab root opens Settings as a sheet.
+   button and needs-you badge. Tab roots use native large titles and, on iOS, the header
+   search bar; the web preview keeps a search field in the page. Pushed pages use the plain
+   stack title. The computer button on each tab root, the one place that names the computer,
+   opens Settings as a sheet.
 2. Retain visible grouping: Queue and Settings use inset translucent groups with
    the desktop rim. Chats rows stay compact, with an explicit selected fill.
    Assistant prose remains unboxed; user messages use the shared glass material.
@@ -46,7 +49,9 @@ claims. Measurements are visual estimates at a 390 by 844 logical viewport.
    0/10/8/6/5px steps to intensity 0/50/40/30/25. Tint and lighting remain shared.
    OS Reduce Transparency overrides the level with solid material. Atmosphere stays fixed.
 5. Preserve selected-computer ownership, notifications, live Queue counts, semantic
-   green/amber/red states and all named commands. Opening a review preserves its
+   green/amber/red states and all named commands. Settings lists paired computers in one
+   group: the shown one ticked with its status, then Add a computer and Forget this computer.
+   The Queue tab's badge counts what needs you. Copy says "computer", never a platform. Opening a review preserves its
    return route. Tabs out of view leave the page, so screen readers reach only the shown tab.
 
 ## Verification

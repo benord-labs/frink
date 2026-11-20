@@ -50,7 +50,7 @@ export function ConnectStep({
           style={{ width: 30, height: 53, tintColor: t.accent, marginBottom: space.md }}
         />
         <Text variant="largeTitle" accessibilityRole="header">
-          Your Mac, in your pocket
+          Frink, in your pocket
         </Text>
         {!pasting && (
           <Text variant="body" color="secondary">
@@ -73,7 +73,7 @@ export function ConnectStep({
         <View style={{ gap: space.md }}>
           <Field
             label="Pairing code"
-            placeholder="Paste the code from Frink on your Mac"
+            placeholder="Paste the code from Frink on your computer"
             value={code}
             onChangeText={onCode}
             autoFocus
