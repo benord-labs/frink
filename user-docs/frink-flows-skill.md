@@ -2,6 +2,8 @@
 
 Frink's agents use the `frink-flows` skill to design, edit, validate and inspect Flows. The skill explains contracts; the `frink_flows_*` MCP tools read and change live flows.
 
+Two of those tools act on runs rather than flows: `frink_flows_continue_run` and `frink_flows_cancel_run` do a Work Queue row's Continue / Retry and Cancel, and share a budget of 20 calls per chat session. The run-inspection reference says when an agent may use them.
+
 ## What the agent reads
 
 The skill's name and description make it discoverable. On a relevant request, the agent reads `SKILL.md`: a short authoring workflow, graph essentials and an intent-to-reference table. It then opens only the relevant guides.

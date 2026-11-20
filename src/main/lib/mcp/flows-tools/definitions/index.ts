@@ -122,6 +122,41 @@ export const FLOWS_TOOLS = [
       required: ['runId'],
     },
   },
+  {
+    name: 'frink_flows_continue_run',
+    description:
+      "Continue a paused or stopped flow run, exactly as the Work Queue does. Use it once whatever stopped the run is fixed. Find run ids with frink_flows_get_batch (omit batchId to list a flow's recent runs) and the stopped step with frink_flows_get_run. Without message it is the Work Queue's Carry on / Retry: a run still holding its machine slot continues in place (outcome: resumed); one that gave its slot up queues to take one back (outcome: queued, or already-queued if a resume was already waiting). A step waiting for a reply needs message instead: it is sent as the reply typed in that step's chat (outcome: replied). Refused: steps only a person answers (Approval, plan review, a held run's Start, a secret request), a retry that may repeat side effects, and your own run. Rate limit: 20 continue/cancel calls per chat session.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        runId: { type: 'string', description: 'Id of the flow run to continue.' },
+        nodeRunId: {
+          type: 'string',
+          description:
+            'Optional. The stopped step you inspected (a nodeRunId from frink_flows_get_run). When given, the call is refused if that step is no longer the one to continue.',
+        },
+        message: {
+          type: 'string',
+          description:
+            'Optional. The reply for a step waiting on one, sent into its chat as the user’s reply. Max 10000 characters. Omit to Carry on / Retry.',
+        },
+      },
+      required: ['runId'],
+    },
+  },
+  {
+    name: 'frink_flows_cancel_run',
+    description:
+      "Cancel a flow run that has not finished (pending, held, running or paused), or a finished run's queued Retry, exactly as the Work Queue's Cancel does: the run stops and its machine slot is freed. It cannot be undone. Refused for finished runs and for your own run (report your outcome with frink_task_signal instead). Rate limit: 20 continue/cancel calls per chat session.",
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        runId: { type: 'string', description: 'Id of the flow run to cancel.' },
+      },
+      required: ['runId'],
+    },
+  },
   REGISTER_NODE_TOOL,
   {
     name: 'frink_flows_get_batch',

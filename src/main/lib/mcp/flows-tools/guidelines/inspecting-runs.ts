@@ -23,7 +23,8 @@ Fan-out inspection summarizes \`totalLanes\`, \`completedLanes\`, \`failedLanes\
 
 ## Pauses and failures
 
-Approval, questions and failure checkpoints pause the run. Awaiting nodes have \`awaiting_input\`; users approve/retry in the Flow UI. Agents cannot directly resume paused runs.
+Approval, questions and failure checkpoints pause the run. Awaiting nodes have \`awaiting_input\`; users approve/retry in the Flow UI.
+Once whatever stopped a run is fixed, \`frink_flows_continue_run({runId, nodeRunId?})\` does the Work Queue's Carry on / Retry: \`outcome: "resumed"\` continued in place, \`"queued"\` waits for a free slot. A step waiting for a reply needs \`message\`, sent as the reply typed in its chat (\`"replied"\`). It refuses steps only a person answers (Approval, plan review, a held run's Start, a secret request), retries that may repeat side effects, and your own run; leave those to the user. \`frink_flows_cancel_run({runId})\` stops an unfinished run and frees its slot. Find run ids with \`frink_flows_get_batch({flowId})\` (no batchId). Both share a 20-call/session budget.
 Default node failure terminates the run. Set \`graph.settings.pauseOnFailure: true\` with an \`update_settings\` patch to preserve pending execution state and let the user Retry or Skip in the UI. A paused run keeps its machine-admission slot, except one waiting only on a user reply to an agent step, which frees it once the step's prompt cache goes cold (at most an hour after the step settled) and takes one back when the user continues; persisted state survives restarts/offline periods.
 
 To change a saved flow, fetch its current graph and patch its \`flowId\`; do not create duplicates. Read the patch response: saved topology does not establish valid execution config or a successful run.
