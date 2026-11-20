@@ -4,12 +4,13 @@
  * turn, and it sits behind a two-step inline confirm.
  */
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, Square } from 'lucide-react';
+import { Square } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '../../../../../../../lib/trpc';
 import { invalidateTaskQueries } from '../../../utils';
 import { StripAction } from '../FlowSurfaceCard';
+import { Spinner } from '../../../../../../../components/ui/spinner';
 
 export function StopRunButton({
   flowRunId,
@@ -69,7 +70,7 @@ export function StopRunButton({
         }}
         title="Cancel this flow run. This cannot be undone."
       >
-        {cancelRun.isPending ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+        {cancelRun.isPending ? <Spinner className="h-3 w-3" /> : null}
         Confirm stop
       </Button>
       <Button

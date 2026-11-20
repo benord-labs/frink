@@ -4,8 +4,8 @@
  */
 
 import { memo } from 'react';
-import { Loader2 } from 'lucide-react';
 import { agentsChatUserBubbleShellClass } from '../../main/chat-composer-shell-classes';
+import { Spinner } from '../../../../components/ui/spinner';
 
 type PendingChatPlaceholderProps = {
   text: string;
@@ -16,7 +16,7 @@ function PendingChatPlaceholderComponent({ text }: PendingChatPlaceholderProps) 
     <div className="flex flex-col h-full p-4 gap-3">
       <div className={agentsChatUserBubbleShellClass()}>{text}</div>
       <div className="flex items-center gap-2 text-xs text-muted-foreground pl-1">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        <Spinner className="h-3.5 w-3.5" />
         <span>Creating chat…</span>
       </div>
     </div>

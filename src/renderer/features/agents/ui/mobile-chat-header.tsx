@@ -1,10 +1,11 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue } from 'jotai';
-import { AlignJustify, Hammer, SquareTerminal, Diff, Loader2, Undo2, MapIcon } from 'lucide-react';
+import { AlignJustify, Hammer, SquareTerminal, Diff, Undo2, MapIcon } from 'lucide-react';
 import { useMemo } from 'react';
 import { cn } from '../../../lib/utils';
 import { loadingSubChatsAtom } from '../atoms';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
+import { Spinner } from '../../../components/ui/spinner';
 
 type DiffStats = { isLoading: boolean; hasChanges: boolean };
 
@@ -84,7 +85,7 @@ export function MobileChatHeader({
       >
         <div className="shrink-0 w-3.5 h-3.5 flex items-center justify-center">
           {isLoading ? (
-            <Loader2 className="w-3.5 h-3.5 text-muted-foreground animate-spin" />
+            <Spinner className="w-3.5 h-3.5 text-muted-foreground" />
           ) : mode === 'plan' ? (
             <MapIcon className="w-3.5 h-3.5 text-muted-foreground" />
           ) : (
@@ -132,11 +133,7 @@ export function MobileChatHeader({
             )}
             iconOnly
           >
-            {diffStats?.isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Diff className="h-4 w-4" />
-            )}
+            {diffStats?.isLoading ? <Spinner className="h-4 w-4" /> : <Diff className="h-4 w-4" />}
           </Button>
         )}
 

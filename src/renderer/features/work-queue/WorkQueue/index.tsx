@@ -2,7 +2,6 @@
 import { buttonVariants } from '@benord-labs/frink-primitives';
 import type { UIMessage } from 'ai';
 import { useSetAtom } from 'jotai';
-import { Loader2 } from 'lucide-react';
 import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../shared/types/plan';
@@ -55,6 +54,7 @@ import type {
   WorkQueueTaskRow,
   WorkQueueTaskStatus,
 } from './types';
+import { Spinner } from '../../../components/ui/spinner';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -575,10 +575,7 @@ export function WorkQueue({
               role="status"
               aria-live="polite"
             >
-              <Loader2
-                className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none"
-                aria-hidden
-              />
+              <Spinner className="h-5 w-5 text-muted-foreground" />
               <span className="sr-only">Loading Work Queue</span>
             </div>
           ) : isHistoryView ? (

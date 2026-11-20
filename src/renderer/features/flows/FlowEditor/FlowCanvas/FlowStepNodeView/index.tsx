@@ -6,7 +6,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { Handle, NodeResizer, NodeToolbar, Position } from '@xyflow/react';
 import { useAtomValue } from 'jotai';
-import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, Trash2, XCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Trash2, XCircle } from 'lucide-react';
 import { type MouseEvent, type ReactElement, useState } from 'react';
 import type { FlowNode as FlowNodeDef } from '../../../../../../shared/lib/validate-flow-graph';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
@@ -24,6 +24,7 @@ import {
 import { FlowStepAddHandle } from '../FlowStepAddHandle';
 import { blockHeaderTintClass } from '../flowStepNodeStyles';
 import { cn } from '../../../../../lib/utils';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 /** Steps whose summary is a command or expression, so it reads in the code face. */
 const LITERAL_SUMMARY_TYPES = new Set(['run_command', 'condition', 'http_request']);
@@ -293,7 +294,7 @@ export function FlowStepNodeView({
                 className="absolute -right-0.5 -top-0.5 flex h-3 w-3 items-center justify-center rounded-full border-2 border-card bg-primary"
                 aria-hidden
               >
-                <Loader2 className="h-2 w-2 animate-spin text-primary-foreground" />
+                <Spinner className="h-2 w-2 text-primary-foreground" />
               </span>
             ) : activeExecState?.status === 'completed' ? (
               <span

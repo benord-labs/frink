@@ -1,8 +1,8 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '../../../../../../lib/trpc';
+import { Spinner } from '../../../../../ui/spinner';
 
 type Props = {
   accountId: string;
@@ -75,7 +75,7 @@ export function ApiKeyEditForm({ accountId, onSave, onCancel }: Props) {
         >
           {updateMutation.isPending ? (
             <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" aria-hidden="true" />
+              <Spinner className="h-3.5 w-3.5 mr-1.5" />
               Verifying…
             </>
           ) : (

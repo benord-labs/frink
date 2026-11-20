@@ -8,10 +8,11 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import type { ReactElement } from 'react';
 import type { BatchRunState } from '../../../../lib/utils/batch-run-state';
 import { UNSAVED_RUN_TITLE } from '../../../../lib/utils/flow-run-dispatch';
+import { Spinner } from '../../../../components/ui/spinner';
 
 type Props = {
   /** null = no batch (plain single run). */
@@ -26,7 +27,7 @@ type Props = {
   onPrimaryStart: () => void;
 };
 
-const spinner = <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />;
+const spinner = <Spinner className="h-3.5 w-3.5" />;
 
 type StartRunPrimary = 'start' | 'running' | 'unavailable' | undefined;
 

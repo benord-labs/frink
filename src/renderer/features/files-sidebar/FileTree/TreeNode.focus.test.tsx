@@ -132,12 +132,16 @@ beforeEach(() => {
 
 describe('TreeNode create focus handoff', () => {
   it('expands the folder and focuses the inline input after New File', async () => {
+    mocks.listDirectoryQuery.mockResolvedValue([
+      { path: 'src/components/Button.tsx', name: 'Button.tsx', type: 'file' },
+    ]);
     render(<Harness />);
     await openFolderMenuAndSelect(/New File/);
 
     expect(folderRow()).toHaveAttribute('aria-expanded', 'true');
     const input = await screen.findByLabelText('New file name');
     await waitFor(() => expect(input).toHaveFocus());
+    expect(await screen.findByText('Button.tsx')).toBeInTheDocument();
   });
 
   it('focuses the inline input after New Folder', async () => {

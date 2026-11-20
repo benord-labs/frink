@@ -1,17 +1,11 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ChevronLeft,
-  RefreshCw,
-  Terminal,
-  Loader2,
-} from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, RefreshCw, Terminal } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { FrinkLoadingLogo } from '../../components/ui/frink-loading-logo';
 import type { ConnectAccountFlow, ConnectFlowState } from '../../hooks/useConnectAccountFlow';
 import { BUTTON_SHADOW } from '../../lib/button-shadow';
 import { cn } from '../../lib/utils';
+import { Spinner } from '../../components/ui/spinner';
 
 export const PRIMARY_CTA =
   'w-full min-h-[44px] bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
@@ -105,13 +99,7 @@ function LoginFoundPanel({
         disabled={isConnecting || !accountLabel.trim() || connectDisabled}
         className={cn(PRIMARY_CTA, 'disabled:cursor-not-allowed', BUTTON_SHADOW)}
       >
-        {isConnecting ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : isReauthFlow ? (
-          'Reconnect'
-        ) : (
-          'Connect'
-        )}
+        {isConnecting ? <Spinner className="h-4 w-4" /> : isReauthFlow ? 'Reconnect' : 'Connect'}
       </Button>
     </div>
   );
@@ -134,7 +122,7 @@ function RefreshButton({
   return (
     <Button onClick={onRefresh} disabled={isRefreshing} className={cn(PRIMARY_CTA, BUTTON_SHADOW)}>
       {isRefreshing ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Spinner className="h-4 w-4" />
       ) : (
         <>
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
@@ -218,7 +206,7 @@ function ErrorPanel({
           disabled={isConnecting}
           className="flex-1 min-h-[44px] rounded-lg gap-2"
         >
-          {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Retry'}
+          {isConnecting ? <Spinner className="h-4 w-4" /> : 'Retry'}
         </Button>
       </div>
     </div>
@@ -347,7 +335,7 @@ export function ConnectAccountShell({
         <div className="space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
+              <Spinner className="h-6 w-6" />
             </div>
           )}
 
