@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useStickToBottom } from 'use-stick-to-bottom';
 import { usePrefersReducedMotion } from '../../../../../../hooks/use-prefers-reduced-motion';
 
@@ -9,5 +10,10 @@ export function useChatStickToBottom() {
       ? { initial: 'instant', resize: 'instant' }
       : { initial: 'instant', resize: 'smooth' },
   );
-  return { stickToBottom, prefersReducedMotion };
+  // The instance is a fresh object each render while its members are stable: depend on members.
+  const { isAtBottom, scrollToBottom: scrollViewportToBottom, stopScroll } = stickToBottom;
+  const scrollToBottom = useCallback(() => {
+    void scrollViewportToBottom(prefersReducedMotion ? { animation: 'instant' } : undefined);
+  }, [scrollViewportToBottom, prefersReducedMotion]);
+  return { stickToBottom, isAtBottom, scrollToBottom, stopScroll };
 }

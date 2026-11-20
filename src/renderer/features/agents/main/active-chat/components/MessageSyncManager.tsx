@@ -99,8 +99,10 @@ export function MessageSyncManager({ isActive, subChatId, messages, status }: Pr
   return null;
 }
 
+/** `releaseFollow` stops following the stream: a jump to a match is the user leaving the bottom. */
 export function useSearchScrollManager(
   chatContainerRef: React.RefObject<HTMLElement | null>,
+  releaseFollow: () => void,
   splitPaneIndex?: number,
 ) {
   const currentSearchMatch = useAtomValue(chatSearchCurrentMatchAtom);
@@ -128,6 +130,7 @@ export function useSearchScrollManager(
           }
 
           if (targetElement) {
+            releaseFollow();
             const stickyParent = targetElement.closest('[data-user-message-id]');
             if (stickyParent) {
               const messageGroupWrapper = stickyParent.parentElement;
@@ -148,5 +151,5 @@ export function useSearchScrollManager(
         }, 50);
       });
     });
-  }, [currentSearchMatch, chatContainerRef, isActivePane]);
+  }, [currentSearchMatch, chatContainerRef, isActivePane, releaseFollow]);
 }

@@ -313,17 +313,12 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Auto-scroll: single owner for this chat surface. Follow/release is decided from content-size
   // observation, never from scrollTop arithmetic — a layout-shift clamp is not user intent.
-  const { stickToBottom, prefersReducedMotion } = useChatStickToBottom();
-  // Depend on members, never on `stickToBottom` itself — the hook returns a fresh object each render
-  // while its members are stable. The same file's decision entry covers why the read-only consumers
-  // (search jump-to-match, pagination, Cmd+Down) get the plain ref below, not the hook's scrollRef:
+  const { stickToBottom, isAtBottom, scrollToBottom, stopScroll } = useChatStickToBottom();
+  // The same file's decision entry covers why the read-only consumers (search jump-to-match,
+  // pagination, Cmd+Down) get the plain ref below, not the hook's scrollRef:
   // docs/decisions/chat-autoscroll-single-owner.md
-  const { isAtBottom, scrollToBottom: scrollViewportToBottom } = stickToBottom;
   /** The scroll viewport; MessagesScrollContainer populates this when the element attaches. */
   const chatContainerRef = useRef<HTMLElement | null>(null);
-  const scrollToBottom = useCallback(() => {
-    void scrollViewportToBottom(prefersReducedMotion ? { animation: 'instant' } : undefined);
-  }, [scrollViewportToBottom, prefersReducedMotion]);
 
   // Sub-chat rename hook
   const { subChatName: storeSubChatName, handleRenameSubChat } = useSubChatRename(subChatId);
@@ -1350,7 +1345,7 @@ const ChatViewInner = memo(function ChatViewInner({
   });
 
   // Message sync and search scroll managed by MessageSyncManager component
-  useSearchScrollManager(chatContainerRef, splitPaneIndex);
+  useSearchScrollManager(chatContainerRef, stopScroll, splitPaneIndex);
 
   return (
     <>

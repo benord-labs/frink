@@ -35,6 +35,15 @@ async function advance(ms: number) {
   await act(() => vi.advanceTimersByTimeAsync(ms));
 }
 
+function preferReducedMotion(): void {
+  const realMatchMedia = window.matchMedia.bind(window);
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => {
+    const list = realMatchMedia(query);
+    Object.defineProperty(list, 'matches', { value: query.includes('reduce') });
+    return list;
+  });
+}
+
 async function setup({ cssSmooth = false } = {}) {
   const scroll = document.createElement('div');
   if (cssSmooth) {
@@ -66,7 +75,11 @@ async function setup({ cssSmooth = false } = {}) {
   const scrollTo = vi.fn<(options: ScrollToOptions) => Promise<void> | undefined>(() => undefined);
   Object.defineProperty(scroll, 'scrollTo', { value: scrollTo });
 
-  const hook = renderHook(() => useChatStickToBottom().stickToBottom);
+  // The library instance, plus `jump`: the app's explicit scroll to bottom (Send, button, Cmd+Down).
+  const hook = renderHook(() => {
+    const chat = useChatStickToBottom();
+    return { ...chat.stickToBottom, jump: chat.scrollToBottom };
+  });
   act(() => {
     hook.result.current.scrollRef(scroll);
     hook.result.current.contentRef(content);
@@ -333,12 +346,7 @@ describe('use-stick-to-bottom native smooth follow (local patch)', () => {
   });
 
   it('jumps instead of gliding under reduced motion', async () => {
-    const realMatchMedia = window.matchMedia.bind(window);
-    vi.spyOn(window, 'matchMedia').mockImplementation((query) => {
-      const list = realMatchMedia(query);
-      Object.defineProperty(list, 'matches', { value: query.includes('reduce') });
-      return list;
-    });
+    preferReducedMotion();
     const { geometry, scrollTo, target, grow } = await setup();
 
     await grow(200);
@@ -348,12 +356,24 @@ describe('use-stick-to-bottom native smooth follow (local patch)', () => {
     expect(geometry.top).toBe(target());
   });
 
+  it('makes an explicit scroll to bottom instant under reduced motion', async () => {
+    preferReducedMotion();
+    const { hook, geometry, scrollTo, target, scrollEvent } = await setup();
+
+    await scrollEvent(geometry.top - 300);
+    act(() => hook.result.current.jump());
+    await advance(20);
+
+    expect(geometry.top).toBe(target());
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
   it('hands an explicit scrollToBottom spring to the glide once it lands', async () => {
     const { hook, geometry, scrollTo, target, grow, scrollEvent } = await setup();
     scrollTo.mockImplementation(({ top }) => void (geometry.top = top ?? geometry.top));
 
     await scrollEvent(geometry.top - 100);
-    act(() => void hook.result.current.scrollToBottom());
+    act(() => hook.result.current.jump());
     await advance(20);
     await grow(200);
     expect(scrollTo).not.toHaveBeenCalled();
