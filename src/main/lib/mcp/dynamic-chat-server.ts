@@ -53,6 +53,7 @@ import {
   resetFlowsRunCount,
   resetRegisterNodeCount,
 } from './flows-tools';
+import { resetRunControlCount } from './flows-tools/gating/session-call-limiters';
 import { isLocalMcpCaller } from './local-caller';
 import {
   dispatchFlowToolCall,
@@ -277,6 +278,7 @@ const PER_EXECUTION_COUNTER_RESETS: ReadonlyArray<(executionId?: string) => void
   resetFlowsListTemplatesCount,
   resetListPluginToolsCount,
   resetRegisterNodeCount,
+  resetRunControlCount,
 ];
 
 export function clearCurrentExecutionChat(executionId?: string): void {
