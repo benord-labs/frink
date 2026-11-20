@@ -6,6 +6,7 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { resolveElectronResourcePath } from '../../platform/electron-resource-path';
 import { userEnv } from '../acp/agents/launch';
+import type { SignInOutcome } from '../sign-in-outcome';
 import { cursorHostEnv, findCurl, NEEDS_CURL, runnable, userDirsOf } from './cursor-home';
 import { saveCursorModels } from './cursor-models';
 import {
@@ -128,14 +129,17 @@ type HostInput = Parameters<ForkHost>[0];
 type HostTalk<T> = {
   send(request: CursorHostRequest): void;
   settle(value: T): void;
-  fail(text: string): void;
+  fail(text: string, value?: T): void;
 };
 
-/** Starts a host and settles on what `onMessage` decides, or on `failure` if the host gives up. */
+/** What a host gives up with: `failure`, or `unstarted` and `crashed` when it never ran or stopped early. */
+type HostGive<T> = { failure: T; unstarted?: T; crashed?: T; ms: number; what: string };
+
+/** Starts a host and settles on what `onMessage` decides, or on what `give` says if the host gives up. */
 function talkToHost<T>(
   forkHost: ForkHost,
   input: HostInput,
-  give: { failure: T; ms: number; what: string },
+  give: HostGive<T>,
   onMessage: (message: CursorHostMessage, talk: HostTalk<T>) => void,
 ): Promise<T> {
   return new Promise((resolve) => {
@@ -147,21 +151,21 @@ function talkToHost<T>(
       host?.kill();
       resolve(value);
     };
-    const fail = (text: string) => {
+    const fail = (text: string, value = give.failure) => {
       // Settling kills the host, so its exit then is expected.
       if (settled) return;
       log.warn(`[Cursor] ${give.what}: ${text}`);
-      settle(give.failure);
+      settle(value);
     };
     const timer = setTimeout(() => fail('no answer'), give.ms);
     const talk: HostTalk<T> = { send: (request) => host?.send(request), settle, fail };
     try {
       host = forkHost(input, {
         message: (message) => onMessage(message, talk),
-        exit: () => fail('the host stopped'),
+        exit: () => fail('the host stopped', give.crashed),
       });
     } catch (error) {
-      fail(String(error));
+      fail(String(error), give.unstarted);
     }
   });
 }
@@ -205,11 +209,11 @@ export async function findCursorAgent(deps: CursorLaunchDeps = {}): Promise<Curs
   });
 }
 
-type SignIn = { done: Promise<boolean>; page?: string };
+type SignIn = { done: Promise<SignInOutcome>; page?: string };
 let signingIn: SignIn | undefined;
 
 /** Runs Cursor's own sign-in in the browser; Cursor keeps the key it makes, Frink never sees it. */
-export function signInToCursor(deps: CursorLaunchDeps = {}): Promise<boolean> {
+export function signInToCursor(deps: CursorLaunchDeps = {}): Promise<SignInOutcome> {
   const openExternal = deps.openExternal ?? ((url: string) => shell.openExternal(url));
   // Another click while one waits opens its page again, as Cursor still waits on that page.
   if (signingIn) {
@@ -234,21 +238,28 @@ export function signInToCursor(deps: CursorLaunchDeps = {}): Promise<boolean> {
 async function startSignIn(
   deps: CursorLaunchDeps,
   openPage: (url: string) => Promise<void>,
-): Promise<boolean> {
+): Promise<SignInOutcome> {
   const host = await realHomeHost(deps);
-  if (!host.ok) return false;
-  const give = { failure: false, ms: SIGN_IN_MS, what: 'Sign-in did not finish' };
+  if (!host.ok) return 'unavailable';
+  const give: HostGive<SignInOutcome> = {
+    failure: 'stopped',
+    unstarted: 'unavailable',
+    crashed: 'failed',
+    ms: SIGN_IN_MS,
+    what: 'Sign-in did not finish',
+  };
   let loggingIn = false;
   return talkToHost(deps.forkHost ?? forkUtilityHost, host.input, give, (message, talk) => {
     // Signed in means a model list before any login, or the login's own answer after it.
-    if (message.type === (loggingIn ? 'auth' : 'models')) talk.settle(true);
+    if (message.type === (loggingIn ? 'auth' : 'models')) talk.settle('finished');
     // Only a key Cursor turns down is replaced, so a working sign-in never makes a second key.
     else if (!loggingIn && turnedDown(message)) {
       loggingIn = true;
       talk.send({ type: 'login' });
     } else if (message.type === 'auth') talk.send({ type: 'models' });
-    else if (message.type === 'open') void openPage(message.url).catch((e) => talk.fail(String(e)));
-    else if (message.type === 'error') talk.fail(message.text);
+    else if (message.type === 'open')
+      void openPage(message.url).catch((e) => talk.fail(String(e), 'failed'));
+    else if (message.type === 'error') talk.fail(message.text, 'failed');
   });
 }
 

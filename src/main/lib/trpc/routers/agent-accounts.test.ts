@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findAcpAgent } from '../../agent-runner/acp';
 import { findCopilotAgent } from '../../agent-runner/copilot';
 import type { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
+import type { SignInOutcome } from '../../agent-runner/sign-in-outcome';
 import type { PickerGroupFields } from '../../../../shared/lib/model-picker-label/groups';
 import type { DetectCodexAccountResult } from '../../credentials/detect-codex';
 import * as schema from '../../db/schema';
@@ -61,9 +62,9 @@ describe('agentAccounts', () => {
   const detectCodex = vi.fn<() => Promise<DetectCodexAccountResult>>();
   const findCursor = vi.fn<typeof findCursorAgent>();
   const signInCursor = vi.fn<typeof signInToCursor>();
-  const signInClaude = vi.fn<() => Promise<boolean>>();
+  const signInClaude = vi.fn<() => Promise<SignInOutcome>>();
   const cancelClaude = vi.fn();
-  const signInCodex = vi.fn<() => Promise<boolean>>();
+  const signInCodex = vi.fn<() => Promise<SignInOutcome>>();
   const cancelCodex = vi.fn();
 
   const caller = (flags: Record<string, boolean> = ON, platform = 'darwin') =>
@@ -94,11 +95,11 @@ describe('agentAccounts', () => {
     env = { PATH: bin, HOME: root, FAKE_VERSION: '1.19.4' };
     detectCodex.mockReset().mockResolvedValue(CODEX_LOGIN);
     findCursor.mockReset().mockResolvedValue({ status: 'ready' });
-    signInCursor.mockReset().mockResolvedValue(true);
+    signInCursor.mockReset().mockResolvedValue('finished');
     vi.clearAllMocks();
-    signInClaude.mockReset().mockResolvedValue(true);
+    signInClaude.mockReset().mockResolvedValue('finished');
     cancelClaude.mockReset();
-    signInCodex.mockReset().mockResolvedValue(true);
+    signInCodex.mockReset().mockResolvedValue('finished');
     cancelCodex.mockReset();
   });
   afterEach(() => rm(root, { recursive: true, force: true }));
@@ -278,7 +279,7 @@ describe('agentAccounts', () => {
 
   it("signs in through Cursor's own sign-in, for Cursor only, and says only whether it finished", async () => {
     await expect(caller(CURSOR_ON).signIn({ type: 'cursor' })).resolves.toBeUndefined();
-    signInCursor.mockResolvedValue(false);
+    signInCursor.mockResolvedValue('stopped');
     await expect(caller(CURSOR_ON).signIn({ type: 'cursor' })).rejects.toThrow(
       "Cursor's sign-in didn't finish. Try again.",
     );
@@ -295,7 +296,7 @@ describe('agentAccounts', () => {
 
   it("signs in through Claude's own sign-in on macOS and Linux, and cancels it", async () => {
     await expect(caller().signIn({ type: 'claude-code' })).resolves.toBeUndefined();
-    signInClaude.mockResolvedValue(false);
+    signInClaude.mockResolvedValue('stopped');
     await expect(caller({}, 'linux').signIn({ type: 'claude-code' })).rejects.toThrow(
       "Claude's sign-in didn't finish. Try again.",
     );
@@ -319,7 +320,7 @@ describe('agentAccounts', () => {
 
   it("signs in to ChatGPT through Codex's own sign-in on macOS and Linux, and cancels it", async () => {
     await expect(caller(CODEX_ON).signIn({ type: 'codex' })).resolves.toBeUndefined();
-    signInCodex.mockResolvedValue(false);
+    signInCodex.mockResolvedValue('stopped');
     await expect(caller(CODEX_ON, 'linux').signIn({ type: 'codex' })).rejects.toThrow(
       "ChatGPT's sign-in didn't finish. Try again.",
     );
@@ -338,6 +339,24 @@ describe('agentAccounts', () => {
     expect(cancelClaude).not.toHaveBeenCalled();
     expect(rows()).toEqual([]);
   });
+
+  it.each([
+    ['claude-code', ON, signInClaude],
+    ['codex', CODEX_ON, signInCodex],
+    ['cursor', CURSOR_ON, signInCursor],
+  ] as const)(
+    'records a %s sign-in that could not start as a damaged install, not a cancel',
+    async (type, flags, signIn) => {
+      signIn.mockResolvedValue('unavailable');
+      await expect(caller(flags).signIn({ type })).rejects.toThrow("didn't finish");
+      signIn.mockResolvedValue('failed');
+      await expect(caller(flags).signIn({ type })).rejects.toThrow("didn't finish");
+      expect(vi.mocked(analytics.trackAccountConnectFailed).mock.calls).toEqual([
+        [{ provider: type, reason: 'detection_error' }],
+        [{ provider: type, reason: 'unknown' }],
+      ]);
+    },
+  );
 
   it('lists the models each agent last reported, or none before it has run', async () => {
     await expect(caller().models({ type: 'opencode' })).resolves.toEqual([
