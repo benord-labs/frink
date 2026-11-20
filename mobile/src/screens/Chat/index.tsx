@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { mergeTranscript } from '../../lib/chat/pending';
 import { useResource } from '../../lib/connection';
+import { useAlertAnswer } from '../../lib/notifications/alert-open';
 import { duration } from '../../lib/status';
 import { closeDeletedChat } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
@@ -46,6 +47,11 @@ function useChatResource(id: string, subChatId: string | undefined) {
   );
   const latest = resource.data?.activity;
   useEffect(() => setActivity(latest), [latest]);
+  // An answer sent from the alert lands after the chat opened, so read the closed request again.
+  const answered = useAlertAnswer(id);
+  useEffect(() => {
+    if (answered) resource.refresh();
+  }, [answered]);
   return resource;
 }
 

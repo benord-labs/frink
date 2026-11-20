@@ -30,3 +30,14 @@ it('opens the chat that needs you, or the Queue for a task without one', () => {
   );
   expect(alertedComputer({ ...data, chatId: '' }, paired)).toBeNull();
 });
+
+it('carries only a needs-you alert’s permission request id', () => {
+  const data = { deviceId: paired[0], chatId: 'chat', subChatId: 'sub' };
+  const permissionRequestId = 'perm_1';
+  expect(
+    alertedComputer({ ...data, type: 'needs-you', permissionRequestId }, paired)?.requestId,
+  ).toBe('perm_1');
+  expect(
+    alertedComputer({ ...data, type: 'session-completed', permissionRequestId }, paired)?.requestId,
+  ).toBeUndefined();
+});
