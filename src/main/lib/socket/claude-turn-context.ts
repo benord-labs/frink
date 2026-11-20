@@ -218,6 +218,7 @@ export function createWakeBurstTurn(
   wakeTurn.waitForExecutionSettlement = burst.waitForExecutionSettlement;
   wakeTurn.planTerminalsLocked = arming.planTerminalsLocked;
   wakeTurn.planSubmitted = arming.planSubmitted;
+  wakeTurn.planReentered = arming.planReentered;
   wakeTurn.preplanSignal = arming.preplanSignal;
   wakeTurn.planSubmissionHalt = arming.planSubmissionHalt;
   wakeTurn.setPlanSubmissionHalt = arming.setPlanSubmissionHalt;
