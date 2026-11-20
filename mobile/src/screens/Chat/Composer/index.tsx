@@ -8,7 +8,7 @@ import {
   useWindowDimensions,
   type TextStyle,
 } from 'react-native';
-import { ArrowUp, Square } from 'lucide-react-native';
+import { ArrowUp, AudioLines, Square } from 'lucide-react-native';
 import type {
   MobileActivity,
   MobileChatMode,
@@ -16,6 +16,7 @@ import type {
 } from '@frink/shared/types/remote/mobile';
 import { useDraft } from '../../../lib/drafts';
 import { useDictation, voiceSupported } from '../../../lib/voice/use-dictation';
+import { IconButton } from '../../../ui/button';
 import { GlassSurface } from '../../../ui/material';
 import { space, useTheme } from '../../../ui/theme';
 import {
@@ -113,6 +114,7 @@ export function Composer({
   onUpdate,
   onMode,
   onAccount,
+  onVoice,
 }: {
   activity: MobileActivity;
   executionReady: boolean;
@@ -135,6 +137,8 @@ export function Composer({
   onUpdate: (patch: ComposerPatch) => void;
   onMode: (mode: MobileChatMode) => void;
   onAccount?: (accountId: string) => void;
+  /** Opens hands-free voice mode; offered only while the box is empty. */
+  onVoice?: () => void;
 }) {
   const t = useTheme();
   const line = useLine();
@@ -242,6 +246,9 @@ export function Composer({
           >
             {choosing && settings}
           </View>
+          {onVoice && mode !== 'unavailable' && !value.trim() && (
+            <IconButton icon={AudioLines} label="Voice mode" size={ACTION} onPress={onVoice} />
+          )}
           {voiceSupported && mode !== 'unavailable' && (
             <MicButton
               listening={dictation.phase !== 'idle'}

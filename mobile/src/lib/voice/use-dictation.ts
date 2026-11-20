@@ -5,12 +5,16 @@ import { useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { useConnection } from '../connection';
 import { useDrafts } from '../drafts';
-import { voiceAvailable } from './available';
+import { DICTATION_MODULES, voiceAvailable } from './available';
 import { Dictation, IDLE } from './dictation';
 import { nativeRecognizer } from './recognizer';
 
 /** False on web and on builds made before voice was added, which then show no microphone. */
-export const voiceSupported = voiceAvailable(Platform.OS, requireOptionalNativeModule);
+export const voiceSupported = voiceAvailable(
+  DICTATION_MODULES,
+  Platform.OS,
+  requireOptionalNativeModule,
+);
 
 /** Dictation into the named draft. It ends when the screen closes or is covered, the chat or
  *  computer changes, `enabled` turns false, or the app goes to the background. */

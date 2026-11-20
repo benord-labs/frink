@@ -38,7 +38,7 @@ type NativeSession = {
 };
 
 /** The phone's language, e.g. "en-GB", so words are heard the way the user speaks. */
-function deviceLocale(): string {
+export function deviceLocale(): string {
   return Intl.DateTimeFormat().resolvedOptions().locale;
 }
 

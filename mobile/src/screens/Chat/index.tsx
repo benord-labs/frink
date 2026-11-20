@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { mergeTranscript } from '../../lib/chat/pending';
 import { useResource } from '../../lib/connection';
+import { voiceModeSupported } from '../../lib/voice/mode/use-voice-mode';
 import { duration } from '../../lib/status';
 import { closeDeletedChat } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
@@ -38,7 +39,7 @@ import { useTurnClock } from './use-turn-clock';
 const ios = Platform.OS === 'ios';
 
 /** Busy chats poll faster; the interval follows the last activity the computer reported. */
-function useChatResource(id: string, subChatId: string | undefined) {
+export function useChatResource(id: string, subChatId: string | undefined) {
   const [activity, setActivity] = useState<MobileActivity>();
   const resource = useResource(
     { type: 'chat', id, subChatId },
@@ -293,6 +294,11 @@ function ChatView({
                 onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
                 onMode={(mode) => composerState.change({ type: 'setMode', mode })}
                 onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
+                onVoice={
+                  voiceModeSupported
+                    ? () => navigation.navigate('Voice', { id, subChatId: data.subChatId })
+                    : undefined
+                }
               />
             </View>
           )}
