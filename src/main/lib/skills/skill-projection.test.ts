@@ -41,7 +41,6 @@ describe('projectSkill (PCH-2)', () => {
   const allTargets = () => [
     path.join(tmp, '.agents', 'skills', 'reviewer'),
     path.join(tmp, '.claude', 'skills', 'reviewer'),
-    path.join(tmp, '.cursor', 'skills', 'reviewer'),
   ];
 
   beforeEach(async () => {
@@ -58,13 +57,14 @@ describe('projectSkill (PCH-2)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('copies the skill into all three universal targets, provenance-marked', async () => {
+  it('copies the skill into both universal targets, provenance-marked, and none into Cursor', async () => {
     await projectSkill('reviewer', srcSkill);
     for (const t of allTargets()) {
       expect(existsSync(path.join(t, 'SKILL.md'))).toBe(true);
       expect(existsSync(path.join(t, 'ref.md'))).toBe(true);
       expect(existsSync(path.join(t, PROVENANCE_MARKER))).toBe(true);
     }
+    expect(existsSync(path.join(tmp, '.cursor', 'skills'))).toBe(false);
   });
 
   it('migrates an existing symlink target to a real copy', async () => {
@@ -295,12 +295,12 @@ describe('projectSkill (PCH-2)', () => {
 
     it('removes a file the source dropped, unless the user edited it', async () => {
       await projectSkill('reviewer', srcSkill);
-      const cursor = allTargets()[2];
-      await fs.writeFile(path.join(cursor, 'ref.md'), 'my ref\n');
+      const agents = allTargets()[0];
+      await fs.writeFile(path.join(agents, 'ref.md'), 'my ref\n');
       await fs.rm(path.join(srcSkill, 'ref.md'));
       await projectSkill('reviewer', srcSkill);
       expect(existsSync(path.join(claudeTarget(), 'ref.md'))).toBe(false);
-      expect(await read(cursor, 'ref.md')).toBe('my ref\n');
+      expect(await read(agents, 'ref.md')).toBe('my ref\n');
     });
 
     it.skipIf(!canHideContent)('leaves a copy file it cannot read alone', async () => {
@@ -494,7 +494,7 @@ describe('projectSkill (PCH-2)', () => {
     });
 
     it('never writes to or marks a source that lives inside a target base', async () => {
-      const own = path.join(tmp, '.cursor', 'skills', 'mine');
+      const own = path.join(tmp, '.agents', 'skills', 'mine');
       await fs.mkdir(own, { recursive: true });
       await fs.writeFile(path.join(own, 'SKILL.md'), SKILL);
       await projectSkill('mine', own);
@@ -503,11 +503,9 @@ describe('projectSkill (PCH-2)', () => {
 
       expect(existsSync(path.join(own, PROVENANCE_MARKER))).toBe(false);
       expect(await fs.readdir(own)).toEqual(['SKILL.md']);
-      for (const tool of ['.agents', '.claude']) {
-        const copy = path.join(tmp, tool, 'skills', 'mine');
-        expect(await read(copy, 'SKILL.md')).toBe(`${SKILL}v2\n`);
-        expect(existsSync(path.join(copy, PROVENANCE_MARKER))).toBe(true);
-      }
+      const copy = path.join(tmp, '.claude', 'skills', 'mine');
+      expect(await read(copy, 'SKILL.md')).toBe(`${SKILL}v2\n`);
+      expect(existsSync(path.join(copy, PROVENANCE_MARKER))).toBe(true);
     });
 
     it('keeps an edited file when the source turns that path into a directory', async () => {
@@ -797,7 +795,6 @@ describe('projectSkill (PCH-2)', () => {
       await projectSkill('reviewer', srcSkill);
       expect(await read(claudeTarget(), 'SKILL.md')).toBe('MY EDIT\n');
       expect(await read(claudeTarget(), 'ref.md')).toBe(NEW_REF);
-      expect(await read(allTargets()[2], 'SKILL.md')).toBe(SKILL);
     });
 
     it('carries empty source folders, on the first copy and when one is added later', async () => {

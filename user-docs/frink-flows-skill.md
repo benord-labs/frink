@@ -16,7 +16,7 @@ Nine references cover triggers, webhook aliases, action contracts, graph/logic, 
 |---|---|
 | `<app>/assets/skills/frink-flows/` | Release bundle |
 | `~/.frink/skills/frink-flows/` | Canonical editable copy |
-| `~/.agents/skills/frink-flows/`, `~/.claude/skills/frink-flows/`, `~/.cursor/skills/frink-flows/` | Real copies projected for agent discovery |
+| `~/.agents/skills/frink-flows/`, `~/.claude/skills/frink-flows/` | Real copies projected for agent discovery (the Cursor editor reads both) |
 
 These are real copies, not symlinks. Edit the canonical copy, restart Frink so it projects changes, then start a new agent session. A local edit in a projected provider copy keeps only the edited file; the rest of that copy keeps updating, and the edit does not write back to the canonical skill.
 

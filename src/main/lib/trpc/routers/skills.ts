@@ -8,7 +8,7 @@ import type { AgentInfo } from '../../agents';
 import { BRIDGED_TOOLS, skillCopyDirs } from '../../agents/follows-you';
 import { getDatabase } from '../../db';
 import { listProjects } from '../../db/repos/projects';
-import { skillTargetDirsFor } from '../../frink-skills-dir';
+import { skillSourceDirsFor } from '../../frink-skills-dir';
 import { anyCommittableDir } from '../../git/git-utils';
 import {
   copyUserSkill,
@@ -280,7 +280,7 @@ export const skillsRouter = router({
 
         // Renderer-supplied source paths must stay inside a known skill root (home or a registered project).
         const allowedRoots = [frinkUserHome(), ...projects.map((p) => p.path)].flatMap((b) =>
-          skillTargetDirsFor(b),
+          skillSourceDirsFor(b),
         );
         const copied: string[] = [];
         const skipped: string[] = [];

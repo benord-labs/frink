@@ -5,7 +5,7 @@
  * application. On boot we make those skills available to:
  *
  *   1. The Claude Agent SDK (it scans `~/.claude/skills/`).
- *   2. Cursor (it scans `~/.cursor/skills/`).
+ *   2. Cursor, Codex and others (they scan `~/.agents/skills/`; Cursor also reads `~/.claude/skills/`).
  *   3. Frink's own settings UI (it scans `~/.frink/skills/`).
  *
  * Source of truth is `~/.frink/skills/<name>/`. The per-tool paths above hold
@@ -36,6 +36,7 @@ import { getFrinkSkillsDir } from '../frink-skills-dir';
 import { ensureDirExistsAsync } from '../fs-helpers';
 import { resolveElectronResourcePath } from '../platform/electron-resource-path';
 import { captureContained } from '../sentry';
+import { removeFrinkCursorSkills } from './cursor-skill-cleanup';
 import { type Baseline, copyFiles, readBaseline, replaceDir, sha256 } from './skill-fs';
 import { projectSkill } from './skill-projection';
 
@@ -61,6 +62,8 @@ function resolveSourceRoot(): string {
 }
 
 function tryRequireElectron(): typeof import('electron') | null {
+  // Outside Electron (plain Node, unit tests) the package exports the binary's path, not the API.
+  if (!process.versions.electron) return null;
   try {
     return require('electron');
   } catch {
@@ -296,6 +299,9 @@ export async function provisionFrinkSkills(): Promise<ProvisionOutcome[]> {
       `[skill-provisioner] ${outcome.skill}: ${outcome.status}${outcome.details ? ` — ${outcome.details}` : ''}`,
     );
   }
+  await removeFrinkCursorSkills().catch((err) =>
+    log.warn(`[skill-provisioner] ~/.cursor/skills cleanup failed: ${String(err)}`),
+  );
   return outcomes;
 }
 
