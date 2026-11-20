@@ -303,7 +303,11 @@ async function dispatchKnownFlowToolCall(
       options.args,
       options.executionId,
       options.projectPath,
-      { invocationConsented: invocation.invocationConsented, registerNode: registrationOptions(options) },
+      {
+        invocationConsented: invocation.invocationConsented,
+        registerNode: registrationOptions(options),
+        sessionId: options.ctx?.subChatId,
+      },
     );
     return result ?? toolResult(`Unhandled flow tool: ${options.name}`, true);
   } finally {
