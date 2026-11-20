@@ -1725,6 +1725,7 @@ export const filesRouter = router({
         fileContent: z.string().optional(),
         offset: z.number().int().nonnegative().optional(),
         specifier: z.string().optional(),
+        openBuffers: z.record(z.string(), z.string().nullable()).optional(),
       }),
     )
     .query(async ({ input }) => {

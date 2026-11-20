@@ -22,8 +22,11 @@ describe('clearAliasCache (deprecated)', () => {
     const { clearAliasCache } = await import('./alias-definition-provider');
     clearAliasCache();
     clearAliasCache();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain('clearAliasCache');
-    expect(warnSpy.mock.calls[0]?.[0]).toContain('model.getValue');
+    // Loading the editor atoms also logs jotai's own atomFamily notice; count only this one.
+    const ours = warnSpy.mock.calls.filter(([message]) =>
+      String(message).includes('clearAliasCache'),
+    );
+    expect(ours).toHaveLength(1);
+    expect(ours[0]?.[0]).toContain('model.getValue');
   });
 });
