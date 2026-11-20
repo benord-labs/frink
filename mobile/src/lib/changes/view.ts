@@ -25,9 +25,11 @@ export function countTurnEnd(turns: TurnCount, activity: MobileActivity | undefi
   return { activity, ended: turns.ended + Number(turns.activity === 'running') };
 }
 
-/** Names a line the way an agent can find it: the file, then its line in the new or old file. */
+/** Names a line the way an agent can find it; a removed line says so, since its number is the old file's. */
 export function lineLocation(path: string, line: MobileDiffLine): string {
-  return `${path}:${line.newNo ?? line.oldNo}`;
+  return line.newNo === undefined
+    ? `${path} (removed line ${line.oldNo})`
+    : `${path}:${line.newNo}`;
 }
 
 /** Starts a new line in a half-written draft rather than replacing it. */
@@ -82,7 +84,8 @@ export function emptyKind(
   changes: MobileChatChanges | undefined,
   error: string | undefined,
 ): 'loading' | 'clean' | null {
-  if (!changes) return error ? null : 'loading';
+  if (error !== undefined) return null;
+  if (!changes) return 'loading';
   return changes.truncated ? null : 'clean';
 }
 

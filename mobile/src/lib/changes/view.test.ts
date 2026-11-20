@@ -83,7 +83,9 @@ describe('line references', () => {
   it('names the new line, or the old one for a removed line', () => {
     const [removed, added] = file.hunks[0]?.lines ?? [];
     expect(added && lineLocation(file.path, added)).toBe('src/checkout.ts:10');
-    expect(removed && lineLocation('old.ts', { ...removed, oldNo: 7 })).toBe('old.ts:7');
+    expect(removed && lineLocation('old.ts', { ...removed, oldNo: 7 })).toBe(
+      'old.ts (removed line 7)',
+    );
   });
 
   it('adds to a half-written draft on its own line instead of replacing it', () => {
@@ -125,6 +127,8 @@ describe('emptyKind', () => {
   it('spins while asking and shows nothing over an error with no answer yet', () => {
     expect(emptyKind(undefined, undefined)).toBe('loading');
     expect(emptyKind(undefined, 'Offline')).toBeNull();
+    expect(emptyKind(undefined, '')).toBeNull();
+    expect(emptyKind(NONE, 'Offline')).toBeNull();
   });
 
   it('calls a clean worktree clean, but not a diff too large to list', () => {
