@@ -1092,7 +1092,8 @@ async function handlePatch(
           expectedVersionNumber,
         });
         persistenceCompleted = true;
-        recordKnownFlowVersion(sessionId, flowId, version.version_number, true);
+        const savedNewVersion = version.version_number > expectedVersionNumber;
+        recordKnownFlowVersion(sessionId, flowId, version.version_number, savedNewVersion);
         const receipt = buildFlowPatchReceipt({
           mode: name !== undefined ? 'create' : 'update',
           baseGraph,

@@ -243,6 +243,14 @@ describe('frink_flows_patch — stale-read guard', () => {
     expect(results.map((r) => JSON.parse(expectMcpText(r)).versionNumber)).toEqual([66, 67]);
   });
 
+  it('does not claim a patch that changed nothing saved the latest version', async () => {
+    state.getFlow.mockResolvedValue(flowAt(66, V66));
+    state.createFlowVersion.mockResolvedValueOnce({ id: 'ver-66', version_number: 66 });
+    expectMcpText(await editTrack(66));
+    const body = JSON.parse(expectMcpErrorText(await editTrack(65)));
+    expect(body.message).not.toContain('Your previous patch');
+  });
+
   it('does not track reads for a caller without a chat identity', async () => {
     state.getFlow.mockResolvedValueOnce(flowAt(65, V65));
     await handleFlowsToolCall('frink_flows_get', { flowId: 'flow-1' });
