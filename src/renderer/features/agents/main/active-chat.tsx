@@ -5,7 +5,6 @@ import type { UIMessage } from 'ai';
 import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useStickToBottom } from 'use-stick-to-bottom';
 import { useShallow } from 'zustand/react/shallow';
 import { ChatAtmosphereSurface } from '@/components/ChatAtmosphereSurface';
 import {
@@ -20,7 +19,6 @@ import { buildAnswerMessage } from '../../../../shared/lib/agent-questions/answe
 import type { AiProviderId } from '../../../../shared/lib/ai-providers';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
-import { usePrefersReducedMotion } from '../../../hooks/use-prefers-reduced-motion';
 import { deriveFlowChatBottomSurface } from '../../../lib/agent-chat/flow-chat-surface-state';
 import { useClaudePrewarm } from '../../../lib/agent-chat/prewarm/use-claude-prewarm';
 import { classifyDurableMessageRehydration } from '../../../lib/agent-chat/rehydration';
@@ -160,6 +158,7 @@ import {
   useTaskCompletionDetection,
   useTextContextWrapper,
 } from './active-chat/hooks';
+import { useChatStickToBottom } from './active-chat/hooks/use-chat-stick-to-bottom';
 import { shouldReleaseEdit } from './active-chat/hooks/use-queue-edit';
 import { useRealtimeSync } from './active-chat/hooks/useRealtimeSync';
 import type { ChatViewInnerProps, ChatViewProps } from './active-chat/types';
@@ -314,12 +313,7 @@ const ChatViewInner = memo(function ChatViewInner({
 
   // Auto-scroll: single owner for this chat surface. Follow/release is decided from content-size
   // observation, never from scrollTop arithmetic — a layout-shift clamp is not user intent.
-  // `resize`/`initial` accept only 'instant' or a spring object; bare 'smooth'/'auto' strings are
-  // discarded at runtime, so pass a spring object to change the motion.
-  const prefersReducedMotion = usePrefersReducedMotion();
-  const stickToBottom = useStickToBottom(
-    prefersReducedMotion ? { initial: 'instant', resize: 'instant' } : { initial: 'instant' },
-  );
+  const { stickToBottom, prefersReducedMotion } = useChatStickToBottom();
   // Depend on members, never on `stickToBottom` itself — the hook returns a fresh object each render
   // while its members are stable. The same file's decision entry covers why the read-only consumers
   // (search jump-to-match, pagination, Cmd+Down) get the plain ref below, not the hook's scrollRef:
