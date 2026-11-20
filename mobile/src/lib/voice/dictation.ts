@@ -1,21 +1,25 @@
 import { mergeDictation } from './merge';
 
 export type RecognitionEvents = {
+  started: () => void;
   result: (transcript: string, isFinal: boolean) => void;
   error: (code: string) => void;
   end: () => void;
 };
 
-/** One speech recognizer; only one recognition runs at a time. */
-export type Recognizer = {
-  requestPermission: () => Promise<boolean>;
-  /** Returns the function that stops listening. */
-  listen: (events: RecognitionEvents) => () => void;
-  start: () => void;
+/** One recognition, from the caller's side. */
+export type RecognitionSession = {
   /** Finishes the current words, then ends. */
   stop: () => void;
   /** Ends at once, with no further results. */
   abort: () => void;
+};
+
+/** One speech recognizer; only one recognition runs at a time. */
+export type Recognizer = {
+  requestPermission: () => Promise<boolean>;
+  /** Begins once any earlier recognition has ended; `events` then hears only this one. */
+  start: (events: RecognitionEvents) => RecognitionSession;
 };
 
 export type DictationPhase = 'idle' | 'starting' | 'listening' | 'stopping';
@@ -33,10 +37,13 @@ export const IDLE: DictationState = { phase: 'idle', notice: null };
 export const SILENCE_MS = 8000;
 /** A stop that never reports its end is cut off after this long. */
 export const STOP_GRACE_MS = 3000;
+/** A start that never reports listening or failing is given up after this long. */
+export const START_TIMEOUT_MS = 5000;
 
 export const NOTICES = {
   denied: 'To dictate, allow Frink to use the microphone and speech recognition in Settings.',
   language: "Dictation isn't available in this iPhone's language.",
+  busy: 'The microphone is still finishing the last dictation. Try again in a moment.',
   failed: 'Dictation stopped. Tap the microphone to try again.',
 };
 
@@ -45,17 +52,18 @@ export function errorNotice(code: string): string | null {
   if (code === 'aborted' || code === 'no-speech' || code === 'speech-timeout') return null;
   if (code === 'not-allowed' || code === 'service-not-allowed') return NOTICES.denied;
   if (code === 'language-not-supported') return NOTICES.language;
+  if (code === 'busy') return NOTICES.busy;
   return NOTICES.failed;
 }
 
 /** Writes dictated words into a draft. Each session has a fresh id, so events that arrive after it
- *  ended are ignored, and every way out returns to idle. */
+ *  ended are ignored, and every phase has a way back to idle. */
 export class Dictation {
   private state = IDLE;
   private session = 0;
   private base = '';
   private written = '';
-  private unlisten: (() => void) | null = null;
+  private recognition: RecognitionSession | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly deps: DictationDeps) {}
@@ -72,14 +80,13 @@ export class Dictation {
     const granted = await this.deps.recognizer.requestPermission().catch(() => false);
     if (session !== this.session) return;
     if (!granted) return this.finish(NOTICES.denied);
-    this.unlisten = this.deps.recognizer.listen({
-      result: (transcript, isFinal) => this.result(session, transcript, isFinal),
-      error: (code) => this.ended(session, errorNotice(code)),
-      end: () => this.ended(session, null),
-    });
-    this.deps.recognizer.start();
-    this.set({ phase: 'listening', notice: null });
-    this.arm(SILENCE_MS, () => this.stop());
+    this.arm(START_TIMEOUT_MS, () => this.abort(NOTICES.failed));
+    try {
+      const recognition = this.deps.recognizer.start(this.events(session));
+      if (session === this.session) this.recognition = recognition;
+    } catch {
+      this.finish(NOTICES.failed);
+    }
   }
 
   /** The microphone button: starts when idle, otherwise stops. */
@@ -98,15 +105,15 @@ export class Dictation {
     if (this.phase === 'idle' || this.phase === 'stopping') return;
     if (this.phase === 'starting') return this.abort();
     this.set({ phase: 'stopping', notice: null });
-    this.deps.recognizer.stop();
+    this.recognition?.stop();
     this.arm(STOP_GRACE_MS, () => this.abort());
   }
 
   /** Ends now; a result still on its way is dropped. */
-  abort(): void {
+  abort(notice: string | null = null): void {
     if (this.phase === 'idle') return;
-    this.deps.recognizer.abort();
-    this.finish(null);
+    this.recognition?.abort();
+    this.finish(notice);
   }
 
   /** The user changed the draft. While dictating, their edit wins and dictation ends. */
@@ -118,10 +125,28 @@ export class Dictation {
     }
   }
 
+  private events(session: number): RecognitionEvents {
+    return {
+      started: () => this.listening(session),
+      result: (transcript, isFinal) => this.result(session, transcript, isFinal),
+      error: (code) => this.ended(session, errorNotice(code)),
+      end: () => this.ended(session, null),
+    };
+  }
+
+  private listening(session: number): void {
+    if (session !== this.session || this.phase !== 'starting') return;
+    this.set({ phase: 'listening', notice: null });
+    this.arm(SILENCE_MS, () => this.stop());
+  }
+
   private result(session: number, transcript: string, isFinal: boolean): void {
     if (session !== this.session) return;
-    this.written = mergeDictation(this.base, transcript);
-    this.deps.write(this.written);
+    // An empty result carries no words, so it must not take away the ones already shown.
+    if (transcript.trim()) {
+      this.written = mergeDictation(this.base, transcript);
+      this.deps.write(this.written);
+    }
     // A final result closes a stretch of speech; the next partials start a new one after it.
     if (isFinal) this.base = this.written;
     if (this.phase === 'listening') this.arm(SILENCE_MS, () => this.stop());
@@ -139,8 +164,7 @@ export class Dictation {
   private finish(notice: string | null): void {
     this.session++;
     clearTimeout(this.timer);
-    this.unlisten?.();
-    this.unlisten = null;
+    this.recognition = null;
     this.set({ phase: 'idle', notice });
   }
 
