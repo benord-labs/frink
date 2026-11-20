@@ -97,12 +97,10 @@ describe('checkPermission — dispatcher routing', () => {
     // writes reach this same dispatcher via dynamic-chat-server.gateFlowWrite.
     setDocsLoader(async () => ({
       policy: noRules,
-      project: { ...noRules, deny: ['mcp__frink_dynamic_chat__*'] },
+      project: { ...noRules, deny: ['mcp__frink__*'] },
       user: noRules,
     }));
-    const r = await checkPermission(
-      baseReq({ tool: 'mcp__frink_dynamic_chat__frink_flows_list', input: {} }),
-    );
+    const r = await checkPermission(baseReq({ tool: 'mcp__frink__frink_flows_list', input: {} }));
     expect(r).toEqual({ decision: 'allow' });
   });
 
@@ -118,16 +116,11 @@ describe('checkPermission — dispatcher routing', () => {
   });
 
   it('frink mutating flow tool with no rules → asks with narrow + server-wide suggestions', async () => {
-    const r = await checkPermission(
-      baseReq({ tool: 'mcp__frink_dynamic_chat__frink_flows_patch', input: {} }),
-    );
+    const r = await checkPermission(baseReq({ tool: 'mcp__frink__frink_flows_patch', input: {} }));
     expect(r).toMatchObject({
       decision: 'ask',
       prompt: {
-        suggestedRules: [
-          'mcp__frink_dynamic_chat__frink_flows_patch',
-          'mcp__frink_dynamic_chat__*',
-        ],
+        suggestedRules: ['mcp__frink__frink_flows_patch', 'mcp__frink__*'],
       },
     });
   });
@@ -135,34 +128,27 @@ describe('checkPermission — dispatcher routing', () => {
   it('frink mutating flow tool honors an explicit deny rule', async () => {
     setDocsLoader(async () => ({
       policy: noRules,
-      project: { ...noRules, deny: ['mcp__frink_dynamic_chat__*'] },
+      project: { ...noRules, deny: ['mcp__frink__*'] },
       user: noRules,
     }));
-    const r = await checkPermission(
-      baseReq({ tool: 'mcp__frink_dynamic_chat__frink_flows_patch', input: {} }),
-    );
+    const r = await checkPermission(baseReq({ tool: 'mcp__frink__frink_flows_patch', input: {} }));
     expect(r).toMatchObject({ decision: 'deny' });
   });
 
-  it('frink mutating flow tool asks under the `frink` server key too (external-CLI identity)', async () => {
-    // Rules learned as mcp__frink_dynamic_chat__* do NOT cover this identity;
-    // it must still consult rules rather than fall to the trust auto-allow.
-    const r = await checkPermission(baseReq({ tool: 'mcp__frink__frink_flows_patch', input: {} }));
-    expect(r).toMatchObject({
-      decision: 'ask',
-      prompt: { suggestedRules: ['mcp__frink__frink_flows_patch', 'mcp__frink__*'] },
-    });
+  it("does not trust a call under the server's earlier key", async () => {
+    const r = await checkPermission(
+      baseReq({ tool: 'mcp__frink_dynamic_chat__frink_flows_list', input: {} }),
+    );
+    expect(r).toMatchObject({ decision: 'ask' });
   });
 
   it('frink mutating flow tool honors an allow rule (always-allow persistence)', async () => {
     setDocsLoader(async () => ({
       policy: noRules,
-      project: { ...noRules, allow: ['mcp__frink_dynamic_chat__frink_flows_patch'] },
+      project: { ...noRules, allow: ['mcp__frink__frink_flows_patch'] },
       user: noRules,
     }));
-    const r = await checkPermission(
-      baseReq({ tool: 'mcp__frink_dynamic_chat__frink_flows_patch', input: {} }),
-    );
+    const r = await checkPermission(baseReq({ tool: 'mcp__frink__frink_flows_patch', input: {} }));
     expect(r).toMatchObject({ decision: 'allow' });
   });
 

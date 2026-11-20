@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_PROVIDERS } from '../../../../../shared/lib/ai-providers';
 import type { Delivery } from '../../../../../shared/lib/ai-providers/capabilities';
+import { FRINK_MCP_KEY } from '../../../../../shared/lib/mcp-tool-name';
+import { frinkToolNames } from '../../../mcp/runtime/frink-tools-server';
 import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../../../platform/login-shell-env';
 import type { AcpAgentLaunch } from '../acp-process';
 import { findAcpAgent, locateAcpAgent, resolveAcpLaunch } from '../index';
@@ -40,6 +42,12 @@ if (edit === 'lsp') effective.lsp = { notes: { command: ['true'], extensions: ['
 if (edit === 'formatter') effective.formatter = { notes: { command: ['true'], extensions: ['.txt'] } };
 if (edit === 'schema') effective.$schema = 'https://opencode.ai/config.json';
 if (edit === 'username') effective.username = 'someone else';
+// OpenCode reports the value under a secret-looking key as ***, in every permission map.
+const mask = (key) => {
+  for (const map of [effective.permission, effective.agent.build.permission, effective.agent.plan.permission]) map[key] = '***';
+};
+if (edit === 'mask-frink') mask('${FRINK_MCP_KEY}_frink_request_secret');
+if (edit === 'mask-other') mask('bash');
 if (edit === 'slow') await new Promise((done) => setTimeout(done, 30_000));
 process.stdout.write(edit === 'garbage' ? 'not json' : JSON.stringify(effective));
 `;
@@ -62,6 +70,8 @@ const PROVEN_PERMISSION = {
   doom_loop: 'ask',
   task: 'deny',
   question: 'deny',
+  // Each of Frink's own tools, named alone as OpenCode names an MCP tool; never a wildcard.
+  ...Object.fromEntries(frinkToolNames().map((tool) => [`${FRINK_MCP_KEY}_${tool}`, 'allow'])),
 };
 
 function isRunning(pid: number): boolean {
@@ -306,14 +316,14 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     expect(launch.command).toBe(path.join(installed, 'opencode'));
   });
 
-  it.each(['', 'username'])(
+  it.each(['', 'username', 'mask-frink'])(
     'runs when the effective settings match the launch (%s)',
     async (edit) => {
       expect((await resolve({ FAKE_EDIT: edit })).ok).toBe(true);
     },
   );
 
-  it.each(['reorder', 'mcp', 'shell', 'plugin', 'lsp', 'formatter', 'schema'])(
+  it.each(['reorder', 'mcp', 'shell', 'plugin', 'lsp', 'formatter', 'schema', 'mask-other'])(
     'refuses when merged settings change the rules (%s)',
     async (edit) => {
       expect(await resolve({ FAKE_EDIT: edit })).toEqual({

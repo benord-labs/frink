@@ -1,10 +1,17 @@
 // @vitest-environment happy-dom
+import { cleanup, render } from '@testing-library/react';
+import { createElement } from 'react';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FILE_LINK_ELEMENT, remarkFileLinks } from '../lib/file-links/remark-file-links';
 import { MENTION_ELEMENT, MENTION_REMARK_PLUGINS } from '../lib/mentions/remark-mentions';
-import { getStreamdownComponents, REMARK_PLUGINS, stripEmojis } from './chat-markdown-renderer';
+import {
+  getStreamdownComponents,
+  MemoizedMarkdown,
+  REMARK_PLUGINS,
+  stripEmojis,
+} from './chat-markdown-renderer';
 
 describe('stripEmojis', () => {
   it('removes common pictograph emoji (opt-in aggressive cleanup)', () => {
@@ -130,5 +137,23 @@ describe('getStreamdownComponents cache', () => {
     for (const tag of expectedTags) {
       expect(components, `missing component for <${tag}>`).toHaveProperty(tag);
     }
+  });
+});
+
+describe('MemoizedMarkdown streaming', () => {
+  afterEach(cleanup);
+
+  it('keeps the trailing code block and earlier blocks mounted when content is appended', () => {
+    const view = (content: string) => createElement(MemoizedMarkdown, { id: 'm', content });
+    const { container, rerender } = render(view('intro\n\n```text\nconst a = 1;\n'));
+    const pre = container.querySelector('pre');
+    const intro = container.querySelector('p');
+    expect(pre).not.toBeNull();
+
+    rerender(view('intro\n\n```text\nconst a = 1;\nconst b = 2;\n'));
+
+    expect(container.querySelector('pre')).toBe(pre);
+    expect(container.querySelector('p')).toBe(intro);
+    expect(pre?.textContent).toContain('const b = 2;');
   });
 });

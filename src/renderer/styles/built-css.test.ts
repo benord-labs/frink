@@ -194,6 +194,17 @@ describe('production CSS', () => {
     expect([...offenders]).toEqual([]);
   });
 
+  // The chroma band is a box swept over the word; only the text mask gives it the word's shape.
+  // `text` is a non-standard mask-clip value, so an optimiser may drop it.
+  it('keeps the chroma band clipped to its word', async () => {
+    const clips: (string | undefined)[] = [];
+    postcss.parse(await built).walkRules(/chroma-text$/, (rule) => {
+      if (declares(rule, '-webkit-mask-image')) clips.push(valueOf(rule, '-webkit-mask-clip'));
+    });
+    expect(clips.length).toBeGreaterThan(0);
+    expect(new Set(clips)).toEqual(new Set(['text']));
+  });
+
   // The OS override forces the Solid glass vars, so a surface must look as it does at Solid.
   it('keeps surface shadows when the OS forces Solid', async () => {
     const resets: string[] = [];

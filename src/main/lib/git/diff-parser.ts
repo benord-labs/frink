@@ -71,6 +71,7 @@ const LANG_MAP: Record<string, string> = {
  */
 const HUNK_HEADER_REGEX = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
 const DIFF_GIT_PATH_REGEX = /^diff --git a\/(.+) b\/(.+)$/;
+const QUOTED_DIFF_GIT_PATH_REGEX = /^diff --git ("a\/(?:[^"\\]|\\.)*") ("b\/(?:[^"\\]|\\.)*")$/;
 
 /**
  * Get language identifier for syntax highlighting
@@ -133,6 +134,90 @@ function validateDiffHunk(diffText: string): { valid: boolean; reason?: string }
   return { valid: true };
 }
 
+/** Git's one-letter escapes; `\"` and `\\` stand for the character itself. */
+const C_ESCAPES = new Map([
+  ['a', 7],
+  ['b', 8],
+  ['t', 9],
+  ['n', 10],
+  ['v', 11],
+  ['f', 12],
+  ['r', 13],
+]);
+
+/** Undoes git's C-style quoting of a path with a quote, backslash, control or non-ASCII byte.
+ * Bytes that are not valid UTF-8 become replacement characters, so the result is never quoted. */
+export function unquoteGitPath(raw: string): string {
+  if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return raw;
+  const bytes: number[] = [];
+  for (const [text, escape] of raw.slice(1, -1).matchAll(/\\([0-7]{3}|.)|[^\\]+/gs)) {
+    if (escape === undefined) bytes.push(...Buffer.from(text, 'utf8'));
+    else if (escape.length === 3) bytes.push(parseInt(escape, 8));
+    else
+      bytes.push(
+        ...Buffer.from(String.fromCharCode(C_ESCAPES.get(escape) ?? escape.charCodeAt(0))),
+      );
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/** A `---`/`+++` header's path, unquoted and without its `a/` or `b/` side prefix. */
+function headerPath(line: string, prefix: 'a/' | 'b/'): string {
+  const path = unquoteGitPath(line.slice(4).trim());
+  return path.startsWith(prefix) ? path.slice(2) : path;
+}
+
+/** The two paths on a `diff --git` line, or null when it names none. */
+function diffGitPaths(line: string) {
+  const quoted = line.match(QUOTED_DIFF_GIT_PATH_REGEX);
+  if (quoted?.[1] && quoted[2]) {
+    return {
+      oldPath: unquoteGitPath(quoted[1]).slice(2),
+      newPath: unquoteGitPath(quoted[2]).slice(2),
+    };
+  }
+  const plain = line.match(DIFF_GIT_PATH_REGEX);
+  return plain?.[1] && plain[2] ? { oldPath: plain[1], newPath: plain[2] } : null;
+}
+
+/** Reads a file block's paths from the lines before its first hunk; `---`/`+++` win. */
+function scanHeader(headerLines: string[]) {
+  let oldPath = '';
+  let newPath = '';
+  let isBinary = false;
+  for (const line of headerLines) {
+    if (line.startsWith('--- ')) oldPath = headerPath(line, 'a/');
+    else if (line.startsWith('+++ ')) newPath = headerPath(line, 'b/');
+    else if (line.startsWith('Binary files ') && line.endsWith(' differ')) isBinary = true;
+  }
+  const named = headerLines.map(diffGitPaths).find((paths) => paths !== null);
+  return {
+    oldPath: oldPath || named?.oldPath || '',
+    newPath: newPath || named?.newPath || '',
+    isBinary,
+  };
+}
+
+/** Counts added and removed lines; every line here is hunk content, never a path header. */
+function countChanges(hunkLines: string[]) {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of hunkLines) {
+    if (HUNK_HEADER_REGEX.test(line)) continue;
+    if (line.startsWith('+')) additions += 1;
+    else if (line.startsWith('-')) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
+/** Reads one file block's paths and counts. Lines after the first hunk header are content, so
+ * a removed `-- note` or an added `++ x` is counted and never read as a path header. */
+function scanBlock(blockLines: string[]) {
+  const firstHunk = blockLines.findIndex((line) => HUNK_HEADER_REGEX.test(line));
+  const split = firstHunk === -1 ? blockLines.length : firstHunk;
+  return { ...scanHeader(blockLines.slice(0, split)), ...countChanges(blockLines.slice(split)) };
+}
+
 /**
  * Split a unified diff into separate file diffs
  */
@@ -172,43 +257,7 @@ export function splitUnifiedDiffByFile(diffText: string): ParsedDiffFile[] {
   pushCurrent();
 
   return blocks.map((blockText, index) => {
-    const blockLines = blockText.split('\n');
-    let oldPath: string = '';
-    let newPath: string = '';
-    let isBinary: boolean = false;
-    let additions: number = 0;
-    let deletions: number = 0;
-
-    for (const line of blockLines) {
-      if (line.startsWith('diff --git ')) {
-        const match = line.match(DIFF_GIT_PATH_REGEX);
-        if (match?.[1] && match[2]) {
-          if (!oldPath) oldPath = match[1];
-          if (!newPath) newPath = match[2];
-        }
-      }
-
-      if (line.startsWith('Binary files ') && line.endsWith(' differ')) {
-        isBinary = true;
-      }
-
-      if (line.startsWith('--- ')) {
-        const raw = line.slice(4).trim();
-        oldPath = raw.startsWith('a/') ? raw.slice(2) : raw;
-      }
-
-      if (line.startsWith('+++ ')) {
-        const raw = line.slice(4).trim();
-        newPath = raw.startsWith('b/') ? raw.slice(2) : raw;
-      }
-
-      if (line.startsWith('+') && !line.startsWith('+++ ')) {
-        additions += 1;
-      } else if (line.startsWith('-') && !line.startsWith('--- ')) {
-        deletions += 1;
-      }
-    }
-
+    const { oldPath, newPath, isBinary, additions, deletions } = scanBlock(blockText.split('\n'));
     const key = oldPath || newPath ? `${oldPath}->${newPath}` : `file-${index}`;
     const validation = isBinary ? { valid: true } : validateDiffHunk(blockText);
     const isValid = validation.valid;

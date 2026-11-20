@@ -18,7 +18,7 @@ const options = (overrides: Record<string, unknown> = {}) => ({
 });
 const servers = (token = 'secret-token-a') => ({
   linear: { type: 'http', url: 'https://mcp.linear.test', headers: { Authorization: token } },
-  frink_dynamic_chat: { type: 'http', url: 'http://127.0.0.1:9/mcp?channel=c1&toolset=agent' },
+  frink: { type: 'http', url: 'http://127.0.0.1:9/mcp?channel=c1&toolset=agent' },
 });
 
 describe('computeClaudeSessionKey', () => {
@@ -45,7 +45,7 @@ describe('computeClaudeSessionKey', () => {
   it('ignores the dynamic-chat channel each CLI mints, but not the toolset beside it', () => {
     const dynamicChat = (query: string) => ({
       ...servers(),
-      frink_dynamic_chat: { type: 'http', url: `http://127.0.0.1:9/mcp?${query}` },
+      frink: { type: 'http', url: `http://127.0.0.1:9/mcp?${query}` },
     });
     const key = (query: string) => computeClaudeSessionKey(options(), dynamicChat(query));
 

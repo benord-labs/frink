@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as analytics from '../../../analytics';
 import * as database from '../../../db';
 import { __resetSubChatLocks } from '../../../db/repos/sub-chat-mutex';
 import { createSubChat, getSubChatById, updateSubChatMessages } from '../../../db/repos/sub-chats';
@@ -85,5 +87,39 @@ describe('a turn completing through the live-stream transport', () => {
     expect(settled).not.toHaveProperty('parts');
     expect(terminal).toMatchObject({ durability: 'non-durable' });
     expect(terminal?.parts).toBeUndefined();
+  });
+
+  it("records the PR link from a contentless turn's checkpointed parts", async () => {
+    // finalize keeps the checkpoint and the transport reads the PR from what finalize returns, so
+    // a wrong returned message would drop the link even though the row is right.
+    vi.spyOn(analytics, 'trackPRCreated').mockImplementation(() => {});
+    const prUrl = 'https://github.com/acme/app/pull/42';
+    const checkpointed = [{ type: 'text', text: `Opened ${prUrl}` }];
+    await db.insert(schema.chats).values({ id: 'chat-1' });
+    const row = await createSubChat(db, {
+      chatId: 'chat-1',
+      messages: JSON.stringify([
+        { id: 'u1', role: 'user', parts: [] },
+        { id: 'a2', role: 'assistant', parts: checkpointed },
+      ]),
+    });
+    recordLiveStreamStart({
+      chatId: 'chat-1',
+      subChatId: row.id,
+      assistantMessageId: 'a2',
+      streamEpoch: 'epoch-1',
+    });
+
+    await createLiveStreamTransport({ broadcast: vi.fn() }).sendExecuteCompleteDirect({
+      chatId: 'chat-1',
+      subChatId: row.id,
+      assistantMessageId: 'a2',
+      streamEpoch: 'epoch-1',
+      finalParts: [{ type: 'step-start' }],
+    });
+
+    const chat = db.select().from(schema.chats).where(eq(schema.chats.id, 'chat-1')).get();
+    expect(chat?.prUrl).toBe(prUrl);
+    expect((await getSubChatById(db, row.id))?.messages[1]?.parts).toEqual(checkpointed);
   });
 });

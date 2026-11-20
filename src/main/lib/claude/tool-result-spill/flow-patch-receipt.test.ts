@@ -13,7 +13,7 @@ const userData = path.join(tempRoot, 'Application Support', 'Frink Dev');
 
 const SUB_CHAT = 'subchat-0001';
 const OTHER_SUB_CHAT = 'subchat-0002';
-const TOOL = 'mcp__frink_dynamic_chat__frink_flows_patch';
+const TOOL = 'mcp__frink__frink_flows_patch';
 const GRAPH = { nodes: [{ id: 'agent-0', blockType: 'agent' }], edges: [] };
 
 const SUCCESS = {
@@ -115,6 +115,13 @@ describe('recoverSpilledFlowPatchChunk', () => {
         webhookSetup: SUCCESS.webhookSetup,
       },
     });
+  });
+
+  it("recovers a receipt saved under the server's earlier key", () => {
+    const chunk = outputChunk(writeSpill('earlier-key.txt', JSON.stringify(SUCCESS)));
+    const restored = recover(chunk, 'mcp__frink_dynamic_chat__frink_flows_patch');
+
+    expect(restored).toMatchObject({ output: { flowId: 'flow-1', status: 'success' } });
   });
 
   it('recovers a spilled partial receipt with its failed and skipped operations', () => {
@@ -224,7 +231,7 @@ describe('recoverSpilledFlowPatchChunk', () => {
   it('leaves other tools alone', () => {
     const chunk = outputChunk(writeSpill('other-tool.txt', JSON.stringify(SUCCESS)));
 
-    expect(recover(chunk, 'mcp__frink_dynamic_chat__frink_flows_get')).toBe(chunk);
+    expect(recover(chunk, 'mcp__frink__frink_flows_get')).toBe(chunk);
     expect(recover(chunk, 'mcp__someone_else__frink_flows_patch')).toBe(chunk);
     expect(recoverSpilledFlowPatchChunk(chunk, { subChatId: SUB_CHAT, toolName: undefined })).toBe(
       chunk,

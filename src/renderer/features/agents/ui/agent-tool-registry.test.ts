@@ -68,7 +68,7 @@ describe('parseMcpToolType', () => {
 //   3. otherwise                                          → bare-text fallback
 describe('routing precedence', () => {
   it('registered MCP short-form tools resolve into AgentToolRegistry (registry wins)', () => {
-    const partType = 'tool-mcp__frink_dynamic_chat__frink_flows_patch';
+    const partType = 'tool-mcp__frink__frink_flows_patch';
     const resolved = resolveRegistryKey(partType);
     expect(resolved).toBe('tool-frink_flows_patch');
     expect(resolved in AgentToolRegistry).toBe(true);
@@ -85,7 +85,7 @@ describe('routing precedence', () => {
   });
 
   it('names the secret a frink_request_secret call asks for, and its file', () => {
-    const partType = 'tool-mcp__frink_dynamic_chat__frink_request_secret';
+    const partType = 'tool-mcp__frink__frink_request_secret';
     const entry = AgentToolRegistry[resolveRegistryKey(partType)];
     const input = { name: 'STRIPE_KEY', reason: 'Charge test cards' };
 

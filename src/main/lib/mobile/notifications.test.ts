@@ -302,6 +302,35 @@ it('alerts once, time-sensitive, when a chat starts waiting on you and the wait 
   ]);
 });
 
+it('adds Allow and Deny only for a chat waiting on one answerable request, naming just its id', async () => {
+  await store.notifications(credential.token, { token: push });
+  stop = start();
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.set('one', { kind: 'permission', subChatId: 'sub', requestId: 'perm_1' });
+  fixture.waiting.set('several', { kind: 'permission', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  const [one, several] = sent();
+  expect(one).toEqual({
+    to: push,
+    title: 'A chat needs your permission',
+    body: 'Allow or deny it to let the chat carry on.',
+    sound: 'default',
+    ttl: 3600,
+    interruptionLevel: 'time-sensitive',
+    collapseId: 'one',
+    categoryId: 'permission',
+    data: {
+      type: 'needs-you',
+      deviceId: credential.deviceId,
+      chatId: 'one',
+      subChatId: 'sub',
+      permissionRequestId: 'perm_1',
+    },
+  });
+  expect(several).not.toHaveProperty('categoryId');
+  expect(several.data).not.toHaveProperty('permissionRequestId');
+});
+
 it('stays quiet for a wait answered before the second look', async () => {
   await store.notifications(credential.token, { token: push });
   stop = start();

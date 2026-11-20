@@ -11,6 +11,7 @@ import {
   questionsForCopilotTool,
 } from './copilot-gate';
 import { COPILOT_TOOLS, createCopilotGate } from './index';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 let cwd = '';
 const outside = path.join(os.tmpdir(), 'copilot gate outside', 'notes.txt');
@@ -323,7 +324,11 @@ function hookInput(toolName: string, toolArgs: JsonValue): PreToolUseHookInput {
 
 type PlanFolder = Parameters<typeof createCopilotGate>[0]['plan'];
 
-function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, plan?: PlanFolder) {
+function testGate(
+  answer: (request: CodexApprovalRequest) => ApprovalOutcome,
+  plan?: PlanFolder,
+  frinkTools?: boolean,
+) {
   const asked: CodexApprovalRequest[] = [];
   const turn = new AbortController();
   const checkApproval: CodexApprovalCheck = async (request) => {
@@ -336,6 +341,7 @@ function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, pl
     checkApproval,
     turnOver: turn.signal,
     plan,
+    frinkTools,
   });
   const decide = (toolName: string, toolArgs: JsonValue): Promise<PreToolUseHookOutput> =>
     gate.onPreToolUse(hookInput(toolName, toolArgs));
@@ -647,6 +653,29 @@ describe("the session's own plan file", () => {
     await decide('apply_patch', patch);
     gate.noteExecutionStart('a', 'apply_patch', patch);
     gate.noteExecutionStart('b', 'apply_patch', patch);
+    expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
+    expect(gate.actedUnasked('b', SUCCEEDED)).toBe(true);
+  });
+});
+
+describe("Frink's own tools", () => {
+  const SEARCH = `${FRINK_MCP_KEY}-searchProjects`;
+
+  it('lets an exactly named Frink tool through unasked, only in a turn that offers them', async () => {
+    const offered = testGate(() => DENIED, undefined, true);
+    expect(await offered.decide(SEARCH, { query: '' })).toEqual({ permissionDecision: 'allow' });
+    expect(offered.asked).toEqual([]);
+    const notOffered = testGate(() => ALLOW, undefined, false);
+    expect((await notOffered.decide(SEARCH, { query: '' })).permissionDecision).toBe('deny');
+    for (const name of [`${FRINK_MCP_KEY}-made_up`, 'other-searchProjects']) {
+      expect((await offered.decide(name, {})).permissionDecision).toBe('deny');
+    }
+  });
+
+  it("never trips on Frink's server, and trips on a Frink-named tool any other server ran", () => {
+    const { gate } = testGate(() => DENIED, undefined, true);
+    gate.noteExecutionStart('a', SEARCH, { query: '' }, FRINK_MCP_KEY);
+    gate.noteExecutionStart('b', SEARCH, { query: '' }, 'impostor');
     expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
     expect(gate.actedUnasked('b', SUCCEEDED)).toBe(true);
   });

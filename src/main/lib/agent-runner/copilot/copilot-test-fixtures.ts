@@ -12,6 +12,7 @@ import type {
   SessionMode,
 } from '@github/copilot-sdk';
 import type { CopilotTurnClient, CopilotTurnSession } from './copilot-runner';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 /** What a session reports when only Frink's own policy applies. */
 export const CLIENT_ONLY_POLICY: ManagedSettingsResolvedData = {
@@ -70,6 +71,39 @@ export const toolEnds = (toolCallId: string, success: boolean, text = 'done'): S
 });
 
 export const IDLE: SessionEvent = { ...EVENT_BASE, type: 'session.idle', data: {} };
+
+/** Copilot CLI 1.0.97 calling Frink's own searchProjects, recorded offline against Frink's real
+ * server on 2026-11-20; ids, timings and telemetry are left out. */
+export const RECORDED_COPILOT_FRINK_TOOL: SessionEvent[] = [
+  {
+    ...EVENT_BASE,
+    type: 'tool.execution_start',
+    data: {
+      toolCallId: 'call_frink-tool_0',
+      toolName: `${FRINK_MCP_KEY}-searchProjects`,
+      arguments: { query: '' },
+      toolTitle: 'searchProjects',
+      mcpServerName: FRINK_MCP_KEY,
+      mcpConfigServerName: FRINK_MCP_KEY,
+      mcpTransport: 'http',
+      mcpConfigSource: 'user',
+      mcpToolName: 'searchProjects',
+    },
+  },
+  {
+    ...EVENT_BASE,
+    type: 'tool.execution_complete',
+    data: {
+      toolCallId: 'call_frink-tool_0',
+      success: true,
+      result: {
+        content: '{"projects":[]}',
+        detailedContent: '{"projects":[]}',
+        contents: [{ type: 'text', text: '{\n  "projects": []\n}' }],
+      },
+    },
+  },
+];
 /** The main agent is done while a command it started still runs. */
 export const AGENT_IDLE: SessionEvent = { ...EVENT_BASE, type: 'assistant.idle', data: {} };
 export const TASKS_CHANGED: SessionEvent = {

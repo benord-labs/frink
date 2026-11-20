@@ -30,6 +30,8 @@ export const RENDERER_LIB_DOMAINS = [
   'hotkeys',
   'mascot',
   'mentions',
+  // Placing main-process native views (browser pages, HTML artifacts) over a DOM slot.
+  'native-view',
   'perf',
   'plugins',
   'query-keys',
@@ -75,6 +77,8 @@ export const MAIN_LIB_DOMAINS = [
   'db',
   'debug-ingest',
   'diagnostics',
+  // Find-in-files: the content search worker, its runner, globs and the shared ignore policy.
+  'file-search',
   'flows',
   'git',
   'integrations',

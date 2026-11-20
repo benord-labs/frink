@@ -14,13 +14,7 @@ import { AgentsHeaderControls } from '../../../ui/agents-header-controls';
 import { HeaderBadge } from '../../../ui/header-badge';
 import { MobileChatHeader } from '../../../ui/mobile-chat-header';
 
-type DiffStatsType = {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-  isLoading: boolean;
-  hasChanges: boolean;
-};
+type DiffStatsType = { isLoading: boolean; hasChanges: boolean };
 
 type ChatHeaderProps = {
   // Layout state

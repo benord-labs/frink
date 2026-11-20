@@ -206,7 +206,7 @@ describe('PermissionPrompt — FourButtonView responses', () => {
 
   it('humanizes the persistent Flow rule without changing the emitted rule value', () => {
     const onApprove = vi.fn();
-    const rule = 'mcp__frink_dynamic_chat__frink_flows_patch';
+    const rule = 'mcp__frink__frink_flows_patch';
     const { container } = render(
       <PermissionPrompt
         request={makeMcpRequest({
@@ -216,7 +216,7 @@ describe('PermissionPrompt — FourButtonView responses', () => {
             tool: rule,
             input: { flowId: 'private-flow-id', operations: [] },
             reason: 'no-matching-rule',
-            suggestedRules: [rule, 'mcp__frink_dynamic_chat__*'],
+            suggestedRules: [rule, 'mcp__frink__*'],
           },
         })}
         onApprove={onApprove}
@@ -604,7 +604,7 @@ describe('PermissionPrompt — per-flow agent-run consent', () => {
       <PermissionPrompt
         request={makeFlowConsentRequest({
           prompt: {
-            tool: 'mcp__frink_dynamic_chat__frink_flows_run',
+            tool: 'mcp__frink__frink_flows_run',
             input: {},
             reason: 'no-matching-rule',
             suggestedRules: [],

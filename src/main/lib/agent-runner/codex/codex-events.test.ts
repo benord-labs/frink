@@ -221,15 +221,31 @@ describe('mapNotificationToChunks', () => {
     });
   });
 
-  it('closes an mcpToolCall card with the error when the call failed', () => {
-    expect(
+  it('closes an mcpToolCall card as failed on a call error or a result the tool marked isError', () => {
+    type McpCallEnd = {
+      status: 'completed' | 'failed';
+      error: { message: string } | null;
+      result?: { content: { type: 'text'; text: string }[] };
+    };
+    const completed = (item: McpCallEnd) =>
       mapNotificationToChunks('item/completed', {
-        item: { type: 'mcpToolCall', id: 'm1', server: 'gh', tool: 'list', error: 'rate limited' },
-      }).at(-1),
-    ).toEqual({
-      type: 'tool-output-available',
+        item: { type: 'mcpToolCall', id: 'm1', server: 'gh', tool: 'list', ...item },
+      }).at(-1);
+    expect(completed({ status: 'failed', error: { message: 'rate limited' } })).toEqual({
+      type: 'tool-output-error',
       toolCallId: 'm1',
-      output: { error: 'rate limited' },
+      errorText: 'rate limited',
+    });
+    const refused: McpCallEnd['result'] = {
+      content: [{ type: 'text', text: 'Ask the user to allow github.com.' }],
+    };
+    expect(completed({ status: 'failed', result: refused, error: null })).toEqual({
+      type: 'tool-output-error',
+      toolCallId: 'm1',
+      errorText: 'Ask the user to allow github.com.',
+    });
+    expect(completed({ status: 'completed', result: refused, error: null })).toMatchObject({
+      type: 'tool-output-available',
     });
   });
 

@@ -55,10 +55,16 @@ describe('resolveFrinkMcpServers', () => {
   it('preserves user-owned servers alongside plugin OAuth', async () => {
     mocks.getGlobalMcpServers.mockResolvedValue({
       user_shortcut: server({ command: 'my-shortcut-mcp' }),
-      plugin_shortcut_shortcut: server({ url: 'https://mcp.shortcut.com/mcp', managedBy: 'vendor_plugin' }),
+      plugin_shortcut_shortcut: server({
+        url: 'https://mcp.shortcut.com/mcp',
+        managedBy: 'vendor_plugin',
+      }),
     });
     const result = await resolveFrinkMcpServers({ projectPath: '/project' });
-    expect(Object.keys(result.servers ?? {})).toEqual(['plugin_shortcut_shortcut', 'user_shortcut']);
+    expect(Object.keys(result.servers ?? {})).toEqual([
+      'plugin_shortcut_shortcut',
+      'user_shortcut',
+    ]);
   });
 
   it('preserves Claude server shape while exposing only scoped stdio env separately', async () => {
@@ -89,7 +95,7 @@ describe('resolveFrinkMcpServers', () => {
       dynamicChatMcpUrl: 'http://127.0.0.1:4312/mcp',
     });
 
-    expect(Object.keys(result.servers ?? {})).toEqual(['frink_dynamic_chat', 'remote', 'z_@local']);
+    expect(Object.keys(result.servers ?? {})).toEqual(['frink', 'remote', 'z_@local']);
     expect(result.servers?.remote).toEqual({
       type: 'http',
       url: 'https://example.test/mcp',
@@ -239,7 +245,12 @@ describe('resolveFrinkMcpServers', () => {
       remote: server({ name: 'remote', type: 'cloud_api', url: 'https://example.test/mcp' }),
     });
     mocks.getMcpCredentials.mockResolvedValue({
-      oauth: { accessToken: 'stale-token', refreshToken: 'refresh-token', clientId: 'client-id', expiresAt },
+      oauth: {
+        accessToken: 'stale-token',
+        refreshToken: 'refresh-token',
+        clientId: 'client-id',
+        expiresAt,
+      },
     });
     mocks.refreshAccessToken.mockResolvedValue({
       accessToken: 'fresh-token',
@@ -374,7 +385,7 @@ describe('resolveFrinkMcpServers', () => {
 
     expect(result).toEqual({
       servers: {
-        frink_dynamic_chat: { type: 'http', url: 'http://127.0.0.1:4312/mcp' },
+        frink: { type: 'http', url: 'http://127.0.0.1:4312/mcp' },
       },
       envByServer: {},
     });
@@ -386,8 +397,8 @@ describe('resolveFrinkMcpServers', () => {
 
   it('does not let configured MCPs replace the trusted dynamic-chat server', async () => {
     mocks.getGlobalMcpServers.mockResolvedValue({
-      frink_dynamic_chat: server({
-        name: 'frink_dynamic_chat',
+      frink: server({
+        name: 'frink',
         type: 'cloud_api',
         url: 'https://untrusted.example.test/mcp',
       }),
@@ -398,7 +409,7 @@ describe('resolveFrinkMcpServers', () => {
       dynamicChatMcpUrl: 'http://127.0.0.1:4312/mcp?channel=trusted',
     });
 
-    expect(result.servers?.frink_dynamic_chat).toEqual({
+    expect(result.servers?.frink).toEqual({
       type: 'http',
       url: 'http://127.0.0.1:4312/mcp?channel=trusted',
     });
@@ -414,7 +425,9 @@ describe('OAuth expiry predicates', () => {
   });
 
   it('counts a zero-deadline credential as connected only when it can be renewed', () => {
-    expect(usableOrRefreshableOAuth({ oauth: { accessToken: 'token', expiresAt: 0, ...renewable } })).toBe(true);
+    expect(
+      usableOrRefreshableOAuth({ oauth: { accessToken: 'token', expiresAt: 0, ...renewable } }),
+    ).toBe(true);
     expect(usableOrRefreshableOAuth({ oauth: { accessToken: 'token', expiresAt: 0 } })).toBe(false);
   });
 });
@@ -424,12 +437,20 @@ describe('refreshNearExpiryOAuth deadline handling', () => {
   const REFRESH_WINDOW_MS = 5 * 60 * 1000;
   const remote = server({ name: 'remote', type: 'cloud_api', url: 'https://example.test/mcp' });
   const credential = (expiresAt: number | undefined) => ({
-    oauth: { accessToken: 'stale-token', refreshToken: 'refresh-token', clientId: 'client-id', expiresAt },
+    oauth: {
+      accessToken: 'stale-token',
+      refreshToken: 'refresh-token',
+      clientId: 'client-id',
+      expiresAt,
+    },
   });
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'], now: NOW });
-    mocks.refreshAccessToken.mockResolvedValue({ accessToken: 'fresh-token', expiresAt: NOW + 3_600_000 });
+    mocks.refreshAccessToken.mockResolvedValue({
+      accessToken: 'fresh-token',
+      expiresAt: NOW + 3_600_000,
+    });
   });
 
   it.each([
@@ -448,7 +469,10 @@ describe('refreshNearExpiryOAuth deadline handling', () => {
   });
 
   it.each([
-    { label: 'a deadline one millisecond outside the refresh window', expiresAt: NOW + REFRESH_WINDOW_MS + 1 },
+    {
+      label: 'a deadline one millisecond outside the refresh window',
+      expiresAt: NOW + REFRESH_WINDOW_MS + 1,
+    },
     { label: 'a far-future deadline', expiresAt: NOW + 3_600_000 },
     { label: 'the largest safe deadline', expiresAt: Number.MAX_SAFE_INTEGER },
   ])('leaves $label alone', async ({ expiresAt }) => {
@@ -463,7 +487,11 @@ describe('refreshNearExpiryOAuth deadline handling', () => {
   it('does not refresh a zero-deadline credential on a server with no url', async () => {
     const stored = credential(0);
 
-    const result = await refreshNearExpiryOAuth('local', server({ name: 'local', command: 'local-mcp' }), stored);
+    const result = await refreshNearExpiryOAuth(
+      'local',
+      server({ name: 'local', command: 'local-mcp' }),
+      stored,
+    );
 
     expect(mocks.refreshAccessToken).not.toHaveBeenCalled();
     expect(result).toBe(stored);

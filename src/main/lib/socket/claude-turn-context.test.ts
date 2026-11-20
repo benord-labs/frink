@@ -263,6 +263,14 @@ describe('createWakeBurstTurn', () => {
     expect(burst.preplanSignal).toBe(park);
   });
 
+  it('carries a plan re-entered after approval, so the burst still reads as planning', () => {
+    const arming = armingTurn();
+    arming.planSubmitted = true;
+    arming.planReentered = true;
+
+    expect(burstOf(arming).planReentered).toBe(true);
+  });
+
   it("runs under the arming turn's execution, so a burst's signal and questions stay its own", () => {
     const arming = armingTurn();
     expect(burstOf(arming).execution).toBe(arming.execution);

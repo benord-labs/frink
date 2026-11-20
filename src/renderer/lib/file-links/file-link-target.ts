@@ -207,3 +207,34 @@ export function findShortenedPath(file: string, entries: { path: string }[]): st
   const tails = entries.filter((entry) => entry.path.replaceAll('\\', '/').endsWith(`/${file}`));
   return tails.length === 1 ? tails[0].path : undefined;
 }
+
+/** What the disk says sits at a path, as files.entryType answers. */
+type DiskEntryType = 'file' | 'folder' | 'unavailable' | null;
+
+export type FileLinkDisk = {
+  typeAt: (path: string) => Promise<DiskEntryType>;
+  search: (query: string) => Promise<{ path: string }[]>;
+};
+
+/** Where a click on a file link opens, why it can't, or nothing for a folder. */
+export type FileLinkClick = { open: string } | { problem: string } | null;
+
+export async function resolveFileLinkClick(
+  { path, name }: { path: string; name: string },
+  target: FileLinkTarget,
+  projectName: string | undefined,
+  disk: FileLinkDisk,
+): Promise<FileLinkClick> {
+  let found = path;
+  let type = await disk.typeAt(path);
+  // Only a bare relative path can be a shortened one. The search proposes; the disk decides.
+  if (!type && isBareRelativePath(target.path)) {
+    found = findShortenedPath(path, await disk.search(path)) ?? path;
+    if (found !== path) type = await disk.typeAt(found);
+  }
+  if (type === 'folder') return null;
+  if (type === 'unavailable')
+    return { problem: `${name} isn't answering. Its drive may be disconnected or asleep.` };
+  if (!type) return { problem: `Couldn't find ${name} in ${projectName ?? 'this project'}` };
+  return { open: found };
+}

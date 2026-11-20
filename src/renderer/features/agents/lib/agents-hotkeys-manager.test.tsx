@@ -593,6 +593,7 @@ describe('useAgentsHotkeys on Windows and Linux', () => {
     render(
       <HotkeysHarness
         canShowFilesSidebar={true}
+        canSearchFiles={true}
         onBeforeAction={() => true}
         setFileSearchDialogOpen={setFileSearchDialogOpen}
       />,
@@ -616,6 +617,7 @@ describe('useAgentsHotkeys on Windows and Linux', () => {
         </div>
         <HotkeysHarness
           canShowFilesSidebar={true}
+          canSearchFiles={true}
           onBeforeAction={() => true}
           isSplitActive={true}
           paneCount={2}

@@ -20,8 +20,13 @@ import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import { collectChunks } from '../acp/acp-test-fixtures';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import * as database from '../../db';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
+import type { UIMessageChunk } from '../../claude/types';
+import * as dynamicChat from '../../mcp/dynamic-chat-server';
+import { type FrinkToolsServer, frinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import { plantCanarySetup, registerCanaryRows } from '../../socket/test-suites/conformance/canary';
+import * as copilotEvents from './copilot-events';
 import type { CopilotRunnerDeps } from './copilot-runner';
 import { type CopilotRunnerParams, resolveCopilotLaunch, runCopilotAgent } from './index';
 
@@ -54,6 +59,7 @@ type Case = {
   prompt?: string;
 };
 type TurnSetup = {
+  frinkTools?: FrinkToolsServer;
   answer?: (abortController: AbortController) => Promise<Answer>;
   prompt?: string;
   model?: string;
@@ -68,6 +74,7 @@ type Turn = {
   managed: ManagedSettingsResolvedData[];
   approveAll?: string;
   sessionId?: string;
+  chunks: UIMessageChunk[];
 };
 
 const DENY: Answer = { allowed: false, message: 'Denied by the test' };
@@ -373,7 +380,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
   async function turn(id: string, setup: TurnSetup = {}): Promise<Turn> {
     if (!launch) throw new Error('No launch');
     bodiesByCase.delete(id);
-    const record: Turn = { questions: [], errors: [], failures: [], managed: [] };
+    const record: Turn = { questions: [], errors: [], failures: [], managed: [], chunks: [] };
     const abortController = new AbortController();
     const answer = setup.answer ?? (async () => DENY);
     const chunks = await collectChunks(
@@ -384,6 +391,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
           prompt: setup.prompt ?? `Run the steps. case:${id}`,
           model: setup.model ?? 'fake-model',
           resumeSessionId: setup.resumeSessionId,
+          frinkTools: setup.frinkTools,
           abortController,
           checkApproval: (question) => {
             record.questions.push(question.toolName);
@@ -397,6 +405,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
         },
       ),
     );
+    record.chunks = chunks;
     for (const chunk of chunks) {
       if (chunk.type === 'error') record.errors.push(chunk.errorText);
       if (chunk.type === 'tool-output-error') record.failures.push(chunk.errorText);
@@ -853,6 +862,90 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     },
     TURN_MS,
   );
+
+  describe("Frink's own tools", () => {
+    const subChatId = 'sub-frink-tools';
+    const call = { name: `${FRINK_MCP_KEY}-searchProjects`, args: { query: '' } };
+
+    async function frinkTurn(id: string, setup: TurnSetup = {}) {
+      const baseUrl = await dynamicChat.getOrStartDynamicChatMcpUrl();
+      dynamicChat.setCurrentExecutionChat(
+        'chat',
+        subChatId,
+        project,
+        'agent',
+        undefined,
+        undefined,
+        false,
+        'copilot',
+      );
+      const frinkTools = frinkToolsServer({
+        baseUrl,
+        subChatId,
+        runtime: 'copilot',
+        hasSignalTask: false,
+      });
+      const events = vi.spyOn(copilotEvents, 'mapCopilotEvent');
+      scripts.set(id, [call]);
+      try {
+        const result = await turn(id, { ...setup, frinkTools });
+        return { result, events: events.mock.calls.map(([event]) => event) };
+      } finally {
+        events.mockRestore();
+        dynamicChat.clearCurrentExecutionChat();
+      }
+    }
+
+    it(
+      'are listed on the first turn, and one runs with no question and no permission request',
+      async () => {
+        const { result, events } = await frinkTurn('frink-tool');
+        // Tees this real turn as the conformance grid's RECORDED Copilot Frink-tool fixture.
+        const recordTo = process.env.FRINK_RECORD_COPILOT_FRINK_TOOL;
+        if (recordTo) await writeFile(recordTo, JSON.stringify(events, null, 2));
+        const [firstBody = ''] = bodiesByCase.get('frink-tool') ?? [];
+        expect(firstBody).toContain(`"${call.name}"`);
+        expect(firstBody).not.toContain(`"${FRINK_MCP_KEY}-frink_task_signal"`);
+        // MCP is open this turn, yet no planted server's tools reach the model.
+        expect(firstBody).not.toContain('"evil-');
+        const { questions, errors, failures } = result;
+        expect({ questions, errors, failures }).toEqual({
+          questions: [],
+          errors: [],
+          failures: [],
+        });
+        expect(events.map(({ type }) => type)).not.toContain('permission.requested');
+        expect(result.chunks).toContainEqual(
+          expect.objectContaining({
+            type: 'tool-input-available',
+            toolName: frinkToolPartName('searchProjects'),
+          }),
+        );
+        expect(result.chunks).toContainEqual(
+          expect.objectContaining({
+            type: 'tool-output-available',
+            output: { content: [{ type: 'text', text: '{"projects":[]}' }] },
+          }),
+        );
+      },
+      TURN_MS,
+    );
+
+    it(
+      "are refused by Copilot's own check when Frink's answer is missing",
+      async () => {
+        const { result, events } = await frinkTurn('frink-tool-silent', {
+          gateWrapper: () => async () => undefined,
+        });
+        const asked = events.flatMap((event) =>
+          event.type === 'permission.requested' ? [event.data.permissionRequest.kind] : [],
+        );
+        expect(asked).toEqual(['mcp']);
+        expect(result.failures.join('\n')).toContain('Frink decides before each step.');
+      },
+      TURN_MS,
+    );
+  });
 
   registerCanaryRows(
     'copilot',

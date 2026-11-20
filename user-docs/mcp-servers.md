@@ -1,6 +1,6 @@
 # MCP servers
 
-MCP (Model Context Protocol) servers give your AI assistants extra tools, like "search Linear" or "spin up a Neon branch." Frink manages MCPs centrally so you configure them once and they're available across every chat and every provider (Claude, Codex) you use through Frink.
+MCP (Model Context Protocol) servers give your AI assistants extra tools, like "search Linear" or "spin up a Neon branch." Frink manages MCPs centrally so you configure them once and they're available across every Claude and Codex chat you run through Frink. OpenCode, GitHub Copilot and Cursor chats don't get your MCP servers yet.
 
 This guide explains how Frink imports MCPs from your existing tools, where they are stored, and how the day-to-day mechanics work.
 
@@ -24,6 +24,20 @@ Frink supports both.
 - Native configs (`~/.claude.json`, `~/.cursor/mcp.json`) are left untouched. Your CLI tools keep working.
 - Credentials are stored encrypted and never leave this computer.
 - Delete an imported MCP from Frink and it stays deleted, even on reboot.
+
+## Frink's own tools
+
+Frink also has a server of its own. It gives agents Frink's chat tools: project search, moving a chat to another project, and building and running Flows. You don't add or configure it, and it doesn't show in Settings.
+
+| AI tool | Frink's own tools |
+|---|---|
+| Claude | Yes |
+| Codex | Yes, in project chats (not in a general chat) |
+| OpenCode | Yes |
+| GitHub Copilot | Yes |
+| Cursor | Not yet |
+
+Frink checks every call to its own tools itself, with your rules and the same cards, whichever tool the chat uses. Tools that only read run without a card; tools that change your Flows ask unless Auto is on.
 
 ## Where Frink stores MCPs
 
@@ -208,8 +222,8 @@ Yes. Open the MCP's row and click **Turn off**. That keeps the definition and cr
 **Q: Should I use Frink for MCPs that handle sensitive data?**
 The data flow is: the MCP server runs locally, talks to whatever upstream service it integrates with, and returns results into your chat. Frink stores the definition (server name, command, URL) and the encrypted credentials on this computer. If your concern is "is my OAuth token traveling through Frink's cloud?", the answer is no. If your concern is "is this third-party MCP server trustworthy with my data?", that's about the server itself, not Frink.
 
-**Q: I see a `frink` entry in my `~/.claude.json`. Why doesn't it show in Settings?**
-Frink injects that entry so Claude Code can talk back to Frink's own tools. It's deliberately filtered out of the import scan since Frink already manages it internally. Don't delete it manually, or your Claude sessions lose access to Frink's tooling. Frink's read-only and infrastructure tools are trusted and run silently; tools that change your Flows go through the standard permission prompt like any other MCP tool — with "always allow" options, honored deny rules, and no prompt at all when Auto Mode is on.
+**Q: Why doesn't Frink's own server show in Settings?**
+Frink connects its own server, named `frink`, to each chat itself. It never writes it into `~/.claude.json` or any other tool's config. Because that name is Frink's, a server called `frink` in another tool's config is not imported. Frink's read-only and infrastructure tools are trusted and run silently; tools that change your Flows go through the standard permission prompt like any other MCP tool — with "always allow" options, honored deny rules, and no prompt at all when Auto Mode is on. A rule for all of Frink's tools is written `mcp__frink__*`.
 
 **Q: I'm offline. Will the importer still work?**
 Yes. The importer only reads and writes files on this computer: new entries go to `~/.frink/mcp/config.json` and credentials are encrypted as usual.

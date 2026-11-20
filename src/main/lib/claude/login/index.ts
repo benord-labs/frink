@@ -1,7 +1,12 @@
 // Adapted from an MIT-licensed project; its notice is in THIRD_PARTY_LICENSES.md.
-import { spawn } from 'node:child_process';
+import {
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptionsWithoutStdio,
+  spawn,
+} from 'node:child_process';
 import { app } from 'electron';
 import { killProcessTree } from '../../agent-runner/process-settlement';
+import type { SignInOutcome } from '../../agent-runner/sign-in-outcome';
 import { buildClaudeEnv, getBundledClaudeBinaryPath } from '../env';
 
 const LOGIN_TIMEOUT_MS = 180_000;
@@ -10,6 +15,11 @@ type QuitListener = (event: 'before-quit', stop: () => void) => void;
 
 type ClaudeLoginDeps = {
   binaryPath: () => string;
+  spawn?: (
+    command: string,
+    args: string[],
+    options: SpawnOptionsWithoutStdio,
+  ) => ChildProcessWithoutNullStreams;
   baseEnv: () => Record<string, string>;
   /** Frink's app, which says when it quits. */
   app: { on: QuitListener; off: QuitListener };
@@ -21,11 +31,11 @@ const DEFAULT_DEPS: ClaudeLoginDeps = {
   app,
 };
 
-type Login = { done: Promise<boolean>; stop: () => void };
+type Login = { done: Promise<SignInOutcome>; stop: () => void };
 let running: Login | undefined;
 
-/** Runs Claude's own browser sign-in, one at a time; true when it finished. */
-export function signInToClaude(deps: ClaudeLoginDeps = DEFAULT_DEPS): Promise<boolean> {
+/** Runs Claude's own browser sign-in, one at a time, and says how it ended. */
+export function signInToClaude(deps: ClaudeLoginDeps = DEFAULT_DEPS): Promise<SignInOutcome> {
   if (running) return running.done;
   const login = startLogin(deps);
   const current: Login = {
@@ -54,7 +64,7 @@ function startLogin(deps: ClaudeLoginDeps): Login {
     CLAUDE_CODE_ENABLE_TASKS: _tasks,
     ...env
   } = deps.baseEnv();
-  const child = spawn(deps.binaryPath(), ['auth', 'login', '--claudeai'], {
+  const child = (deps.spawn ?? spawn)(deps.binaryPath(), ['auth', 'login', '--claudeai'], {
     env: { ...env, CLAUDE_SECURESTORAGE_CONFIG_DIR: '' },
     // stdin stays open and unwritten: Claude can end its browser callback when stdin closes.
     stdio: 'pipe',
@@ -62,18 +72,26 @@ function startLogin(deps: ClaudeLoginDeps): Login {
   });
   child.stdout.resume();
   child.stderr.resume();
-  const stop = () => killProcessTree(child);
-  const done = new Promise<boolean>((resolve) => {
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    killProcessTree(child);
+  };
+  const done = new Promise<SignInOutcome>((resolve) => {
     const timer = setTimeout(stop, LOGIN_TIMEOUT_MS);
     deps.app.on('before-quit', stop);
-    const finish = (finished: boolean) => {
+    const finish = (outcome: SignInOutcome) => {
       clearTimeout(timer);
       deps.app.off('before-quit', stop);
       child.stdin.destroy();
-      resolve(finished);
+      resolve(outcome);
     };
-    child.once('error', () => finish(false));
-    child.once('exit', (code) => finish(code === 0));
+    // With no pid Claude never started; otherwise the error is a stop that could not be delivered.
+    child.once('error', () => finish(child.pid === undefined ? 'unavailable' : 'stopped'));
+    // A signal Frink did not send, such as macOS refusing an unsigned binary, is a damaged install.
+    child.once('exit', (code) =>
+      finish(code === 0 ? 'finished' : code === null && !stopped ? 'unavailable' : 'stopped'),
+    );
   });
   return { done, stop };
 }

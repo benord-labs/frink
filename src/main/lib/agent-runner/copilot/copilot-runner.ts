@@ -13,6 +13,7 @@ import log from 'electron-log';
 import { EFFORT_LABEL, modelRowFor } from '../../../../shared/lib/model-picker-label/groups';
 import type { ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
 import type { UIMessageChunk } from '../../claude/types';
+import type { FrinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import { type AgentModel, rememberAgentModels, rememberedAgentModels } from '../agent-models';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
@@ -84,6 +85,8 @@ export type CopilotRunnerParams = {
   images?: { data: string; mimeType: string }[];
   abortController: AbortController;
   checkApproval: CodexApprovalCheck;
+  /** Frink's own MCP server for this turn; left out when it did not start. */
+  frinkTools?: FrinkToolsServer;
 };
 
 export type CopilotRunnerDeps = {
@@ -221,6 +224,7 @@ class CopilotTurn {
       tools: params.launch.tools,
       checkApproval: params.checkApproval,
       turnOver: this.over.signal,
+      frinkTools: Boolean(params.frinkTools),
       plan: {
         configDirectory: params.launch.configDirectory,
         sessionId: () => this.session?.sessionId,
@@ -300,8 +304,8 @@ class CopilotTurn {
     }
     if (event.type === 'session.background_tasks_changed') void this.noteCommands();
     if (event.type === 'tool.execution_start') {
-      const { toolCallId, toolName, arguments: args } = event.data;
-      this.gate.noteExecutionStart(toolCallId, toolName, args);
+      const { toolCallId, toolName, arguments: args, mcpServerName } = event.data;
+      this.gate.noteExecutionStart(toolCallId, toolName, args, mcpServerName);
     }
     mapCopilotEvent(event, this.shown).forEach(this.stream.emit);
     if (
@@ -349,6 +353,7 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
     onEvent: turn.onEvent,
     model: choice.model,
     reasoningEffort: choice.reasoningEffort,
+    frinkTools: params.frinkTools,
   });
   const opened = await openCheckedSession(client, {
     options: {

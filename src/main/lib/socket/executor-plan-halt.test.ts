@@ -43,7 +43,9 @@ const dbProjectState = vi.hoisted(() => ({
 
 const dynamicChatServerMocks = vi.hoisted(() => ({
   bindChannelExecution: vi.fn(),
-  setCurrentExecutionChat: vi.fn(() => 'exec-context-1'),
+  setCurrentExecutionChat: vi.fn<
+    typeof import('../mcp/dynamic-chat-server').setCurrentExecutionChat
+  >(() => 'exec-context-1'),
   clearCurrentExecutionChat: vi.fn(),
   getOrStartDynamicChatMcpUrl: vi.fn(async () => 'http://127.0.0.1:9999'),
   getLatestTaskSignal: vi.fn(),
@@ -262,6 +264,11 @@ beforeEach(() => {
 
 function stubPermissionsStoreDefault() {
   vi.mocked(checkPermission).mockResolvedValue({ decision: 'allow' });
+}
+
+/** The Flow-tool gate's live plan phase: the last arg of the latest setCurrentExecutionChat call. */
+function planPhase(): (() => boolean) | undefined {
+  return dynamicChatServerMocks.setCurrentExecutionChat.mock.calls.at(-1)?.[13];
 }
 
 describe('Claude plan-mode submission halt', () => {
@@ -606,8 +613,11 @@ Done.
     vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
 
     let decision: { permissionDecision?: string } | undefined;
+    // An agent turn that enters plan mode refuses Flow tools while it plans.
+    const planning: Array<boolean | undefined> = [];
     claudeQueryMock.mockImplementationOnce((call: PlanQueryCall) => {
       const gen = (async function* () {
+        planning.push(planPhase()?.());
         yield {
           chunks: [
             {
@@ -624,6 +634,7 @@ Done.
             writePlanChunk('write-plan-m1'),
           ],
         };
+        planning.push(planPhase()?.());
         decision = yield* submitPlan(call, 'exit-plan-m1');
         yield {
           chunks: [
@@ -657,6 +668,9 @@ Done.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(decision?.permissionDecision).toBe('deny');
+    expect(planning).toEqual([false, true]);
+    // A human-approval plan stays planning after submission; the halt ends the turn.
+    expect(planPhase()?.()).toBe(true);
     const clientModule = await import('./client');
     expect(vi.mocked(clientModule.sendErrorDirect)).not.toHaveBeenCalled();
     const completeCalls = vi.mocked(clientModule.sendExecuteCompleteDirect).mock.calls;
@@ -682,8 +696,10 @@ Done.
     } as never);
 
     const interrupt = vi.fn().mockResolvedValue(undefined);
+    let planningBeforeExit: boolean | undefined;
     claudeQueryMock.mockImplementationOnce(() => {
       const gen = (async function* () {
+        planningBeforeExit = planPhase()?.();
         yield {
           chunks: [
             {
@@ -737,6 +753,9 @@ Done.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(interrupt).not.toHaveBeenCalled();
+    // Flow tools are refused while planning and allowed once the plan is auto-approved in-turn.
+    expect(planningBeforeExit).toBe(true);
+    expect(planPhase()?.()).toBe(false);
     const clientModule = await import('./client');
     expect(vi.mocked(clientModule.sendErrorDirect)).not.toHaveBeenCalled();
     const completeCalls = vi.mocked(clientModule.sendExecuteCompleteDirect).mock.calls;
@@ -762,6 +781,56 @@ Done.
     const implParts = (implInputCall?.[0] as { parts?: Array<{ type?: string }> }).parts;
     expect(implParts?.some((p) => p.type === 'tool-frink-plan')).toBe(true);
     expect(implParts?.some((p) => p.type === 'tool-Write')).toBe(true);
+  });
+
+  it('auto-approve plan node: re-entering plan mode after approval refuses Flow tools again', async () => {
+    vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
+    const { getFlowDriveInfoForSubChat } = await import('../db/repos/tasks');
+    // SAFETY: the executor reads only these fields of the flow drive info for an auto-approve node.
+    vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
+      active: true,
+      autoApprovePlan: true,
+      taskId: 'flow-task-auto-reenter',
+    } as never);
+    const tool = (
+      type: 'tool-input-available' | 'tool-output-available',
+      toolCallId: string,
+      toolName: string,
+    ): UIMessageChunk =>
+      type === 'tool-input-available'
+        ? { type, toolCallId, toolName, input: {} }
+        : { type, toolCallId, output: { success: true } };
+    const planning: Array<boolean | undefined> = [];
+    claudeQueryMock.mockImplementationOnce(() => {
+      const gen = (async function* () {
+        yield {
+          chunks: [
+            writePlanChunk('write-plan-r1'),
+            tool('tool-input-available', 'exit-plan-r1', 'ExitPlanMode'),
+            tool('tool-output-available', 'exit-plan-r1', 'ExitPlanMode'),
+          ],
+        };
+        planning.push(planPhase()?.());
+        yield { chunks: [tool('tool-input-available', 'enter-plan-r2', 'EnterPlanMode')] };
+        planning.push(planPhase()?.());
+        yield {
+          chunks: [
+            tool('tool-output-available', 'enter-plan-r2', 'EnterPlanMode'),
+            tool('tool-input-available', 'exit-plan-r2', 'ExitPlanMode'),
+            tool('tool-output-available', 'exit-plan-r2', 'ExitPlanMode'),
+          ],
+        };
+        planning.push(planPhase()?.());
+        yield { chunks: [{ type: 'finish' } satisfies UIMessageChunk] };
+        yield { type: 'result' };
+      })();
+      return Object.assign(gen, { interrupt: vi.fn().mockResolvedValue(undefined) });
+    });
+
+    await handleRemoteExecute({ ...basePayload, message: 'flow plan node' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(planning).toEqual([false, true, false]);
   });
 
   /**

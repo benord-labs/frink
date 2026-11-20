@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -271,6 +271,70 @@ describe('resolveDefinition', () => {
   it('returns null for a local that shadows an import, so the editor answers', () => {
     const source = 'import { a } from "@/lib/x";\nfunction f(a: number) { return a; }';
     expect(definitionAt(source, 'a; }')).toBeNull();
+  });
+
+  describe('with unsaved buffers of open tabs', () => {
+    const at = (source: string, marker: string, openBuffers: Record<string, string | null>) =>
+      resolveDefinition({
+        projectPath: root,
+        containingFile: join(root, 'src/App.tsx'),
+        fileContent: source,
+        offset: source.lastIndexOf(marker),
+        openBuffers,
+      });
+
+    it('lands on the declaration in the unsaved buffer when lines were added above it', () => {
+      const shifted = `// x\n${'\n'.repeat(4)}export const a = 1, size = 2;\n`;
+      const result = at('import { a } from "@/lib/x";\na;', 'a;', {
+        [join(root, 'src/lib/x.ts')]: shifted,
+      });
+      expect(result).toMatchObject({ path: join(root, 'src/lib/x.ts'), line: 6, column: 14 });
+    });
+
+    it('follows a re-export the unsaved barrel points somewhere else', async () => {
+      await writeTree(root, { 'src/lib/other.ts': '\n\nexport const sz = 1;\n' });
+      const result = at('import { sz } from "@/lib";\nsz;', 'sz;', {
+        [join(root, 'src/lib/index.ts')]: 'export { sz } from "./other";\n',
+      });
+      expect(result).toMatchObject({ path: join(root, 'src/lib/other.ts'), line: 3, column: 14 });
+    });
+
+    it('matches a buffer keyed by the workspace path behind a node_modules symlink', async () => {
+      await writeTree(root, {
+        'packages/ui/package.json': JSON.stringify({ name: '@ws/ui', types: './src/index.ts' }),
+        'packages/ui/src/index.ts': 'export const Chip = 1;\n',
+      });
+      await mkdir(join(root, 'node_modules/@ws'), { recursive: true });
+      await symlink(join(root, 'packages/ui'), join(root, 'node_modules/@ws/ui'), 'dir');
+      const result = at('import { Chip } from "@ws/ui";\nChip;', 'Chip;', {
+        [join(root, 'packages/ui/src/index.ts')]: '\n\n\nexport const Chip = 1;\n',
+      });
+      expect(result).toMatchObject({ line: 4, column: 14 });
+    });
+
+    it('reads the clicked file from its live text when a re-export leads back into it', async () => {
+      await writeTree(root, {
+        'src/App.tsx': 'export const Local = 1;\n',
+        'src/lib/back.ts': 'export { Local } from "../App";\n',
+      });
+      const source = 'import { Local as L } from "./lib/back";\n\n\nexport const Local = 1;\nL;';
+      const result = at(source, 'L;', {});
+      expect(result).toMatchObject({ path: join(root, 'src/App.tsx'), line: 4, column: 14 });
+    });
+
+    it('ignores an oversized buffer for another file and opens an oversized target at its top', () => {
+      const huge = 'x'.repeat(2 * 1024 * 1024 + 1);
+      const target = join(root, 'src/lib/x.ts');
+      const other = at('import { a } from "@/lib/x";\na;', 'a;', {
+        [join(root, 'src/lib/button.ts')]: huge,
+      });
+      expect(other).toMatchObject({ path: target, line: 2, column: 14 });
+      const top = at('import { a } from "@/lib/x";\na;', 'a;', { [target]: huge });
+      expect(top).toEqual({ path: target, line: 1, column: 1, endColumn: 1 });
+      // The renderer sends null for an unsaved tab past its caps; it must not fall back to disk.
+      const marked = at('import { a } from "@/lib/x";\na;', 'a;', { [target]: null });
+      expect(marked).toEqual({ path: target, line: 1, column: 1, endColumn: 1 });
+    });
   });
 
   it('opens a clicked specifier at the top of the file', () => {

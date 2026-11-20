@@ -9,6 +9,8 @@ type ContentSearchResultsProps = {
   isLoading: boolean;
   query: string;
   invalidRegex: boolean;
+  /** The search stopped at its time limit, so `matches` may be incomplete */
+  timedOut?: boolean;
   matches: ContentSearchMatch[];
   onSelectMatch: (
     relativePath: string,
@@ -16,7 +18,6 @@ type ContentSearchResultsProps = {
     startColumn: number,
     endColumn: number,
   ) => void;
-  renderLine: (lineText: string) => string | ReactNode[];
   pageSize?: number;
   /** Shown above the results, e.g. the project they come from */
   heading?: ReactNode;
@@ -28,13 +29,31 @@ type ContentSearchResultsProps = {
 
 const DEFAULT_PAGE_SIZE = 50;
 
+/** The line with its match marked at the span the search reported; the query is never re-run here. */
+function MatchPreview({ match }: { match: ContentSearchMatch }) {
+  const { lineText, previewStart, previewEnd } = match;
+  if (!(previewEnd > previewStart)) return lineText;
+  return (
+    <>
+      {lineText.slice(0, previewStart)}
+      <mark className="rounded bg-primary/30 px-0.5 text-foreground">
+        {lineText.slice(previewStart, previewEnd)}
+      </mark>
+      {lineText.slice(previewEnd)}
+    </>
+  );
+}
+const TIMED_OUT_HINT = 'Search stopped after 30 seconds. Narrow it with Files to include.';
+const TIMED_OUT_EMPTY =
+  'Nothing matched in the first 30 seconds, when the search stopped. Narrow it with Files to include.';
+
 export function ContentSearchResults({
   isLoading,
   query,
   invalidRegex,
+  timedOut = false,
   matches,
   onSelectMatch,
-  renderLine,
   pageSize = DEFAULT_PAGE_SIZE,
   heading,
   className,
@@ -68,6 +87,8 @@ export function ContentSearchResults({
   const matchedFileCount = useMemo(() => {
     return new Set(matches.map((match) => match.filePath)).size;
   }, [matches]);
+  const emptyText = timedOut ? TIMED_OUT_EMPTY : emptyMessage;
+  const timedOutNote = timedOut ? <div>{TIMED_OUT_HINT}</div> : null;
 
   return (
     <div className={cn('flex-1 overflow-y-auto px-2 py-2 space-y-1', className)}>
@@ -79,11 +100,12 @@ export function ContentSearchResults({
       ) : invalidRegex ? (
         <div className="text-xs text-destructive px-2 py-1">Invalid regular expression.</div>
       ) : matches.length === 0 ? (
-        <div className="text-xs text-muted-foreground px-2 py-1">{emptyMessage}</div>
+        <div className="text-xs text-muted-foreground px-2 py-1">{emptyText}</div>
       ) : (
         <>
           <div className="px-1 pb-1 text-[11px] text-muted-foreground">
             {`${matches.length} results in ${matchedFileCount} files`}
+            {timedOutNote}
           </div>
           {groupedVisibleMatches.map((fileGroup) => (
             <section
@@ -119,7 +141,7 @@ export function ContentSearchResults({
                         {match.lineNumber}
                       </span>
                       <span className="text-xs text-foreground/90 truncate">
-                        {renderLine(match.lineText)}
+                        <MatchPreview match={match} />
                       </span>
                     </div>
                   </Button>
