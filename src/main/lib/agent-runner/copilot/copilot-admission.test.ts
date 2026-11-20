@@ -13,6 +13,7 @@ import {
   type ManagedSettingsResolvedData,
   type ResumeSessionConfig,
   type SessionConfig,
+  type SessionEvent,
 } from '@github/copilot-sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -60,7 +61,8 @@ type Case = {
 };
 type TurnSetup = {
   frinkTools?: FrinkToolsServer;
-  answer?: (abortController: AbortController) => Promise<Answer>;
+  /** `quit` force-stops Copilot, as quitting Frink or a crash does. */
+  answer?: (abortController: AbortController, quit: () => void) => Promise<Answer>;
   prompt?: string;
   model?: string;
   resumeSessionId?: string;
@@ -75,6 +77,10 @@ type Turn = {
   approveAll?: string;
   sessionId?: string;
   chunks: UIMessageChunk[];
+  /** A resumed session's history as the turn first sees it. */
+  resumedHistory?: SessionEvent[];
+  /** The CLI version the session reported, which can differ from what `copilot --version` prints. */
+  version?: string;
 };
 
 const DENY: Answer = { allowed: false, message: 'Denied by the test' };
@@ -350,6 +356,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       const client = new CopilotClient(options);
       const create = client.createSession.bind(client);
       const resume = client.resumeSession.bind(client);
+      const getStatus = client.getStatus.bind(client);
       const watched = <Config extends SessionConfig | ResumeSessionConfig>(
         config: Config,
       ): Config => ({
@@ -370,9 +377,17 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       };
       return Object.assign(client, {
         getAuthStatus: async () => ({ isAuthenticated: true }),
+        getStatus: async () => {
+          const status = await getStatus();
+          record.version = status.version;
+          return status;
+        },
         createSession: async (config: SessionConfig) => opened(await create(watched(config))),
-        resumeSession: async (id: string, config: ResumeSessionConfig) =>
-          opened(await resume(id, watched(config))),
+        resumeSession: async (id: string, config: ResumeSessionConfig) => {
+          const session = await resume(id, watched(config));
+          record.resumedHistory = await session.getEvents();
+          return opened(session);
+        },
       });
     };
   }
@@ -383,6 +398,9 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     const record: Turn = { questions: [], errors: [], failures: [], managed: [], chunks: [] };
     const abortController = new AbortController();
     const answer = setup.answer ?? (async () => DENY);
+    const wrap = admissionClient(record, setup.approveAll ?? false);
+    let live: CopilotClient | undefined;
+    const quit = () => void live?.forceStop();
     const chunks = await collectChunks(
       runCopilotAgent(
         {
@@ -395,11 +413,14 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
           abortController,
           checkApproval: (question) => {
             record.questions.push(question.toolName);
-            return answer(abortController);
+            return answer(abortController, quit);
           },
         },
         {
-          createClient: admissionClient(record, setup.approveAll ?? false),
+          createClient: (options) => {
+            live = wrap(options);
+            return live;
+          },
           provider,
           gateWrapper: setup.gateWrapper,
         },
@@ -748,6 +769,46 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
           }),
         );
       }
+    },
+    TURN_MS,
+  );
+
+  // Copilot records a stopped call as aborted. From 1.0.97 a resume closes a call that a quit or crash
+  // cut off as interrupted; 1.0.96 leaves it open and sends nothing for it.
+  const closesLeftOpenCalls = (version = '') =>
+    version.localeCompare('1.0.97', 'en', { numeric: true }) >= 0;
+
+  it.each([
+    { how: 'stopped', repaired: false },
+    { how: 'quit', repaired: true },
+  ])(
+    'resumes without a false unasked-action stop after a turn $how mid-command',
+    async ({ how, repaired }) => {
+      scripts.set(`mid-${how}`, [bash('sleep 30')]);
+      const first = await turn(`mid-${how}`, {
+        answer: async (abortController, quit) => {
+          setTimeout(() => (repaired ? quit() : abortController.abort()), 1500);
+          return ALLOW;
+        },
+      });
+      scripts.set(`mid-${how}-resume`, [bash(`touch '${inProject(`m-mid-${how}`)}'`)]);
+      const second = await turn(`mid-${how}-resume`, { resumeSessionId: first.sessionId });
+      const history = second.resumedHistory ?? [];
+      const finished = new Set(
+        history.flatMap((event) =>
+          event.type === 'tool.execution_complete' ? [event.data.toolCallId] : [],
+        ),
+      );
+      const left = history.filter(
+        (event) => event.type === 'tool.execution_start' && !finished.has(event.data.toolCallId),
+      );
+      expect(left).toHaveLength(1);
+      expect(second.failures.some((text) => text.includes('interrupted before a result'))).toBe(
+        repaired && closesLeftOpenCalls(second.version),
+      );
+      expect(second.errors).toEqual([]);
+      expect(second.questions).toEqual(['Bash']);
+      expect(existsSync(inProject(`m-mid-${how}`))).toBe(false);
     },
     TURN_MS,
   );
