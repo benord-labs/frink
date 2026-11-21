@@ -1,16 +1,19 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
+import { Square, Workflow } from 'lucide-react-native';
 import type { MobileRun, MobileRunNode } from '@frink/shared/types/remote/mobile';
 import { useAction, useResource } from '../../lib/connection';
 import { usePageTitle } from '../../navigation/page-title';
-import type { RootRoutes } from '../../navigation/routes';
+import { useRootNavigation, type RootRoutes } from '../../navigation/routes';
+import { IconButton } from '../../ui/button';
 import { StatusGlyph } from '../../ui/glyphs';
 import { SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
+import { confirmStopRun } from '../Chat/confirm';
 import { READINESS } from '../Flow/readiness';
 import {
   isTerminal,
@@ -22,7 +25,6 @@ import {
   TONE_TEXT,
 } from './run-view';
 import { RunTimeline } from './RunTimeline';
-import { StopRun } from './StopRun';
 
 /** Where the run stands at a glance: its state, then progress and time on one quiet line. */
 function RunSummary({ run }: { run: MobileRun }) {
@@ -48,6 +50,45 @@ function RunSummary({ run }: { run: MobileRun }) {
       </Text>
     </View>
   );
+}
+
+/** The bar holds Open Flow, and Stop while the run can still change. */
+function useRunHeader(run: MobileRun | undefined, busy: boolean, onStop: () => void) {
+  const navigation = useRootNavigation();
+  const stop = useRef(onStop);
+  stop.current = onStop;
+  const flowId = run?.flowId;
+  const live = !!run && !isTerminal(run.status);
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight:
+        flowId === undefined
+          ? undefined
+          : () => (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <IconButton
+                  icon={Workflow}
+                  label="Open Flow"
+                  tone="plain"
+                  size={44}
+                  // Back to the Flow page this run was opened from, else that Flow on top.
+                  onPress={() =>
+                    navigation.navigate({ name: 'Flow', params: { id: flowId }, pop: true })
+                  }
+                />
+                {live && (
+                  <IconButton
+                    icon={Square}
+                    label="Stop run"
+                    tone="danger"
+                    disabled={busy}
+                    onPress={() => stop.current()}
+                  />
+                )}
+              </View>
+            ),
+    });
+  }, [navigation, flowId, live, busy]);
 }
 
 /** One Flow run: its step timeline, the decisions it waits on, and Stop. */
@@ -89,11 +130,11 @@ export function RunScreen() {
     if (done) refresh();
   }
   async function stop() {
+    if (!(await confirmStopRun())) return;
     setActed(null);
-    const done = await action.run({ type: 'cancelRun', id: params.id });
-    if (done) refresh();
-    return !!done;
+    if (await action.run({ type: 'cancelRun', id: params.id })) refresh();
   }
+  useRunHeader(run, action.busy, () => void stop());
   return (
     <Screen>
       <ScrollView
@@ -108,6 +149,15 @@ export function RunScreen() {
         ) : (
           <View style={{ paddingTop: space.lg }}>
             <RunSummary run={run} />
+            {!acted && action.error && (
+              <Text
+                variant="secondary"
+                color="danger"
+                style={{ paddingHorizontal: GUTTER, paddingTop: space.sm }}
+              >
+                {action.error}
+              </Text>
+            )}
             {waiting.length > 0 && (
               <>
                 <SectionHeader title="Needs you" count={waiting.length} />
@@ -119,11 +169,6 @@ export function RunScreen() {
                 <SectionHeader title="Timeline" count={timeline.length || undefined} />
                 <RunTimeline nodes={timeline} {...decisionState} />
               </>
-            )}
-            {!isTerminal(run.status) && (
-              <View style={{ paddingTop: space.xxl }}>
-                <StopRun busy={action.busy} error={acted ? null : action.error} onStop={stop} />
-              </View>
             )}
           </View>
         )}
