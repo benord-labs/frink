@@ -7,10 +7,13 @@ import type {
 
 type TabScreenNavigation = Pick<NavigationProp<ParamListBase>, 'getParent'>;
 
-/** A screen that belongs to the deleted chat: the chat itself or its changes. */
+/** Screens that show one chat by its id: the conversation and its voice mode. */
+const CHAT_SCREENS = new Set(['Chat', 'Voice']);
+
+/** A screen that belongs to the deleted chat: the chat, its voice mode, or its changes. */
 function isDeletedChat({ name, params }: Route<string>, chatId: string) {
   if (!params) return false;
-  if (name === 'Chat') return 'id' in params && params.id === chatId;
+  if (CHAT_SCREENS.has(name)) return 'id' in params && params.id === chatId;
   return name === 'Changes' && 'chatId' in params && params.chatId === chatId;
 }
 

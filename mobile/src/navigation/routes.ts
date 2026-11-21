@@ -27,6 +27,8 @@ export type RootRoutes = {
   Changes: { chatId: string };
   Flow: { id: string };
   Run: { id: string };
+  /** Hands-free voice mode for one conversation. */
+  Voice: { id: string; subChatId: string };
 };
 export type TabRoutes = {
   ChatsTab: NavigatorScreenParams<RootRoutes> | undefined;

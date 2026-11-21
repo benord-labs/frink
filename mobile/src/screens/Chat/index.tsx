@@ -19,6 +19,7 @@ import { mergeTranscript } from '../../lib/chat/pending';
 import { useChatStream } from '../../lib/chat/use-chat-stream';
 import { useResource } from '../../lib/connection';
 import { useAlertAnswer } from '../../lib/notifications/alert-open';
+import { voiceModeSupported } from '../../lib/voice/mode/use-voice-mode';
 import { duration } from '../../lib/status';
 import { closeDeletedChat } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
@@ -41,7 +42,7 @@ const ios = Platform.OS === 'ios';
 
 /** While the computer pushes changes the stream is the chat's only writer: polls stop and a
  * refresh takes a fresh copy through it. Otherwise busy chats poll faster than idle ones. */
-function useChatResource(id: string, subChatId: string | undefined) {
+export function useChatResource(id: string, subChatId: string | undefined) {
   const [activity, setActivity] = useState<MobileActivity>();
   const [live, setLive] = useState(false);
   const resource = useResource(
@@ -304,6 +305,11 @@ function ChatView({
                 onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
                 onMode={(mode) => composerState.change({ type: 'setMode', mode })}
                 onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
+                onVoice={
+                  voiceModeSupported
+                    ? () => navigation.navigate('Voice', { id, subChatId: data.subChatId })
+                    : undefined
+                }
               />
             </View>
           )}

@@ -12,7 +12,7 @@ import { afterChatDeletion } from './after-chat-deletion';
 
 const stackRouter = StackRouter({});
 const stackOptions = {
-  routeNames: ['Chats', 'Flows', 'Queue', 'Chat', 'Run', 'Flow'],
+  routeNames: ['Chats', 'Flows', 'Queue', 'Chat', 'Voice', 'Run', 'Flow'],
   routeParamList: {},
   routeGetIdList: {},
 };
@@ -98,13 +98,14 @@ describe('deleting a conversation', () => {
     expect(result.routes.map((route) => route.key)).toEqual(['queue', 'other']);
   });
 
-  it('pops the open chat to the previous screen and drops retained copies', () => {
+  it('pops the open chat and its voice mode to the previous screen and drops retained copies', () => {
     const flows = stack([
       { key: 'flows', name: 'Flows' },
       { key: 'run', name: 'Run', params: { id: 'run-1' } },
       { key: 'older', name: 'Chat', params: { id: 'a' } },
       { key: 'other', name: 'Chat', params: { id: 'b' } },
       { key: 'chat', name: 'Chat', params: { id: 'a' } },
+      { key: 'voice', name: 'Voice', params: { id: 'a', subChatId: 's' } },
     ]);
     const result = afterChatDeletion(flows, 'a');
     expect(result.routes.map((route) => route.key)).toEqual(['flows', 'run', 'other']);

@@ -62,7 +62,8 @@ function useOpenQueueLink(navigation: Navigation) {
 function rememberChat(navigation: Navigation, deviceId: string | undefined) {
   const route = navigation.getCurrentRoute();
   if (!deviceId || !route || route.name === 'Settings' || route.name === 'Changes') return;
-  const chat = route.name === 'Chat' ? route.params : undefined;
+  // Voice mode belongs to its chat, so a relaunch reopens that chat.
+  const chat = route.name === 'Chat' || route.name === 'Voice' ? route.params : undefined;
   void saveLastChat(deviceId, chat?.id ? { id: chat.id, subChatId: chat.subChatId } : null);
 }
 
