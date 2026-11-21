@@ -28,12 +28,16 @@ let clears = 0;
 /** The clear count when each computer, or every computer (`undefined`), was last cleared. */
 const cleared = new Map<string | undefined, number>();
 
+/** Stores an answer and says whether it did. */
+export type CacheWrite = <T>(key: string, data: T, updatedAt?: number) => boolean;
+
 /** A writer for a request starting now: it stores nothing once the computer is cleared meanwhile. */
-export function cacheWriter(deviceId: string) {
+export function cacheWriter(deviceId: string): CacheWrite {
   const started = clears;
-  return <T>(key: string, data: T, updatedAt = Date.now()) => {
-    if (Math.max(cleared.get(deviceId) ?? 0, cleared.get(undefined) ?? 0) > started) return;
+  return (key, data, updatedAt = Date.now()) => {
+    if (Math.max(cleared.get(deviceId) ?? 0, cleared.get(undefined) ?? 0) > started) return false;
     writeCache(key, deviceId, data, updatedAt);
+    return true;
   };
 }
 

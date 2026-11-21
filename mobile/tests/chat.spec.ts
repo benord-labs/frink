@@ -1,7 +1,19 @@
 import { expect, test, type Page } from '@playwright/test';
-import type { MobileChatDetail, MobileQuestion } from '@frink/shared/types/remote/mobile';
-import { UNREACHABLE, held, openApp, type AppState } from './fixtures/app';
-import { conversation, messageBox, openChat, requestsOf, scrollTranscript } from './fixtures/chat';
+import type {
+  MobileChatDetail,
+  MobileChatOp,
+  MobileMessage,
+  MobileQuestion,
+} from '@frink/shared/types/remote/mobile';
+import { UNKNOWN_REQUEST, UNREACHABLE, held, openApp, type AppState } from './fixtures/app';
+import {
+  changeChat,
+  conversation,
+  messageBox,
+  openChat,
+  requestsOf,
+  scrollTranscript,
+} from './fixtures/chat';
 import { overviewFixture } from './fixtures/data';
 import { openDestination } from './fixtures/navigation';
 
@@ -238,6 +250,100 @@ test.describe('reading a chat', () => {
   });
 });
 
+test.describe('live updates', () => {
+  const appendToReply = (text: string): MobileChatOp => ({
+    op: 'append',
+    messageId: 'm2',
+    partIndex: 3,
+    text,
+  });
+  /** Opens the chat once the computer has answered its live watch; like the desktop, the first
+   *  event waits a moment after that answer. */
+  async function openLiveChat(page: Page, state: AppState) {
+    await openChat(page);
+    await expect.poll(() => state.watches.length).toBe(1);
+    await page.waitForTimeout(250);
+  }
+
+  test('a pushed reply shows at once, without asking for the chat again', async ({ page }) => {
+    const state = await openApp(page, { data: { chat: conversation({}, 'running') } });
+    await openLiveChat(page, state);
+    const reads = requestsOf(state, 'chat').length;
+    expect(state.push([appendToReply(' The suite now passes 20 times in a row.')])).toBe(true);
+    await expect(page.getByText(/The suite now passes 20 times in a row\./)).toBeVisible();
+    expect(requestsOf(state, 'chat')).toHaveLength(reads);
+    expect(requestsOf(state, 'watchChat')).toHaveLength(1);
+  });
+
+  test('during a steady stream, a change the computer did not push shows within 15 s', async ({
+    page,
+  }) => {
+    const running = conversation({}, 'running');
+    const state = await openApp(page, { data: { chat: running } });
+    await openLiveChat(page, state);
+    const reads = requestsOf(state, 'chat').length;
+    state.data.chat = { ...running, chat: { ...running.chat, name: 'Renamed on the computer' } };
+    for (let second = 0; second < 16; second++) {
+      state.push([appendToReply('.')]);
+      await page.clock.runFor(1000);
+    }
+    await expect(page.getByText('Renamed on the computer').first()).toBeVisible();
+    expect(requestsOf(state, 'chat')).toHaveLength(reads);
+    expect(requestsOf(state, 'watchChat')).toHaveLength(2);
+  });
+
+  test('a skipped event asks for a fresh copy exactly once', async ({ page }) => {
+    const state = await openApp(page, { data: { chat: conversation({}, 'running') } });
+    await openLiveChat(page, state);
+    const [sub] = state.watches;
+    expect(state.push([appendToReply(' Skipped ahead.')], { seq: 5 })).toBe(true);
+    await expect.poll(() => requestsOf(state, 'watchChat').length).toBe(2);
+    expect(requestsOf(state, 'unwatchChat')).toEqual([{ type: 'unwatchChat', sub }]);
+    await expect(page.getByText(/Skipped ahead/)).toHaveCount(0);
+    await page.waitForTimeout(1000);
+    expect(requestsOf(state, 'watchChat')).toHaveLength(2);
+  });
+
+  test('an older computer that cannot push keeps the chat on quick polls, with no error', async ({
+    page,
+  }) => {
+    const state = await openApp(page, {
+      data: { chat: conversation({}, 'running') },
+      respond: (input) => (input.type === 'watchChat' ? UNKNOWN_REQUEST : undefined),
+    });
+    await openChat(page);
+    await expect.poll(() => requestsOf(state, 'watchChat').length).toBe(1);
+    const reads = requestsOf(state, 'chat').length;
+    await page.clock.runFor(4500);
+    await expect.poll(() => requestsOf(state, 'chat').length).toBeGreaterThan(reads);
+    await expect(page.getByText(/Invalid request/)).toHaveCount(0);
+    await expect(page.getByTestId('message-m2')).toBeVisible();
+  });
+
+  test('a message sent from the phone settles when its saved copy is pushed', async ({ page }) => {
+    const state = await openApp(page, {
+      data: { chat: conversation() },
+      respond: (input) => (input.type === 'sendMessage' ? { ok: true } : undefined),
+    });
+    await openLiveChat(page, state);
+    await messageBox(page).fill('Run it once more on CI');
+    await send(page).click();
+    await expect.poll(() => requestsOf(state, 'sendMessage')).toHaveLength(1);
+    const [sent] = requestsOf(state, 'sendMessage');
+    await expect(page.getByText('Sending…', { exact: true })).toBeVisible();
+    // A send's follow-up read is a fresh copy through the stream, on a new watch.
+    await expect.poll(() => state.watches.length).toBe(2);
+    const saved: MobileMessage = {
+      id: String(sent.requestId),
+      role: 'user',
+      text: 'Run it once more on CI',
+    };
+    expect(state.push([{ op: 'upsert', message: saved }])).toBe(true);
+    await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Run it once more on CI', { exact: true })).toHaveCount(1);
+  });
+});
+
 test.describe('scrolling', () => {
   test('follows new messages without moving a reader of earlier ones', async ({ page }) => {
     const messages = longTranscript(30);
@@ -247,9 +353,10 @@ test.describe('scrolling', () => {
     await scrollTranscript(page, 600);
     const latest = page.getByRole('button', { name: 'Latest', exact: true });
     await expect(latest).toBeVisible();
-    state.data.chat = conversation({
-      messages: [...messages, { id: 'newest', role: 'assistant', text: 'New while you read.' }],
-    });
+    const newest: MobileMessage = { id: 'newest', role: 'assistant', text: 'New while you read.' };
+    state.data.chat = conversation({ messages: [...messages, newest] });
+    // Sent once, as soon as the chat's live watch is open.
+    await expect.poll(() => state.push([{ op: 'upsert', message: newest }])).toBe(true);
     await expect(page.getByTestId('message-newest')).toBeAttached();
     await expect(page.getByTestId('message-newest')).not.toBeInViewport();
     // Copy belongs to the newest reply only, so a long chat isn't a column of icons.
@@ -400,7 +507,7 @@ test.describe('sending and steering', () => {
     await expect(messageBox(page)).toHaveValue('');
     await page.screenshot({ path: 'test-results/chat-not-delivered-dark.png' });
     // A retry stays a send under its id even once a turn runs, so a saved copy is never steered in.
-    state.data.chat = conversation({}, 'running');
+    changeChat(state, conversation({}, 'running'));
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Guide Frink while it works');
     await retry.click();
     await expect(retry).toHaveCount(0);
@@ -467,15 +574,20 @@ test.describe('sending and steering', () => {
     // Taken, but the agent hasn't reached its next step: reads without its note keep the bubble.
     const waiting = page.getByText('Frink reads this at its next step', { exact: true });
     await expect(waiting).toBeVisible();
-    const reads = requestsOf(state, 'chat').length;
-    await expect.poll(() => requestsOf(state, 'chat').length).toBeGreaterThan(reads + 1);
+    const copies = requestsOf(state, 'watchChat').length;
+    await page.clock.fastForward(16_000);
+    await expect.poll(() => requestsOf(state, 'watchChat').length).toBeGreaterThan(copies);
     await expect(waiting).toBeVisible();
     // The computer shows the steer inside the running reply, never as a message of its own.
     // SAFETY: this test opened the app with a chat.
     const chat = state.data.chat as MobileChatDetail;
-    const parts = [{ type: 'steer', text: 'Use the existing waitForFrame helper' }];
-    const reply = { id: 'steered-reply', role: 'assistant', text: '', parts };
-    state.data.chat = { ...chat, messages: [...chat.messages, reply] };
+    const reply: MobileMessage = {
+      id: 'steered-reply',
+      role: 'assistant',
+      text: '',
+      parts: [{ type: 'steer', text: 'Use the existing waitForFrame helper' }],
+    };
+    changeChat(state, { ...chat, messages: [...chat.messages, reply] });
     await expect(waiting).toHaveCount(0);
     await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
     await expect(
@@ -517,7 +629,7 @@ test.describe('sending and steering', () => {
     await expect.poll(() => requestsOf(state, 'steerMessage').length).toBe(2);
     await expect(retry).toBeVisible();
     // Once the chat is idle the same text starts a turn instead.
-    state.data.chat = conversation();
+    changeChat(state, conversation());
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Message Frink');
     await retry.click();
     await expect(retry).toHaveCount(0);
