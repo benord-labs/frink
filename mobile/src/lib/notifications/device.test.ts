@@ -8,6 +8,7 @@ const native = vi.hoisted(() => ({
   addNotificationResponseReceivedListener: vi.fn(),
   getLastNotificationResponse: vi.fn(),
   clearLastNotificationResponse: vi.fn(),
+  setNotificationCategoryAsync: vi.fn(() => Promise.resolve()),
   IosAuthorizationStatus: { PROVISIONAL: 3 },
   DEFAULT_ACTION_IDENTIFIER: 'open',
 }));
@@ -41,8 +42,45 @@ it('consumes cold-start and live notification taps once and removes its listener
   const open = vi.fn();
   const stop = onNotificationOpened(open);
   native.addNotificationResponseReceivedListener.mock.calls[0][0](response);
-  expect(open).toHaveBeenCalledExactlyOnceWith({ chatId: 'chat' });
+  expect(open).toHaveBeenCalledExactlyOnceWith({ chatId: 'chat' }, 'open');
   expect(native.clearLastNotificationResponse).toHaveBeenCalledOnce();
   stop();
   expect(remove).toHaveBeenCalledOnce();
+});
+it('passes on Allow and Deny taps, but no other action', () => {
+  const tap = (actionIdentifier: string, identifier: string) => ({
+    actionIdentifier,
+    notification: { request: { identifier, content: { data: { chatId: 'chat' } } } },
+  });
+  native.getLastNotificationResponse.mockReturnValue(null);
+  native.addNotificationResponseReceivedListener.mockReturnValue({ remove: vi.fn() });
+  const open = vi.fn();
+  onNotificationOpened(open);
+  const consume = native.addNotificationResponseReceivedListener.mock.calls[0][0];
+  consume(tap('allow', 'one'));
+  consume(tap('reply', 'two'));
+  consume(tap('deny', 'three'));
+  expect(open.mock.calls).toEqual([
+    [{ chatId: 'chat' }, 'allow'],
+    [{ chatId: 'chat' }, 'deny'],
+  ]);
+});
+it('drops a tap delivered twice, but lets the same alert be answered with the other button', () => {
+  const tap = (actionIdentifier: string) => ({
+    actionIdentifier,
+    notification: { request: { identifier: 'one', content: { data: { chatId: 'chat' } } } },
+  });
+  native.getLastNotificationResponse.mockReturnValue(null);
+  native.addNotificationResponseReceivedListener.mockReturnValue({ remove: vi.fn() });
+  const open = vi.fn();
+  onNotificationOpened(open);
+  const listeners = native.addNotificationResponseReceivedListener.mock.calls;
+  const consume = listeners[listeners.length - 1][0];
+  consume(tap('allow'));
+  consume(tap('allow'));
+  consume(tap('deny'));
+  expect(open.mock.calls).toEqual([
+    [{ chatId: 'chat' }, 'allow'],
+    [{ chatId: 'chat' }, 'deny'],
+  ]);
 });

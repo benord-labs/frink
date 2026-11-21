@@ -18,6 +18,7 @@ import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { mergeTranscript } from '../../lib/chat/pending';
 import { useChatStream } from '../../lib/chat/use-chat-stream';
 import { useResource } from '../../lib/connection';
+import { useAlertAnswer } from '../../lib/notifications/alert-open';
 import { duration } from '../../lib/status';
 import { closeDeletedChat } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
@@ -50,6 +51,12 @@ function useChatResource(id: string, subChatId: string | undefined) {
   const refresh = useChatStream(id, subChatId, resource, setLive);
   const latest = resource.data?.activity;
   useEffect(() => setActivity(latest), [latest]);
+  const reload = live ? refresh : resource.refresh;
+  // An answer sent from the alert lands after the chat opened, so read the closed request again.
+  const answered = useAlertAnswer(id);
+  useEffect(() => {
+    if (answered) reload();
+  }, [answered]);
   return live ? { ...resource, refresh, pull: refresh } : resource;
 }
 
