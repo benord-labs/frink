@@ -71,6 +71,7 @@ vi.mock('@/lib/hotkeys/shortcut-registry', () => ({
 
 const entry = (path: string, type: string) => ({ name: path.split('/').pop(), path, type });
 const MISSING_FOLDER = "Can't open api's folder. It may have moved or been deleted.";
+const NOT_ANSWERING = "api's folder isn't answering. Its drive may be disconnected or asleep.";
 
 function renderRoot(
   props: Partial<ComponentProps<typeof ExtraProjectRoot>> = {},
@@ -213,8 +214,14 @@ describe('ExtraProjectRoot', () => {
     }
   });
 
-  it.each<[string, Query, Query, 'missing' | 'empty' | 'loading']>([
+  it.each<[string, Query, Query, 'missing' | 'empty' | 'loading' | 'not-answering']>([
     ['says a folder that fails to list may have moved', { isError: true }, {}, 'missing'],
+    [
+      "says a folder whose drive isn't answering may be disconnected, not moved",
+      { data: [] },
+      { data: 'unavailable', isSuccess: true },
+      'not-answering',
+    ],
     [
       'says a folder no longer on disk may have moved',
       { data: [] },
@@ -234,7 +241,9 @@ describe('ExtraProjectRoot', () => {
     const { tree } = renderRoot();
 
     expect(screen.queryByRole('status')?.textContent ?? null).toBe(
-      shows === 'missing' ? MISSING_FOLDER : null,
+      { missing: MISSING_FOLDER, 'not-answering': NOT_ANSWERING, empty: null, loading: null }[
+        shows
+      ],
     );
     expect(Boolean(screen.queryByText('No files in project'))).toBe(shows === 'empty');
     expect(tree.getAttribute('aria-busy')).toBe(shows === 'loading' ? 'true' : null);

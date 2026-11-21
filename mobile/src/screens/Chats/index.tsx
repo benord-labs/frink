@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { ChevronDown, ChevronRight, Plus, SearchX, SquarePen } from 'lucide-react-native';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
@@ -14,7 +22,6 @@ import { closeDeletedChat } from '../../navigation/after-chat-deletion';
 import { Button, IconButton } from '../../ui/button';
 import { EmptyState } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
-import { SearchField } from '../../ui/search-field';
 import { Segmented } from '../../ui/segmented';
 import { Text } from '../../ui/text';
 import { space, useTheme } from '../../ui/theme';
@@ -29,6 +36,7 @@ const VIEWS = [
   { id: 'recent', label: 'Recent' },
   { id: 'projects', label: 'Projects' },
 ] as const;
+const LIST_INSET = 12;
 
 /** On launch, reopen the conversation that was on screen, once, unless something else opened. */
 function useReopenLastChat() {
@@ -36,9 +44,17 @@ function useReopenLastChat() {
   const deviceId = useConnection().connection?.deviceId;
   useEffect(() => {
     if (!deviceId) return;
+    let left = false;
+    // Leaving the list before the saved chat is read means the user already chose where to go.
+    const off = navigation.addListener('blur', () => (left = true));
     void readLastChat(appStore, deviceId).then((chat) => {
-      if (chat && navigation.isFocused()) navigation.navigate('Chat', chat);
+      off();
+      if (chat && !left && navigation.isFocused()) navigation.navigate('Chat', chat);
     });
+    return () => {
+      left = true;
+      off();
+    };
     // Only the first mount reopens; later visits to the list stay on the list.
   }, []);
 }
@@ -62,22 +78,23 @@ function NewChatButton({ ready }: { ready: boolean }) {
 export function ChatsScreen() {
   const root = useRootNavigation();
   const ready = useOverview().data?.executionReady !== false;
-  const [query, setQuery] = useState('');
   const [view, setView] = useState<'recent' | 'projects'>('recent');
-  useScreenHeader({ title: 'Chats' });
+  const { query, header } = useScreenHeader({ title: 'Chats', search: 'Search chats' });
   useReopenLastChat();
   useLayoutEffect(() => {
     const newChat = () => <NewChatButton ready={ready} />;
     root.setOptions({ headerLeft: newChat });
   }, [root, ready]);
+  // The list is the screen's first child so the large title can collapse into the bar on scroll.
   return (
-    <View style={{ flex: 1, minHeight: 0, paddingTop: space.sm }}>
-      <View style={{ paddingHorizontal: 15, gap: space.sm }}>
-        <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" />
-        <Segmented items={VIEWS} value={view} onChange={setView} tabs />
+    <ChatList query={query} view={view} ready={ready}>
+      <View style={{ marginHorizontal: -LIST_INSET }}>
+        {header}
+        <View style={{ paddingHorizontal: 15, paddingTop: space.sm }}>
+          <Segmented items={VIEWS} value={view} onChange={setView} tabs />
+        </View>
       </View>
-      <ChatList query={query} view={view} ready={ready} />
-    </View>
+    </ChatList>
   );
 }
 
@@ -85,10 +102,12 @@ function ChatList({
   query,
   view,
   ready,
+  children,
 }: {
   query: string;
   view: 'recent' | 'projects';
   ready: boolean;
+  children: ReactNode;
 }) {
   const t = useTheme();
   const root = useRootNavigation();
@@ -134,7 +153,8 @@ function ChatList({
     <ScrollView
       testID="chat-list"
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: space.lg }}
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerStyle={{ paddingHorizontal: LIST_INSET, paddingBottom: space.lg }}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       refreshControl={<RefreshControl refreshing={chats.refreshing} onRefresh={chats.pull} />}
@@ -147,6 +167,7 @@ function ChatList({
         page.more();
       }}
     >
+      {children}
       <ResourceStatus {...chats} />
       {sections.map((section) => (
         <View key={section.key}>

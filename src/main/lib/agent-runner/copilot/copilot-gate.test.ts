@@ -11,6 +11,7 @@ import {
   questionsForCopilotTool,
 } from './copilot-gate';
 import { COPILOT_TOOLS, createCopilotGate } from './index';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 
 let cwd = '';
 const outside = path.join(os.tmpdir(), 'copilot gate outside', 'notes.txt');
@@ -323,7 +324,11 @@ function hookInput(toolName: string, toolArgs: JsonValue): PreToolUseHookInput {
 
 type PlanFolder = Parameters<typeof createCopilotGate>[0]['plan'];
 
-function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, plan?: PlanFolder) {
+function testGate(
+  answer: (request: CodexApprovalRequest) => ApprovalOutcome,
+  plan?: PlanFolder,
+  frinkTools?: boolean,
+) {
   const asked: CodexApprovalRequest[] = [];
   const turn = new AbortController();
   const checkApproval: CodexApprovalCheck = async (request) => {
@@ -336,6 +341,7 @@ function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, pl
     checkApproval,
     turnOver: turn.signal,
     plan,
+    frinkTools,
   });
   const decide = (toolName: string, toolArgs: JsonValue): Promise<PreToolUseHookOutput> =>
     gate.onPreToolUse(hookInput(toolName, toolArgs));
@@ -426,6 +432,7 @@ describe('createCopilotGate', () => {
 const SUCCEEDED = {};
 const FAILED = { error: { code: 'failure', message: 'exit 1' } };
 const REFUSED = { error: { code: 'denied', message: 'Denied by preToolUse hook: no' } };
+const INTERRUPTED = { success: false, error: { code: 'interrupted', message: 'interrupted' } };
 
 describe('the stop on an unasked action', () => {
   it('does not trip when a parent and a child run the same command and one was denied', async () => {
@@ -514,6 +521,33 @@ describe('the stop on an unasked action', () => {
     gate.noteExecutionStart('a', 'lsp', { operation: 'hover' });
     expect(gate.actedUnasked('a', SUCCEEDED)).toBe(true);
     expect(gate.actedUnasked('unseen', SUCCEEDED)).toBe(true);
+  });
+
+  it('lets a resume close each call an earlier process left open, once and only as interrupted', () => {
+    const { gate } = testGate(() => ALLOW);
+    gate.noteInterrupted(['a', 'b', 'c', 'd']);
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(false);
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(true);
+    expect(gate.actedUnasked('b', INTERRUPTED)).toBe(false);
+    expect(gate.actedUnasked('c', { success: true })).toBe(true);
+    expect(gate.actedUnasked('d', { ...FAILED, success: false })).toBe(true);
+    expect(gate.actedUnasked('unseen', INTERRUPTED)).toBe(true);
+  });
+
+  it('judges a call left open as usual when it runs again in this turn', () => {
+    const { gate } = testGate(() => ALLOW);
+    gate.noteInterrupted(['a']);
+    gate.noteExecutionStart('a', 'bash', { command: 'touch m.txt' });
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(true);
+  });
+
+  it('no longer lets a call left open close as interrupted once it has run again', async () => {
+    const { gate, decide } = testGate(() => ALLOW);
+    gate.noteInterrupted(['a']);
+    await decide('bash', { command: 'touch m.txt' });
+    gate.noteExecutionStart('a', 'bash', { command: 'touch m.txt' });
+    expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
+    expect(gate.actedUnasked('a', INTERRUPTED)).toBe(true);
   });
 });
 
@@ -647,6 +681,29 @@ describe("the session's own plan file", () => {
     await decide('apply_patch', patch);
     gate.noteExecutionStart('a', 'apply_patch', patch);
     gate.noteExecutionStart('b', 'apply_patch', patch);
+    expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
+    expect(gate.actedUnasked('b', SUCCEEDED)).toBe(true);
+  });
+});
+
+describe("Frink's own tools", () => {
+  const SEARCH = `${FRINK_MCP_KEY}-searchProjects`;
+
+  it('lets an exactly named Frink tool through unasked, only in a turn that offers them', async () => {
+    const offered = testGate(() => DENIED, undefined, true);
+    expect(await offered.decide(SEARCH, { query: '' })).toEqual({ permissionDecision: 'allow' });
+    expect(offered.asked).toEqual([]);
+    const notOffered = testGate(() => ALLOW, undefined, false);
+    expect((await notOffered.decide(SEARCH, { query: '' })).permissionDecision).toBe('deny');
+    for (const name of [`${FRINK_MCP_KEY}-made_up`, 'other-searchProjects']) {
+      expect((await offered.decide(name, {})).permissionDecision).toBe('deny');
+    }
+  });
+
+  it("never trips on Frink's server, and trips on a Frink-named tool any other server ran", () => {
+    const { gate } = testGate(() => DENIED, undefined, true);
+    gate.noteExecutionStart('a', SEARCH, { query: '' }, FRINK_MCP_KEY);
+    gate.noteExecutionStart('b', SEARCH, { query: '' }, 'impostor');
     expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
     expect(gate.actedUnasked('b', SUCCEEDED)).toBe(true);
   });

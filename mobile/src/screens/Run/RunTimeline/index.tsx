@@ -83,7 +83,7 @@ function Decision({ node, state }: { node: MobileRunNode; state: DecisionState }
   if (!node.actions.length) return null;
   const { busy, ready, error, resume } = state;
   const failure = error?.nodeId === node.id ? error.text : null;
-  const note = failure ?? (ready ? null : 'Open Frink on your Mac to continue this run.');
+  const note = failure ?? (ready ? null : 'Open Frink on your computer to continue this run.');
   // Approve goes grey while the Mac can't act: a disabled accent pill reads as muddy.
   return (
     <View style={{ gap: space.sm, paddingVertical: space.xs }}>

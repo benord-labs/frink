@@ -6,6 +6,7 @@ import {
 import { Platform } from 'react-native';
 import { Inbox, MessageCircle, Workflow } from 'lucide-react-native';
 import { useOverview } from '../lib/overview';
+import { ChangesScreen } from '../screens/Changes';
 import { ChatScreen } from '../screens/Chat';
 import { ChatsScreen } from '../screens/Chats';
 import { FlowScreen } from '../screens/Flow';
@@ -63,6 +64,7 @@ function ChatsStack() {
         options={{ ...solid, headerRight: computer }}
       />
       <Stack.Screen name="Chat" component={ChatScreen} options={chat} />
+      <Stack.Screen name="Changes" component={ChangesScreen} options={solid} />
       <Stack.Screen name="Voice" component={VoiceModeScreen} options={voice} />
     </Stack.Navigator>
   );
@@ -80,6 +82,7 @@ function FlowsStack() {
       <Stack.Screen name="Flow" component={FlowScreen} options={solid} />
       <Stack.Screen name="Run" component={RunScreen} options={solid} />
       <Stack.Screen name="Chat" component={ChatScreen} options={chat} />
+      <Stack.Screen name="Changes" component={ChangesScreen} options={solid} />
       <Stack.Screen name="Voice" component={VoiceModeScreen} options={voice} />
     </Stack.Navigator>
   );
@@ -95,6 +98,7 @@ function QueueStack() {
         options={{ ...solid, headerRight: computer }}
       />
       <Stack.Screen name="Chat" component={ChatScreen} options={chat} />
+      <Stack.Screen name="Changes" component={ChangesScreen} options={solid} />
       <Stack.Screen name="Voice" component={VoiceModeScreen} options={voice} />
       <Stack.Screen name="Run" component={RunScreen} options={solid} />
       <Stack.Screen name="Flow" component={FlowScreen} options={solid} />
@@ -115,10 +119,10 @@ export const TABS = [
   { name: 'QueueTab', title: 'Queue', component: QueueStack, symbol: 'tray', icon: Inbox },
 ] as const;
 
-/** A conversation keeps the whole height for its transcript and composer, as does voice mode. */
+/** A conversation, its changes and its voice mode keep the whole height. */
 export function tabBarHidden(route: RouteProp<TabRoutes>) {
-  const name = getFocusedRouteNameFromRoute(route);
-  return name === 'Chat' || name === 'Voice';
+  const focused = getFocusedRouteNameFromRoute(route);
+  return focused === 'Chat' || focused === 'Changes' || focused === 'Voice';
 }
 
 /** The Queue tab's badge: how many items need you, or none. */

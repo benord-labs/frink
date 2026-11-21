@@ -121,12 +121,12 @@ describe('scanNativeMcpSources', () => {
     });
   });
 
-  it("filters out Frink's own injected frink_dynamic_chat entry from Cursor", async () => {
+  it("filters out an entry under Frink's own key from Cursor", async () => {
     readFileMock.mockImplementation(async (fp: string) => {
       if (fp === CURSOR_GLOBAL_PATH) {
         return JSON.stringify({
           mcpServers: {
-            frink_dynamic_chat: { url: 'http://localhost:31415/mcp' },
+            frink: { url: 'http://localhost:31415/mcp' },
             slack: { command: 'npx' },
           },
         });
@@ -137,7 +137,7 @@ describe('scanNativeMcpSources', () => {
     const candidates = await scanNativeMcpSources();
     const names = candidates.map((c) => c.name);
     expect(names).toContain('slack');
-    expect(names).not.toContain('frink_dynamic_chat');
+    expect(names).not.toContain('frink');
   });
 
   // Regression: a `frink` entry in ~/.claude.json points at Frink's own MCP.

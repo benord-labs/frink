@@ -1,5 +1,6 @@
 import log from 'electron-log';
 import { z } from 'zod';
+import { PERMISSION_ALERT_CATEGORY } from '../../../shared/types/remote/notifications';
 import {
   subscribeSessionCompletions,
   type SessionCompletion,
@@ -44,6 +45,8 @@ type Alert = {
   urgent: boolean;
   /** One alert per chat in Notification Center: a newer one replaces the older. */
   collapseId: string;
+  /** Adds the Allow and Deny buttons, which answer `data.permissionRequestId` and nothing else. */
+  categoryId?: typeof PERMISSION_ALERT_CATEGORY;
   data: Record<string, string>;
 };
 
@@ -55,15 +58,21 @@ const finishedAlert = (event: SessionCompletion): Alert => ({
   data: { type: 'session-completed', ...event },
 });
 
-function needsYouAlert(chatId: string, { kind, subChatId }: WaitingChat): Alert {
+function needsYouAlert(chatId: string, { kind, subChatId, requestId }: WaitingChat): Alert {
   // A chat-less task is keyed `task:<id>`; its alert opens the Queue instead of a chat.
   const chat = chatId.startsWith('task:') ? {} : { chatId, ...(subChatId && { subChatId }) };
-  return {
+  const alert: Alert = {
     ...NEEDS_YOU[kind],
     urgent: true,
     collapseId: chatId,
     data: { type: 'needs-you', ...chat },
   };
+  // Only the request's opaque id leaves the computer; what it asks to do stays here.
+  if (kind === 'permission' && requestId && subChatId) {
+    alert.categoryId = PERMISSION_ALERT_CATEGORY;
+    alert.data.permissionRequestId = requestId;
+  }
+  return alert;
 }
 
 async function expoRequest(operation: 'send' | 'getReceipts', body: unknown, signal: AbortSignal) {
@@ -134,7 +143,7 @@ export function startMobileNotifications(
     timer.unref();
     timers.add(timer);
   }
-  async function send({ title, body, urgent, collapseId, data: ids }: Alert) {
+  async function send({ title, body, urgent, collapseId, categoryId, data: ids }: Alert) {
     const recipients = store.notificationRecipients();
     if (!recipients.length || controller.signal.aborted) return;
     try {
@@ -150,6 +159,7 @@ export function startMobileNotifications(
             // Time-sensitive alerts reach the Lock Screen through a Focus the user lets them past.
             interruptionLevel: urgent ? 'time-sensitive' : 'active',
             collapseId,
+            categoryId,
             data: { ...ids, deviceId: recipient.id },
           })),
           controller.signal,

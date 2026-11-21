@@ -33,7 +33,7 @@ type Db = ReturnType<typeof getDatabase>;
 const INTERRUPTED_RUNS_LIMIT = 500;
 
 /** A resume already waits for the run: a queued ticket, or a continuation staged behind its slot. */
-async function hasQueuedResume(flowRunId: string): Promise<boolean> {
+export async function hasQueuedResume(flowRunId: string): Promise<boolean> {
   const { probeFlowAdmission } = await import('../../flows/admission/runtime');
   const { hasStagedContinuation } =
     await import('../../flows/admission/terminal-resume/continuation');

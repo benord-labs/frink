@@ -43,8 +43,6 @@ Right-click a file or folder in the tree and choose **Add to Chat**. Each one ap
 
 In split view, each pane's tree adds to that pane's chat. The item doesn't appear until a chat is open.
 
-> A name with square brackets that the message can't hold, such as `a]b.ts`, isn't added. Frink tells you so; type its path instead.
-
 ## Files named in a reply
 
 When the agent names a file in a reply, the file shows as a badge. Click the badge, or focus it and press **Enter**, to open the file in the editor at the line the reply gives.
@@ -100,6 +98,16 @@ Press **Cmd+Shift+P / Ctrl+Shift+P** (**Search files**) and type part of a file'
 Search files looks in every project in the chat's file tree. When the tree has more than one project, buttons at the top narrow the search to one project, or widen it again with **All in this tree**. A result from a linked project shows that project's name. Search files starts with **All in this tree** each time you open it.
 
 In split view, Search files looks in the projects of the pane you're working in. It doesn't open for a pane with no project, such as a new chat that hasn't started yet.
+
+## Search inside files
+
+On the file tree's **Search** tab, type to look inside the files of every project in the tree. **Aa** matches case, **.ab** matches whole words and **.\*** reads your text as a regular expression.
+
+- **Filter files** (the funnel) opens **Files to include** and **Files to exclude**. Type patterns separated by commas, such as `src, *.ts` or `**/*.test.ts`. A plain name like `gen` matches a folder of that name and everything in it. The filters are saved with the other search options.
+- The usual build and dependency folders, such as `node_modules` and `dist`, are always left out. Your `.gitignore` is not used.
+- A search shows at most 200 matches. If it runs for 30 seconds it stops and says so, keeping the matches it found. Narrow it with **Files to include**.
+- Typing a new search stops the one before it, so Frink stays responsive while you type, even with a slow regular expression.
+- A linked file is searched when it points at a file inside the project. Linked folders are not searched, and nothing outside the project is read.
 
 ## Symbolic links in the tree
 

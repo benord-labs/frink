@@ -1,9 +1,8 @@
-import { Fragment } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable } from 'react-native';
 import type { MobileFlow, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { runStatus } from '../../../lib/status';
 import { useRootNavigation } from '../../../navigation/routes';
-import { ListRow, RowSeparator } from '../../../ui/list';
+import { ListGroup, ListRow } from '../../../ui/list';
 import { Text } from '../../../ui/text';
 import { GUTTER, space } from '../../../ui/theme';
 import { StatusGlyph } from '../../../ui/glyphs';
@@ -63,12 +62,9 @@ export function RecentRuns({
       </Text>
     );
   return (
-    <View>
-      {runs.items.map((run, index) => (
-        <Fragment key={run.id}>
-          {index > 0 && <RowSeparator />}
-          <RunRow run={run} shown={liveStatus(flow, run)} />
-        </Fragment>
+    <ListGroup>
+      {runs.items.map((run) => (
+        <RunRow key={run.id} run={run} shown={liveStatus(flow, run)} />
       ))}
       {runs.hasMore && (
         <Pressable
@@ -92,6 +88,6 @@ export function RecentRuns({
           </Text>
         </Pressable>
       )}
-    </View>
+    </ListGroup>
   );
 }

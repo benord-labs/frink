@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseMention } from '../../../shared/lib/mentions/parse-mention';
+import {
+  isOpenEditorFile,
+  parseMention,
+  pickedPathMention,
+} from '../../../shared/lib/mentions/parse-mention';
 import {
   attachedContextFile,
   buildQueuedMessageText,
@@ -228,6 +232,15 @@ describe('openFileMention', () => {
   it('skips a file the text already mentions, and only that file', () => {
     expect(openFileMention(file, `${token} hello`)).toBeNull();
     expect(openFileMention(file, '@[file:editor:/repo/other.md] hello')).toBe(token);
+  });
+
+  it('sends the whole path of an open file the plain token would cut short', () => {
+    const token = openFileMention({ path: '/repo/a]b.ts' }, 'hello') ?? '';
+    const mention = parseMention(token.slice(2, -1));
+    expect(mention?.path).toBe('/repo/a]b.ts');
+    expect(mention && isOpenEditorFile(mention)).toBe(true);
+    const picked = `@[${pickedPathMention('file', '/repo/a]b.ts').id}]`;
+    expect(openFileMention({ path: '/repo/a]b.ts' }, `read ${picked}`)).toBeNull();
   });
 
   it('skips a file the user already picked from the @ menu', () => {

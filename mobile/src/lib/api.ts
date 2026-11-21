@@ -52,7 +52,9 @@ async function post(
   const result = parseResponse(response.body);
   if (response.status < 200 || response.status >= 300)
     throw new ApiError(
-      typeof result.error === 'string' ? result.error : 'Frink on your Mac couldn’t complete this.',
+      typeof result.error === 'string'
+        ? result.error
+        : 'Frink on your computer couldn’t complete this.',
       response.status,
     );
   return result;
@@ -92,11 +94,11 @@ export async function pairComputer(text: string, name: string): Promise<Connecti
   closeMobileRelay();
   const result = await jsonPost(pairing, '/pair', { code: pairing.code, name });
   if (result.apiVersion !== MOBILE_API_VERSION)
-    throw new Error('Update Frink on your Mac and this iPhone so they match.');
+    throw new Error('Update Frink on your computer and this iPhone so they match.');
   return connectionSchema.parse({ ...pairing, ...result, pairedAt: Date.now() });
 }
 
-/** Requests that change nothing on the Mac, so a lost one is safe to ask again. */
+/** Requests that change nothing on the computer, so a lost one is safe to ask again. */
 const READ_TYPES: ReadonlySet<MobileRequest['type']> = new Set([
   'overview',
   'flows',
@@ -106,6 +108,7 @@ const READ_TYPES: ReadonlySet<MobileRequest['type']> = new Set([
   'projects',
   'chat',
   'composer',
+  'chatChanges',
 ]);
 
 export async function requestMobile<T extends MobileRequest>(
@@ -125,7 +128,7 @@ export async function requestMobile<T extends MobileRequest>(
   }
 }
 
-/** Reads this iPhone's alert registration on the Mac; a `token` registers it, `null` removes it. */
+/** Reads this iPhone's alert registration on the computer; a `token` registers it, `null` removes it. */
 export async function requestNotifications(
   connection: Connection,
   input: NotificationRegistration,

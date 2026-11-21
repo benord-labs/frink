@@ -1,73 +1,74 @@
 import * as Crypto from 'expo-crypto';
-import { useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
-import { Activity, Play } from 'lucide-react-native';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
+import { Play } from 'lucide-react-native';
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useAction } from '../../../lib/connection';
 import { useRootNavigation } from '../../../navigation/routes';
-import { Button } from '../../../ui/button';
-import { ListRow } from '../../../ui/list';
+import { StatusGlyph } from '../../../ui/glyphs';
+import { ListGroup, ListRow } from '../../../ui/list';
 import { Switch } from '../../../ui/switch';
 import { Text } from '../../../ui/text';
-import { GUTTER, space } from '../../../ui/theme';
+import { GUTTER, space, useTheme } from '../../../ui/theme';
 import { flowStatus } from '../../Flows/flow-list';
-import { isTerminal } from '../../Run/run-view';
-import { currentRunId, enabledHint, runNowBlocker } from '../flow-view';
+import { currentRunId, runNowBlocker, saveEnabled, triggerWords } from '../flow-view';
 
-function EnabledRow({ flow, onChanged }: { flow: MobileFlow; onChanged: () => void }) {
+/** Puts the Flow's on/off switch in the navigation bar; returns its shown position and any error. */
+export function useEnabledSwitch(flow: MobileFlow | undefined, onChanged: () => void) {
+  const navigation = useRootNavigation();
   const action = useAction();
   // Holds the new position until the computer's next answer confirms it, so the switch never snaps back.
   const [pending, setPending] = useState<boolean | null>(null);
+  const saved = flow?.enabled;
   useEffect(() => {
-    if (pending === flow.enabled) setPending(null);
-  }, [pending, flow.enabled]);
-  const enabled = pending ?? flow.enabled;
-  async function toggle(value: boolean) {
-    setPending(value);
-    if (await action.run({ type: 'setFlowEnabled', id: flow.id, enabled: value })) onChanged();
-    else setPending(null);
-  }
-  return (
-    <View>
-      <ListRow
-        title="Enabled"
-        subtitle={enabledHint({ enabled, trigger: flow.trigger })}
-        trailing={
-          <Switch
-            accessibilityLabel="Enabled"
-            value={enabled}
-            disabled={action.busy}
-            onValueChange={(value) => void toggle(value)}
-          />
-        }
-      />
-      {action.error && (
-        <Text variant="secondary" color="danger" style={{ paddingHorizontal: GUTTER }}>
-          {action.error}
-        </Text>
-      )}
-    </View>
-  );
+    if (pending === saved) setPending(null);
+  }, [pending, saved]);
+  const enabled = pending ?? saved;
+  const toggle = useRef<(value: boolean) => void>(() => {});
+  toggle.current = (value) => {
+    if (!flow) return;
+    const send = async (enabled: boolean) =>
+      !!(await action.run({ type: 'setFlowEnabled', id: flow.id, enabled }));
+    void saveEnabled(value, { show: setPending, send, saved: onChanged });
+  };
+  const busy = action.busy;
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight:
+        enabled === undefined
+          ? undefined
+          : () => (
+              <Switch
+                accessibilityLabel="Enabled"
+                value={enabled}
+                disabled={busy}
+                onValueChange={(value) => toggle.current(value)}
+              />
+            ),
+    });
+  }, [navigation, enabled, busy]);
+  return { enabled, error: action.error };
 }
 
-function RunNow({
+/** The live run and its state, which opens it; or Run now, with what it waits on. */
+export function PrimaryRow({
   flow,
   executionReady,
+  switchError,
   onChanged,
 }: {
   flow: MobileFlow;
   executionReady?: boolean;
+  switchError: string | null;
   onChanged: () => void;
 }) {
+  const t = useTheme();
   const navigation = useRootNavigation();
   const action = useAction();
   // One id per intended run: a retry after a lost answer can't start a second run.
   const requestId = useRef(Crypto.randomUUID());
   const current = currentRunId(flow);
-  const blocker =
-    flow.status && !isTerminal(flow.status) && !current
-      ? 'Refresh to find the current run.'
-      : runNowBlocker(flow, executionReady);
+  const blocker = runNowBlocker(flow, executionReady);
   async function start() {
     const result = await action.run({
       type: 'startFlow',
@@ -80,49 +81,37 @@ function RunNow({
     onChanged();
     navigation.navigate('Run', { id: result.id });
   }
-  if (current)
-    return (
-      <View style={{ paddingHorizontal: GUTTER, gap: space.sm }}>
-        <Text variant="secondary" color="secondary">
-          {flowStatus(flow).word}
-        </Text>
-        <Button icon={Activity} onPress={() => navigation.navigate('Run', { id: current })}>
-          View current run
-        </Button>
-      </View>
-    );
+  const status = flowStatus(flow);
+  const error = action.error ?? switchError;
   return (
-    <View style={{ paddingHorizontal: GUTTER, gap: space.sm }}>
-      <Button icon={Play} disabled={!!blocker} busy={action.busy} onPress={() => void start()}>
-        Run now
-      </Button>
-      {(action.error ?? blocker) && (
-        <Text
-          variant="secondary"
-          color={action.error ? 'danger' : 'muted'}
-          style={{ textAlign: 'center' }}
-        >
-          {action.error ?? blocker}
+    <View style={{ gap: space.sm }}>
+      <ListGroup>
+        {current ? (
+          <ListRow
+            testID="flow-current-run"
+            accessibilityLabel="View current run"
+            leading={<StatusGlyph glyph={status.glyph} tone={status.tone} size={18} />}
+            title="View current run"
+            onPress={() => navigation.navigate('Run', { id: current })}
+          />
+        ) : (
+          <ListRow
+            testID="flow-run-now"
+            accessibilityLabel="Run now"
+            leading={<Play size={18} color={blocker ? t.muted : t.accent} />}
+            title="Run now"
+            subtitle={blocker ?? triggerWords(flow.trigger)}
+            trailing={action.busy && <ActivityIndicator color={t.muted} />}
+            dimmed={!!blocker}
+            onPress={blocker ? undefined : () => void start()}
+          />
+        )}
+      </ListGroup>
+      {error && (
+        <Text variant="secondary" color="danger" style={{ paddingHorizontal: GUTTER }}>
+          {error}
         </Text>
       )}
-    </View>
-  );
-}
-
-/** Run now, then the switch that turns the Flow on or off. */
-export function FlowControls({
-  flow,
-  executionReady,
-  onChanged,
-}: {
-  flow: MobileFlow;
-  executionReady?: boolean;
-  onChanged: () => void;
-}) {
-  return (
-    <View style={{ gap: space.lg }}>
-      <RunNow flow={flow} executionReady={executionReady} onChanged={onChanged} />
-      <EnabledRow flow={flow} onChanged={onChanged} />
     </View>
   );
 }

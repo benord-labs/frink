@@ -209,7 +209,7 @@ function registerAdoptedCallbackTests(harness: ClaudeTurnBindingHarness): void {
     mockHeldSession(claudeQueryMock, async ({ options }) => {
       vi.mocked(getTaskById).mockClear();
       await options.canUseTool(
-        'mcp__frink_dynamic_chat__frink_task_signal',
+        'mcp__frink__frink_task_signal',
         { state: 'done', summary: 'coverage green' },
         toolCall('signal-1'),
       );
@@ -417,7 +417,7 @@ function registerStopHookTests(harness: ClaudeTurnBindingHarness): void {
       decisions.push(await stop(stopInput()));
       vi.mocked(getTaskById).mockClear();
       await input.options.canUseTool(
-        'mcp__frink_dynamic_chat__frink_task_signal',
+        'mcp__frink__frink_task_signal',
         { state: 'done', summary: 'coverage green' },
         toolCall('signal-1'),
       );

@@ -27,6 +27,10 @@ import {
   type TurnSetup,
 } from './drive';
 import {
+  FRINK_TOOL,
+  FRINK_TOOL_CALL,
+  FRINK_TOOL_ERROR,
+  FRINK_TOOL_FAILED,
   LINKED_PROJECT,
   REPLY,
   type ScenarioFixtures,
@@ -36,6 +40,7 @@ import {
   WRITE_FILE,
   WRITE_PATH,
 } from './fixtures';
+import { frinkToolPartName } from '../../../../../shared/lib/mcp-tool-name';
 import { SESSION_SCENARIOS } from './sessions';
 import { expectStagedNotLoadedReported, playStagedNotLoaded } from './staged-not-loaded';
 
@@ -76,6 +81,35 @@ function expectWriteCard(seen: Observed, runtime: AgentRuntime): void {
   expect(seen.chunks).toContainEqual(
     expect.objectContaining({ type: 'tool-output-available', toolCallId: card.toolCallId }),
   );
+}
+
+/** A Frink tool call shows as its own card on every runtime, its text result intact. */
+function expectFrinkToolCard(seen: Observed): void {
+  const toolName = frinkToolPartName(FRINK_TOOL.tool);
+  const cardIds = seen.chunks.flatMap((chunk) =>
+    chunk.type === 'tool-input-available' && chunk.toolName === toolName ? [chunk.toolCallId] : [],
+  );
+  expect(cardIds).not.toEqual([]);
+  const output = seen.chunks.find(
+    (chunk) => chunk.type === 'tool-output-available' && cardIds.includes(chunk.toolCallId),
+  );
+  expect(JSON.stringify(output)).toContain(FRINK_TOOL.resultWord);
+}
+
+/** A Frink tool's isError result shows as a failed card on every runtime, with its reason. */
+function expectFrinkToolErrorCard(seen: Observed): void {
+  const toolName = frinkToolPartName(FRINK_TOOL.tool);
+  const cardIds = seen.chunks.flatMap((chunk) =>
+    chunk.type === 'tool-input-available' && chunk.toolName === toolName ? [chunk.toolCallId] : [],
+  );
+  const failed = seen.chunks.find(
+    (chunk) => chunk.type === 'tool-output-error' && cardIds.includes(chunk.toolCallId),
+  );
+  expect(JSON.stringify(failed)).toContain(FRINK_TOOL_ERROR);
+  const shownAsDone = seen.chunks.some(
+    (chunk) => chunk.type === 'tool-output-available' && cardIds.includes(chunk.toolCallId),
+  );
+  expect(shownAsDone).toBe(false);
 }
 
 function expectFileChanged(seen: Observed): void {
@@ -179,6 +213,12 @@ const SCENARIOS: Scenario[] = [
     // A `/compact` goes out bare, so no note becomes its summary instructions.
     play: once(SIMPLE_TURN, { links: [LINKED_PROJECT], message: '/compact', delivery: PERSON }),
     check: expectPlainTurn,
+  },
+  { id: 'frink-tool-card', play: once(FRINK_TOOL_CALL), check: expectFrinkToolCard },
+  {
+    id: 'frink-tool-error-card',
+    play: once(FRINK_TOOL_FAILED),
+    check: expectFrinkToolErrorCard,
   },
   ...SESSION_SCENARIOS,
   ...APPROVAL_SCENARIOS,

@@ -1,6 +1,4 @@
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
-import type { Status } from '../../lib/status';
-import { flowStatus } from '../Flows/flow-list';
 import { isTerminal } from '../Run/run-view';
 
 /** A parked run still owns this Flow's primary action. Never start over it. */
@@ -14,38 +12,36 @@ const AUTOMATIC: Record<string, string> = {
   post_task_trigger: 'Runs after a task finishes',
 };
 
-/** What the Enabled switch controls, in words. A disabled Flow can't run at all, even by hand. */
-export function enabledHint(flow: Pick<MobileFlow, 'enabled' | 'trigger'>): string {
-  if (!flow.enabled) return 'Off. Turn it on to run it.';
-  return AUTOMATIC[flow.trigger] ?? 'Runs when you start it';
+/** How a Flow starts, in words. */
+export function triggerWords(trigger: string): string {
+  return AUTOMATIC[trigger] ?? 'Runs when you start it';
 }
 
-/** Why "Run now" can't be pressed, or null when it can. A live run is offered instead of it. */
+/** Why "Run now" can't be pressed, or null when it can. Any unfinished run blocks a second one. */
 export function runNowBlocker(
-  flow: Pick<MobileFlow, 'enabled'>,
+  flow: Pick<MobileFlow, 'enabled' | 'status'>,
   executionReady: boolean | undefined,
 ): string | null {
+  if (flow.status && !isTerminal(flow.status)) return 'Refresh to find the current run.';
   if (executionReady === false) return 'Open Frink on your Mac to run Flows.';
   if (!flow.enabled) return 'Turn this Flow on to run it.';
   return null;
 }
 
-export type FlowAttention = { status: Status; title: string; subtitle: string; runId: string };
-
-/** What a Flow in "Needs you" is waiting on, and which run to open to act on it. */
-export function flowAttention(flow: MobileFlow): FlowAttention | null {
-  const status = flowStatus(flow);
-  // `status` comes from the live run when there is one, otherwise from the newest run.
-  const runId = flow.status ? flow.latestRunId : (flow.lastRun?.id ?? null);
-  if (!runId) return null;
-  if (status.tone === 'attention')
-    return { status, title: 'Waiting for you', subtitle: 'Open the run to decide', runId };
-  if (status.tone === 'danger')
-    return {
-      status,
-      title: 'Last run failed',
-      subtitle: 'Open the run to see what went wrong',
-      runId,
-    };
-  return null;
+/** Shows the switch at its new position while saving; it moves back only if the computer refused. */
+export async function saveEnabled(
+  value: boolean,
+  {
+    show,
+    send,
+    saved,
+  }: {
+    show: (value: boolean | null) => void;
+    send: (value: boolean) => Promise<boolean>;
+    saved: () => void;
+  },
+) {
+  show(value);
+  if (await send(value)) saved();
+  else show(null);
 }

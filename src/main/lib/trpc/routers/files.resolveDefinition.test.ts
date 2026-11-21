@@ -99,6 +99,27 @@ describe('filesRouter.resolveDefinition', () => {
     expect(result).toEqual({ path: fooPath, line: 1, column: 14, endColumn: 17 });
   });
 
+  // zod strips unknown keys and rejects a null it does not allow; either would disable the fix.
+  it('reads the unsaved buffer of an open target instead of the file on disk', async () => {
+    const srcDir = join(projectPath, 'src');
+    await mkdir(srcDir, { recursive: true });
+    const fooPath = join(srcDir, 'foo.ts');
+    await writeFile(fooPath, 'export const Foo = 1;', 'utf8');
+    const fileContent = "import { Foo } from './foo';\nFoo;";
+
+    const { filesRouter } = await import('./files');
+    const caller = filesRouter.createCaller({ getWindow: () => null });
+    const result = await caller.resolveDefinition({
+      projectPath,
+      containingFile: join(srcDir, 'index.ts'),
+      fileContent,
+      offset: fileContent.lastIndexOf('Foo'),
+      openBuffers: { [fooPath]: '\n\nexport const Foo = 1;', [join(srcDir, 'big.ts')]: null },
+    });
+
+    expect(result).toMatchObject({ path: fooPath, line: 3, column: 14 });
+  });
+
   it('resolves via specifier when provided (e.g. from quoted string in CSS)', async () => {
     const srcDir = join(projectPath, 'src');
     await mkdir(join(srcDir, 'styles'), { recursive: true });

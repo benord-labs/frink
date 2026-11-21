@@ -106,7 +106,7 @@ function FrinkStatus(
   const status = text(
     stale
       ? 'May be out of date'
-      : pick('Waiting for you', 'Working on your Mac', 'Nothing running'),
+      : pick('Waiting for you', 'Working on your computer', 'Nothing running'),
     14,
     secondary,
     'medium',

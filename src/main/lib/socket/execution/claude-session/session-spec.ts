@@ -28,7 +28,7 @@ import {
 } from '../../../debug-ingest/ingest-server';
 import { getDebugLogPath } from '../../../debug-ingest/log-manager';
 import { buildFrinkSystemPromptAppend } from '../../../frink-system-prompt';
-import { withChannelQuery } from '../../../mcp/execution-identity';
+import { frinkToolsServer } from '../../../mcp/runtime/frink-tools-server';
 import { resolveFrinkMcpServers } from '../../../mcp/runtime';
 import { createClaudeMcpConfigTransport } from '../../../mcp/runtime/mcp-config-transport';
 import { ensureLoginShellEnv } from '../../../platform/login-shell-env';
@@ -183,8 +183,13 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
 
   // This execute's CLI channel: live only once its CLI spawns (an adopted session keeps its own).
   const claudeChannel = crypto.randomUUID();
-  const claudeDynamicChatMcpUrl =
-    dynamicChatMcpUrl && withChannelQuery(dynamicChatMcpUrl, claudeChannel, Boolean(signalTaskId));
+  const claudeDynamicChatMcpUrl = frinkToolsServer({
+    baseUrl: dynamicChatMcpUrl,
+    subChatId,
+    runtime: 'claude',
+    hasSignalTask: Boolean(signalTaskId),
+    channel: claudeChannel,
+  })?.url;
   const { servers: mcpServers } = await resolveFrinkMcpServers({
     projectId: inputs.projectId,
     projectPath,

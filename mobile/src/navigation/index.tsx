@@ -20,7 +20,7 @@ import { appStore } from '../lib/storage';
 import { SettingsScreen } from '../screens/Settings';
 import { useReduceMotion } from '../ui/glyphs';
 import { useTheme } from '../ui/theme';
-import { alertActions, SHOW_QUEUE } from './open-alert';
+import { alertActions, showQueue } from './open-alert';
 import type { AppRoutes } from './routes';
 import { Tabs } from './tabs';
 
@@ -52,7 +52,7 @@ function useOpenQueueLink(navigation: Navigation) {
   useEffect(
     () =>
       onQueueLink(() => {
-        if (navigation.isReady()) navigation.dispatch(SHOW_QUEUE);
+        if (navigation.isReady()) navigation.dispatch(showQueue());
       }),
     [navigation],
   );
@@ -61,7 +61,7 @@ function useOpenQueueLink(navigation: Navigation) {
 /** Remembers the conversation on screen, so the next launch reopens it. */
 function rememberChat(navigation: Navigation, deviceId: string | undefined) {
   const route = navigation.getCurrentRoute();
-  if (!deviceId || !route || route.name === 'Settings') return;
+  if (!deviceId || !route || route.name === 'Settings' || route.name === 'Changes') return;
   // Voice mode belongs to its chat, so a relaunch reopens that chat.
   const chat = route.name === 'Chat' || route.name === 'Voice' ? route.params : undefined;
   void saveLastChat(deviceId, chat?.id ? { id: chat.id, subChatId: chat.subChatId } : null);

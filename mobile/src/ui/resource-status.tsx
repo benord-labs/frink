@@ -6,8 +6,8 @@ import { GUTTER, radius, space, useTheme } from './theme';
 // A lost connection with earlier data reads as waiting; a server error names what failed.
 function statusCopy(error: string, errorStatus: number | undefined, time: string | null) {
   if (errorStatus !== 0) return { title: 'Couldn’t refresh', detail: error };
-  if (!time) return { title: 'Can’t reach your Mac', detail: error };
-  return { title: 'Can’t reach your Mac', detail: `Showing what it sent at ${time}.` };
+  if (!time) return { title: 'Can’t reach your computer', detail: error };
+  return { title: 'Can’t reach your computer', detail: `Showing what it sent at ${time}.` };
 }
 
 /** Offline / failed-refresh banner for the top of any screen. Renders nothing when healthy. */

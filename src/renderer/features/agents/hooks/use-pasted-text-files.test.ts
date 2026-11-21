@@ -148,6 +148,106 @@ describe('usePastedTextFiles', () => {
     ]);
   });
 
+  it('copies every file of one drop into the sub-chat it was dropped in, even after a switch', async () => {
+    let finishFirst: (value: { filePath: string; filename: string; size: number }) => void;
+    attachAsync.mockReturnValueOnce(new Promise((resolve) => (finishFirst = resolve)));
+    attachAsync.mockResolvedValueOnce({
+      filePath: '/s/sub-a/pasted/b.md',
+      filename: 'b.md',
+      size: 5,
+    });
+    const targetFor = (sub: string) => ({ key: getSubChatDraftKey('chat-1', sub), newChat: false });
+    const { rerender, result } = renderHook(({ sub }) => usePastedTextFiles(sub, targetFor(sub)), {
+      initialProps: { sub: 'sub-a' },
+    });
+    let drop: Promise<void> = Promise.resolve();
+    act(() => {
+      drop = result.current.addPastedFiles([fileOf('a.md', 5), fileOf('b.md', 5)]);
+    });
+    rerender({ sub: 'sub-b' });
+
+    await act(async () => {
+      finishFirst({ filePath: '/s/sub-a/pasted/a.md', filename: 'a.md', size: 5 });
+      await drop;
+    });
+
+    expect(attachAsync).toHaveBeenNthCalledWith(2, expect.objectContaining({ subChatId: 'sub-a' }));
+    expect(readDraft(getSubChatDraftKey('chat-1', 'sub-a'))?.pastedTexts).toHaveLength(2);
+    expect(result.current.pastedTexts).toHaveLength(0);
+  });
+
+  describe('a large paste still saving', () => {
+    const targetFor = (sub: string) => ({ key: getSubChatDraftKey('chat-1', sub), newChat: false });
+    const saved = { filePath: '/s/sub-a/pasted/p.txt', filename: 'p.txt', size: 6000 };
+    let finishSave: (value: typeof saved) => void;
+    let failSave: (error: Error) => void;
+
+    beforeEach(() => {
+      mutateAsync.mockReturnValue(
+        new Promise((resolve, reject) => {
+          finishSave = resolve;
+          failSave = reject;
+        }),
+      );
+    });
+
+    const startPaste = (sub = 'sub-a') => {
+      const hook = renderHook(({ sub: s }) => usePastedTextFiles(s, targetFor(s)), {
+        initialProps: { sub },
+      });
+      let paste: Promise<void> = Promise.resolve();
+      act(() => {
+        paste = hook.result.current.addPastedText('z'.repeat(6000));
+      });
+      return { ...hook, paste: () => paste };
+    };
+
+    it('keeps the chip in the stored draft when the composer closes mid-save', async () => {
+      const { unmount, paste } = startPaste();
+      unmount();
+
+      await act(async () => {
+        finishSave(saved);
+        await paste();
+      });
+
+      expect(readDraft(getSubChatDraftKey('chat-1', 'sub-a'))?.pastedTexts).toMatchObject([
+        { filePath: saved.filePath },
+      ]);
+    });
+
+    it('keeps the chip in the sub-chat it was pasted in when the user switches away mid-save', async () => {
+      const { result, rerender, paste } = startPaste();
+      rerender({ sub: 'sub-b' });
+
+      await act(async () => {
+        finishSave(saved);
+        await paste();
+      });
+
+      expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ subChatId: 'sub-a' }));
+      expect(result.current.pastedTexts).toHaveLength(0);
+      expect(readDraft(getSubChatDraftKey('chat-1', 'sub-b'))).toBeNull();
+      expect(readDraft(getSubChatDraftKey('chat-1', 'sub-a'))?.pastedTexts).toMatchObject([
+        { filePath: saved.filePath },
+      ]);
+    });
+
+    // A count left raised would keep Send disabled for that chat until the app restarts.
+    it('holds Send while saving and releases it when the save fails, still rejecting', async () => {
+      const { result, paste } = startPaste();
+      expect(result.current.isCopying).toBe(true);
+
+      await act(async () => {
+        failSave(new Error('disk full'));
+        await expect(paste()).rejects.toThrow('disk full');
+      });
+
+      expect(result.current.isCopying).toBe(false);
+      expect(readDraft(getSubChatDraftKey('chat-1', 'sub-a'))).toBeNull();
+    });
+  });
+
   describe('two panes showing the same sub-chat', () => {
     const target = { key: getSubChatDraftKey('chat-1', 'sub-a'), newChat: false };
     const copied = { filePath: '/s/sub-a/pasted/n.md', filename: 'n.md', size: 5 };

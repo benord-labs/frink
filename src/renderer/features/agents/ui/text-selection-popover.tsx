@@ -115,7 +115,7 @@ export function TextSelectionPopover({
     : 'animate-in fade-in-0 zoom-in-95 origin-top duration-100';
 
   const popoverContent = (
-    <div ref={popoverRef} style={style} data-artifact-preview-occluder>
+    <div ref={popoverRef} style={style} data-native-view-occluder>
       <div
         className={`flex items-center gap-0.5 rounded-md border px-0.5 py-0.5 shadow-lg ${overlayGlass} ${animationClass}`}
       >

@@ -92,6 +92,14 @@ export function StatusGlyph({
   return <Animated.View style={{ transform: [{ rotate }] }}>{icon}</Animated.View>;
 }
 
+/** A small solid dot in a status tone, beside a computer's name. */
+export function StatusDot({ tone }: { tone: StatusTone }) {
+  const t = useTheme();
+  return (
+    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneColor(t, tone) }} />
+  );
+}
+
 /** The running marker: a primary dot with a breathing ring. */
 export function PulseDot({ color, size = 8 }: { color: string; size?: number }) {
   const pulse = useLoop(1600, true);

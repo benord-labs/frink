@@ -9,7 +9,7 @@ import { GUTTER, space } from '../../../ui/theme';
 import { notificationsNote } from '../settings-view';
 import { Card } from '../card';
 
-/** Two switches, alerts and the Lock Screen card, with one line that says what leaves the Mac. */
+/** Two switches, alerts and the Lock Screen card, with one line that says what leaves the computer. */
 export function Notifications() {
   const alerts = useNotifications();
   // Null on iPad and in a browser, where there is no Lock Screen card to offer.

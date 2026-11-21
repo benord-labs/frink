@@ -5,6 +5,7 @@ import path from 'node:path';
 import log from 'electron-log';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
+import { FRINK_MCP_KEY } from '../../../../shared/lib/mcp-tool-name';
 import { isPathWithinProject, isProcessRelative } from '../../permissions/path-check';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
@@ -31,6 +32,8 @@ type CursorQuestions =
 
 type Folders = { cwd: string; home: string; realHome: string };
 type GateOptions = Folders & {
+  /** This turn's address of Frink's own server, the only MCP server a call may reach. */
+  frinkToolsUrl?: string;
   /** The ripgrep Cursor's search runs, asked which files a search would walk. */
   ripgrep: string;
   hookVersions: readonly string[];
@@ -95,9 +98,12 @@ const hookSchema = z.object({
   tool_use_id: z.string().optional(),
   command: z.string().optional(),
   cwd: z.string().optional(),
+  url: z.string().optional(),
 });
 type HookCall = z.infer<typeof hookSchema>;
 const succeeded = z.object({ status: z.literal('success') });
+// Cursor's run names every MCP call `mcp`, with the server it reached as the provider.
+const frinkCall = z.object({ providerIdentifier: z.literal(FRINK_MCP_KEY) });
 const HOOK_TOOLS = new Map(Object.entries(CURSOR_HOOK_TOOLS));
 const STREAM_TOOLS = new Map<string, CursorStreamTool | null>(Object.entries(CURSOR_STREAM_TOOLS));
 
@@ -328,6 +334,8 @@ export function createCursorGate(opts: GateOptions) {
   const shells = new Map<string, string>();
   let canary = false;
   let stopped = false;
+  // MCP calls allowed and not yet run; only Frink's own server, at this turn's address, is allowed.
+  let frinkCallsLeft = 0;
 
   async function decide(verdict: CursorQuestions): Promise<CursorHookAnswer> {
     if (verdict.kind === 'refuse') return deny(verdict.reason);
@@ -349,22 +357,26 @@ export function createCursorGate(opts: GateOptions) {
     return ALLOW;
   }
 
-  async function judge(hook: HookCall): Promise<CursorHookAnswer> {
-    if (hook.hook_event_name === 'beforeSubmitPrompt') {
-      canary = true;
-      return { continue: true };
-    }
+  function judgeShell(hook: HookCall): Promise<CursorHookAnswer> {
     const id = hook.tool_use_id;
-    if (hook.hook_event_name === 'beforeShellExecution') {
-      const input = { command: hook.command ?? null, cwd: hook.cwd ?? '' };
-      const verdict = questionsForCursorTool('Shell', input, opts);
-      if (verdict.kind === 'ask' && id && shells.get(id) === hook.command) {
-        shells.delete(id);
-        return ALLOW;
-      }
-      return decide(verdict);
+    const input = { command: hook.command ?? null, cwd: hook.cwd ?? '' };
+    const verdict = questionsForCursorTool('Shell', input, opts);
+    if (verdict.kind === 'ask' && id && shells.get(id) === hook.command) {
+      shells.delete(id);
+      return Promise.resolve(ALLOW);
     }
-    if (hook.hook_event_name !== 'preToolUse') return deny(CANT_CHECK);
+    return decide(verdict);
+  }
+
+  /** Frink's server decides its own calls; a missing or other address is refused. */
+  function judgeMcp(hook: HookCall): CursorHookAnswer {
+    if (!opts.frinkToolsUrl || hook.url !== opts.frinkToolsUrl) return deny(CANT_CHECK);
+    frinkCallsLeft += 1;
+    return ALLOW;
+  }
+
+  async function judgeTool(hook: HookCall): Promise<CursorHookAnswer> {
+    const id = hook.tool_use_id;
     const toolName = hook.tool_name ?? '';
     const verdict = questionsForCursorTool(toolName, hook.tool_input, opts);
     // Cursor's search follows links, so each outside place its walk reaches is asked too.
@@ -378,6 +390,22 @@ export function createCursorGate(opts: GateOptions) {
       shells.set(id, shell.data.command);
     }
     return answer;
+  }
+
+  async function judge(hook: HookCall): Promise<CursorHookAnswer> {
+    switch (hook.hook_event_name) {
+      case 'beforeSubmitPrompt':
+        canary = true;
+        return { continue: true };
+      case 'beforeShellExecution':
+        return judgeShell(hook);
+      case 'beforeMCPExecution':
+        return judgeMcp(hook);
+      case 'preToolUse':
+        return judgeTool(hook);
+      default:
+        return deny(CANT_CHECK);
+    }
   }
 
   return {
@@ -404,6 +432,10 @@ export function createCursorGate(opts: GateOptions) {
      *  uses up its allowance, so a later unasked run of the same step cannot reuse it. */
     actedUnasked(call: { name: string; args: unknown; result: unknown }): boolean {
       const ran = succeeded.safeParse(call.result).success;
+      if (call.name === 'mcp' && frinkCall.safeParse(call.args).success && frinkCallsLeft > 0) {
+        frinkCallsLeft -= 1;
+        return false;
+      }
       const tool = STREAM_TOOLS.get(call.name);
       if (tool === null) return false;
       const args = inputSchema.safeParse(call.args);

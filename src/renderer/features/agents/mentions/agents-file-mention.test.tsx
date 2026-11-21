@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { AgentsFileMention } from './agents-file-mention';
 
 const state = vi.hoisted(() => ({
@@ -95,6 +96,21 @@ describe('AgentsFileMention with linked projects', () => {
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'file:local:/w/ros-service/src/app.ts' }),
     );
+  });
+
+  it('picks a changed file as a file the agent is told about, whole even with a stray bracket', () => {
+    state.tree.extras = [];
+    linkedSearch([]);
+    const onSelect = vi.fn();
+    const changedFiles = [
+      { filePath: 'src/a]b.ts', displayPath: 'src/a]b.ts', additions: 3, deletions: 1 },
+    ];
+    renderPicker({ onSelect, changedFiles });
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const [picked] = onSelect.mock.calls[0] ?? [];
+    expect(picked).toMatchObject({ label: 'a]b.ts', additions: 3, deletions: 1 });
+    expect(parseMention(picked?.id ?? '')).toMatchObject({ type: 'file', path: 'src/a]b.ts' });
   });
 
   it('keeps the usual header and searches nothing more when the chat links nothing', () => {

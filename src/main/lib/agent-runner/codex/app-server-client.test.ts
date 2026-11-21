@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { COMMAND_APPROVAL_METHOD, PERMISSIONS_APPROVAL_METHOD } from './codex-events';
 import { FRINK_HOST_TOOL_PERMISSION_METHOD } from './codex-host-permissions';
+import { launchLocks } from './launch-locks';
+import { buildSpawnArgs } from './spawn-args';
 
 vi.mock('electron-log', () => ({
   default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
@@ -1133,5 +1135,85 @@ describe('CodexAppServerClient leftover commands', () => {
 
     expect(adoptProcess).toHaveBeenCalledWith(server);
     client.dispose();
+  });
+});
+
+describe('CodexAppServerClient effective-settings check', () => {
+  let child: ReturnType<typeof makeFakeChild>;
+  const args = buildSpawnArgs();
+  const initialized = { userAgent: 'm', capabilities: HOST_CAPABILITIES };
+
+  beforeEach(() => {
+    child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('refuses and stops a server whose managed settings turned multi_agent_v2 back on', async () => {
+    const data = launchLocks(args).features.map((name) => ({
+      name,
+      enabled: name === 'multi_agent_v2',
+    }));
+    attachMockPeer(child, (msg, peer) => {
+      if (msg.method === 'initialize') peer.write({ id: msg.id, result: initialized });
+      if (msg.method === 'experimentalFeature/list') {
+        peer.write({ id: msg.id, result: { data, nextCursor: null } });
+      }
+      if (msg.method === 'config/read') {
+        peer.write({ id: msg.id, result: { config: { agents: { enabled: false } } } });
+      }
+    });
+
+    const client = new CodexAppServerClient({ binary: 'codex', args, clientInfo: CLIENT_INFO });
+    await expect(client.start()).rejects.toThrow(/helper agents.*`multi_agent_v2`/);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('reports no Sentry error when a turn abort disposes the server mid settings check', async () => {
+    let checking: () => void = () => undefined;
+    const checkSent = new Promise<void>((resolve) => (checking = resolve));
+    attachMockPeer(child, (msg, peer) => {
+      if (msg.method === 'initialize') peer.write({ id: msg.id, result: initialized });
+      if (msg.method === 'config/read') checking();
+    });
+
+    const captureException = vi.fn();
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      args,
+      clientInfo: CLIENT_INFO,
+      captureException,
+    });
+    const started = client.start();
+    await checkSent;
+    client.dispose();
+    await expect(started).rejects.toThrow("couldn't confirm Codex's settings");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it('reports a settings read that fails on a live server, then stops it', async () => {
+    attachMockPeer(child, (msg, peer) => {
+      if (msg.method === 'initialize') peer.write({ id: msg.id, result: initialized });
+      else if (msg.id !== undefined) {
+        peer.write({ id: msg.id, error: { code: -32603, message: 'config broke' } });
+      }
+    });
+
+    const captureException = vi.fn();
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      args,
+      clientInfo: CLIENT_INFO,
+      captureException,
+    });
+    await expect(client.start()).rejects.toThrow("couldn't confirm Codex's settings");
+    expect(captureException).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'config broke' }),
+      { surface: 'codex-launch-locks' },
+    );
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
   });
 });

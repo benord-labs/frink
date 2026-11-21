@@ -87,6 +87,17 @@ describe('deleting a conversation', () => {
     expect(reset).toEqual(result);
   });
 
+  it('also closes the Changes screen of a deleted chat, in any tab', () => {
+    const queue = stack([
+      { key: 'queue', name: 'Queue' },
+      { key: 'chat', name: 'Chat', params: { id: 'a' } },
+      { key: 'changes', name: 'Changes', params: { chatId: 'a' } },
+      { key: 'other', name: 'Changes', params: { chatId: 'b' } },
+    ]);
+    const result = afterChatDeletion(queue, 'a');
+    expect(result.routes.map((route) => route.key)).toEqual(['queue', 'other']);
+  });
+
   it('pops the open chat and its voice mode to the previous screen and drops retained copies', () => {
     const flows = stack([
       { key: 'flows', name: 'Flows' },

@@ -1,11 +1,12 @@
 import { Alert, Platform } from 'react-native';
 import { SIDE_EFFECTS_RETRY } from '@frink/shared/lib/task-recovery/side-effects-confirm';
 
-/** A two-button destructive confirmation; the web preview uses the browser's own dialog. */
-export function confirmDestructive(
+/** A two-button confirmation; the web preview uses the browser's own dialog. */
+export function confirmAction(
   title: string,
   message: string,
   action: string,
+  style: 'default' | 'destructive' = 'default',
 ): Promise<boolean> {
   if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
   return new Promise((resolve) =>
@@ -14,11 +15,15 @@ export function confirmDestructive(
       message,
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-        { text: action, style: 'destructive', onPress: () => resolve(true) },
+        { text: action, style, onPress: () => resolve(true) },
       ],
       { cancelable: true, onDismiss: () => resolve(false) },
     ),
   );
+}
+
+export function confirmDestructive(title: string, message: string, action: string) {
+  return confirmAction(title, message, action, 'destructive');
 }
 
 /** Desktop's ask before retrying a started non-agent step, which may repeat what it did. */

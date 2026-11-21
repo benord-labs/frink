@@ -165,8 +165,8 @@ export function FilesSidebar({
     setContentSearchOptions,
     contentMatches,
     contentSearchInvalidRegex,
+    contentSearchTimedOut,
     isLoadingContentSearch,
-    highlightContentMatch,
   } = useContentSearchTab({
     projectPath: effectiveProjectPath || '',
     canSearch: canAccessFiles,
@@ -700,7 +700,7 @@ export function FilesSidebar({
             searchInputClassName={FILES_SIDEBAR_SEARCH_INPUT_CLASS}
             className="@container/files-header"
           />
-          <div className="flex items-center gap-1.5 border-b border-border/25 px-3 pb-2">
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border/25 px-3 pb-2">
             {renderTabButton('files', 'Files')}
             {renderTabButton('search', 'Search')}
             {activeTab === 'search' && (
@@ -819,9 +819,9 @@ export function FilesSidebar({
               isLoading={isLoading}
               query={contentDebouncedQuery}
               invalidRegex={contentSearchInvalidRegex}
+              timedOut={contentSearchTimedOut}
               matches={contentMatches}
               onSelectMatch={handleSelectContentMatch}
-              renderLine={highlightContentMatch}
             />
           )}
 

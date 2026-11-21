@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import stableStringify from 'fast-json-stable-stringify';
+import { FRINK_MCP_KEY } from '../../../../../shared/lib/mcp-tool-name';
 import { spawnCredentialFingerprint } from '../../../claude/credential-fd-spawn';
 
 // Applied live to a running CLI, or only meaningful at spawn, so a change never needs a new CLI.
@@ -24,10 +25,10 @@ function digest(value: unknown): string {
 // Each CLI mints its own dynamic-chat channel token: identity, not configuration. The toolset in
 // the same URL still keys the spawn.
 function withoutChannel(mcpServers: Record<string, unknown> | undefined): unknown {
-  const dynamicChat = mcpServers?.frink_dynamic_chat as { url?: string } | undefined;
+  const dynamicChat = mcpServers?.[FRINK_MCP_KEY] as { url?: string } | undefined;
   if (!dynamicChat?.url) return mcpServers;
   const url = dynamicChat.url.replace(/channel=[^&]*/, '');
-  return { ...mcpServers, frink_dynamic_chat: { ...dynamicChat, url } };
+  return { ...mcpServers, [FRINK_MCP_KEY]: { ...dynamicChat, url } };
 }
 
 /** Effort is set live too, except `max`: the live setting (`effortLevel`) has no max tier. */

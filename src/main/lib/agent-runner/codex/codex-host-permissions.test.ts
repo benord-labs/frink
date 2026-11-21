@@ -87,7 +87,7 @@ describe('Frink Codex host permission contract', () => {
         kind: 'mcp',
         toolName: 'mcp__safe__read',
         input: { flowId: 'flow-1' },
-        mcp: { server: 'frink_dynamic_chat', tool: 'frink_flows_patch' },
+        mcp: { server: 'frink', tool: 'frink_flows_patch' },
       }),
     ).toBeNull();
   });
@@ -96,15 +96,15 @@ describe('Frink Codex host permission contract', () => {
     const parsed = parseFrinkHostToolPermissionRequest({
       ...commandRequest,
       kind: 'mcp',
-      toolName: 'mcp__frink_dynamic_chat__evil__x',
+      toolName: 'mcp__frink__evil__x',
       input: {},
-      mcp: { server: 'frink_dynamic_chat__evil', tool: 'x' },
+      mcp: { server: 'frink__evil', tool: 'x' },
     });
     expect(parsed && mapFrinkHostPermissionRequests(parsed)).toEqual([
       {
-        toolName: 'mcp__frink_dynamic_chat__evil__x',
+        toolName: 'mcp__frink__evil__x',
         input: {},
-        mcp: { server: 'frink_dynamic_chat__evil', tool: 'x' },
+        mcp: { server: 'frink__evil', tool: 'x' },
       },
     ]);
   });
@@ -194,48 +194,27 @@ describe('Frink Codex host permission contract', () => {
     const parsed = parseFrinkHostToolPermissionRequest({
       ...commandRequest,
       kind: 'mcp',
-      toolName: 'mcp__frink_dynamic_chat__frink_flows_patch',
+      toolName: 'mcp__frink__frink_flows_patch',
       input: { flowId: 'flow-1' },
-      mcp: { server: 'frink_dynamic_chat', tool: 'frink_flows_patch' },
+      mcp: { server: 'frink', tool: 'frink_flows_patch' },
     });
     if (!parsed) throw new Error('fixture must parse');
     deduper.remember(parsed);
     expect(
-      deduper.consumeMcp(
-        'thread-1',
-        'turn-1',
-        'item-1',
-        'frink_dynamic_chat',
-        'frink_flows_patch',
-        {
-          flowId: 'different',
-        },
-      ),
+      deduper.consumeMcp('thread-1', 'turn-1', 'item-1', 'frink', 'frink_flows_patch', {
+        flowId: 'different',
+      }),
     ).toBe(false);
     deduper.remember(parsed);
     expect(
-      deduper.consumeMcp(
-        'thread-1',
-        'turn-1',
-        'item-1',
-        'frink_dynamic_chat',
-        'frink_flows_patch',
-        {
-          flowId: 'flow-1',
-        },
-      ),
+      deduper.consumeMcp('thread-1', 'turn-1', 'item-1', 'frink', 'frink_flows_patch', {
+        flowId: 'flow-1',
+      }),
     ).toBe(true);
     expect(
-      deduper.consumeMcp(
-        'thread-1',
-        'turn-1',
-        'item-1',
-        'frink_dynamic_chat',
-        'frink_flows_patch',
-        {
-          flowId: 'flow-1',
-        },
-      ),
+      deduper.consumeMcp('thread-1', 'turn-1', 'item-1', 'frink', 'frink_flows_patch', {
+        flowId: 'flow-1',
+      }),
     ).toBe(false);
   });
 
@@ -244,9 +223,9 @@ describe('Frink Codex host permission contract', () => {
     const first = parseFrinkHostToolPermissionRequest({
       ...commandRequest,
       kind: 'mcp',
-      toolName: 'mcp__frink_dynamic_chat__frink_flows_patch',
+      toolName: 'mcp__frink__frink_flows_patch',
       input: { flowId: 'flow-1' },
-      mcp: { server: 'frink_dynamic_chat', tool: 'frink_flows_patch' },
+      mcp: { server: 'frink', tool: 'frink_flows_patch' },
     });
     if (!first) throw new Error('fixture must parse');
     const second = parseFrinkHostToolPermissionRequest({
@@ -259,7 +238,7 @@ describe('Frink Codex host permission contract', () => {
     deduper.clearTurn('thread-1', 'turn-1');
 
     const consume = (turnId: string) =>
-      deduper.consumeMcp('thread-1', turnId, 'item-1', 'frink_dynamic_chat', 'frink_flows_patch', {
+      deduper.consumeMcp('thread-1', turnId, 'item-1', 'frink', 'frink_flows_patch', {
         flowId: 'flow-1',
       });
     expect(consume('turn-1')).toBe(false);

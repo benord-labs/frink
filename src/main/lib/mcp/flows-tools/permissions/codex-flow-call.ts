@@ -1,7 +1,4 @@
-import {
-  FRINK_DYNAMIC_CHAT_MCP_KEY,
-  FRINK_MUTATING_FLOW_TOOLS,
-} from '../../../../../shared/lib/mcp-tool-name';
+import { FRINK_MCP_KEY, FRINK_MUTATING_FLOW_TOOLS } from '../../../../../shared/lib/mcp-tool-name';
 import { codexHostPermissionDeduper } from '../../../agent-runner/codex/codex-host-permissions';
 
 type CodexCallMeta = { threadId?: unknown; turnId?: unknown; callId?: unknown } | undefined;
@@ -25,7 +22,7 @@ export function consumeCodexFlowPreapproval(
     meta.threadId,
     meta.turnId,
     meta.callId,
-    FRINK_DYNAMIC_CHAT_MCP_KEY,
+    FRINK_MCP_KEY,
     name,
     args,
   );

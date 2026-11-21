@@ -18,6 +18,7 @@ import { getDatabase } from '../../db';
 import { withSubChatLock } from '../../db/repos/sub-chat-mutex';
 import { updateSubChatMode } from '../../db/repos/sub-chats';
 import { submittedPlanFromExitPlanModeInput } from '../../claude/session-plan-paths';
+import type { UIMessageChunk } from '../../claude/types';
 import { captureContained } from '../../sentry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { attachTurn } from '../execution/claude-session/attach';
@@ -284,6 +285,33 @@ type PlanAutoDenyFloorState = Pick<
 
 export function isPlanAutoDenyFloorActive(state: PlanAutoDenyFloorState): boolean {
   return state.planAutoReview && state.autoReviewTools && !state.planSubmitted;
+}
+
+/** The Flow-tool gate's live plan phase: a plan turn plans until an auto-approved submission, an agent
+ * turn once EnterPlanMode locks it. Plan turns skip the lock: it is set after the MCP context exists. */
+export function isTurnPlanning(
+  startMode: string,
+  turn: Pick<ClaudeTurnContext, 'planTerminalsLocked' | 'planSubmitted' | 'planReentered'>,
+  flowPlanAutoApprove: boolean,
+): boolean {
+  if (turn.planReentered) return true;
+  if (startMode === 'plan') return !(flowPlanAutoApprove && turn.planSubmitted);
+  return turn.planTerminalsLocked;
+}
+
+/** The plan bookkeeping follows only a turn's first Enter/Exit cycle; this follows a later one so
+ * the Flow-tool gate refuses while the SDK is back in plan mode. */
+export function trackPlanReentry(
+  turn: Pick<ClaudeTurnContext, 'planSubmitted' | 'planReentered'>,
+  chunk: UIMessageChunk,
+  toolName: string | undefined,
+): void {
+  if (!turn.planSubmitted) return;
+  if (chunk.type === 'tool-input-available' && chunk.toolName === 'EnterPlanMode') {
+    turn.planReentered = true;
+  } else if (chunk.type === 'tool-output-available' && toolName === 'ExitPlanMode') {
+    turn.planReentered = false;
+  }
 }
 
 /**

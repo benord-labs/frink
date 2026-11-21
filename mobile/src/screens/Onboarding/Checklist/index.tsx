@@ -3,12 +3,15 @@ import { Text } from '../../../ui/text';
 import { space, useTheme } from '../../../ui/theme';
 
 const STEPS = [
-  { title: 'Open Frink on your Mac', detail: 'Go to Settings → Mobile and turn on mobile access.' },
+  {
+    title: 'Open Frink on your computer',
+    detail: 'Go to Settings → Mobile and turn on mobile access.',
+  },
   { title: 'Scan the code', detail: 'Each code works once, for five minutes.' },
   {
     title: 'Take Frink with you',
     detail:
-      'Your connection is encrypted end to end, on Wi-Fi or cellular. Keep your Mac awake and online.',
+      'Your connection is encrypted end to end, on Wi-Fi or cellular. Keep your computer awake and online.',
   },
 ];
 const NODE = 28;

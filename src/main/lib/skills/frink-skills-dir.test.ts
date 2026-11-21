@@ -1,7 +1,12 @@
 import os from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getFrinkSkillsDir, getSkillReadRoots, getUniversalSkillDirs } from '../frink-skills-dir';
+import {
+  getFrinkSkillsDir,
+  getSkillReadRoots,
+  getUniversalSkillDirs,
+  getUniversalSkillSources,
+} from '../frink-skills-dir';
 
 describe('skill directories follow the home Frink owns', () => {
   afterEach(() => {
@@ -16,9 +21,13 @@ describe('skill directories follow the home Frink owns', () => {
     expect(getUniversalSkillDirs()).toEqual([
       join('/rig/home', '.agents', 'skills'),
       join('/rig/home', '.claude', 'skills'),
+    ]);
+    // Cursor's own folder stays a source (last, so it never wins a name clash) and a read root.
+    expect(getUniversalSkillSources()).toEqual([
+      ...getUniversalSkillDirs(),
       join('/rig/home', '.cursor', 'skills'),
     ]);
-    expect(getSkillReadRoots()).toEqual([getFrinkSkillsDir(), ...getUniversalSkillDirs()]);
+    expect(getSkillReadRoots()).toEqual([getFrinkSkillsDir(), ...getUniversalSkillSources()]);
   });
 
   it('uses the real home when no isolated home is configured', () => {

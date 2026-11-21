@@ -36,8 +36,8 @@ function refresh(
 
 /**
  * Runs `refresh` on open, on return to the app, on a switch change, and whenever the overview's
- * counts change while Frink is open. Unmounting means the Mac was forgotten or replaced (the app
- * remounts per pairing), so the session ends with the last Mac it talked to.
+ * counts change while Frink is open. Unmounting means the computer was forgotten or replaced (the app
+ * remounts per pairing), so the session ends with the last computer it talked to.
  */
 function useReconcile(on: boolean | undefined, setRefused: (refused: boolean) => void) {
   const { connection } = useConnection();
@@ -58,7 +58,7 @@ function useReconcile(on: boolean | undefined, setRefused: (refused: boolean) =>
   }, [run]);
 }
 
-/** Keeps the Lock Screen card in line with its switch and the Mac's counts. */
+/** Keeps the Lock Screen card in line with its switch and the computer's counts. */
 export function LiveActivityProvider({ children }: { children: ReactNode }) {
   const [on, setOn] = useState<boolean>();
   const [refused, setRefused] = useState(false);

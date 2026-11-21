@@ -1,6 +1,6 @@
 import { openDestination } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
-import { openApp, type AppState } from './fixtures/app';
+import { held, openApp, type AppState } from './fixtures/app';
 import { overviewFixture } from './fixtures/data';
 import { flowFor, macFlows, waitingRun } from './fixtures/flows';
 
@@ -34,7 +34,6 @@ async function openFlows(page: Page, options: Parameters<typeof openApp>[1] = {}
 
 async function openFlow(page: Page, id: string, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openFlows(page, options);
-  await page.getByRole('tab', { name: 'Library', exact: true }).click();
   await page.getByTestId(`flow-row-${id}`).click();
   return state;
 }
@@ -43,29 +42,20 @@ const lastOf = (state: AppState, type: string) =>
   state.requests.filter((request) => request.type === type).at(-1);
 
 test.describe('Flows tab', () => {
-  test('separates activity from the library and preserves the selected view', async ({ page }) => {
+  test('is one list: runs under way now, then every Flow', async ({ page }) => {
     await openFlows(page);
-    const sections = page.getByRole('heading');
-    await expect(sections.filter({ hasText: 'Needs you' })).toContainText('1');
-    await expect(sections.filter({ hasText: 'Running' })).toContainText('1');
-    await expect(sections.filter({ hasText: 'Recent results' })).toContainText('2');
-    await expect(page.locator('[data-testid^="flow-row-"]')).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: 'Library', exact: true })).toHaveCount(0);
+    await expect(page.getByText('Recent results')).toHaveCount(0);
     const ids = (prefix: string) =>
       page
         .locator(`[data-testid^="${prefix}"]`)
         .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
-    // Only the human wait needs you. Finished failures are results.
-    expect(await ids('flow-activity-')).toEqual([
-      'flow-activity-flow-3',
-      'flow-activity-flow-1',
-      'flow-activity-flow-2',
-      'flow-activity-flow-4',
-    ]);
-    await expect(page.getByTestId('flow-activity-flow-1')).toContainText('Running');
-    await expect(page.getByTestId('flow-activity-flow-2')).toContainText('Failed');
-    await expect(page.getByTestId('flow-activity-flow-3')).toContainText('Waiting for you');
-    await expect(page.getByTestId('flow-activity-flow-4')).toContainText('7h');
-    await page.getByRole('tab', { name: 'Library', exact: true }).click();
+    // Every unfinished run is "now", including the one waiting on you.
+    expect(await ids('flow-now-')).toEqual(['flow-now-flow-1', 'flow-now-flow-3']);
+    await expect(page.getByTestId('flow-now-flow-1')).toContainText('Running');
+    await expect(page.getByTestId('flow-now-flow-3')).toContainText('Waiting for you');
+    await expect(page.getByTestId('flows-needs-you')).toContainText(/^\d+ needs? you/);
+    await expect(page.getByRole('heading', { name: /^All Flows/ })).toContainText('5');
     expect(await ids('flow-row-')).toEqual([
       'flow-row-flow-1',
       'flow-row-flow-2',
@@ -73,42 +63,41 @@ test.describe('Flows tab', () => {
       'flow-row-flow-4',
       'flow-row-flow-5',
     ]);
-    await expect(page.getByTestId('flow-row-flow-5')).toContainText('Off');
     await expect(page.getByTestId('flow-row-flow-4')).toContainText('Summarises support email');
+    await expect(page.getByTestId('flow-row-flow-4')).toContainText('7h');
+    await expect(page.getByTestId('flow-row-flow-2')).toHaveAttribute(
+      'aria-label',
+      'Nightly triage, Failed',
+    );
+    // An off Flow is dimmed rather than labelled.
+    await expect(page.getByTestId('flow-row-flow-5')).toHaveCSS('opacity', '0.55');
+    await expect(page.getByTestId('flow-row-flow-5')).not.toContainText(/\bOff\b/);
+    await expect(page.getByTestId('flow-row-flow-4')).toHaveCSS('opacity', '1');
     await shot(page, 'list-dark');
     await page.emulateMedia({ colorScheme: 'light' });
     await shot(page, 'list-light');
-    await page.getByTestId('flow-row-flow-4').click();
-    await page.getByRole('link', { name: /back/i }).click();
-    await expect(page.getByRole('tab', { name: 'Library', exact: true })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
   });
 
-  test('an activity row opens its run; a library row opens the Flow', async ({ page }) => {
+  test('a Now row opens its run; a Flow row opens the Flow', async ({ page }) => {
     const state = await openFlows(page);
-    await page.getByTestId('flow-activity-flow-2').click();
-    await expect.poll(() => lastOf(state, 'run')).toEqual({ type: 'run', id: 'run-2' });
+    await page.getByTestId('flow-now-flow-1').click();
+    await expect.poll(() => lastOf(state, 'run')).toEqual({ type: 'run', id: 'run-1' });
+    await page.getByRole('link', { name: /back/i }).filter({ visible: true }).click();
+    await page.getByTestId('flow-row-flow-2').click();
+    await expect.poll(() => lastOf(state, 'flow')).toMatchObject({ type: 'flow', id: 'flow-2' });
+    expect(lastOf(state, 'startFlow')).toBeUndefined();
   });
 
-  test('no runs yet offers the saved library without starting work', async ({ page }) => {
-    const flows = macFlows().map((flow) => ({
-      ...flow,
-      status: null,
-      latestRunId: null,
-      lastRun: null,
-    }));
-    const state = await openFlows(page, { data: { flows } });
-    await expect(page.getByText('No runs yet', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Browse flows' }).click();
-    await expect(page.locator('[data-testid^="flow-row-"]')).toHaveCount(5);
-    expect(lastOf(state, 'startFlow')).toBeUndefined();
+  test('the needs-you row switches to the Queue', async ({ page }) => {
+    await openFlows(page);
+    await page.getByTestId('flows-needs-you').click();
+    await expect(
+      page.getByRole('heading', { name: 'Queue', exact: true }).filter({ visible: true }),
+    ).toBeVisible();
   });
 
   test('searches names and descriptions, and recovers from no matches', async ({ page }) => {
     await openFlows(page);
-    await page.getByRole('tab', { name: 'Library', exact: true }).click();
     const search = page.getByRole('textbox', { name: 'Search flows' });
     await search.fill('github');
     await expect(page.getByTestId('flow-row-flow-2')).toBeVisible();
@@ -129,11 +118,12 @@ test.describe('Flows tab', () => {
 
   test('keeps the list and says so when the Mac goes offline', async ({ page }) => {
     const state = await openFlows(page);
-    await page.getByRole('tab', { name: 'Library', exact: true }).click();
     await expect(page.getByTestId('flow-row-flow-1')).toBeVisible();
     state.offline = true;
     await page.clock.runFor(6000);
-    await expect(page.getByTestId('flows-screen').getByText('Can’t reach your Mac')).toBeVisible();
+    await expect(
+      page.getByTestId('flows-screen').getByText('Can’t reach your computer'),
+    ).toBeVisible();
     await expect(page.getByTestId('flow-row-flow-1')).toBeVisible();
     await shot(page, 'offline-dark');
   });
@@ -164,7 +154,11 @@ test.describe('Flow detail', () => {
   test('a running Flow offers its current run instead of Run now', async ({ page }) => {
     const state = await openFlow(page, 'flow-1');
     await expect(page.getByRole('button', { name: 'Run now' })).toHaveCount(0);
-    await expect(page.getByText('This Flow is running now.')).toHaveCount(0);
+    // The state is said once, on the run's history row.
+    await expect(page.getByText('Running', { exact: true }).filter({ visible: true })).toHaveCount(
+      1,
+    );
+    await expect(page.getByTestId('run-row-run-1')).toContainText('Running');
     await shot(page, 'detail-running-dark');
     await page.emulateMedia({ colorScheme: 'light' });
     await shot(page, 'detail-running-light');
@@ -174,15 +168,15 @@ test.describe('Flow detail', () => {
 
   test('a Flow waiting on you says so and opens the run to decide', async ({ page }) => {
     const state = await openFlows(page, { data: { run: waitingRun() } });
-    await page.getByRole('tab', { name: 'Library', exact: true }).click();
-    const waiting = page.getByTestId('flow-row-flow-3');
-    await expect(waiting).toContainText('Waiting for you');
-    await expect(waiting).toHaveAttribute(
+    await expect(page.getByTestId('flow-row-flow-3')).toHaveAttribute(
       'aria-label',
-      'Release checklist, Enabled, Waiting for you',
+      'Release checklist, Waiting for you',
     );
-    // From the activity list straight to the run; from the library, through the Flow.
     await page.getByTestId('flow-row-flow-3').click();
+    await expect(page.getByTestId('flow-current-run')).toBeVisible();
+    await expect(
+      page.getByText('Waiting for you', { exact: true }).filter({ visible: true }),
+    ).toHaveCount(1);
     await expect(page.getByRole('button', { name: 'Run now' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'View current run' })).toHaveCount(1);
     // The engine calls this run "paused"; the history row reads as the Flow does.
@@ -195,15 +189,16 @@ test.describe('Flow detail', () => {
 
   test('a failed Flow points at the run that failed', async ({ page }) => {
     const state = await openFlow(page, 'flow-2');
-    await expect(page.getByTestId('flow-attention')).toContainText('Last run failed');
-    await expect(page.getByTestId('flow-attention')).toContainText('see what went wrong');
+    // The failure is said once, on its run; Run now stays the primary row.
+    await expect(page.getByTestId('flow-attention')).toHaveCount(0);
+    await expect(page.getByTestId('flow-run-now')).toBeVisible();
     const runs = page.locator('[data-testid^="run-row-"]');
     await expect(runs.first()).toHaveAttribute('data-testid', 'run-row-run-2');
     await expect(runs.first()).toContainText('Failed');
     await shot(page, 'detail-failed-dark');
     await page.emulateMedia({ colorScheme: 'light' });
     await shot(page, 'detail-failed-light');
-    await page.getByTestId('flow-attention').click();
+    await runs.first().click();
     await expect.poll(() => lastOf(state, 'run')).toEqual({ type: 'run', id: 'run-2' });
   });
 
@@ -217,28 +212,34 @@ test.describe('Flow detail', () => {
             }
           : undefined,
     });
-    await expect(page.getByRole('button', { name: 'Run now' })).toBeDisabled();
-    await expect(page.getByText('Refresh to find the current run.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Run now' })).toHaveCount(0);
+    await expect(page.getByTestId('flow-run-now')).toContainText(
+      'Refresh to find the current run.',
+    );
   });
 
   test('Run now waits for Frink to be open on the Mac', async ({ page }) => {
-    await openFlow(page, 'flow-4', {
+    const state = await openFlow(page, 'flow-4', {
       data: { overview: { ...overviewFixture(), executionReady: false } },
     });
-    await expect(page.getByText('Open Frink on your Mac to run Flows.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Run now' })).toBeDisabled();
+    await expect(page.getByTestId('flow-run-now')).toContainText(
+      'Open Frink on your Mac to run Flows.',
+    );
+    await page.getByTestId('flow-run-now').click({ force: true });
+    await expect(page.getByRole('button', { name: 'Run now' })).toHaveCount(0);
+    expect(lastOf(state, 'startFlow')).toBeUndefined();
   });
 
-  test('the Enabled switch turns the Flow off', async ({ page }) => {
+  test('the Enabled switch in the navigation bar turns the Flow off', async ({ page }) => {
     const state = await openFlow(page, 'flow-4');
-    const toggle = page.getByRole('switch', { name: 'Enabled' });
+    const toggle = page.getByRole('switch', { name: 'Enabled' }).filter({ visible: true });
     await expect(toggle).toBeChecked();
     await toggle.click({ force: true });
     await expect
       .poll(() => lastOf(state, 'setFlowEnabled'))
       .toEqual({ type: 'setFlowEnabled', id: 'flow-4', enabled: false });
     await expect(toggle).not.toBeChecked();
-    await expect(page.getByText('Off. Turn it on to run it.')).toBeVisible();
+    await expect(page.getByTestId('flow-run-now')).toContainText('Turn this Flow on to run it.');
   });
 
   test('outlines branches, loops and joins, and expands instructions', async ({ page }) => {
@@ -250,7 +251,9 @@ test.describe('Flow detail', () => {
     await expect(decision).toContainText('No work needed: Publish summary');
     await expect(page.getByTestId('outline-step-summary')).toContainText('Joins from');
     await expect(page.getByTestId('outline-step-review')).not.toContainText('Then');
-    await expect(page.getByText('Version 4. Change steps in Frink on your Mac.')).toBeVisible();
+    await expect(
+      page.getByText('Version 4. Change steps in Frink on your computer.'),
+    ).toBeVisible();
     const show = page.getByRole('button', { name: 'Show instructions for Check incoming issues' });
     await expect(show).toHaveAttribute('aria-expanded', 'false');
     await show.click();
@@ -359,7 +362,7 @@ test.describe('Run detail', () => {
     });
     await page.getByRole('button', { name: 'View current run' }).click();
     const step = page.getByTestId('run-step-nr-plan');
-    await expect(step).toContainText('Open Frink on your Mac to continue this run.');
+    await expect(step).toContainText('Open Frink on your computer to continue this run.');
     await expect(
       page.getByRole('button', { name: 'Approve Plan the announcement' }),
     ).toBeDisabled();
@@ -384,18 +387,49 @@ test.describe('Run detail', () => {
     await tallShot(page, 'run-decision-error-dark');
   });
 
-  test('stopping a run asks first', async ({ page }) => {
+  test('Stop sits in the navigation bar and asks first', async ({ page }) => {
     const state = await openFlow(page, 'flow-1');
     await page.getByTestId('run-row-run-1').click();
-    await page.getByRole('button', { name: 'Stop run', exact: true }).click();
-    await expect(page.getByText('Stop this run?')).toBeVisible();
-    await tallShot(page, 'run-stop-confirm-dark');
-    await page.getByRole('button', { name: 'Keep running' }).click();
-    await expect(page.getByText('Stop this run?')).toBeHidden();
-    await expect.poll(() => lastOf(state, 'cancelRun')).toBeUndefined();
-    await page.getByRole('button', { name: 'Stop run', exact: true }).click();
-    await page.getByRole('button', { name: 'Stop run now' }).click();
+    const stop = page
+      .getByRole('button', { name: 'Stop run', exact: true })
+      .filter({ visible: true });
+    const prompts: string[] = [];
+    page.once('dialog', (dialog) => {
+      prompts.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await stop.click();
+    await expect.poll(() => prompts).toEqual(['Stop run?\n\nStopping ends the whole Flow run.']);
+    expect(lastOf(state, 'cancelRun')).toBeUndefined();
+    page.once('dialog', (dialog) => void dialog.accept());
+    await stop.click();
     await expect.poll(() => lastOf(state, 'cancelRun')).toEqual({ type: 'cancelRun', id: 'run-1' });
+  });
+
+  test('Stop waits while a decision is being sent', async ({ page }) => {
+    const answer = held();
+    const state = await openFlow(page, 'flow-3', {
+      data: { run: waitingRun() },
+      respond: (input) => (input.type === 'resumeNode' ? answer.promise : perFlow(input)),
+    });
+    await page.getByTestId('run-row-run-3').click();
+    const stop = page
+      .getByRole('button', { name: 'Stop run', exact: true })
+      .filter({ visible: true });
+    await expect(stop).toBeEnabled();
+    await page.getByRole('button', { name: 'Approve Plan the announcement' }).click();
+    await expect.poll(() => lastOf(state, 'resumeNode')).toMatchObject({ action: 'approve' });
+    await expect(stop).toBeDisabled();
+    answer.release();
+    await expect(stop).toBeEnabled();
+  });
+
+  test('Open Flow goes from a run to its Flow', async ({ page }) => {
+    const state = await openFlows(page);
+    await page.getByTestId('flow-now-flow-1').click();
+    await page.getByRole('button', { name: 'Open Flow' }).filter({ visible: true }).click();
+    await expect.poll(() => lastOf(state, 'flow')).toMatchObject({ type: 'flow', id: 'flow-1' });
+    await expect(page.getByTestId('flow-current-run')).toBeVisible();
   });
 
   test('a finished run has no Stop', async ({ page }) => {

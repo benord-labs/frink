@@ -13,6 +13,8 @@ export function alertedComputer(data: unknown, deviceIds: readonly string[]) {
     : subChatId
       ? { id: chatId, subChatId }
       : { id: chatId };
-  return { deviceId, target };
+  // The one permission request its Allow and Deny buttons may answer.
+  const requestId = parsed.data.type === 'needs-you' ? parsed.data.permissionRequestId : undefined;
+  return { deviceId, target, requestId };
 }
 export type AlertedComputer = NonNullable<ReturnType<typeof alertedComputer>>;

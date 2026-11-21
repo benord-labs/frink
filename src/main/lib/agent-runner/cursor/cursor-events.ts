@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { FRINK_MCP_KEY, frinkToolPartName } from '../../../../shared/lib/mcp-tool-name';
 import type { UIMessageChunk } from '../../claude/types';
+import { frinkToolOutput } from '../../mcp/runtime/frink-tools-server';
 import { endTextRun } from '../codex/codex-stream-chunks';
 
 type TextBlock = { type: 'text'; text: string };
@@ -72,6 +74,35 @@ const resultSchema = z.union([
   z.object({ error: z.object({ message: z.string() }) }),
 ]);
 
+/** A call to Frink's own server, as Cursor's run reports every MCP call. */
+const frinkArgsSchema = z.object({
+  providerIdentifier: z.literal(FRINK_MCP_KEY),
+  toolName: z.string(),
+  args: z.record(z.string(), z.json()).default({}),
+});
+// Text only: an image a Frink tool returns reaches the chat as its own card.
+const frinkResultSchema = z.object({
+  status: z.literal('success'),
+  value: z.object({
+    content: z.array(z.object({ text: z.object({ text: z.string() }).optional() })),
+    isError: z.boolean().default(false),
+  }),
+});
+
+/** A Frink tool's result: its text blocks, or an error when the call failed or was unreadable. */
+function frinkOutput(
+  toolCallId: string,
+  parsed: z.infer<typeof frinkResultSchema> | undefined,
+): UIMessageChunk {
+  const text = parsed?.value.content
+    .flatMap((item) => (item.text ? [item.text.text] : []))
+    .join('');
+  if (parsed && !parsed.value.isError) {
+    return { type: 'tool-output-available', toolCallId, output: frinkToolOutput(text ?? '') };
+  }
+  return { type: 'tool-output-error', toolCallId, errorText: text || TOOL_FAILED };
+}
+
 /** What one turn has streamed so far. */
 export type CursorEventState = { openTextId: string | null; textRuns: number };
 
@@ -95,6 +126,35 @@ function toolOutput(callId: string, parsed?: z.infer<typeof resultSchema>): UIMe
   return { type: 'tool-output-error', toolCallId: callId, errorText };
 }
 
+type CursorToolCall = Extract<CursorSdkMessage, { type: 'tool_call' }>;
+
+function toolStart(
+  state: CursorEventState,
+  toolCallId: string,
+  toolName: string,
+  input: Extract<UIMessageChunk, { type: 'tool-input-available' }>['input'],
+): UIMessageChunk[] {
+  return [
+    ...endTextRun(state),
+    { type: 'tool-input-start', toolCallId, toolName },
+    { type: 'tool-input-available', toolCallId, toolName, input },
+  ];
+}
+
+/** A tool call starting or ending; Frink's own tools keep their real names and output. */
+function toolCallChunks(message: CursorToolCall, state: CursorEventState): UIMessageChunk[] {
+  const { call_id: toolCallId, name } = message;
+  const running = message.status === 'running';
+  const frink = name === 'mcp' ? frinkArgsSchema.safeParse(message.args).data : undefined;
+  if (frink && !running) {
+    return [frinkOutput(toolCallId, frinkResultSchema.safeParse(message.result).data)];
+  }
+  if (frink) return toolStart(state, toolCallId, frinkToolPartName(frink.toolName), frink.args);
+  if (!running) return [toolOutput(toolCallId, resultSchema.safeParse(message.result).data)];
+  const input = toolCard(name, argsSchema.safeParse(message.args).data ?? {});
+  return toolStart(state, toolCallId, CARDS.get(name) ?? GENERIC_TOOL_NAME, input);
+}
+
 /** Maps one Cursor SDK message onto Frink's chat chunks. Messages Frink does not show map to none. */
 export function mapCursorMessage(
   message: CursorSdkMessage,
@@ -115,19 +175,8 @@ export function mapCursorMessage(
         ...endTextRun(state),
         { type: 'reasoning-delta', id: 'cursor-thinking', delta: message.text },
       ];
-    case 'tool_call': {
-      const { call_id: toolCallId, name } = message;
-      if (message.status !== 'running') {
-        return [toolOutput(toolCallId, resultSchema.safeParse(message.result).data)];
-      }
-      const toolName = CARDS.get(name) ?? GENERIC_TOOL_NAME;
-      const input = toolCard(name, argsSchema.safeParse(message.args).data ?? {});
-      return [
-        ...endTextRun(state),
-        { type: 'tool-input-start', toolCallId, toolName },
-        { type: 'tool-input-available', toolCallId, toolName, input },
-      ];
-    }
+    case 'tool_call':
+      return toolCallChunks(message, state);
     case 'usage': {
       const { inputTokens, outputTokens } = message.usage;
       const totalTokens = inputTokens + outputTokens;

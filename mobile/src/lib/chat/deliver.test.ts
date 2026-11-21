@@ -64,10 +64,10 @@ function outbox(kind: PendingEntry['kind'] = 'send') {
 
 describe('deliver', () => {
   it('resends an unreachable message once, under the same request id', async () => {
-    const mac = computer([fail(0), ok]);
+    const desktop = computer([fail(0), ok]);
     const { target, entry } = outbox();
-    await deliver(mac.env, target, entry);
-    expect(mac.sends.map((send) => send.type === 'sendMessage' && send.requestId)).toEqual([
+    await deliver(desktop.env, target, entry);
+    expect(desktop.sends.map((send) => send.type === 'sendMessage' && send.requestId)).toEqual([
       entry.id,
       entry.id,
     ]);
@@ -75,57 +75,59 @@ describe('deliver', () => {
   });
 
   it('waits for the app to come back before resending', async () => {
-    const mac = computer([fail(0), ok]);
+    const desktop = computer([fail(0), ok]);
     const { target, entry } = outbox();
-    mac.become('background');
-    const done = deliver(mac.env, target, entry);
+    desktop.become('background');
+    const done = deliver(desktop.env, target, entry);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(mac.sends).toHaveLength(1);
-    mac.become('active');
+    expect(desktop.sends).toHaveLength(1);
+    desktop.become('active');
     await done;
-    expect(mac.sends).toHaveLength(2);
+    expect(desktop.sends).toHaveLength(2);
   });
 
   it('counts a refused repeat as delivered when the transcript holds it', async () => {
     const { target, entry } = outbox();
-    const mac = computer([fail(0), fail(409, 'Already sent.')], [entry.id]);
-    await expect(deliver(mac.env, target, entry)).resolves.toBe(true);
+    const desktop = computer([fail(0), fail(409, 'Already sent.')], [entry.id]);
+    await expect(deliver(desktop.env, target, entry)).resolves.toBe(true);
     expect(readPending(target.key)).toEqual([{ ...entry, state: 'sent' }]);
   });
 
   it('marks a refused send failed with the computer’s words', async () => {
-    const mac = computer([fail(409, 'Frink is busy. Try again.')]);
+    const desktop = computer([fail(409, 'Frink is busy. Try again.')]);
     const { target, entry } = outbox();
-    await deliver(mac.env, target, entry);
-    expect(mac.sends).toHaveLength(1);
+    await deliver(desktop.env, target, entry);
+    expect(desktop.sends).toHaveLength(1);
     expect(readPending(target.key)).toEqual([
       { ...entry, state: 'failed', error: 'Frink is busy. Try again.' },
     ]);
   });
 
   it('gives up after one retry', async () => {
-    const mac = computer([fail(0), fail(0, 'Can’t reach your Mac.')]);
+    const desktop = computer([fail(0), fail(0, 'Can’t reach your computer.')]);
     const { target, entry } = outbox();
-    await deliver(mac.env, target, entry);
-    expect(mac.sends).toHaveLength(2);
+    await deliver(desktop.env, target, entry);
+    expect(desktop.sends).toHaveLength(2);
     expect(readPending(target.key)[0]).toMatchObject({ state: 'failed' });
   });
 
   it('asks again about an unreachable steer under its id, so a lost answer never becomes a turn', async () => {
-    const mac = computer([fail(0), steered('delivered')]);
+    const desktop = computer([fail(0), steered('delivered')]);
     const { target, entry } = outbox('steer');
-    await expect(deliver(mac.env, target, entry)).resolves.toBe(true);
-    expect(mac.sends.map((send) => [send.type, 'requestId' in send && send.requestId])).toEqual([
-      ['steerMessage', entry.id],
-      ['steerMessage', entry.id],
-    ]);
+    await expect(deliver(desktop.env, target, entry)).resolves.toBe(true);
+    expect(desktop.sends.map((send) => [send.type, 'requestId' in send && send.requestId])).toEqual(
+      [
+        ['steerMessage', entry.id],
+        ['steerMessage', entry.id],
+      ],
+    );
     expect(readPending(target.key)).toEqual([{ ...entry, state: 'sent' }]);
   });
 
   it('marks a steer the turn refused failed, saying nothing was sent', async () => {
-    const mac = computer([steered('not-delivered')]);
+    const desktop = computer([steered('not-delivered')]);
     const { target, entry } = outbox('steer');
-    await expect(deliver(mac.env, target, entry)).resolves.toBe(false);
+    await expect(deliver(desktop.env, target, entry)).resolves.toBe(false);
     expect(readPending(target.key)).toEqual([{ ...entry, state: 'failed', error: STEER_REFUSED }]);
   });
 });

@@ -2,11 +2,13 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import { useSetAtom } from 'jotai';
-import { ShieldAlert, Minimize2, Maximize2, Loader2 } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
+import { ExpandIcon } from '../../../components/ui/expand-icon';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildAgentEditorOpenInput } from '@/lib/worktree/derive-project-path-from-editor-path';
 import { extractWorktreeRelativePath } from '@/lib/worktree/worktree-path';
 import { detectLanguage } from '../../../../shared/detect-language';
+import { Spinner } from '../../../components/ui/spinner';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useCodeTheme } from '../../../lib/hooks/use-code-theme';
@@ -704,10 +706,9 @@ export const AgentEditTool = memo(function AgentEditTool({
 
         {/* Status and expand button */}
         <div className="flex items-center gap-2 shrink-0 ml-2">
-          {/* Diff stats or spinner */}
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {isPending || isInputStreaming ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
+              <Spinner className="w-3 h-3" />
             ) : permissionDenied ? (
               <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-600">
                 <ShieldAlert className="h-3.5 w-3.5" />
@@ -732,20 +733,7 @@ export const AgentEditTool = memo(function AgentEditTool({
               aria-label={isOutputExpanded ? 'Collapse file content' : 'Expand file content'}
               className="p-1 rounded-md transition-[background-color,transform] duration-150 ease-out active:scale-95"
             >
-              <div className="relative w-4 h-4">
-                <Maximize2
-                  className={cn(
-                    'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                    isOutputExpanded ? 'opacity-0 scale-75' : 'opacity-100 scale-100',
-                  )}
-                />
-                <Minimize2
-                  className={cn(
-                    'absolute inset-0 w-4 h-4 text-muted-foreground transition-[opacity,transform] duration-200 ease-out',
-                    isOutputExpanded ? 'opacity-100 scale-100' : 'opacity-0 scale-75',
-                  )}
-                />
-              </div>
+              <ExpandIcon expanded={isOutputExpanded} />
             </Button>
           )}
         </div>

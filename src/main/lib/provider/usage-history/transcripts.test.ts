@@ -79,6 +79,7 @@ describe('parseClaudeLine', () => {
         content: [
           toolUse('Skill', { skill: 'commit-gates' }),
           toolUse('mcp__shortcut__stories-search'),
+          toolUse('mcp__frink__frink_flows_run'),
           toolUse('mcp__frink_dynamic_chat__frink_flows_run'),
           toolUse('Bash', { command: 'ls' }),
           toolUse('Skill', {}),

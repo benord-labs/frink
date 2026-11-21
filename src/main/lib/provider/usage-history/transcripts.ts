@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isFrinkMcpServerInHistory } from '../../../../shared/lib/mcp-tool-name';
 
 /** Line parsing for the transcripts Claude Code and Codex write, one JSON object per line. Pure:
  * reading files and remembering where a read stopped live in `reader.ts`. */
@@ -26,9 +27,6 @@ export const USAGE_LINE_MARKERS: Record<UsageProvider, string[]> = {
   claude: ['"usage"'],
   codex: ['"session_meta"', '"turn_context"', '"token_count"'],
 };
-
-/** Frink's own MCP plumbing, present in every chat: not an integration the user added. */
-const INTERNAL_MCP_SERVERS = new Set(['frink_dynamic_chat']);
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7/i;
 
@@ -133,7 +131,8 @@ function toolOf(block: unknown): string | null {
     return skill.success ? `skill:${skill.data.skill}` : null;
   }
   const server = /^mcp__(.+?)__/.exec(name)?.[1];
-  return server && !INTERNAL_MCP_SERVERS.has(server) ? `mcp:${server}` : null;
+  // Frink's own server, under any key it has had, is not an integration the user added.
+  return server && !isFrinkMcpServerInHistory(server) ? `mcp:${server}` : null;
 }
 
 /** A Claude Code assistant line. A response spans one line per content block, each repeating its

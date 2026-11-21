@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { getChannelToken, withChannelQuery } from '../../mcp/execution-identity';
+import { frinkToolsServer } from '../../mcp/runtime/frink-tools-server';
 
 /** Codex shells drop `*KEY*`/`*SECRET*`/`*TOKEN*` vars; last in the args so no override undoes it.
  * Why: docs/decisions/child-process-env-secrets.md */
@@ -11,6 +11,11 @@ export const CODEX_SHELL_ENV_SCRUB_ARGS = [
 /** Codex's model catalog turns sub-agents on despite the feature flags, and a sub-agent's calls skip
  * Frink's gate; only [agents].enabled=false removes them. After configArgs so no override undoes it. */
 export const CODEX_SUB_AGENTS_OFF_ARGS = ['--config', 'agents.enabled=false'] as const;
+
+/** The `--config` keys Frink locks; the start check confirms Codex kept each launched value. */
+export const CODEX_LOCKED_CONFIG_KEYS: ReadonlySet<string> = new Set(
+  [CODEX_SUB_AGENTS_OFF_ARGS[1], CODEX_SHELL_ENV_SCRUB_ARGS[1]].map((arg) => arg.split('=')[0]),
+);
 
 /** Disable Codex execution surfaces that do not implement Frink host permission v1, including
  * sub-agents, and scrub credentials from the shells Codex spawns. */
@@ -48,7 +53,7 @@ type CodexMcpConfigParams = {
 /** Build the channel-scoped dynamic-chat URL included in Codex's canonical MCP table. */
 export function buildCodexDynamicChatMcpUrl(params: CodexMcpConfigParams): string | null {
   const { baseUrl, subChatId, projectPath, hasSignalTask } = params;
-  const eligible = baseUrl && projectPath && projectPath !== os.homedir();
-  if (!eligible) return null;
-  return withChannelQuery(baseUrl, getChannelToken(subChatId, 'codex'), hasSignalTask);
+  const server = frinkToolsServer({ baseUrl, subChatId, runtime: 'codex', hasSignalTask });
+  const eligible = server && projectPath && projectPath !== os.homedir();
+  return eligible ? server.url : null;
 }

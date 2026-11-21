@@ -14,7 +14,7 @@ import { Field } from '../Field';
 import { Notice } from '../Notice';
 
 /**
- * Names the Mac a code points at before anything is sent to it. `onCancel` closes the sheet a
+ * Names the computer a code points at before anything is sent to it. `onCancel` closes the sheet a
  * pairing link opened over the app.
  */
 export function ConfirmStep({
@@ -80,7 +80,7 @@ export function ConfirmStep({
       </View>
       <Field
         label="This iPhone’s name"
-        hint="Shown in Frink on your Mac, so you can tell your devices apart."
+        hint="Shown in Frink on your computer, so you can tell your devices apart."
         value={deviceName}
         onChangeText={onDeviceName}
         maxLength={60}
@@ -94,7 +94,7 @@ export function ConfirmStep({
         <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
           <ShieldCheck size={18} color={t.muted} />
           <Text variant="secondary" color="muted" style={{ flex: 1 }}>
-            Only connect if this is your Mac.
+            Only connect if this is your computer.
           </Text>
         </View>
         <Button busy={busy} onPress={onConnect} accessibilityLabel="Connect">
