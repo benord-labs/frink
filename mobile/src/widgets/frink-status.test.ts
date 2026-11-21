@@ -80,7 +80,7 @@ it('leads the island with what needs you', () => {
   expect(read(regions.minimal).text).toBe('1');
 });
 
-it('says the card may be out of date once the Mac has gone quiet', () => {
+it('says the card may be out of date once the computer has gone quiet', () => {
   const regions = layout({ running: 1, needsYou: 0 }, { ...dark, isStale: true });
   expect(read(regions.banner).text).toContain('May be out of date');
   expect(read(regions.expandedBottom).text).toContain('May be out of date');

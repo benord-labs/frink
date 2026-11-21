@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { mergeTranscript } from '../../lib/chat/pending';
+import { useChatStream } from '../../lib/chat/use-chat-stream';
 import { useResource } from '../../lib/connection';
 import { useAlertAnswer } from '../../lib/notifications/alert-open';
 import { duration } from '../../lib/status';
@@ -38,21 +39,25 @@ import { useTurnClock } from './use-turn-clock';
 
 const ios = Platform.OS === 'ios';
 
-/** Busy chats poll faster; the interval follows the last activity the computer reported. */
+/** While the computer pushes changes the stream is the chat's only writer: polls stop and a
+ * refresh takes a fresh copy through it. Otherwise busy chats poll faster than idle ones. */
 function useChatResource(id: string, subChatId: string | undefined) {
   const [activity, setActivity] = useState<MobileActivity>();
+  const [live, setLive] = useState(false);
   const resource = useResource(
     { type: 'chat', id, subChatId },
-    { interval: chatPollInterval(activity) },
+    { interval: chatPollInterval(activity), enabled: !live },
   );
+  const refresh = useChatStream(id, subChatId, resource, setLive);
   const latest = resource.data?.activity;
   useEffect(() => setActivity(latest), [latest]);
+  const reload = live ? refresh : resource.refresh;
   // An answer sent from the alert lands after the chat opened, so read the closed request again.
   const answered = useAlertAnswer(id);
   useEffect(() => {
-    if (answered) resource.refresh();
+    if (answered) reload();
   }, [answered]);
-  return resource;
+  return live ? { ...resource, refresh, pull: refresh } : resource;
 }
 
 /**

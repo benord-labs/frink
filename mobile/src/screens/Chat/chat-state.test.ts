@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
-import { acceptsMessage, actionEnabled, chatPollInterval, composerMode } from './chat-state';
+import {
+  acceptsMessage,
+  actionEnabled,
+  chatPollInterval,
+  composerMode,
+  composerPlaceholder,
+} from './chat-state';
 
 describe('composerMode', () => {
   const typed = { text: 'Also this', files: 0 };
   const empty = { text: ' ', files: 0 };
 
-  it('sends when idle and ready, and says so when the Mac is not ready', () => {
+  it('sends when idle and ready, and says so when the computer is not ready', () => {
     expect(composerMode('idle', typed, true, false)).toBe('send');
     expect(composerMode('idle', typed, false, false)).toBe('unavailable');
   });
@@ -29,8 +35,15 @@ describe('composerMode', () => {
   });
 });
 
+describe('composerPlaceholder', () => {
+  it('says where to open Frink when the computer cannot run chats', () => {
+    expect(composerPlaceholder('idle', false, false)).toBe('Open Frink on your computer to chat');
+    expect(composerPlaceholder('idle', true, false)).toBe('Message Frink');
+  });
+});
+
 describe('acceptsMessage', () => {
-  it('takes files and text when idle or in a plain chat’s background wait, with the Mac ready', () => {
+  it('takes files and text when idle or in a plain chat’s background wait, with the computer ready', () => {
     expect(acceptsMessage('idle', true, false)).toBe(true);
     expect(acceptsMessage('background', true, false)).toBe(true);
     expect(acceptsMessage('background', false, false)).toBe(false);

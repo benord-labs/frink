@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
-import { flowRunId, flowSections, flowStatus, flowTrailing, matchingFlows } from './flow-list';
+import {
+  flowMenu,
+  flowRunId,
+  flowStatus,
+  flowSubtitle,
+  groupFlows,
+  matchingFlows,
+  needsYouLabel,
+} from './flow-list';
 
 const NOW = Date.parse('2026-09-29T14:30:00Z');
 
@@ -21,108 +29,83 @@ const lastRun = (status: string, minutes = 5) => ({
   status,
   at: new Date(NOW - minutes * 60_000).toISOString(),
 });
-const titles = (flows: MobileFlow[], query?: string) =>
-  flowSections(flows, query).map((s) => [s.title, s.flows.map((f) => f.id)]);
+const ids = (flows: MobileFlow[]) => flows.map((item) => item.id);
+const nowIds = (flows: MobileFlow[]) => ids(groupFlows(flows).now.map((entry) => entry.flow));
 
-describe('flowSections', () => {
-  it('leads with what needs you, then what runs, what you paused and what just finished', () => {
+describe('groupFlows', () => {
+  it('puts every unfinished run in Now, waits included, and every Flow in All Flows', () => {
+    // The computer reports a paused run as awaiting_input and a run waiting for Start as held.
     const flows = [
       flow({ id: 'live', status: 'running' }),
       flow({ id: 'failed', lastRun: lastRun('failed') }),
-      flow({ id: 'waiting-off', enabled: false, status: 'awaiting_input' }),
-      flow({ id: 'failed-off', enabled: false, lastRun: lastRun('failed', 6) }),
-      flow({ id: 'parked', status: 'paused' }),
+      flow({ id: 'waiting', status: 'awaiting_input', lastRun: lastRun('paused') }),
+      flow({ id: 'held', status: 'held' }),
+      flow({ id: 'queued', status: 'queued' }),
       flow({ id: 'done', lastRun: lastRun('completed') }),
-      flow({ id: 'never' }),
+      flow({ id: 'never', enabled: false }),
     ];
-    expect(titles(flows)).toEqual([
-      ['Needs you', ['waiting-off']],
-      ['Running', ['live']],
-      ['Paused', ['parked']],
-      ['Recent results', ['failed', 'done', 'failed-off']],
-    ]);
+    expect(nowIds(flows)).toEqual(['live', 'waiting', 'held', 'queued']);
+    expect(groupFlows(flows).now[0].runId).toBe('live-live');
+    expect(ids(groupFlows(flows).all)).toEqual(ids(flows));
   });
 
-  // The Mac sends the live run's display status; the newest run keeps the engine's raw "paused".
-  it('trusts the live display status over the raw paused run', () => {
-    const waiting = flow({ id: 'w', status: 'awaiting_input', lastRun: lastRun('paused') });
-    const working = flow({ id: 'r', status: 'running', lastRun: lastRun('paused') });
-    expect(titles([waiting, working])).toEqual([
-      ['Needs you', ['w']],
-      ['Running', ['r']],
-    ]);
-  });
-
-  it('lists a run held for Start under Needs you as Ready to start', () => {
-    const held = flow({ id: 'held', status: 'held' });
-    expect(titles([held])).toEqual([['Needs you', ['held']]]);
-    expect(flowTrailing(held, NOW)).toEqual({ text: 'Ready to start', tone: 'attention' });
-  });
-
-  it('sorts the latest result per flow, while the library still lists every Flow', () => {
-    const results = [60, 5, 20, 1, 30, 90].map((minutes) =>
-      flow({ id: `${minutes}`, lastRun: lastRun('completed', minutes) }),
-    );
-    expect(flowSections(results)[0].flows.map((f) => f.id)).toEqual([
-      '1',
-      '5',
-      '20',
-      '30',
-      '60',
-      '90',
-    ]);
-    expect(matchingFlows(results)).toHaveLength(6);
-  });
-
-  it('opens the live run while there is one, never an older finished run in its place', () => {
-    const active = flow({ id: 'a', status: 'running', lastRun: lastRun('completed') });
-    expect(flowRunId(active)).toBe('live-a');
-    expect(flowRunId({ ...active, latestRunId: null })).toBeNull();
-    expect(flowSections([{ ...active, latestRunId: null }])).toEqual([]);
-    expect(flowRunId(flow({ id: 'b', lastRun: lastRun('completed', 7) }))).toBe('last-completed-7');
-  });
-
-  it('deduplicates run IDs across sections, keeping the most actionable row', () => {
+  it('leaves out a live status without a run to open, and lists each run once', () => {
     const rows = [
-      flow({ id: 'old', lastRun: { ...lastRun('completed'), id: 'same' } }),
-      flow({ id: 'wait', status: 'awaiting_input', latestRunId: 'same' }),
-      flow({ id: 'copy', status: 'awaiting_input', latestRunId: 'same' }),
+      flow({ id: 'lost', status: 'running', latestRunId: null }),
+      flow({ id: 'first', status: 'running', latestRunId: 'same' }),
+      flow({ id: 'copy', status: 'running', latestRunId: 'same' }),
     ];
-    expect(titles(rows)).toEqual([['Needs you', ['wait']]]);
-  });
-
-  it('filters by name or description', () => {
-    const flows = [
-      flow({ id: 'x', name: 'Digest', description: 'Support INBOX', status: 'running' }),
-    ];
-    expect(matchingFlows(flows, ' inbox ').map((f) => f.id)).toEqual(['x']);
-    expect(flowSections(flows, 'nothing')).toEqual([]);
+    expect(nowIds(rows)).toEqual(['first']);
   });
 });
 
-describe('flowTrailing', () => {
-  it('prefers the live run over the last run', () => {
-    expect(flowStatus(flow({ id: 'a', status: 'running', lastRun: lastRun('failed') })).word).toBe(
-      'Running',
-    );
-    expect(flowTrailing(flow({ id: 'a', status: 'running' }), NOW)).toEqual({
-      text: 'Running',
-      tone: 'live',
-    });
+describe('needsYouLabel', () => {
+  it('counts what needs you in one link, and hides at zero', () => {
+    expect(needsYouLabel(0)).toBeNull();
+    expect(needsYouLabel(1)).toBe('1 needs you');
+    expect(needsYouLabel(4)).toBe('4 need you');
+  });
+});
+
+describe('flow rows', () => {
+  it('reports the live run over the last run, and opens the matching run', () => {
+    const active = flow({ id: 'a', status: 'running', lastRun: lastRun('failed') });
+    expect(flowStatus(active).word).toBe('Running');
+    expect(flowRunId(active)).toBe('live-a');
+    expect(flowRunId(flow({ id: 'b', lastRun: lastRun('completed', 7) }))).toBe('last-completed-7');
+    expect(flowStatus(flow({ id: 'c' })).word).toBe('Never run');
   });
 
-  it('shows when a finished run ended, and names waits and failures', () => {
-    expect(flowTrailing(flow({ id: 'a', lastRun: lastRun('completed', 90) }), NOW)).toEqual({
-      text: '1h',
-      tone: 'quiet',
-    });
-    expect(flowTrailing(flow({ id: 'a', status: 'awaiting_input' }), NOW)?.text).toBe(
-      'Waiting for you',
+  it('describes a Flow, or says how it starts', () => {
+    expect(flowSubtitle({ description: 'Triage issues', trigger: 'schedule_trigger' })).toBe(
+      'Triage issues',
     );
-    expect(flowTrailing(flow({ id: 'a', lastRun: lastRun('failed') }), NOW)).toEqual({
-      text: 'Failed',
-      tone: 'danger',
-    });
-    expect(flowTrailing(flow({ id: 'a' }), NOW)).toBeNull();
+    expect(flowSubtitle({ description: '', trigger: 'schedule_trigger' })).toBe(
+      'Runs on a schedule',
+    );
+  });
+
+  it('filters by name or description', () => {
+    const flows = [flow({ id: 'x', name: 'Digest', description: 'Support INBOX' })];
+    expect(ids(matchingFlows(flows, ' inbox '))).toEqual(['x']);
+    expect(matchingFlows(flows, 'nothing')).toEqual([]);
+  });
+});
+
+describe('flowMenu', () => {
+  const labels = (item: MobileFlow) => flowMenu(item).map((entry) => entry.label);
+
+  it('offers Run now only when the Flow is on and nothing is under way', () => {
+    expect(labels(flow({ id: 'a', lastRun: lastRun('completed') }))).toEqual([
+      'Run now',
+      'Turn off',
+      'View last run',
+    ]);
+    expect(labels(flow({ id: 'b', enabled: false }))).toEqual(['Turn on']);
+    expect(labels(flow({ id: 'c', status: 'awaiting_input' }))).toEqual([
+      'Turn off',
+      'View current run',
+    ]);
+    expect(labels(flow({ id: 'd', status: 'running', latestRunId: null }))).toEqual(['Turn off']);
   });
 });

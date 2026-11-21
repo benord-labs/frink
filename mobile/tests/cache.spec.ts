@@ -1,11 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openApp } from './fixtures/app';
+import { UNKNOWN_REQUEST, openApp } from './fixtures/app';
 import { conversation, openChat, requestsOf } from './fixtures/chat';
 import { NOW, overviewFixture } from './fixtures/data';
 import { macFlows } from './fixtures/flows';
 import { openDestination, openTab } from './fixtures/navigation';
 
-const offlineBanner = (page: Page) => page.getByText('Can’t reach your Mac', { exact: true });
+const offlineBanner = (page: Page) => page.getByText('Can’t reach your computer', { exact: true });
 
 /** Six running Flows, one more than a collapsed section shows, the newest titled `newest`. */
 function sixRunning(newest: string) {
@@ -25,14 +25,14 @@ function sixRunning(newest: string) {
   };
 }
 
-test('Flows reopens with its last rows even when the Mac is unreachable', async ({ page }) => {
+test('Flows reopens with its last rows even when the computer is unreachable', async ({ page }) => {
   const state = await openApp(page, { data: { flows: macFlows() } });
   await openDestination(page, 'Flows');
-  await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
+  await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
   await openDestination(page, 'Settings');
   state.offline = true;
   await openDestination(page, 'Flows');
-  await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
+  await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
 });
 
 test('Flows opens warm on first visit', async ({ page }) => {
@@ -41,7 +41,7 @@ test('Flows opens warm on first visit', async ({ page }) => {
   await expect.poll(() => requestsOf(state, 'flows').length).toBe(1);
   state.offline = true;
   await openTab(page, 'Flows');
-  await expect(page.getByTestId('flow-activity-flow-1')).toBeVisible();
+  await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
 });
 
 test('re-expanding a Queue section shows the live rows, not an earlier expansion', async ({
@@ -71,9 +71,13 @@ test('a chat reads readiness from the shared overview poll', async ({ page }) =>
   expect(overviews.filter((input) => 'limits' in input)).toEqual([]);
 });
 
+// Against a desktop too old to push live updates, so the chat keeps its quick polls.
 test.describe('a polled chat', () => {
   async function openPausedChat(page: Page) {
-    const state = await openApp(page, { data: { chat: conversation() } });
+    const state = await openApp(page, {
+      data: { chat: conversation() },
+      respond: (input) => (input.type === 'watchChat' ? UNKNOWN_REQUEST : undefined),
+    });
     await openChat(page);
     await expect(page.getByTestId('message-m1')).toBeVisible();
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));

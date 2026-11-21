@@ -105,9 +105,9 @@ describe('cache', () => {
     const before = cacheWriter('device-1');
     const other = cacheWriter('device-2');
     clearCache('device-1');
-    before(key, ['late']);
+    expect(before(key, ['late'])).toBe(false);
     expect(readCache(key)).toBeUndefined();
-    other(resourceKey('device-2', 'route-2', { type: 'flows' }), ['kept']);
+    expect(other(resourceKey('device-2', 'route-2', { type: 'flows' }), ['kept'])).toBe(true);
     expect(readCache(resourceKey('device-2', 'route-2', { type: 'flows' }))).toBeDefined();
     cacheWriter('device-1')(key, ['fresh']);
     expect(readCache<string[]>(key)?.data).toEqual(['fresh']);

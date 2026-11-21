@@ -65,7 +65,7 @@ export function AttachButton({
               <OptionRow
                 icon={Paperclip}
                 title="Files"
-                subtitle="Saved on your Mac for Frink to read"
+                subtitle="Saved on your computer for Frink to read"
                 onPress={() => pick(attachments.pickFiles)}
               />
             </SheetSection>

@@ -310,7 +310,7 @@ export function AnswerRow({ children, send }: { children: ReactNode; send: React
   );
 }
 
-/** A permission Frink asked for, e.g. to run a command. Some kinds can only be answered on the Mac. */
+/** A permission Frink asked for, e.g. to run a command. Some kinds can only be answered on the computer. */
 export function PermissionForm({
   prompt,
   onAnswered,
@@ -367,7 +367,7 @@ export function PermissionForm({
           </Button>
         </View>
       ) : (
-        <Note>Answer this one in Frink on your Mac.</Note>
+        <Note>Answer this one in Frink on your computer.</Note>
       )}
     </DecisionCard>
   );

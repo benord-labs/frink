@@ -160,3 +160,17 @@ test('while Frink works the composer is text-only: no attach, no controls', asyn
   await messageBox(page).fill('');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
 });
+
+test('without the native speech modules the composer has no microphone and sends typed text', async ({
+  page,
+}) => {
+  const state = await openApp(page, { data: { chat: conversation() } });
+  await openChat(page);
+  await expect(page.getByRole('button', { name: 'Attach', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Dictate', exact: true })).toHaveCount(0);
+  await messageBox(page).fill('Typed, not spoken');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect
+    .poll(() => requestsOf(state, 'sendMessage').at(-1))
+    .toMatchObject({ text: 'Typed, not spoken' });
+});

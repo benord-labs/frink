@@ -15,7 +15,7 @@ function removeUnusedChat(connection: Connection, chatId: string) {
 }
 
 /**
- * Makes a new chat's chat on the Mac the first time it is needed (its first message, or its model
+ * Makes a new chat's chat on the computer the first time it is needed (its first message, or its model
  * list), then claims it for that first message. Once made, the chat is reused: a retry never
  * makes another.
  */
@@ -32,7 +32,7 @@ export function useStartChat() {
   } | null>(null);
 
   const gone = useRef(false);
-  // The Mac that made the owned chat: pairing another one must not send it this chat's removal.
+  // The computer that made the owned chat: pairing another one must not send it this chat's removal.
   const madeOn = useRef<Connection | null>(null);
   const remove = (chat: StartedChat, on = madeOn.current) => {
     if (on) removeUnusedChat(on, chat.chatId);
@@ -75,7 +75,7 @@ export function useStartChat() {
     return true;
   }
 
-  /** Removes a chat that was made only to list models and never used, on the Mac too. */
+  /** Removes a chat that was made only to list models and never used, on the computer too. */
   function discard() {
     const { chat, sent } = owned.current;
     if (sent) return;
