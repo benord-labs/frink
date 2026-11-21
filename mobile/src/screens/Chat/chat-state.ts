@@ -5,13 +5,13 @@ import type { MobileActivity, MobileChatDetail } from '@frink/shared/types/remot
  * - `send` starts a turn, or takes over a background wait as a desktop send does;
  * - `steer` joins the running turn at its next step;
  * - `stop` ends the running turn, or background work that can't take a message right now;
- * - `unavailable` means the Mac can't run chats, so nothing can be sent.
+ * - `unavailable` means the computer can't run chats, so nothing can be sent.
  */
 export type ComposerMode = 'send' | 'steer' | 'stop' | 'unavailable';
 
 /**
  * Whether a new message can start a turn: when idle, or by taking over a chat's background wait.
- * A Flow step's wait belongs to its run, so the Mac refuses messages there until the step ends.
+ * A Flow step's wait belongs to its run, so the computer refuses messages there until the step ends.
  */
 export function acceptsMessage(
   activity: MobileActivity,
@@ -60,7 +60,7 @@ export function composerPlaceholder(
     return acceptsMessage(activity, executionReady, flowRun)
       ? 'Message Frink while it waits'
       : 'Frink is waiting on background work';
-  return executionReady ? 'Message Frink' : 'Open Frink on your Mac to chat';
+  return executionReady ? 'Message Frink' : 'Open Frink on your computer to chat';
 }
 
 /** Busy chats refresh quickly so steps and Stop feel live; idle ones settle down. */

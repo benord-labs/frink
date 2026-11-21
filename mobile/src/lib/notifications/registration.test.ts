@@ -77,7 +77,7 @@ it('works with a phone AbortSignal, which has no throwIfAborted', async () => {
   await expect(run(true, cancelled)).rejects.toThrow('cancelled');
 });
 
-it('starts no refresh or tap while the Mac is being forgotten', () => {
+it('starts no refresh or tap while the computer is being forgotten', () => {
   const forgetting = { inFlight: false, forgetting: true };
   // A turn-on would re-register alerts for a Mac about to be dropped; any tap would cancel the
   // forget's own removal.

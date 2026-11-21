@@ -64,7 +64,9 @@ test('search asks the computer once typing pauses, and says when nothing matches
 }) => {
   const state = await openChats(page);
   await expect(page.getByTestId('chat-row-chat-1')).toBeVisible();
-  const field = page.getByRole('textbox', { name: 'Search chats' });
+  // The search and view picker scroll with the list, which a large title needs to collapse.
+  const field = page.getByTestId('chat-list').getByRole('textbox', { name: 'Search chats' });
+  await expect(page.getByTestId('chat-list').getByRole('tab', { name: 'Recent' })).toBeVisible();
   await field.pressSequentially('invoice', { delay: 30 });
   await expect(page.getByTestId('chat-row-chat-4')).toBeVisible();
   await expect(page.getByTestId('chat-row-chat-1')).toHaveCount(0);
@@ -165,7 +167,7 @@ test('swiping a chat left deletes it after asking', async ({ page }) => {
 });
 
 test('a chat the computer won’t delete explains why', async ({ page }) => {
-  const reason = 'This chat belongs to a Flow run. Delete the run in Frink on your Mac.';
+  const reason = 'This chat belongs to a Flow run. Delete the run in Frink on your computer.';
   await openChats(page, {
     respond: (input) => {
       if (input.type === 'deleteChat') return new Error(reason);
@@ -201,7 +203,7 @@ test('offline keeps the last list and says so', async ({ page }) => {
   await expect(page.getByTestId('chat-row-chat-1')).toBeVisible();
   state.offline = true;
   await expect(
-    page.getByTestId('chat-list').getByText('Can’t reach your Mac', { exact: true }),
+    page.getByTestId('chat-list').getByText('Can’t reach your computer', { exact: true }),
   ).toBeVisible({
     timeout: 10000,
   });

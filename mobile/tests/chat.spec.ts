@@ -20,7 +20,7 @@ import { openDestination } from './fixtures/navigation';
 const send = (page: import('@playwright/test').Page) =>
   page.getByRole('button', { name: 'Send message', exact: true });
 type Input = Parameters<NonNullable<AppState['respond']>>[0];
-/** Answers a send as the Mac does: the message is saved under its request id. */
+/** Answers a send as the computer does: the message is saved under its request id. */
 function saveSent(state: AppState, input: Input) {
   // SAFETY: every test that saves a send opened the app with a chat.
   const chat = state.data.chat as MobileChatDetail;
@@ -125,26 +125,28 @@ test.describe('reading a chat', () => {
   test('a failed response is shown in the conversation', async ({ page }) => {
     await openApp(page, {
       data: {
-        chat: conversation({ error: 'The response failed. Check Frink on your Mac for details.' }),
+        chat: conversation({
+          error: 'The response failed. Check Frink on your computer for details.',
+        }),
       },
     });
     await openChat(page);
     await expect(
-      page.getByText('The response failed. Check Frink on your Mac for details.'),
+      page.getByText('The response failed. Check Frink on your computer for details.'),
     ).toBeVisible();
   });
 
-  test('an unreachable Mac keeps the transcript and says what happened', async ({ page }) => {
+  test('an unreachable computer keeps the transcript and says what happened', async ({ page }) => {
     const state = await openApp(page, { data: { chat: conversation() } });
     await openChat(page);
     await expect(page.getByTestId('message-m1')).toBeVisible();
     state.offline = true;
-    await expect(page.getByText('Can’t reach your Mac', { exact: true })).toBeVisible();
+    await expect(page.getByText('Can’t reach your computer', { exact: true })).toBeVisible();
     await expect(page.getByTestId('message-m1')).toBeVisible();
     await page.screenshot({ path: 'test-results/chat-offline-dark.png' });
     state.offline = false;
     await page.getByRole('button', { name: 'Try again', exact: true }).click();
-    await expect(page.getByText('Can’t reach your Mac', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Can’t reach your computer', { exact: true })).toHaveCount(0);
   });
 
   test('rich replies render safely and fit a narrow phone', async ({ page }) => {
@@ -429,7 +431,7 @@ test.describe('conversations in one chat', () => {
     await openChat(page);
     await expect(page.getByTestId('message-m29')).toBeInViewport();
     state.offline = true;
-    await expect(page.getByText('Can’t reach your Mac')).toBeInViewport();
+    await expect(page.getByText('Can’t reach your computer')).toBeInViewport();
     await expect(page.getByRole('tab', { name: 'Release', exact: true })).toBeInViewport();
     await expect(page.getByRole('tab', { name: 'Follow-up', exact: true })).toBeInViewport();
     // Following the newest message is unaffected: the banner pins above, not in, the transcript.
@@ -441,7 +443,7 @@ test.describe('conversations in one chat', () => {
 });
 
 test.describe('sending and steering', () => {
-  test('a sent message shows at once and the box stays free while the Mac answers', async ({
+  test('a sent message shows at once and the box stays free while the computer answers', async ({
     page,
   }) => {
     const answer = held();
@@ -487,7 +489,7 @@ test.describe('sending and steering', () => {
     await expect(page.getByText('Please verify staging first.')).toHaveCount(1);
   });
 
-  test('a send the Mac refuses says so, and a tap retries it under the same id', async ({
+  test('a send the computer refuses says so, and a tap retries it under the same id', async ({
     page,
   }) => {
     let sends = 0;
@@ -697,12 +699,15 @@ test.describe('sending and steering', () => {
     await expect.poll(() => requestsOf(state, 'stopChat').length).toBe(1);
   });
 
-  test('a Mac that can’t run chats disables sending and says why', async ({ page }) => {
+  test('a computer that can’t run chats disables sending and says why', async ({ page }) => {
     await openApp(page, {
       data: { chat: conversation(), overview: { ...overviewFixture(), executionReady: false } },
     });
     await openChat(page);
-    await expect(messageBox(page)).toHaveAttribute('placeholder', 'Open Frink on your Mac to chat');
+    await expect(messageBox(page)).toHaveAttribute(
+      'placeholder',
+      'Open Frink on your computer to chat',
+    );
     await expect(messageBox(page)).not.toBeEditable();
     await expect(send(page)).toBeDisabled();
     await expect(page.getByTestId('message-m2')).toBeVisible();
@@ -784,11 +789,11 @@ test.describe('questions and permissions', () => {
       });
   });
 
-  test('a question already answered on the Mac says so', async ({ page }) => {
+  test('a question already answered on the computer says so', async ({ page }) => {
     const state = await openApp(page, { data: { chat: conversation() } });
     await openQuestion(page, state, { ...question, id: 'gone' });
     await expect(
-      page.getByText('This was already answered on your Mac. The chat is up to date.'),
+      page.getByText('This was already answered on your computer. The chat is up to date.'),
     ).toBeVisible();
   });
 

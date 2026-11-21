@@ -62,6 +62,12 @@ describe('mobile API boundary', () => {
       undefined,
     );
   });
+  it('asks for both apps to be updated when the computer speaks another API version', async () => {
+    transport.mockResolvedValue(reply({ ...connection, apiVersion: 2 }));
+    await expect(pairComputer(JSON.stringify(pairing), 'My iPhone')).rejects.toThrow(
+      'Update Frink on your computer and this iPhone so they match.',
+    );
+  });
   it('keeps bearer and request inside the encrypted transport envelope', async () => {
     transport.mockResolvedValue(reply({ data: [] }));
     expect(await requestMobile(connection, { type: 'flows' })).toEqual([]);
@@ -117,7 +123,7 @@ describe('mobile API boundary', () => {
     await requestMobile(connection, { type: 'createChat', projectId: 'p' });
     expect(transport.mock.calls[0][5]).toBe(60_000);
   });
-  it.each(['', 'not json'])('reports a %j reply as an unreachable Mac', async (text) => {
+  it.each(['', 'not json'])('reports a %j reply as an unreachable computer', async (text) => {
     transport.mockResolvedValue({ status: 200, body: new TextEncoder().encode(text) });
     await expect(requestMobile(connection, { type: 'overview' })).rejects.toMatchObject({
       constructor: ApiError,

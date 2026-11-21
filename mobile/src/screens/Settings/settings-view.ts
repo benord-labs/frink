@@ -1,4 +1,4 @@
-export type MacStatus = {
+export type ComputerStatus = {
   label: string;
   detail?: string;
   tone: 'live' | 'attention' | 'quiet';
@@ -6,33 +6,45 @@ export type MacStatus = {
 
 /**
  * The connection in words. Status 0 means no answer at all (network); any other error means the
- * Mac answered but failed. Labels differ from the ResourceStatus banner above so they don't repeat.
+ * computer answered but failed. Labels differ from the ResourceStatus banner so they don't repeat.
  */
-export function macStatus(overview: {
+export function computerStatus(overview: {
   data?: { executionReady: boolean };
   error?: string;
   errorStatus?: number;
-}): MacStatus {
+}): ComputerStatus {
   if (overview.error && overview.errorStatus === 0)
     return {
       label: 'Offline',
-      detail: 'Keep Frink open and your Mac awake and online.',
+      detail: 'Keep Frink open and your computer awake and online.',
       tone: 'quiet',
     };
   if (overview.error)
     return {
       label: 'Having trouble',
-      detail: 'Frink on your Mac had a problem. Try again in a moment.',
+      detail: 'Frink on your computer had a problem. Try again in a moment.',
       tone: 'attention',
     };
   if (!overview.data) return { label: 'Checking…', tone: 'quiet' };
   if (!overview.data.executionReady)
-    return {
-      label: 'Frink isn’t open on your Mac',
-      detail: 'Open Frink on your Mac to run chats.',
-      tone: 'attention',
-    };
+    return { label: 'Frink isn’t open on your computer', tone: 'attention' };
   return { label: 'Connected', tone: 'live' };
+}
+
+/** The shown computer's row subtitle: its state, then what to do about it when there is something. */
+export function statusLine(status: ComputerStatus): string {
+  return status.detail ? `${status.label}. ${status.detail}` : status.label;
+}
+
+const REVOKE_HINT =
+  'To fully remove access, also remove this iPhone under Paired phones in Frink on that computer → Settings → Mobile.';
+
+/** The confirm before forgetting a computer, naming it, with how to revoke its access too. */
+export function forgetPrompt(name: string) {
+  return {
+    title: `Forget ${name}?`,
+    message: `This iPhone stops showing ${name} until you pair it again. ${REVOKE_HINT}`,
+  };
 }
 
 type CodeSource = { branch?: string; commit?: string; checkout?: string };
@@ -65,7 +77,7 @@ export function notificationsNote(state: {
       openSettings: true,
     };
   return {
-    text: 'Tells you when a chat needs you or finishes. Your prompts and code stay on your Mac.',
+    text: 'Tells you when a chat needs you or finishes. Your prompts and code stay on your computer.',
     tone: 'muted',
     openSettings: false,
   };

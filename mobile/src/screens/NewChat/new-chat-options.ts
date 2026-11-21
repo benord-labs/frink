@@ -15,15 +15,14 @@ export function creationChoiceChanged(
   );
 }
 
-/** One plain line per choice, for people who have never heard of a git worktree. */
-export const WORK_HELP = {
-  worktree: 'Worktree: a separate copy, safe to experiment.',
-  local: 'Local: works directly in your project folder.',
-} as const;
-export const PLAN_HELP = 'Plan: Frink writes a plan for you to review before it changes anything.';
+/** Where a new chat works, each with one plain line for people who have never heard of a worktree. */
+export const PLACES = [
+  { id: 'worktree', label: 'Worktree', detail: 'A separate copy, safe to experiment' },
+  { id: 'local', label: 'Local', detail: 'Works directly in your project folder' },
+];
 
-/** Why chats can't start: the phone only relays, so the Mac app has to be open to run them. */
-export const NOT_READY = 'Open Frink on your Mac to run chats.';
+/** Why chats can't start: the phone only relays, so the desktop app has to be open to run them. */
+export const NOT_READY = 'Open Frink on your computer to run chats.';
 
 /** The picker gets a search field once the list is longer than a glance. */
 export const PROJECT_SEARCH_THRESHOLD = 6;

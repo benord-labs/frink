@@ -1,4 +1,4 @@
-// A stand-in Mac for the iOS simulator: the real phone protocol over TLS on localhost, answering
+// A stand-in computer for the iOS simulator: the real phone protocol over TLS on localhost, answering
 // with the same fixtures the browser tests use. Setup (certificate, simulator trust): mobile/README.md.
 import { appendFileSync, linkSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { Decoder, Encoder, PacketType, type Packet } from 'socket.io-parser';
@@ -100,7 +100,7 @@ const READS = new Set([
 const sent: unknown[] = [];
 
 type Composer = { mode: string; settings: Record<string, unknown> };
-/** What the Mac would answer: a pairing, a saved composer change, or the fixture for the request. */
+/** What the computer would answer: a pairing, a saved composer change, or the fixture for the request. */
 type Input = Record<string, string> & { type: string; patch?: object };
 const FIXED: Record<string, unknown> = {
   '/pair': {
@@ -157,9 +157,9 @@ const HANDLERS: Record<string, (input: Input) => unknown> = {
   },
 };
 
-/** What the Mac would answer: a fixed reply per path, else the handler or fixture for the request. */
+/** What the computer would answer: a fixed reply per path, else the handler or fixture for the request. */
 function answer(path: string, body: string): unknown {
-  // What the phone asked the Mac to change, for checking that nothing is left behind.
+  // What the phone asked the computer to change, for checking that nothing is left behind.
   const log = () => appendFileSync(logFile, `${new Date().toISOString()} ${path} ${body}\n`);
   if (path in FIXED) {
     if (path !== '/pair') log();
@@ -183,7 +183,7 @@ type Peer = {
 };
 
 Bun.serve({
-  // Loopback only: the simulator shares this Mac's network, and nothing else should reach it.
+  // Loopback only: the simulator shares this computer's network, and nothing else should reach it.
   hostname: '127.0.0.1',
   port,
   tls: { cert: Bun.file(cert), key: Bun.file(key) },

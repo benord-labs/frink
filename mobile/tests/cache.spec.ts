@@ -5,7 +5,7 @@ import { NOW, overviewFixture } from './fixtures/data';
 import { macFlows } from './fixtures/flows';
 import { openDestination, openTab } from './fixtures/navigation';
 
-const offlineBanner = (page: Page) => page.getByText('Can’t reach your Mac', { exact: true });
+const offlineBanner = (page: Page) => page.getByText('Can’t reach your computer', { exact: true });
 
 /** Six running Flows, one more than a collapsed section shows, the newest titled `newest`. */
 function sixRunning(newest: string) {
@@ -25,7 +25,7 @@ function sixRunning(newest: string) {
   };
 }
 
-test('Flows reopens with its last rows even when the Mac is unreachable', async ({ page }) => {
+test('Flows reopens with its last rows even when the computer is unreachable', async ({ page }) => {
   const state = await openApp(page, { data: { flows: macFlows() } });
   await openDestination(page, 'Flows');
   await expect(page.getByTestId('flow-now-flow-1')).toBeVisible();
