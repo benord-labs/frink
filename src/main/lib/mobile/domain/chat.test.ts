@@ -205,7 +205,7 @@ describe('mobile chat actions', () => {
     fixture.seed.mockReturnValue({ streams: [], terminals: [failure] });
     const request = { type: 'chat' as const, id: 'chat', subChatId: 'sub' };
     await expect(readMobileChat(request)).resolves.toMatchObject({
-      error: 'The response failed. Open Frink on your Mac to see why.',
+      error: 'The response failed. Open Frink on your computer to see why.',
     });
     for (const [status, activity] of [
       ['active', 'running'],

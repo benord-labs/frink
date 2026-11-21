@@ -23,7 +23,7 @@ export function runNowBlocker(
   executionReady: boolean | undefined,
 ): string | null {
   if (flow.status && !isTerminal(flow.status)) return 'Refresh to find the current run.';
-  if (executionReady === false) return 'Open Frink on your Mac to run Flows.';
+  if (executionReady === false) return 'Open Frink on your computer to run Flows.';
   if (!flow.enabled) return 'Turn this Flow on to run it.';
   return null;
 }

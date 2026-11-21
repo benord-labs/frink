@@ -11,7 +11,7 @@ import { GUTTER, space, useTheme } from '../../../ui/theme';
 import { needsDecision, plainDetail, stepStatus, stepTrailing, TONE_TEXT } from '../run-view';
 
 export type Resume = (node: MobileRunNode, action: 'approve' | 'skip') => void;
-/** What every step needs to offer its decision: whether the Mac can act, and the last failure. */
+/** What every step needs to offer its decision: whether the computer can act, and the last failure. */
 type DecisionState = {
   busy: boolean;
   ready: boolean;
@@ -84,7 +84,7 @@ function Decision({ node, state }: { node: MobileRunNode; state: DecisionState }
   const { busy, ready, error, resume } = state;
   const failure = error?.nodeId === node.id ? error.text : null;
   const note = failure ?? (ready ? null : 'Open Frink on your computer to continue this run.');
-  // Approve goes grey while the Mac can't act: a disabled accent pill reads as muddy.
+  // Approve goes grey while the computer can't act: a disabled accent pill reads as muddy.
   return (
     <View style={{ gap: space.sm, paddingVertical: space.xs }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>

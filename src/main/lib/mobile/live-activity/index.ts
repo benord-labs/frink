@@ -11,7 +11,7 @@ const TICK_MS = 5_000;
 const FLOOR_MS = 10_000;
 const MAX_BACKOFF_MS = 15 * 60_000;
 const END_AFTER_MS = 60_000;
-// Well inside the 30 minute stale date the forwarder sets, so a live Mac never looks stale.
+// Well inside the 30 minute stale date the forwarder sets, so a live computer never looks stale.
 const KEEP_ALIVE_MS = 15 * 60_000;
 
 export type LiveActivityPush = MobileAgentCounts & {
@@ -54,7 +54,7 @@ export async function postToForwarder(
 const same = (a: MobileAgentCounts, b: MobileAgentCounts) =>
   a.running === b.running && a.needsYou === b.needsYou;
 
-/** The update this device is owed now, if any. The Mac is the card's only writer. */
+/** The update this device is owed now, if any. The computer is the card's only writer. */
 function due(state: DeviceState, counts: MobileAgentCounts, now: number) {
   // Half a tick of slack, so timer jitter never pushes a send to the tick after.
   if (now + TICK_MS / 2 < state.nextAllowedAt) return null;
@@ -70,7 +70,7 @@ function due(state: DeviceState, counts: MobileAgentCounts, now: number) {
   return null;
 }
 
-/** Keeps each phone's Lock Screen card in step with the Mac's agent counts. */
+/** Keeps each phone's Lock Screen card in step with the computer's agent counts. */
 export function startMobileLiveActivity(
   store: LiveActivityStore,
   send: (push: LiveActivityPush, timeoutMs?: number) => Promise<SendResult> = postToForwarder,

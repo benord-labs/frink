@@ -112,11 +112,11 @@ test.describe('Flows tab', () => {
   test('explains where Flows come from when there are none', async ({ page }) => {
     await openFlows(page, { data: { flows: [] } });
     await expect(page.getByText('No Flows yet')).toBeVisible();
-    await expect(page.getByText(/Create a flow in Frink on your Mac/)).toBeVisible();
+    await expect(page.getByText(/Create a flow in Frink on your computer/)).toBeVisible();
     await shot(page, 'empty-dark');
   });
 
-  test('keeps the list and says so when the Mac goes offline', async ({ page }) => {
+  test('keeps the list and says so when the computer goes offline', async ({ page }) => {
     const state = await openFlows(page);
     await expect(page.getByTestId('flow-row-flow-1')).toBeVisible();
     state.offline = true;
@@ -218,12 +218,12 @@ test.describe('Flow detail', () => {
     );
   });
 
-  test('Run now waits for Frink to be open on the Mac', async ({ page }) => {
+  test('Run now waits for Frink to be open on the computer', async ({ page }) => {
     const state = await openFlow(page, 'flow-4', {
       data: { overview: { ...overviewFixture(), executionReady: false } },
     });
     await expect(page.getByTestId('flow-run-now')).toContainText(
-      'Open Frink on your Mac to run Flows.',
+      'Open Frink on your computer to run Flows.',
     );
     await page.getByTestId('flow-run-now').click({ force: true });
     await expect(page.getByRole('button', { name: 'Run now' })).toHaveCount(0);
@@ -356,7 +356,7 @@ test.describe('Run detail', () => {
     await expect(page.getByRole('button', { name: 'Approve Plan the announcement' })).toBeVisible();
   });
 
-  test('decisions wait for Frink to be open on the Mac', async ({ page }) => {
+  test('decisions wait for Frink to be open on the computer', async ({ page }) => {
     const state = await openFlow(page, 'flow-3', {
       data: { run: waitingRun(), overview: { ...overviewFixture(), executionReady: false } },
     });

@@ -283,8 +283,8 @@ export class MobilePairingStore {
                 ...entry,
                 pushToken: unregistered ? undefined : token,
                 pushError: unregistered
-                  ? 'Your Mac couldn’t reach this iPhone. Turn this on again to keep getting alerts.'
-                  : 'Your Mac couldn’t deliver the last alert.',
+                  ? 'Your computer couldn’t reach this iPhone. Turn this on again to keep getting alerts.'
+                  : 'Your computer couldn’t deliver the last alert.',
               }
             : entry,
         ),

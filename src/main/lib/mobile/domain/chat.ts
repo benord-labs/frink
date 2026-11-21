@@ -267,7 +267,7 @@ export async function readMobileChat(
     kind: run || task?.flowRunId ? 'flow' : 'chat',
     error:
       activity === 'idle' && seed.terminals.at(-1)?.status === 'error'
-        ? 'The response failed. Open Frink on your Mac to see why.'
+        ? 'The response failed. Open Frink on your computer to see why.'
         : null,
     questions: await mobileQuestions(chat.id, subChat.id, chat.taskId, { task }),
     permissions: mobilePermissions().filter(

@@ -25,14 +25,14 @@ const push = 'ExpoPushToken[phone-one]';
 const fetchMock = vi.fn();
 const TICK_MS = 5_000;
 const sent = () => fetchMock.mock.calls.flatMap(([, options]) => JSON.parse(options.body));
-/** Away from the Mac with every chat quiet, unless a test says otherwise. */
+/** Away from the computer with every chat quiet, unless a test says otherwise. */
 const start = (reads: Partial<DesktopReads> = {}) =>
   startMobileNotifications(store, {
     desktop: () => ({ inView: false, idle: 0 }),
     isBusy: () => false,
     ...reads,
   });
-/** Frink in front, with the Mac's whole-second idle clock running from `lastInput`. */
+/** Frink in front, with the computer's whole-second idle clock running from `lastInput`. */
 const atMac = (lastInput: () => number, inView = () => true) => ({
   desktop: () => ({ inView: inView(), idle: Math.floor((Date.now() - lastInput()) / 1000) }),
 });
@@ -199,7 +199,7 @@ it.each(['ok', 'DeviceNotRegistered', 'MessageRateExceeded'] as const)(
         {
           ok: null,
           DeviceNotRegistered: expect.stringContaining('couldn’t reach this iPhone'),
-          MessageRateExceeded: 'Your Mac couldn’t deliver the last alert.',
+          MessageRateExceeded: 'Your computer couldn’t deliver the last alert.',
         }[result],
       );
     });
@@ -267,7 +267,7 @@ it('alerts once, time-sensitive, when a chat starts waiting on you and the wait 
   await vi.advanceTimersByTimeAsync(TICK_MS);
   fixture.waiting.set('chat', { kind: 'question', subChatId: 'sub' });
   await vi.advanceTimersByTimeAsync(TICK_MS);
-  // One look is not enough: a question answered at the Mac within seconds stays off the phone.
+  // One look is not enough: a question answered at the computer within seconds stays off the phone.
   expect(fetchMock).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(5 * TICK_MS);
   expect(sent()).toEqual([
@@ -380,18 +380,21 @@ it.each([
   [900, 0],
   [-100, 1],
   [-900, 1],
-])('input %i ms from a chat going quiet at the Mac sends %i alerts', async (offset, alerts) => {
-  await store.notifications(credential.token, { token: push });
-  let lastInput = Date.now() + Math.min(offset, 0);
-  stop = start(atMac(() => lastInput));
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
-  if (offset > 0) {
-    await vi.advanceTimersByTimeAsync(offset);
-    lastInput = Date.now();
-  }
-  await vi.advanceTimersByTimeAsync(130_000);
-  expect(sent()).toHaveLength(alerts);
-});
+])(
+  'input %i ms from a chat going quiet at the computer sends %i alerts',
+  async (offset, alerts) => {
+    await store.notifications(credential.token, { token: push });
+    let lastInput = Date.now() + Math.min(offset, 0);
+    stop = start(atMac(() => lastInput));
+    publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+    if (offset > 0) {
+      await vi.advanceTimersByTimeAsync(offset);
+      lastInput = Date.now();
+    }
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(sent()).toHaveLength(alerts);
+  },
+);
 
 it('does not take earlier input for later input when a look runs late', async () => {
   await store.notifications(credential.token, { token: push });
@@ -422,7 +425,7 @@ it('never sends a finished alert the user saw before switching to another app', 
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it('sends a finished alert at once when Frink was never in view, even with the Mac in use', async () => {
+it('sends a finished alert at once when Frink was never in view, even with the computer in use', async () => {
   await store.notifications(credential.token, { token: push });
   stop = start(
     atMac(
@@ -448,7 +451,7 @@ it('keeps a finished alert when the only input came while the chat was still wor
   expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
 });
 
-it('sends a finished alert once the user has left the Mac with Frink in front', async () => {
+it('sends a finished alert once the user has left the computer with Frink in front', async () => {
   await store.notifications(credential.token, { token: push });
   const lastInput = Date.now();
   stop = start(atMac(() => lastInput));
@@ -459,7 +462,7 @@ it('sends a finished alert once the user has left the Mac with Frink in front', 
   expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
 });
 
-it('stays quiet about a wait that was already open when alerts came on at the Mac', async () => {
+it('stays quiet about a wait that was already open when alerts came on at the computer', async () => {
   await store.notifications(credential.token, { token: push });
   fixture.waiting.set('already', { kind: 'plan' });
   let inView = true;
@@ -478,7 +481,7 @@ it('alerts for a wait that opens just after alerts start', async () => {
   expect(sent()).toEqual([expect.objectContaining({ title: 'A chat has a question' })]);
 });
 
-it('defers a new wait until the user leaves the Mac, and drops one answered there', async () => {
+it('defers a new wait until the user leaves the computer, and drops one answered there', async () => {
   await store.notifications(credential.token, { token: push });
   let inView = true;
   stop = start({ desktop: () => ({ inView, idle: 0 }) });

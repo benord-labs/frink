@@ -47,7 +47,7 @@ test('says when the computer could not reach this iPhone', async ({ page }) => {
   await openApp(page, {
     notifications: {
       enabled: false,
-      error: 'Your Mac couldn’t reach this iPhone. Turn this on again to keep getting alerts.',
+      error: 'Your computer couldn’t reach this iPhone. Turn this on again to keep getting alerts.',
     },
   });
   await openDestination(page, 'Settings');
@@ -56,7 +56,7 @@ test('says when the computer could not reach this iPhone', async ({ page }) => {
 });
 
 test('forgetting the computer also asks it to stop alerts', async ({ page }) => {
-  // Removal is only sent while the Mac has this iPhone registered, which needs alerts allowed;
+  // Removal is only sent while the computer has this iPhone registered, which needs alerts allowed;
   // headless Chromium denies notifications, so the page reports them as allowed.
   await page.addInitScript(() =>
     Object.defineProperty(Notification, 'permission', { get: () => 'granted' }),

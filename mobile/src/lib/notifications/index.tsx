@@ -21,14 +21,14 @@ const UNREGISTER_WAIT_MS = 1500;
 type Alerts = AlertState & {
   busy: boolean;
   set: (enabled: boolean) => void;
-  /** Removes this iPhone's alerts before the Mac is forgotten; no refresh can re-register after. */
+  /** Removes this iPhone's alerts before the computer is forgotten; no refresh can re-register after. */
   unregister: () => Promise<void>;
-  /** Undoes `unregister`'s hold when the Mac could not be forgotten after all. */
+  /** Undoes `unregister`'s hold when the computer could not be forgotten after all. */
   resume: () => void;
 };
 const Context = createContext<Alerts | null>(null);
 
-/** Turns alerts off on the Mac, giving up after a moment: forgetting must work when it is away. */
+/** Turns alerts off on the computer, giving up after a moment: forgetting must work when it is away. */
 async function removeBeforeForget(
   update: (desired: false, forget: AbortController) => Promise<boolean>,
 ): Promise<void> {
@@ -42,7 +42,7 @@ async function removeBeforeForget(
 }
 
 /**
- * Keeps this iPhone's alert registration on the Mac current: on open, on return to the app and
+ * Keeps this iPhone's alert registration on the computer current: on open, on return to the app and
  * when iOS rotates the push token. One update runs at a time, so a refresh can't undo a tap.
  * The first open after pairing turns alerts on, as if tapped, which is when iOS asks to allow them.
  */
@@ -55,7 +55,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const shown = useRef(connection);
   shown.current = connection;
   const update = useCallback(
-    /** Whether this update reached the Mac. Only the forget's own removal runs while forgetting. */
+    /** Whether this update reached the computer. Only the forget's own removal runs while forgetting. */
     async (desired?: boolean, forget?: AbortController): Promise<boolean> => {
       const state = { inFlight: active.current !== null, forgetting: forgetting.current !== null };
       if (!connection || (!forget && !mayStartUpdate(desired, state))) return false;
@@ -73,7 +73,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         setState(next);
         return true;
       } catch (cause) {
-        // Only a tap reports a failed update; an unreachable Mac already shows as offline.
+        // Only a tap reports a failed update; an unreachable computer already shows as offline.
         if (!stale() && desired !== undefined)
           setState((old) => ({
             ...old,
