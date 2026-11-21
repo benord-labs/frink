@@ -54,7 +54,7 @@ export function useReduceMotion(): boolean {
 }
 
 /** Loops a 0→1 value forever; still under Reduce Motion. */
-function useLoop(duration: number, active: boolean) {
+export function useLoop(duration: number, active: boolean) {
   const value = useRef(new Animated.Value(0)).current;
   const reduce = useReduceMotion();
   useEffect(() => {
