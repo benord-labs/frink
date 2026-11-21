@@ -18,11 +18,11 @@ const ticketSchema = z.discriminatedUnion('status', [
 ]);
 const RECEIPT_DELAY_MS = 15 * 60_000;
 const LOOK_MS = 5_000;
-/** No input for this long, or Frink out of view, means the user is not watching it at the Mac. */
+/** No input for this long, or Frink out of view, means the user is not watching it at the computer. */
 const AWAY_AFTER_S = 120;
 
 export type DesktopReads = {
-  /** Whether Frink is in view, and whole seconds since the last input anywhere on the Mac. */
+  /** Whether Frink is in view, and whole seconds since the last input anywhere on the computer. */
   desktop: () => { inView: boolean; idle: number };
   /** The sub-chat is still working: responding, or waiting on background work. */
   isBusy: (subChatId: string) => boolean;
@@ -189,7 +189,7 @@ export function startMobileNotifications(
   // Chats waiting on the user at the last look (null until the first), and those already alerted.
   let seen: Map<string, WaitingChat> | null = null;
   const alerted = new Set<string>();
-  // A finished run is held until its chat is quiet for two looks and the user is away from the Mac.
+  // A finished run is held until its chat is quiet for two looks and the user is away from the computer.
   type Finished = { event: SessionCompletion; quietAt: number; quietIdle: number; looks: number };
   const finished = new Map<string, Finished>();
   // The last look that found Frink in view: focus may move on before the next one.
@@ -217,10 +217,10 @@ export function startMobileNotifications(
     }
   }
   // What already waited when alerts came on is not news; a new wait must hold for two looks,
-  // so one answered at the Mac within seconds never reaches the phone.
+  // so one answered at the computer within seconds never reaches the phone.
   function alertNewWaits(waiting: Map<string, WaitingChat>, previous: typeof seen, away: boolean) {
     for (const chatId of alerted) if (!waiting.has(chatId)) alerted.delete(chatId);
-    // At the Mac a new wait stays unalerted, so one still open once the user leaves alerts then.
+    // At the computer a new wait stays unalerted, so one still open once the user leaves alerts then.
     if (previous && !away) return;
     for (const [chatId, chat] of waiting) {
       if (alerted.has(chatId) || (previous && !previous.has(chatId))) continue;

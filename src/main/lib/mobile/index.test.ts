@@ -256,8 +256,8 @@ describe('desktop mobile access lifecycle', () => {
 
 describe('desktopPresence', () => {
   it.each([
-    ['Frink focused and the Mac in use', true, 'active', true],
-    ['Frink focused and the Mac idle', true, 'idle', true],
+    ['Frink focused and the computer in use', true, 'active', true],
+    ['Frink focused and the computer idle', true, 'idle', true],
     ['another app in front', false, 'active', false],
     ['the screen locked', true, 'locked', false],
     ['an unknown idle state', true, 'unknown', false],

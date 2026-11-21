@@ -57,7 +57,10 @@ it('refreshes a rotated token without a permission prompt', async () => {
   expect(pushToken).toHaveBeenCalledOnce();
 });
 it('shows a delivery failure on refresh, and clears it on a tap', async () => {
-  request.mockResolvedValue({ enabled: false, error: 'Your Mac couldn’t deliver the last alert.' });
+  request.mockResolvedValue({
+    enabled: false,
+    error: 'Your computer couldn’t deliver the last alert.',
+  });
   expect((await run()).error).toContain('couldn’t deliver');
   expect((await run(true)).error).toBeNull();
 });
@@ -79,7 +82,7 @@ it('works with a phone AbortSignal, which has no throwIfAborted', async () => {
 
 it('starts no refresh or tap while the computer is being forgotten', () => {
   const forgetting = { inFlight: false, forgetting: true };
-  // A turn-on would re-register alerts for a Mac about to be dropped; any tap would cancel the
+  // A turn-on would re-register alerts for a computer about to be dropped; any tap would cancel the
   // forget's own removal.
   expect(mayStartUpdate(undefined, forgetting)).toBe(false);
   expect(mayStartUpdate(true, forgetting)).toBe(false);

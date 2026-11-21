@@ -124,7 +124,7 @@ function Step({ step }: { step: OutlineStep }) {
   );
 }
 
-/** The saved Flow as a read-only list of steps; editing stays on the Mac. */
+/** The saved Flow as a read-only list of steps; editing stays on the computer. */
 export function FlowOutline({ definition }: { definition: MobileFlowDefinition | null }) {
   const steps = useMemo(() => (definition ? outlineSteps(definition) : []), [definition]);
   if (!definition)

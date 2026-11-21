@@ -155,7 +155,7 @@ function FlowContent({
         </>
       )}
       {!flows.length ? (
-        <EmptyState title="No Flows yet" detail="Create a flow in Frink on your Mac." />
+        <EmptyState title="No Flows yet" detail="Create a flow in Frink on your computer." />
       ) : !groups.all.length ? (
         <EmptyState title={`No Flows match “${query}”`} detail="Try another name or description." />
       ) : (

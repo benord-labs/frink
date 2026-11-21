@@ -10,7 +10,7 @@ Use Bun and Node 22.12 or newer. From this directory:
 bun install --frozen-lockfile
 ```
 
-The app uses native modules (Markdown, photo and file pickers), so Expo Go cannot run it. Develop with **Frink Dev**, a development build that installs beside the TestFlight app (bundle `dev.frink.mobile.dev`) and loads JavaScript live from your Mac:
+The app uses native modules (Markdown, photo and file pickers), so Expo Go cannot run it. Develop with **Frink Dev**, a development build that installs beside the TestFlight app (bundle `dev.frink.mobile.dev`) and loads JavaScript live from your computer:
 
 1. Register your iPhone once: `bunx eas-cli device:create`, then open the link on the phone. Turn on Settings → Privacy & Security → Developer Mode.
 2. Build Frink Dev in the cloud: `bunx eas-cli build -p ios --profile development`, then install it from the link EAS prints. Rebuild only when native dependencies, permissions or the app icon change.
@@ -25,7 +25,7 @@ Start the desktop app from the repository root with `bun install --frozen-lockfi
 ## Connect your computer
 
 1. In Frink desktop, open **Settings → Mobile** and turn on mobile access.
-2. In the iPhone app, scan the QR code or paste the copied pairing link. Confirm your Mac and tap **Connect**. Each code works once, for five minutes.
+2. In the iPhone app, scan the QR code or paste the copied pairing link. Confirm your computer and tap **Connect**. Each code works once, for five minutes.
 
 One iPhone can pair with several computers. Add another from **Settings → Computers → Add a computer**, or by scanning its code; the computers already paired stay paired. Tap a computer in that list to switch to it. Only the computer on screen is refreshed. Alerts keep arriving from every paired computer, and tapping one opens that computer's chat. If iOS gives this iPhone a new push token, a computer learns it the next time you switch to it, and its alerts resume then. If a computer's mobile access was reset, scanning its new code offers to replace its old pairing. The Lock Screen card shows the computer on screen.
 
@@ -47,11 +47,11 @@ The phone credential lives in the iOS Keychain on this device only. Desktop stor
 
 In the iPhone app, open **Settings → Notifications** and turn on **When a chat finishes**, then allow notifications when iOS asks. When an ordinary chat finishes successfully, Frink on your computer sends a short alert, including while the app is in the background or the phone is locked. Tap it to open that chat. Stopped, failed and superseded turns, and individual Flow steps, send no alert. The computer must be awake and online with mobile access enabled.
 
-The alert is sent once the chat is really finished. A chat still waiting on background work, such as a test run it is watching, alerts after its final reply and not each time that work wakes it. Frink also holds alerts while you are using the Mac with Frink in front: a chat you saw finish there sends nothing, and one that finishes after you step away alerts once the Mac has had no input for two minutes. With another app in front, alerts go to the phone straight away.
+The alert is sent once the chat is really finished. A chat still waiting on background work, such as a test run it is watching, alerts after its final reply and not each time that work wakes it. Frink also holds alerts while you are using the computer with Frink in front: a chat you saw finish there sends nothing, and one that finishes after you step away alerts once the computer has had no input for two minutes. With another app in front, alerts go to the phone straight away.
 
-Frink also alerts when a chat needs you: a question, a permission request, a plan to review, or a task waiting on you. One you answer at the Mac never reaches the phone; one still open when you leave it does.
+Frink also alerts when a chat needs you: a question, a permission request, a plan to review, or a task waiting on you. One you answer at the computer never reaches the phone; one still open when you leave it does.
 
-Alerts go through Expo's push service to Apple. Only a fixed message naming the kind of alert (a chat finished, has a question, needs a permission, has a plan ready, or a task needs you) and opaque pairing and chat ids leave the computer; prompts, code, chat titles and credentials never do. Delivery is best effort: a failure the computer sees is shown under the switch. Turning the switch off or removing the phone in desktop Mobile settings stops future alerts. Forgetting the Mac on the phone stops them too when the Mac is reachable; otherwise that takes effect when you pair again or remove the phone on the desktop. An alert already accepted by the push service may still arrive.
+Alerts go through Expo's push service to Apple. Only a fixed message naming the kind of alert (a chat finished, has a question, needs a permission, has a plan ready, or a task needs you) and opaque pairing and chat ids leave the computer; prompts, code, chat titles and credentials never do. Delivery is best effort: a failure the computer sees is shown under the switch. Turning the switch off or removing the phone in desktop Mobile settings stops future alerts. Forgetting the computer on the phone stops them too when the computer is reachable; otherwise that takes effect when you pair again or remove the phone on the desktop. An alert already accepted by the push service may still arrive.
 
 `expo-notifications` is a native module, so the app must be rebuilt after it is added; a Metro reload is not enough. Before the first build with it, create an Apple Push Notifications key and let EAS store it: run `bunx eas-cli credentials -p ios`, choose the build profile, and set up **Push Notifications** for the bundle id (`dev.frink.mobile.dev` for Frink Dev, `dev.frink.mobile` for TestFlight). EAS then regenerates the provisioning profile with the push entitlement on the next `bunx eas-cli build -p ios --profile development` (or `production`). The key stays in EAS; never put it or an Expo access token in the desktop app.
 
@@ -73,7 +73,7 @@ The desktop bridge and domain tests are part of the repository-root `bun run tes
 
 ### Review on the iOS simulator against fixture data
 
-The web preview shares the navigation structure, but native bars and menus differ; verify native layout on the simulator. `tests/fixtures/sim-relay.ts` stands in for a Mac: it speaks the phone's real channel protocol over TLS on 127.0.0.1 and answers with the UI tests' fixture data. Use a simulator that is not paired to your real Mac, since pairing replaces that pairing.
+The web preview shares the navigation structure, but native bars and menus differ; verify native layout on the simulator. `tests/fixtures/sim-relay.ts` stands in for a computer: it speaks the phone's real channel protocol over TLS on 127.0.0.1 and answers with the UI tests' fixture data. Use a simulator that is not paired to your real computer, since pairing replaces that pairing.
 
 ```sh
 mkdir -p /tmp/frink-sim-relay && cd /tmp/frink-sim-relay

@@ -5,6 +5,6 @@ import { AppState } from 'react-native';
 import App from './App';
 import { watchRelayLifecycle } from './src/lib/relay/client';
 
-// Registered before any screen, so a returning app dials the Mac before its polls fire.
+// Registered before any screen, so a returning app dials the computer before its polls fire.
 watchRelayLifecycle(AppState);
 registerRootComponent(App);

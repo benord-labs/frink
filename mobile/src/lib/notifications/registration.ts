@@ -10,8 +10,8 @@ function stopIfAborted(signal: AbortSignal) {
 
 /**
  * Whether a refresh or a tap may start an alert update. A refresh (`desired` undefined) waits for
- * any update in flight. Nothing starts while the Mac is being forgotten: a turn-on would
- * re-register alerts for a Mac this iPhone is about to drop, and any update would cancel the
+ * any update in flight. Nothing starts while the computer is being forgotten: a turn-on would
+ * re-register alerts for a computer this iPhone is about to drop, and any update would cancel the
  * forget's own removal.
  */
 export function mayStartUpdate(
@@ -23,8 +23,8 @@ export function mayStartUpdate(
 }
 
 /**
- * Brings the Mac's registration for this iPhone in line with `desired` (a tap on the switch) or,
- * when undefined, with what the Mac already has — re-sending a rotated token, or removing the
+ * Brings the computer's registration for this iPhone in line with `desired` (a tap on the switch) or,
+ * when undefined, with what the computer already has — re-sending a rotated token, or removing the
  * registration once alerts are blocked in iPhone Settings. Only an explicit turn-on asks iOS.
  */
 export async function reconcileRegistration(
@@ -33,7 +33,7 @@ export async function reconcileRegistration(
   signal: AbortSignal,
 ): Promise<AlertState> {
   const status = await requestNotifications(host, {}, signal);
-  // A delivery failure the Mac saw is shown on a refresh; any tap on the switch clears it there.
+  // A delivery failure the computer saw is shown on a refresh; any tap on the switch clears it there.
   const error = desired === undefined ? status.error : null;
   const turnOn = desired ?? status.enabled;
   const allowed = await device.permission(desired === true);

@@ -11,7 +11,7 @@ describe('triggerWords', () => {
 });
 
 describe('runNowBlocker', () => {
-  it('allows a run when the Mac is ready and the Flow is on', () => {
+  it('allows a run when the computer is ready and the Flow is on', () => {
     expect(runNowBlocker({ enabled: true, status: null }, true)).toBeNull();
     expect(runNowBlocker({ enabled: true, status: 'failed' }, undefined)).toBeNull();
   });
@@ -21,7 +21,7 @@ describe('runNowBlocker', () => {
       'Refresh to find the current run.',
     );
     expect(runNowBlocker({ enabled: false, status: 'completed' }, false)).toBe(
-      'Open Frink on your Mac to run Flows.',
+      'Open Frink on your computer to run Flows.',
     );
     expect(runNowBlocker({ enabled: false, status: null }, true)).toBe(
       'Turn this Flow on to run it.',
