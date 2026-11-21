@@ -268,7 +268,7 @@ function AccountSection({
       title="Account"
       footer={
         composer.projectId
-          ? 'Applies to every chat in this project, on your Mac too.'
+          ? 'Applies to every chat in this project, on your computer too.'
           : 'This chat has no project, so this changes your default account.'
       }
     >
@@ -282,7 +282,7 @@ function AccountSection({
               ? account.type === 'codex'
                 ? 'Codex'
                 : 'Claude'
-              : 'Sign in again on your Mac to use this account'
+              : 'Sign in again on your computer to use this account'
           }
           dimmed={!account.isAuthenticated}
           selected={composer.account?.id === account.id}

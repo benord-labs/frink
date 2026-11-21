@@ -131,7 +131,7 @@ export function FlowOutline({ definition }: { definition: MobileFlowDefinition |
     return (
       <EmptyState
         title="Steps can’t be shown here"
-        detail="This Flow may be unfinished or too large for your phone. Open it in Frink on your Mac to see every step."
+        detail="This Flow may be unfinished or too large for your phone. Open it in Frink on your computer to see every step."
       />
     );
   return (
@@ -147,7 +147,7 @@ export function FlowOutline({ definition }: { definition: MobileFlowDefinition |
         color="muted"
         style={{ paddingHorizontal: GUTTER, paddingTop: space.md }}
       >
-        Version {definition.versionNumber}. Change steps in Frink on your Mac.
+        Version {definition.versionNumber}. Change steps in Frink on your computer.
       </Text>
     </View>
   );

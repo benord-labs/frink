@@ -14,7 +14,9 @@ import {
   type ChannelSession,
 } from '@frink/shared/lib/mobile-channel';
 import { envelopeBodyParts, type MobileEnvelope } from '@frink/shared/types/remote/mobile-envelope';
-import { closeMobileRelay, relayRequest, watchRelayLifecycle } from './client';
+import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
+import { ChatStream, type ChatStreamDeps } from '../chat/stream';
+import { closeMobileRelay, relayLink, relayRequest, watchRelayLifecycle } from './client';
 import { LinkLost } from './error';
 
 const desktop = generateDesktopKeyPair();
@@ -83,7 +85,12 @@ class Socket {
       this.handlers.get('frame')?.(frame, () => {});
     }
   }
+  event(sub: string, seq: number, text: string) {
+    const body = btoa(text);
+    this.handlers.get('frame')?.(this.session!.seal(encodeEnvelope({ t: 'evt', sub, seq, body })));
+  }
 }
+const SUB = '00000000-0000-4000-8000-00000000000a';
 let socket: Socket;
 function watchLifecycle() {
   let onChange!: (state: AppStateStatus) => void;
@@ -283,4 +290,83 @@ it('retires the client in the background without failing what is in flight, and 
   await vi.waitFor(() => expect(socket.frames).toHaveLength(1));
   unwatch();
   expect(remove).toHaveBeenCalledOnce();
+});
+it('delivers an event frame to its watch, drops one for an unknown watch, and stays open', async () => {
+  await relayRequest(target, '/api', {}, input);
+  const link = relayLink(target);
+  const handler = vi.fn();
+  link.listen(SUB, handler);
+  socket.event(SUB, 1, '{"ops":[]}');
+  socket.event('00000000-0000-4000-8000-00000000000b', 1, '{"ops":[]}');
+  expect(handler).toHaveBeenCalledWith(1, new TextEncoder().encode('{"ops":[]}'));
+  expect(handler).toHaveBeenCalledOnce();
+  expect(socket.disconnected).toBe(false);
+  expect(link.lost).toBe(false);
+});
+it('a retired link drops its watches at once, tells them just after, and the next request dials anew', async () => {
+  const { onChange } = watchLifecycle();
+  await relayRequest(target, '/api', {}, input);
+  const link = relayLink(target);
+  const handler = vi.fn();
+  const lost = vi.fn();
+  link.listen(SUB, handler);
+  link.onLost(lost);
+  const previous = swapSocket();
+  onChange('background');
+  expect(lost).not.toHaveBeenCalled();
+  expect(link.lost).toBe(true);
+  previous.event(SUB, 1, '{"ops":[]}');
+  expect(handler).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(lost).toHaveBeenCalledWith(false));
+  expect(relayLink(target)).not.toBe(link);
+});
+
+const chat: MobileChatDetail = {
+  ...{ chat: { id: 'chat', name: 'Chat', projectId: null }, subChatId: 'sub', subChats: [] },
+  ...{ messages: [], hasMore: false, activity: 'idle', kind: 'chat', error: null },
+  ...{ questions: [], permissions: [], pendingPlanId: null },
+};
+/** Starts a live stream of one chat on the real link to `target`, once that link is up. */
+async function liveStream() {
+  await relayRequest(target, '/api', {}, input);
+  const deps = {
+    link: () => relayLink(target),
+    watch: vi.fn(async () => ({ sub: SUB, detail: chat })),
+    unwatch: vi.fn<(sub: string) => void>(),
+    canWatch: () => true,
+    show: vi.fn<(detail: MobileChatDetail) => void>(),
+    first: () => undefined,
+    live: vi.fn<(live: boolean) => void>(),
+    conversation: 'relay-chat',
+  } satisfies ChatStreamDeps;
+  new ChatStream(deps).start();
+  await vi.waitFor(() => expect(deps.live).toHaveBeenLastCalledWith(true));
+  return deps;
+}
+it('forgetting the computer under a live watch ends the watch and dials nothing', async () => {
+  const deps = await liveStream();
+  const forgotten = socket;
+  closeMobileRelay();
+  await vi.waitFor(() => expect(deps.live).toHaveBeenLastCalledWith(false));
+  forgotten.event(SUB, 1, '{"ops":[]}');
+  expect(deps.show).toHaveBeenCalledOnce();
+  expect(deps.watch).toHaveBeenCalledOnce();
+  expect(wire.io).toHaveBeenCalledOnce();
+});
+it('a link that dies under a live watch watches again on a newly dialled one', async () => {
+  const deps = await liveStream();
+  swapSocket().disconnect();
+  await vi.waitFor(() => expect(deps.watch).toHaveBeenCalledTimes(2));
+  expect(wire.io).toHaveBeenCalledTimes(2);
+  expect(deps.live).toHaveBeenLastCalledWith(true);
+});
+it('coming back to the foreground watches again exactly once, on the newly dialled link', async () => {
+  const { onChange } = watchLifecycle();
+  onChange('background');
+  const deps = await liveStream();
+  swapSocket();
+  onChange('active');
+  await vi.waitFor(() => expect(deps.watch).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(deps.live).toHaveBeenLastCalledWith(true));
+  expect(wire.io).toHaveBeenCalledTimes(2);
 });

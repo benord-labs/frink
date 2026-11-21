@@ -64,9 +64,13 @@ test('shows what needs you, what is running and what is ready', async ({ page })
     await expect(page.getByRole('heading', { name: new RegExp(`^${title}`) })).toBeVisible();
   // Question + permission + plan ready + failed, and the finished task the phone can complete.
   await expect(tabButton(page, 'Queue')).toContainText('5');
+  // The computer button alone names the computer; the title carries no second status line.
+  await expect(page.getByTestId('computer-button').filter({ visible: true })).toContainText(
+    "Benji's MacBook Pro",
+  );
   await expect(
-    page.getByText("Benji's MacBook Pro").filter({ visible: true }).first(),
-  ).toBeVisible();
+    page.getByText("Benji's MacBook Pro", { exact: true }).filter({ visible: true }),
+  ).toHaveCount(1);
   await shot(page, 'sections');
   await page.mouse.wheel(0, 600);
   await expect(row(page, 'task-done')).toBeInViewport();
@@ -137,19 +141,19 @@ test('says you are all caught up when nothing is waiting', async ({ page }) => {
   await shot(page, 'empty', 'light');
 });
 
-test('keeps the last queue on screen when the Mac stops answering', async ({ page }) => {
+test('keeps the last queue on screen when the computer stops answering', async ({ page }) => {
   const state = await openQueue(page);
   await expect(row(page, 'task-plan')).toBeVisible();
   state.offline = true;
   await page.clock.runFor(4000);
-  await expect(page.getByText('Can’t reach your Mac')).toBeVisible();
+  await expect(page.getByText('Can’t reach your computer')).toBeVisible();
   await expect(row(page, 'task-plan')).toBeVisible();
   await shot(page, 'offline');
 });
 
-test('explains that Frink must be open on the Mac to run chats', async ({ page }) => {
+test('explains that Frink must be open on the computer to run chats', async ({ page }) => {
   await openQueue(page, { data: { overview: { ...overviewFixture(), executionReady: false } } });
-  await expect(page.getByText('Open Frink on your Mac to run chats')).toBeVisible();
+  await expect(page.getByText('Open Frink on your computer to run chats')).toBeVisible();
   await expect(row(page, 'task-plan')).toBeVisible();
   await shot(page, 'not-ready');
 });

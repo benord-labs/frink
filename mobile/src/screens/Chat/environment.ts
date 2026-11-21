@@ -19,7 +19,7 @@ export function useKeyboardShown() {
   return shown;
 }
 
-/** Whether the Mac can run chats, read from the app-wide overview poll. */
+/** Whether the computer can run chats, read from the app-wide overview poll. */
 export function useExecutionReady() {
   return useOverview().data?.executionReady ?? true;
 }

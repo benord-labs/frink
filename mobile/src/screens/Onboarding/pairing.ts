@@ -1,9 +1,9 @@
 import { MOBILE_API_VERSION, mobilePairingFields } from '@frink/shared/types/remote/mobile';
 import { ApiError, parsePairing } from '../../lib/api';
 
-export const UPDATE_FRINK = 'Update Frink on your Mac, then make a new code.';
+export const UPDATE_FRINK = 'Update Frink on your computer, then make a new code.';
 const NOT_A_CODE =
-  'This isn’t a full pairing code. Copy it again from Frink on your Mac → Settings → Mobile.';
+  'This isn’t a full pairing code. Copy it again from Frink on your computer → Settings → Mobile.';
 
 export type PairingRead =
   | { ok: true; text: string; host: string; name: string; route: string; key: string }
@@ -20,7 +20,7 @@ function otherVersion(text: string): boolean {
   }
 }
 
-/** Reads a scanned or pasted code into the Mac it points at, or says plainly what is wrong. */
+/** Reads a scanned or pasted code into the computer it points at, or says plainly what is wrong. */
 export function readPairing(text: string): PairingRead {
   if (!text.trim()) return { ok: false, problem: null };
   try {
@@ -40,15 +40,15 @@ export function readPairing(text: string): PairingRead {
 
 /**
  * What went wrong while pairing, for someone who has never heard of HTTP. Any failure after the
- * Mac answered that isn't an HTTP error means the reply wasn't one this app understands.
+ * computer answered that isn't an HTTP error means the reply wasn't one this app understands.
  */
 export function pairingFailure(error: unknown): string {
   if (!(error instanceof ApiError)) return UPDATE_FRINK;
   if (error.status === 0)
-    return 'Can’t reach your Mac. Keep Frink open and your Mac awake and online, then try again.';
+    return 'Can’t reach your computer. Keep Frink open and your computer awake and online, then try again.';
   if (error.status === 401)
-    return 'This code has expired or was already used. Make a new one in Frink on your Mac → Settings → Mobile.';
+    return 'This code has expired or was already used. Make a new one in Frink on your computer → Settings → Mobile.';
   if (error.status === 429)
-    return 'Too many tries with this code. Make a new one in Frink on your Mac → Settings → Mobile.';
-  return 'Frink on your Mac couldn’t finish connecting. Make a new code and try again.';
+    return 'Too many tries with this code. Make a new one in Frink on your computer → Settings → Mobile.';
+  return 'Frink on your computer couldn’t finish connecting. Make a new code and try again.';
 }

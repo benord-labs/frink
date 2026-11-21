@@ -54,7 +54,7 @@ export function useReduceMotion(): boolean {
 }
 
 /** Loops a 0→1 value forever; still under Reduce Motion. */
-function useLoop(duration: number, active: boolean) {
+export function useLoop(duration: number, active: boolean) {
   const value = useRef(new Animated.Value(0)).current;
   const reduce = useReduceMotion();
   useEffect(() => {
@@ -90,6 +90,14 @@ export function StatusGlyph({
   if (glyph !== 'live') return icon;
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   return <Animated.View style={{ transform: [{ rotate }] }}>{icon}</Animated.View>;
+}
+
+/** A small solid dot in a status tone, beside a computer's name. */
+export function StatusDot({ tone }: { tone: StatusTone }) {
+  const t = useTheme();
+  return (
+    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneColor(t, tone) }} />
+  );
 }
 
 /** The running marker: a primary dot with a breathing ring. */

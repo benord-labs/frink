@@ -6,7 +6,6 @@ import { LogOut } from 'lucide-react-native';
 import { useConnection } from '../../lib/connection';
 import { useNotifications } from '../../lib/notifications';
 import { useOverview } from '../../lib/overview';
-import { useScreenHeader } from '../../navigation/screen-header';
 import { ListRow, RowSeparator } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
@@ -17,9 +16,8 @@ import { MenuChip } from '../Chat/Composer/menu';
 import { Card } from './card';
 import { confirmForget } from './confirm-forget';
 import { Computers } from './Computers';
-import { MacIdentity } from './MacIdentity';
 import { Notifications } from './Notifications';
-import { macStatus, sourceLine } from './settings-view';
+import { sourceLine } from './settings-view';
 
 const APP_VERSION = Constants.expoConfig?.version ?? 'Unknown';
 // Where the running JavaScript came from helps while developing; it is jargon to everyone else.
@@ -27,26 +25,23 @@ const SOURCE = __DEV__ ? sourceLine(Constants.expoConfig?.extra?.source) : null;
 
 export function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { header } = useScreenHeader({ title: 'Settings' });
   const overview = useOverview();
   const { connection } = useConnection();
+  const name = overview.data?.machineName ?? connection?.machineName ?? 'your computer';
   return (
     <Screen atmosphere>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}
       >
-        {header}
         <ResourceStatus {...overview} />
-        <MacIdentity
-          name={overview.data?.machineName ?? connection?.machineName ?? 'Your Mac'}
-          status={macStatus(overview)}
-        />
+        <Group title="Computers">
+          <Computers>
+            <ForgetRow />
+          </Computers>
+        </Group>
         <Group title="Appearance">
           <AppearanceSettings />
-        </Group>
-        <Group title="Computers">
-          <Computers />
         </Group>
         <Group title="Notifications">
           <Notifications />
@@ -54,7 +49,7 @@ export function SettingsScreen() {
         <Group title="About">
           <Card testID="settings-about">
             <ListRow
-              title="Frink on your Mac"
+              title={`Frink on ${name}`}
               trailing={<Value>{overview.data?.appVersion ?? '—'}</Value>}
             />
             <RowSeparator inset={GUTTER} />
@@ -65,11 +60,6 @@ export function SettingsScreen() {
                 <ListRow title="Built from" subtitle={SOURCE} />
               </>
             )}
-          </Card>
-        </Group>
-        <Group>
-          <Card>
-            <ForgetRow />
           </Card>
         </Group>
       </ScrollView>
@@ -146,22 +136,16 @@ function PreferenceRow({ label, children }: { label: string; children: ReactNode
   );
 }
 
-function Group({ title, children }: { title?: string; children: ReactNode }) {
+function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View style={{ paddingTop: space.xl }}>
-      {title && (
-        <Text
-          variant="secondary"
-          accessibilityRole="header"
-          style={{
-            paddingHorizontal: GUTTER,
-            paddingBottom: space.xs,
-            fontWeight: '600',
-          }}
-        >
-          {title}
-        </Text>
-      )}
+      <Text
+        variant="secondary"
+        accessibilityRole="header"
+        style={{ paddingHorizontal: GUTTER, paddingBottom: space.xs, fontWeight: '600' }}
+      >
+        {title}
+      </Text>
       {children}
     </View>
   );
@@ -180,10 +164,10 @@ function ForgetRow() {
   const { connection, forget: forgetComputer } = useConnection();
   const { unregister, resume } = useNotifications();
   async function forget() {
-    if (!connection || !(await confirmForget())) return;
+    if (!connection || !(await confirmForget(connection.machineName))) return;
     // Alerts are removed before the encrypted channel closes, through the one update queue.
     await unregister();
-    // A Mac that couldn't be forgotten stays, with its alerts working again; the connection
+    // A computer that couldn't be forgotten stays, with its alerts working again; the connection
     // reports the failure itself.
     await forgetComputer(connection.deviceId).catch(resume);
   }
@@ -202,7 +186,7 @@ function ForgetRow() {
     >
       <LogOut size={20} color={t.danger} />
       <Text variant="row" color="danger">
-        Forget this Mac
+        Forget this computer
       </Text>
     </Pressable>
   );

@@ -37,6 +37,12 @@ export async function scrollTranscript(page: Page, top: number) {
   await transcript.evaluate((node, value) => (node.scrollTop = value), top);
 }
 
+/** Changes the chat on the computer, which tells a phone watching it live to read it again. */
+export function changeChat(state: AppState, chat: MobileChatDetail) {
+  state.data.chat = chat;
+  state.push([{ op: 'resync' }]);
+}
+
 export const requestsOf = (state: AppState, type: string) =>
   state.requests.filter((request) => request.type === type);
 

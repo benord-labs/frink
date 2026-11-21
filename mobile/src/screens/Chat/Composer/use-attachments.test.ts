@@ -123,12 +123,12 @@ it('uploads a settled file once more to a new destination after the target chang
 
 // A failed upload keeps its key too; retrying must replace it and send exactly once.
 it('retries a failed upload exactly once', async () => {
-  render.upload.mockRejectedValueOnce(new Error('Mac went to sleep'));
+  render.upload.mockRejectedValueOnce(new Error('Computer went to sleep'));
   await draw(target).pickFiles();
   draw(target);
   await flush();
   const [failed] = draw(target).items;
-  expect(failed).toMatchObject({ status: 'failed', error: 'Mac went to sleep' });
+  expect(failed).toMatchObject({ status: 'failed', error: 'Computer went to sleep' });
   draw(target).retry(failed.key);
   await flush();
   draw(target);

@@ -54,7 +54,7 @@ function FoldedMarkdown({ text }: { text: string }) {
   );
 }
 
-/** Approve starts the build, as on the Mac; Send back replies with a note and Frink replans. */
+/** Approve starts the build, as in the desktop app; Send back replies with a note and Frink replans. */
 function PlanDecision({ plan }: { plan: PendingPlan }) {
   const { id, chatId, subChatId } = plan;
   const draft = useDraft(JSON.stringify(['plan', chatId, subChatId, id]), '');

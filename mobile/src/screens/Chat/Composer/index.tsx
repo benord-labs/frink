@@ -18,6 +18,7 @@ import type {
 } from '@frink/shared/types/remote/mobile';
 import { withReference } from '../../../lib/changes/view';
 import { useDraft } from '../../../lib/drafts';
+import { useDictation, voiceSupported } from '../../../lib/voice/use-dictation';
 import type { RootRoutes } from '../../../navigation/routes';
 import { GlassSurface } from '../../../ui/material';
 import { space, useTheme } from '../../../ui/theme';
@@ -32,6 +33,7 @@ import { Note } from '../note';
 import { ACTION, AttachButton, AttachmentTray, type Attachments } from './attach';
 import { ModeMenu, ModelMenus, type ComposerPatch } from './controls';
 import { LINE, messageInputSizing } from './input-sizing';
+import { MicButton } from './mic';
 
 export { useComposerAttachments } from './use-attachments';
 export { useComposerState } from './use-composer-state';
@@ -161,6 +163,7 @@ export function Composer({
     executionReady,
     flowRun,
   );
+  const dictation = useDictation(draft, mode !== 'unavailable');
   // Any message that can start a turn takes files, so Attach stays put as Stop turns into Send.
   const attachable = attach && acceptsMessage(activity, executionReady, flowRun);
   const enabled =
@@ -172,8 +175,10 @@ export function Composer({
       failed: attachments.failed,
     });
   const choosing = activity === 'idle' && executionReady;
+  const dictationNote = dictation.notice ? { text: dictation.notice, error: false } : null;
   const shown =
     note ??
+    dictationNote ??
     (flowRun && activity === 'background' && value.trim()
       ? { text: 'Kept until the background work finishes.' }
       : null);
@@ -222,7 +227,10 @@ export function Composer({
             placeholderTextColor={t.muted}
             selectionColor={t.accent}
             value={value}
-            onChangeText={update}
+            onChangeText={(text) => {
+              update(text);
+              dictation.edited(text);
+            }}
             editable={mode !== 'unavailable'}
             autoFocus={autoFocus}
             multiline
@@ -250,12 +258,22 @@ export function Composer({
           >
             {choosing && settings}
           </View>
+          {voiceSupported && mode !== 'unavailable' && (
+            <MicButton
+              listening={dictation.phase !== 'idle'}
+              disabled={busy}
+              onPress={dictation.toggle}
+            />
+          )}
           <ActionButton
             mode={mode}
             enabled={enabled}
             busy={mode === 'send' && attachments.uploading}
             stopLabel={flowRun ? 'Stop run' : 'Stop'}
-            onSend={onSend}
+            onSend={() => {
+              dictation.abort();
+              onSend();
+            }}
             onStop={onStop}
           />
         </View>

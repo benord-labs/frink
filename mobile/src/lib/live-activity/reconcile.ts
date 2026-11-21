@@ -6,11 +6,11 @@ import FrinkStatus from '../../widgets/frink-status';
 import { requestNotifications, type Connection } from '../api';
 import { QUEUE_LINK } from '../pairing-link';
 
-// Frink Dev is signed for Apple's sandbox, which the Mac's forwarder doesn't use: its card shows the
+// Frink Dev is signed for Apple's sandbox, which the computer's forwarder doesn't use: its card shows the
 // counts it started with and never registers for updates.
 const REMOTE = !Constants.expoConfig?.ios?.bundleIdentifier?.endsWith('.dev');
 
-/** What this iPhone last told the Mac, and the card whose token changes it listens to. */
+/** What this iPhone last told the computer, and the card whose token changes it listens to. */
 export type Session = { sent: string | null; listening?: { id: string; remove: () => void } };
 
 function end(card: LiveActivity<MobileAgentCounts>) {
@@ -39,7 +39,7 @@ function listen(session: Session, host: Connection, card: LiveActivity<MobileAge
   session.listening = { id: card.getId(), remove: () => subscription.remove() };
 }
 
-/** Hands the card's update token to the Mac now, and again whenever iOS rotates it. */
+/** Hands the card's update token to the computer now, and again whenever iOS rotates it. */
 async function follow(session: Session, host: Connection, card: LiveActivity<MobileAgentCounts>) {
   if (!REMOTE) return;
   listen(session, host, card);
@@ -58,8 +58,8 @@ function start(agents: MobileAgentCounts) {
 }
 
 /**
- * Brings the Lock Screen card in line with the switch and the Mac's counts. Only the app starts a
- * card (in the foreground, while something runs or needs you); only the Mac updates it. Returns
+ * Brings the Lock Screen card in line with the switch and the computer's counts. Only the app starts a
+ * card (in the foreground, while something runs or needs you); only the computer updates it. Returns
  * true when iOS refused to start one, false once a card started or the switch is off, undefined
  * otherwise.
  */
@@ -75,7 +75,7 @@ export async function reconcile(
     await register(session, host, null);
     return false;
   }
-  // A card still up at 0/0 missed the Mac's end.
+  // A card still up at 0/0 missed the computer's end.
   if (agents && agents.running + agents.needsYou === 0) return void cards.forEach(end);
   const [card, ...extras] = cards;
   extras.forEach(end);
@@ -88,7 +88,7 @@ export async function reconcile(
 }
 
 /**
- * Unpairing, or pairing another Mac, takes the card down and asks the old Mac to stop updating it,
+ * Unpairing, or pairing another computer, takes the card down and asks the old computer to stop updating it,
  * whether or not this launch sent it a token.
  */
 export function endSession(session: Session, host: Connection | null) {

@@ -7,7 +7,7 @@ import { NOW, overviewFixture } from './fixtures/data';
 const messageBox = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true });
 const send = (page: Page) => page.getByRole('button', { name: 'Send message', exact: true });
 const created = { chatId: 'chat-new', subChatId: 'sub-new' };
-/** The chat the first message made, as the Mac reports it before that message is saved. */
+/** The chat the first message made, as the computer reports it before that message is saved. */
 const madeChat = conversation({
   chat: { id: created.chatId, name: 'New chat', projectId: 'project-1' },
   subChatId: created.subChatId,
@@ -53,14 +53,19 @@ test('a new chat is a blank conversation whose first message starts it', async (
   await expect(messageBox(page)).not.toBeFocused();
   // Nothing remembered yet: the most recently active project is already chosen.
   await expect(page.getByRole('button', { name: 'Project: frink' })).toBeVisible();
-  await expect(page.getByText('Worktree: a separate copy, safe to experiment.')).toBeVisible();
+  // One line above the message box: the menus explain where it works and the mode.
+  await expect(page.getByText('What would you like to work on?')).toBeVisible();
+  await expect(page.getByText(/safe to experiment/)).toHaveCount(0);
   await expect(send(page)).toBeDisabled();
   await messageBox(page).fill('Tighten the hero copy on the pricing page');
 
   await pickProject(page, 'marketing-site');
-  await pick(page, 'Work in: Worktree', 'Local');
-  await expect(page.getByText('Local: works directly in your project folder.')).toBeVisible();
-  await pick(page, 'Mode: Agent', 'Plan');
+  await page.getByRole('button', { name: 'Work in: Worktree' }).click();
+  await expect(page.getByText('Works directly in your project folder')).toBeVisible();
+  await page.getByRole('radio', { name: 'Local', exact: true }).click();
+  await page.getByRole('button', { name: 'Mode: Agent' }).click();
+  await expect(page.getByText('Writes a plan for you to approve first')).toBeVisible();
+  await page.getByRole('radio', { name: 'Plan', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Mode: Plan' })).toBeVisible();
   expect(mutations(state)).toEqual([]);
 
@@ -201,7 +206,7 @@ test('the first message shows on its new chat while it is still being sent', asy
   await expect(page.getByText('Bump the Electron version')).toBeVisible();
   await expect(page.getByText('Sending…', { exact: true })).toBeVisible();
   answer.release();
-  // Once the Mac takes it, the chat reads it back at once instead of waiting for the next poll.
+  // Once the computer takes it, the chat reads it back at once instead of waiting for the next poll.
   await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0, { timeout: 1500 });
   await expect(page.getByText('Bump the Electron version')).toHaveCount(1);
 });
@@ -233,16 +238,18 @@ test('a failed first message says so on its chat, and a tap retries it', async (
   expect(retry.requestId).toBe(first.requestId);
 });
 
-test('without Frink running on the Mac, a chat cannot start', async ({ page }) => {
+test('without Frink running on the computer, a chat cannot start', async ({ page }) => {
   await openApp(page, { data: { overview: { ...overviewFixture(), executionReady: false } } });
   await openHistory(page);
   await expect(page.getByRole('button', { name: 'New chat', exact: true })).toBeDisabled();
 });
 
-test('with no projects on the Mac, the page says where to add one', async ({ page }) => {
+test('with no projects on the computer, the page says where to add one', async ({ page }) => {
   const state = await openNewChat(page, { data: { projects: [] } });
   await messageBox(page).fill('Set up CI');
-  await expect(page.getByText('Add a project in Frink on your Mac to start a chat.')).toBeVisible();
+  await expect(
+    page.getByText('Add a project in Frink on your computer to start a chat.'),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Choose model' })).toBeDisabled();
   await send(page).click();
   expect(mutations(state)).toEqual([]);

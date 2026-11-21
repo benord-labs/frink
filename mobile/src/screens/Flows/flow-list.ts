@@ -1,16 +1,12 @@
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
-import { runStatus, shortAge, type Status, type StatusTone } from '../../lib/status';
+import { runStatus, type Status } from '../../lib/status';
+import { runNowBlocker, triggerWords } from '../Flow/flow-view';
+import { isTerminal } from '../Run/run-view';
 
-type SectionId = 'needs_you' | 'running' | 'paused' | 'results';
-export type FlowSection = { id: SectionId; title: string; flows: MobileFlow[] };
-
-const SECTIONS: Array<{ id: SectionId; title: string }> = [
-  { id: 'needs_you', title: 'Needs you' },
-  { id: 'running', title: 'Running' },
-  { id: 'paused', title: 'Paused' },
-  { id: 'results', title: 'Recent results' },
-];
-const RUNNING = new Set(['running', 'pending', 'queued']);
+export type FlowGroups = { now: Array<{ flow: MobileFlow; runId: string }>; all: MobileFlow[] };
+export type FlowMenuItem =
+  | { id: 'run' | 'toggle'; label: string }
+  | { id: 'open'; label: string; runId: string };
 
 /** The live run's status, else the most recent run's: what the row reports. */
 function shownStatus(flow: MobileFlow): string | null {
@@ -26,60 +22,39 @@ export function flowRunId(flow: MobileFlow): string | null {
   return flow.status ? flow.latestRunId : (flow.lastRun?.id ?? null);
 }
 
-/** Only a human wait needs an answer; a user pause and finished results stay separate. */
-function sectionOf(flow: MobileFlow): SectionId | null {
-  if (!flowRunId(flow)) return null;
-  const status = shownStatus(flow);
-  if (status === 'awaiting_input' || status === 'held') return 'needs_you';
-  if (status && RUNNING.has(status)) return 'running';
-  if (status === 'paused') return 'paused';
-  return 'results';
-}
-
 export function matchingFlows(flows: MobileFlow[], query = ''): MobileFlow[] {
   const needle = query.trim().toLowerCase();
   return flows.filter((flow) => `${flow.name} ${flow.description}`.toLowerCase().includes(needle));
 }
 
-/** What is happening now, in a fixed order; the computer's order is kept inside each section. */
-export function flowSections(flows: MobileFlow[], query = ''): FlowSection[] {
-  const shown = matchingFlows(flows, query);
-  const seen = new Set<string>();
-  return SECTIONS.map((section) => {
-    const items = shown.filter((flow) => {
-      const id = flowRunId(flow);
-      if (!id || sectionOf(flow) !== section.id || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-    if (section.id !== 'results') return { ...section, flows: items };
-    const newest = [...items].sort((a, b) =>
-      (b.lastRun?.at ?? '').localeCompare(a.lastRun?.at ?? ''),
-    );
-    return { ...section, flows: newest };
-  }).filter((section) => section.flows.length > 0);
+/** "Now" holds every unfinished run once, waits included; "All Flows" lists every Flow. */
+export function groupFlows(flows: MobileFlow[]): FlowGroups {
+  const now = new Map<string, MobileFlow>();
+  for (const flow of flows) {
+    const runId = flow.latestRunId;
+    if (runId && flow.status && !isTerminal(flow.status) && !now.has(runId)) now.set(runId, flow);
+  }
+  return { now: [...now].map(([runId, flow]) => ({ flow, runId })), all: flows };
 }
 
-// States worth a word: something is happening or waiting right now, or went wrong.
-const WORDED = new Set([
-  'running',
-  'pending',
-  'queued',
-  'awaiting_input',
-  'held',
-  'paused',
-  'failed',
-  'cancelled',
-]);
+/** The one Queue link the Flows list shows; the Queue lists and counts what needs you. */
+export function needsYouLabel(count: number): string | null {
+  if (count <= 0) return null;
+  return count === 1 ? '1 needs you' : `${count} need you`;
+}
 
-/** The right-hand slot of an activity row: a state word, or when it last ran. */
-export function flowTrailing(
-  flow: MobileFlow,
-  now = Date.now(),
-): { text: string; tone: StatusTone } | null {
-  const status = shownStatus(flow);
-  const { word, tone } = runStatus(status);
-  if (status && WORDED.has(status)) return { text: word, tone };
-  const age = shortAge(flow.lastRun?.at, now);
-  return age ? { text: age, tone: 'quiet' } : null;
+/** A Flow row's second line: what it does, else how it starts. */
+export function flowSubtitle(flow: Pick<MobileFlow, 'description' | 'trigger'>): string {
+  return flow.description || triggerWords(flow.trigger);
+}
+
+/** The long-press actions, in the order the Flow page offers them. */
+export function flowMenu(flow: MobileFlow): FlowMenuItem[] {
+  const items: FlowMenuItem[] = [];
+  const live = !!flow.status && !isTerminal(flow.status);
+  if (!runNowBlocker(flow, undefined)) items.push({ id: 'run', label: 'Run now' });
+  items.push({ id: 'toggle', label: flow.enabled ? 'Turn off' : 'Turn on' });
+  const runId = flowRunId(flow);
+  if (runId) items.push({ id: 'open', label: live ? 'View current run' : 'View last run', runId });
+  return items;
 }

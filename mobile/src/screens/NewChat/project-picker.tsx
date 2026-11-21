@@ -108,7 +108,7 @@ export function ProjectPicker({
           detail={
             projects.length
               ? 'Try another name.'
-              : 'Add a project in Frink on your Mac, then start a chat here.'
+              : 'Add a project in Frink on your computer, then start a chat here.'
           }
         />
       )}
