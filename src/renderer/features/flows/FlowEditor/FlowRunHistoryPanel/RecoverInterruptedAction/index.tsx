@@ -1,11 +1,12 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, Play, RotateCcw } from 'lucide-react';
+import { Play, RotateCcw } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { DbFlowRunWithNodeRuns } from '../../../../../../shared/types/flow-run';
 import type { RecoveryKind } from '../../../../../../shared/types/flow-run/resume';
 import { SideEffectsConfirm } from '../../../../../components/SideEffectsConfirm';
 import { trpc } from '../../../../../lib/trpc';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 type RecoverInterruptedActionProps = {
   flowId: string;
@@ -71,7 +72,7 @@ export function RecoverInterruptedAction({ flowId, run }: RecoverInterruptedActi
         }
       >
         {mutation.isPending ? (
-          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+          <Spinner className="h-3 w-3" />
         ) : isContinue ? (
           <Play className="h-3 w-3" aria-hidden />
         ) : (

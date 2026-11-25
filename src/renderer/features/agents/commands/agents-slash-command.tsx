@@ -1,7 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { Copy, Pencil, Plus, Loader2 } from 'lucide-react';
+import { Copy, Pencil, Plus } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import { CommandRowAction } from './CommandRowAction';
 import { trpc } from '../../../lib/trpc';
 import { overlayGlass } from '@/lib/overlay-styles';
 import { cn } from '../../../lib/utils';
+import { Spinner } from '../../../components/ui/spinner';
 
 /** Stable DOM id for the slash command listbox (used by aria-controls on the input). */
 export const SLASH_COMMAND_LISTBOX_ID = 'slash-command-listbox';
@@ -559,10 +560,9 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
         </div>
       )}
 
-      {/* Loading state for repository commands */}
       {isLoading && (
         <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Spinner className="h-3.5 w-3.5" />
           <span>Loading commands...</span>
         </div>
       )}

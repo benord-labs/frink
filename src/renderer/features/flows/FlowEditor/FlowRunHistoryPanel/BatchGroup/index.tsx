@@ -5,11 +5,12 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import type { BatchSummary } from '../../../../../../shared/types/flows/flow-batch';
 import { cn } from '../../../../../lib/utils';
 import { formatRelativeTime } from '../../../../../lib/utils/format-time';
+import { Spinner } from '../../../../../components/ui/spinner';
 
 type BatchGroupProps = {
   summary: BatchSummary;
@@ -98,7 +99,7 @@ export function BatchGroup({
 
 function BatchStatusIcon({ summary }: { summary: BatchSummary }) {
   if (summary.active_count > 0) {
-    return <Loader2 className="h-4 w-4 shrink-0 text-blue-500 animate-spin" aria-hidden />;
+    return <Spinner className="h-4 w-4 shrink-0 text-blue-500" />;
   }
   if (summary.errored_count > 0) {
     return <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />;

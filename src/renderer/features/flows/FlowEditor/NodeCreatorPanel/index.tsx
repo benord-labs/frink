@@ -2,7 +2,7 @@
 /** Centered, searchable catalog for adding a flow block. */
 
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { Loader2, Plus, Search, Trash2, X } from 'lucide-react';
+import { Plus, Search, Trash2, X } from 'lucide-react';
 import {
   Fragment,
   type KeyboardEvent,
@@ -64,6 +64,7 @@ import { NODE_CREATOR_CATEGORIES } from './nodeCreatorCategories';
 import { filterNodeCreatorCategories } from './nodeCreatorUtils';
 
 import type { NodeCreatorMode } from '../../../../lib/flows/node-creator/pick';
+import { Spinner } from '../../../../components/ui/spinner';
 
 export type { NodeCreatorMode };
 
@@ -425,11 +426,7 @@ export function NodeCreatorPanel({
               onClick={() => void confirmDeleteCustomNode()}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleteMutation.isPending ? (
-                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
-              ) : (
-                'Remove'
-              )}
+              {deleteMutation.isPending ? <Spinner className="size-4" /> : 'Remove'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -3,7 +3,7 @@ import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
 import { keepPreviousData } from '@tanstack/react-query';
 import { useAtomValue } from 'jotai';
-import { ChevronRight, Bot, Files, Loader2, ToolCase, FolderOpen } from 'lucide-react';
+import { ChevronRight, Bot, Files, ToolCase, FolderOpen } from 'lucide-react';
 // @ts-expect-error - untyped lucide per-icon module
 import { __iconData as botData } from 'lucide-react/dist/esm/icons/bot.mjs';
 // @ts-expect-error - untyped lucide per-icon module
@@ -48,6 +48,7 @@ import { api } from '../../../lib/mock-api';
 import { trpc } from '../../../lib/trpc';
 import { overlayGlass } from '@/lib/overlay-styles';
 import { cn } from '../../../lib/utils';
+import { Spinner } from '../../../components/ui/spinner';
 
 const OriginalMCPIcon = iconifyComponent(mcpLogo);
 
@@ -899,14 +900,14 @@ export const AgentsFileMention = memo(function AgentsFileMention({
         {/* Initial loading state — file-only surfaces (no cached rows yet) */}
         {showFullPanelLoadingFiles && (
           <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner className="h-3.5 w-3.5" />
             <span>Loading files...</span>
           </div>
         )}
 
         {showGlobalSearchPanelLoading && (
           <div className="flex items-center gap-1.5 h-7 px-1.5 mx-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner className="h-3.5 w-3.5" />
             <span>Searching...</span>
           </div>
         )}
@@ -949,7 +950,7 @@ export const AgentsFileMention = memo(function AgentsFileMention({
 
             {sections.map((section, sectionIndex) => {
               const spinner = showHeaderSpinner && sectionIndex === 0 && (
-                <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin" />
+                <Spinner className="h-2.5 w-2.5 shrink-0" />
               );
               const optionRows = section.rows.map(({ key, option, index }) => {
                 const isSelected = selectedIndex === index;

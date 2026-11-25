@@ -5,7 +5,7 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { AlertTriangle, Trash2, Loader2 } from 'lucide-react';
+import { AlertTriangle, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { getProviderById } from '../../../../shared/integrations/selectors';
@@ -29,6 +29,7 @@ import {
 import { PluginMark } from '../../plugins';
 import { trpc } from '../../../lib/trpc';
 import type { ConnectedIntegration } from '../types';
+import { Spinner } from '../../../components/ui/spinner';
 
 type Props = {
   integration: ConnectedIntegration | null;
@@ -131,7 +132,7 @@ export function IntegrationDetailDialog({
             >
               {disconnect.isPending ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Spinner className="mr-2 h-4 w-4" />
                   Disconnecting...
                 </>
               ) : (

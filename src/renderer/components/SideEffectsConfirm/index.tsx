@@ -1,9 +1,10 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { type ReactElement, type RefObject, useEffect, useRef } from 'react';
 import { SIDE_EFFECTS_RETRY } from '../../../shared/lib/task-recovery/side-effects-confirm';
 import { cn } from '../../lib/utils';
 import type { ConfirmOptions } from '../ui/use-confirm';
+import { Spinner } from '../ui/spinner';
 
 /** The same ask as a useConfirm dialog, for a Retry that lives in a menu or a status row. */
 export const SIDE_EFFECTS_CONFIRM: ConfirmOptions = {
@@ -49,7 +50,7 @@ export function SideEffectsConfirm({
           onClick={onConfirm}
         >
           {pending ? (
-            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            <Spinner className="h-3 w-3" />
           ) : (
             <RotateCcw className="h-3 w-3" aria-hidden />
           )}

@@ -61,13 +61,15 @@ describe('shouldPollFlowAdmission', () => {
 describe('FlowRunStatusIcon (EC9 — spinner state)', () => {
   it('spins for running, stays static for paused, and shows a clock for awaiting_input', () => {
     const { container, rerender } = render(<FlowRunStatusIcon status="running" labelled />);
-    expect(container.querySelector('.animate-spin')).not.toBeNull();
+    expect(container.querySelector('[data-spinner]')).not.toBeNull();
+    expect(screen.getByRole('img', { name: 'Run in progress' })).toBeInTheDocument();
 
     rerender(<FlowRunStatusIcon status="paused" labelled />);
-    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect(container.querySelector('[data-spinner]')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Run in progress' })).toBeInTheDocument();
 
     rerender(<FlowRunStatusIcon status="awaiting_input" labelled />);
-    expect(container.querySelector('.animate-spin')).toBeNull();
+    expect(container.querySelector('[data-spinner]')).toBeNull();
     expect(screen.getByLabelText('Run awaiting input')).toBeInTheDocument();
   });
 

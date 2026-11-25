@@ -1,5 +1,5 @@
 /* eslint-disable max-lines, max-lines-per-function */
-import { ChevronRight, Loader2, Files, Folder } from 'lucide-react';
+import { ChevronRight, Files, Folder } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -19,6 +19,7 @@ import { useReadOnlyTree } from './ReadOnlyContext';
 import { useRefreshTrigger } from './RefreshContext';
 import { DragButton, DropRoot } from './TreeNode.dnd';
 import { TreeNodeMenu } from './TreeNodeMenu';
+import { Spinner } from '../../../components/ui/spinner';
 
 /** Copy text to clipboard with toast feedback (module-level — no component deps) */
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -317,30 +318,32 @@ export const TreeNode = memo(function TreeNode({
     onPasteIntoFolder(parentFolder);
   }, [onPasteIntoFolder, isFolder, node.path]);
 
+  // Lazy load children on first expand
+  const loadChildren = useCallback(async () => {
+    if (hasLoaded || !isFolder) return;
+    setIsLoading(true);
+    try {
+      const loadedChildren = await fetchChildren();
+      setChildren(loadedChildren);
+      setHasLoaded(true);
+    } catch (_error) {
+      // Failed to load directory contents
+    } finally {
+      setIsLoading(false);
+    }
+  }, [hasLoaded, isFolder, fetchChildren]);
+
   const expandAndCreate = useCallback(
     (type: 'file' | 'folder') => {
       if (!isFolder || !onCreateItem) return;
       // Expand the folder first so the inline input is visible
       if (!isExpanded) {
         setIsExpanded(true);
-        if (!hasLoaded) {
-          void (async () => {
-            setIsLoading(true);
-            try {
-              const loadedChildren = await fetchChildren();
-              setChildren(loadedChildren);
-              setHasLoaded(true);
-            } catch (_error) {
-              // Failed to load
-            } finally {
-              setIsLoading(false);
-            }
-          })();
-        }
+        void loadChildren();
       }
       onCreateItem(node.path, type);
     },
-    [isFolder, onCreateItem, node.path, isExpanded, hasLoaded, fetchChildren],
+    [isFolder, onCreateItem, node.path, isExpanded, loadChildren],
   );
 
   const handleNewFile = useCallback(() => {
@@ -374,21 +377,6 @@ export const TreeNode = memo(function TreeNode({
   // Get file icon component
   // biome-ignore lint/style/useNamingConvention: component type variable
   const FileIconComponent = isFolder ? null : getFileIconByExtension(node.name);
-
-  // Lazy load children on first expand
-  const loadChildren = useCallback(async () => {
-    if (hasLoaded || !isFolder) return;
-    setIsLoading(true);
-    try {
-      const loadedChildren = await fetchChildren();
-      setChildren(loadedChildren);
-      setHasLoaded(true);
-    } catch (_error) {
-      // Failed to load directory contents
-    } finally {
-      setIsLoading(false);
-    }
-  }, [hasLoaded, isFolder, fetchChildren]);
 
   // Expand this folder when parent set pathToExpandAfterDrop (e.g. after drop)
   useEffect(() => {
@@ -496,10 +484,7 @@ export const TreeNode = memo(function TreeNode({
     >
       {isFolder &&
         (isLoading ? (
-          <Loader2
-            className="h-3.5 w-3.5 shrink-0 text-muted-foreground animate-spin"
-            aria-hidden="true"
-          />
+          <Spinner className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
           <ChevronRight
             className={cn(

@@ -29,7 +29,7 @@
  * keep it mounted as a de-labelled glyph instead.
  */
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, Pause, Pencil, Play } from 'lucide-react';
+import { Pause, Pencil, Play } from 'lucide-react';
 import { memo, type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import type { ChatMode } from '../../../../../../../shared/types/chat-mode';
@@ -43,6 +43,7 @@ import { FlowReplyBox } from '../FlowReplyBox';
 import { FlowRunMeta } from './FlowRunMeta';
 import { FlowSurfaceCard, StripAction } from './FlowSurfaceCard';
 import { StopRunButton } from './StopRunButton';
+import { Spinner } from '../../../../../../components/ui/spinner';
 
 type FlowRunStripProps = {
   subChatId: string;
@@ -74,7 +75,7 @@ type FlowRunStripProps = {
 function RunStatus({ label }: { label: string }) {
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2" aria-live="polite">
-      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+      <Spinner className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate" title={label}>
         {label}
       </span>
@@ -143,7 +144,7 @@ function RunActions({
           variant="secondary"
           icon={
             pausePending ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              <Spinner className="h-3 w-3" />
             ) : (
               <Pause className="h-3 w-3" aria-hidden />
             )
@@ -331,7 +332,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
             aria-busy={resumePending || undefined}
           >
             {resumePending ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              <Spinner className="h-3 w-3" />
             ) : (
               <Play className="h-3 w-3" aria-hidden />
             )}

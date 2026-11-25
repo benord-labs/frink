@@ -1,10 +1,11 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { ArrowUp, CornerDownLeft, Loader2 } from 'lucide-react';
+import { ArrowUp, CornerDownLeft } from 'lucide-react';
 import { useState } from 'react';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { Kbd } from '../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { cn } from '../../../lib/utils';
+import { Spinner } from '../../../components/ui/spinner';
 
 type AgentSendButtonProps = {
   isStreaming?: boolean;
@@ -36,7 +37,7 @@ function getButtonIcon({ isStreaming, isSubmitting, hasContent }: ButtonVisualSt
   if (isStreaming && !hasContent) {
     return <div className="w-2.5 h-2.5 bg-current rounded-[2px] shrink-0 mx-auto" />;
   }
-  if (isSubmitting) return <Loader2 className="size-4 animate-spin" />;
+  if (isSubmitting) return <Spinner className="size-4" />;
   return <ArrowUp className="size-4" />;
 }
 

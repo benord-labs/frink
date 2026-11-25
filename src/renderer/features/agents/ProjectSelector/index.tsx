@@ -3,7 +3,7 @@ import { useAtom } from 'jotai';
 import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { type NewChatTarget, projectTriggerLabel } from '@/lib/agent-chat/new-chat-target';
-import { ChevronDown, Loader2 } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
 import { isBuildProjectPath } from '../../../lib/build-project';
 import { trpc } from '../../../lib/trpc';
@@ -13,6 +13,7 @@ import { GitHubCloneDialog } from './GitHubCloneDialog';
 import { PickerList, type PickerView } from './PickerList';
 import { ProjectIcon } from '../../../components/ProjectIcon';
 import { isProjectSelectionCandidate, type ProjectSelectionCandidate } from './types';
+import { Spinner } from '../../../components/ui/spinner';
 
 type ProjectSelectorProps = {
   /** When provided (e.g. split-view new-chat pane), use these instead of selectedProjectAtom */
@@ -235,7 +236,7 @@ export function ProjectSelector({
           >
             {openFolder.isPending || cloneFromGitHub.isPending ? (
               <>
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                <Spinner className="h-4 w-4 shrink-0" />
                 <span className="truncate">Adding, this may take a moment...</span>
               </>
             ) : (

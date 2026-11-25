@@ -67,6 +67,7 @@
   --radius-sm: calc(var(--radius) - 4px);
 
   --animate-pane-swap: pane-swap 300ms ease-out;
+  --animate-spin-slow: spin 1.5s linear infinite;
 
   @keyframes pane-swap {
     0% {

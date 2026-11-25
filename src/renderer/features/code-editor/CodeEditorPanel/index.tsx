@@ -15,7 +15,6 @@ import {
   PanelTop,
   Save,
   X,
-  Loader2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { type ComponentType, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -113,6 +112,7 @@ import { OtherProjectNotice } from './OtherProjectNotice';
 import { ProjectGroupSeparator } from './ProjectGroupSeparator';
 import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 import { UnsavedChangesDialog } from './UnsavedChangesDialog';
+import { Spinner } from '../../../components/ui/spinner';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
 const MARKDOWN_PREVIEW_MAX_CHARS = 200_000;
@@ -1908,7 +1908,7 @@ export function CodeEditorPanel({
                   </div>
                 ) : (
                   <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Spinner className="h-4 w-4" />
                     <span>{LOADING_MESSAGE}</span>
                   </div>
                 )
@@ -1933,7 +1933,7 @@ export function CodeEditorPanel({
                   </div>
                 ) : (
                   <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Spinner className="h-4 w-4" />
                     <span>{LOADING_MESSAGE}</span>
                   </div>
                 )

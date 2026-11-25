@@ -1,11 +1,12 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { X, Loader2 } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { ComponentProps, ComponentType } from 'react';
 import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { formatFileSize } from '../../file-viewer/utils/file-utils';
+import { Spinner } from '../../../components/ui/spinner';
 
 type AgentFileItemProps = Omit<ComponentProps<'button'>, 'children'> & {
   filename: string;
@@ -67,7 +68,12 @@ export function AgentFileItem({
       className={cn(mentionChipClass(), skipSelection && 'select-none', className)}
       {...props}
     >
-      {isLoading ? <Loader2 className="animate-spin" /> : <Icon />}
+      {/* The chip sizes and tints only a direct svg, so its spinner wrapper takes the same classes. */}
+      {isLoading ? (
+        <Spinner className="size-3.5 self-center brightness-60 dark:brightness-100" />
+      ) : (
+        <Icon />
+      )}
       {path ? (
         <Tooltip>
           <TooltipTrigger asChild>{name}</TooltipTrigger>

@@ -3,10 +3,11 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Loader2, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useJustUpdated } from '../lib/hooks/use-just-updated';
 import { useUpdateChecker } from '../lib/hooks/use-update-checker';
 import { overlayGlass } from '@/lib/overlay-styles';
+import { Spinner } from './ui/spinner';
 
 const UPDATE_CARD_CLASS = `fixed bottom-4 left-4 z-50 flex items-center gap-3 rounded-lg border p-2.5 text-sm text-popover-foreground shadow-lg animate-in fade-in-0 slide-in-from-bottom-2 ${overlayGlass}`;
 
@@ -259,7 +260,7 @@ export function UpdateBanner() {
       {/* Updating State (downloading, installing, or pending) */}
       {isUpdating && (
         <>
-          <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+          <Spinner className="h-4 w-4 text-muted-foreground" />
           <span className="text-foreground">
             {isPending ? 'Starting update...' : 'Updating...'}
           </span>

@@ -7,11 +7,12 @@
  */
 
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { BookmarkPlus, Check, Loader2 } from 'lucide-react';
+import { BookmarkPlus, Check } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { BatchStageDetail } from '../../../../../../../shared/types/flows/flow-batch';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../../../../components/ui/popover';
 import { trpc } from '../../../../../../lib/trpc';
+import { Spinner } from '../../../../../../components/ui/spinner';
 
 type Props = {
   flowId: string;
@@ -121,7 +122,7 @@ export function SaveTemplatePopover({ flowId, stages }: Props) {
           className="h-auto w-full gap-1.5 rounded px-2 py-1 text-[11px]"
         >
           {isPending ? (
-            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            <Spinner className="h-3 w-3" />
           ) : saved ? (
             <Check className="h-3 w-3" aria-hidden />
           ) : null}

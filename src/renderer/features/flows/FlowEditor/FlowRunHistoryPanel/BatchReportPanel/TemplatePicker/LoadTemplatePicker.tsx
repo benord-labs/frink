@@ -9,10 +9,11 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import { BookOpen, Check, ChevronRight, Loader2, XCircle } from 'lucide-react';
+import { BookOpen, Check, ChevronRight, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../../../../components/ui/popover';
 import { trpc } from '../../../../../../lib/trpc';
+import { Spinner } from '../../../../../../components/ui/spinner';
 
 type Props = {
   flowId: string;
@@ -93,7 +94,7 @@ export function LoadTemplatePicker({ flowId }: Props) {
 
         {isLoading && (
           <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            <Spinner className="h-3.5 w-3.5" />
             <span className="text-xs">Loading…</span>
           </div>
         )}

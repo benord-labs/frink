@@ -7,17 +7,7 @@
  */
 
 import { Button, Input } from '@benord-labs/frink-primitives';
-import {
-  Activity,
-  ChevronRight,
-  FileText,
-  Loader2,
-  Plus,
-  Radio,
-  Save,
-  Settings,
-  X,
-} from 'lucide-react';
+import { Activity, ChevronRight, FileText, Plus, Radio, Save, Settings, X } from 'lucide-react';
 import type { ReactElement } from 'react';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import { Kbd } from '../../../../components/ui/kbd';
@@ -30,6 +20,7 @@ import { FlowRunButton } from '../FlowRunButton';
 import { flowRunDisplayStatus } from '../../../../../shared/lib/flows/run-display-status';
 import { FlowRunStatusIcon } from '../FlowRunStatusIcon';
 import { NodeHealthBadge } from '../NodeHealthBadge';
+import { Spinner } from '../../../../components/ui/spinner';
 
 type FlowEditorTab = 'editor' | 'runs';
 
@@ -364,7 +355,7 @@ export function FlowEditorHeader({
           onClick={save.onSave}
         >
           {save.pending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            <Spinner className="h-3.5 w-3.5" />
           ) : (
             <Save className="h-3.5 w-3.5" aria-hidden />
           )}

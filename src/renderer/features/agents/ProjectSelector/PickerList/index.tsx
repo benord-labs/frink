@@ -7,7 +7,6 @@ import {
   ChevronRight,
   FolderOpen,
   FolderPlus,
-  Loader2,
   MessageSquare,
   Plus,
   Sparkles,
@@ -27,6 +26,7 @@ import type { SelectedProject } from '../../atoms';
 import { formatTimeAgo } from '../../utils/format-time-ago';
 import { ProjectIcon } from '../../../../components/ProjectIcon';
 import type { ProjectSelectionCandidate } from '../types';
+import { Spinner } from '../../../../components/ui/spinner';
 
 const GitHubIcon = iconifyComponent(githubLogo);
 
@@ -54,11 +54,7 @@ function PickerActionButton({
       disabled={isPending}
       className="flex gap-1.5 min-h-[32px] h-auto py-[5px] px-1.5 mx-1 w-[calc(100%-8px)] rounded-md text-sm justify-start cursor-default dark:hover:bg-neutral-800 hover:text-foreground disabled:opacity-60"
     >
-      {isPending ? (
-        <Loader2 className="h-4 w-4 text-muted-foreground shrink-0 animate-spin" />
-      ) : (
-        icon
-      )}
+      {isPending ? <Spinner className="h-4 w-4 text-muted-foreground shrink-0" /> : icon}
       <span>{isPending && pendingLabel ? pendingLabel : label}</span>
     </Button>
   );
@@ -163,7 +159,7 @@ export function PickerList({
               value="add-project-folder"
               icon={
                 openFolderPending ? (
-                  <Loader2 className="h-4 w-4 text-muted-foreground shrink-0 animate-spin" />
+                  <Spinner className="h-4 w-4 text-muted-foreground shrink-0" />
                 ) : (
                   <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
                 )
@@ -176,7 +172,7 @@ export function PickerList({
               value="add-project-clone"
               icon={
                 clonePending ? (
-                  <Loader2 className="h-4 w-4 text-muted-foreground shrink-0 animate-spin" />
+                  <Spinner className="h-4 w-4 text-muted-foreground shrink-0" />
                 ) : (
                   <GitHubIcon className="h-4 w-4 text-muted-foreground shrink-0" />
                 )

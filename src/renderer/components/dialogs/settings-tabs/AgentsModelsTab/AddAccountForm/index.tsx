@@ -1,7 +1,7 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { Loader2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { isClaudeOAuthToken } from '../../../../../../shared/lib/anthropic-token';
+import { Spinner } from '../../../../ui/spinner';
 
 type Props = {
   /** Used when the name field is left blank; unique among existing accounts. */
@@ -75,7 +75,7 @@ export function AddAccountForm({
         <Button type="submit" size="sm" disabled={isPending || !token.trim()}>
           {isPending ? (
             <>
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              <Spinner className="mr-1.5 h-3.5 w-3.5" />
               Checking key…
             </>
           ) : (

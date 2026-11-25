@@ -619,7 +619,7 @@ describe('WorkQueue mapTask trigger context', () => {
     paginatedResponseCache.clear();
     renderWorkQueue();
     expect(screen.getByRole('status').outerHTML).toMatch(
-      /aria-live="polite"[\s\S]*motion-reduce:animate-none/,
+      /aria-live="polite"[\s\S]*motion-safe:animate-spin/,
     );
   });
   it('renders a supplied sidebar trigger in the header', () => {

@@ -2,9 +2,10 @@
  * Shared status icon for flow runs (list row + last-run badge).
  */
 
-import { CheckCircle2, CircleDashed, Clock, ListOrdered, Loader2, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleDashed, Clock, ListOrdered, XCircle } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { flowRunDisplayStatus } from '../../../../../shared/lib/flows/run-display-status';
+import { Spinner } from '../../../../components/ui/spinner';
 import { cn } from '../../../../lib/utils';
 
 const LIVE_ADMISSION_STATES = new Set(['queued', 'claimed', 'active', 'releasing']);
@@ -95,10 +96,10 @@ export function FlowRunStatusIcon({
   }
   if (status === 'running' || status === 'paused') {
     return (
-      <Loader2
-        className={cn(dim, 'shrink-0 text-blue-500', status === 'running' && 'animate-spin')}
-        aria-hidden={!labelled}
-        {...(labelled ? { 'aria-label': 'Run in progress' } : {})}
+      <Spinner
+        spinning={status === 'running'}
+        label={labelled ? 'Run in progress' : undefined}
+        className={cn(dim, 'text-blue-500')}
       />
     );
   }

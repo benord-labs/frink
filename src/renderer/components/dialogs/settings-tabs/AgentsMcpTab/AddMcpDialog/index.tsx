@@ -1,5 +1,5 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '../../../../ui/spinner';
 
 type Props = {
   open: boolean;
@@ -168,7 +169,7 @@ export const AddMcpDialog = memo(function AddMcpDialog({ open, onOpenChange, onA
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={isSubmitting || !name || !command}>
-            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add Server'}
+            {isSubmitting ? <Spinner className="h-4 w-4" /> : 'Add Server'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -23,6 +23,7 @@ import {
 import { MAIN_LIB_DOMAINS, RENDERER_LIB_DOMAINS } from './eslint/domains.mjs';
 import { noProviderBranch, PROVIDER_ADAPTER_PATHS } from './eslint/no-provider-branch.mjs';
 import { noRawSurfaceFill } from './eslint/no-raw-surface-fill.mjs';
+import { noSvgSpin } from './eslint/no-svg-spin.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -56,7 +57,11 @@ const [
 
 // One plugin object: ESLint refuses two blocks that register different objects under one name.
 const frinkPlugin = {
-  rules: { 'no-raw-surface-fill': noRawSurfaceFill, 'no-provider-branch': noProviderBranch },
+  rules: {
+    'no-raw-surface-fill': noRawSurfaceFill,
+    'no-provider-branch': noProviderBranch,
+    'no-svg-spin': noSvgSpin,
+  },
 };
 
 const regex = {
@@ -611,6 +616,21 @@ export default [
     },
     plugins: { frink: frinkPlugin },
     rules: { 'frink/no-raw-surface-fill': 'error' },
+  },
+  // Spin classes live only in the Spinner wrapper (frink/no-svg-spin).
+  {
+    files: ['src/renderer/**/*.{ts,tsx}'],
+    ignores: [
+      '**/*.{test,spec}.{ts,tsx}',
+      '**/__tests__/**',
+      'src/renderer/components/ui/spinner.tsx',
+    ],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: { ecmaFeatures: { jsx: true }, sourceType: 'module' },
+    },
+    plugins: { frink: frinkPlugin },
+    rules: { 'frink/no-svg-spin': 'error' },
   },
   // Provider branches stay in adapters (existing hits: eslint-suppressions.json).
   {
