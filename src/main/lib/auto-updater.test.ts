@@ -24,6 +24,8 @@ const { autoUpdaterMock, setFeedURLMock, checkForUpdatesMock } = vi.hoisted(() =
 });
 
 const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
+type RendererAnswer = (event: { sender: object }, value?: boolean) => void;
+const ipcListeners = new Map<string, RendererAnswer>();
 
 vi.mock('electron', () => ({
   app: {
@@ -34,6 +36,9 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       ipcHandlers.set(channel, handler);
+    }),
+    on: vi.fn((channel: string, listener: RendererAnswer) => {
+      ipcListeners.set(channel, listener);
     }),
   },
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
@@ -52,6 +57,7 @@ vi.mock('electron-updater', () => ({
   autoUpdater: autoUpdaterMock,
 }));
 
+import { EventEmitter } from 'node:events';
 import { app } from 'electron';
 import log from 'electron-log';
 import {
@@ -63,6 +69,8 @@ import {
   isAutoUpdateEnabled,
   setupFocusUpdateCheck,
 } from './auto-updater';
+import { LEAVE_CHANNELS } from '../../shared/leave-reason';
+import { getLeaveGuard } from '../windows/leave-guard';
 
 const FEED = 'https://feed.example/frink/';
 
@@ -188,6 +196,51 @@ describe('initAutoUpdater', () => {
     ipcHandlers.get('update:install')?.({} as Electron.IpcMainInvokeEvent);
     vi.advanceTimersByTime(500);
 
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
+    vi.useRealTimers();
+  });
+
+  it('update:install keeps the update pending when the unsaved-tabs prompt is cancelled', async () => {
+    vi.useFakeTimers();
+    const webContents = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    });
+    const window = Object.assign(new EventEmitter(), {
+      webContents,
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      restore: vi.fn(),
+      show: vi.fn(),
+      focus: vi.fn(),
+      close: vi.fn(),
+    });
+    getLeaveGuard().attach(window);
+    const fromRenderer = (channel: string, value?: boolean) =>
+      ipcListeners.get(channel)?.({ sender: webContents }, value);
+    fromRenderer(LEAVE_CHANNELS.setUnsaved, true);
+    globalThis.__setUpdateAvailable = vi.fn();
+    let onDownloaded: ((info: { version: string }) => void) | undefined;
+    autoUpdaterMock.on.mockImplementation(
+      (event: string, cb: (info: { version: string }) => void) => {
+        if (event === 'update-downloaded') onDownloaded = cb;
+      },
+    );
+    await initAutoUpdater(mockGetWindow);
+    onDownloaded?.({ version: '1.0.1' });
+
+    ipcHandlers.get('update:install')?.();
+    expect(webContents.send).toHaveBeenCalledWith(LEAVE_CHANNELS.request, 'update');
+    fromRenderer(LEAVE_CHANNELS.ack);
+    fromRenderer(LEAVE_CHANNELS.cancel);
+    vi.advanceTimersByTime(500);
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+
+    // The restart is still on offer: asking again installs once confirmed.
+    ipcHandlers.get('update:install')?.();
+    fromRenderer(LEAVE_CHANNELS.confirm);
+    vi.advanceTimersByTime(500);
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
     vi.useRealTimers();
   });

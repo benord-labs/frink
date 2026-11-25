@@ -11,7 +11,7 @@ import { buildClaudeEnv, getBundledClaudeBinaryPath } from '../env';
 
 const LOGIN_TIMEOUT_MS = 180_000;
 
-type QuitListener = (event: 'before-quit', stop: () => void) => void;
+type QuitListener = (event: 'will-quit', stop: () => void) => void;
 
 type ClaudeLoginDeps = {
   binaryPath: () => string;
@@ -79,10 +79,10 @@ function startLogin(deps: ClaudeLoginDeps): Login {
   };
   const done = new Promise<SignInOutcome>((resolve) => {
     const timer = setTimeout(stop, LOGIN_TIMEOUT_MS);
-    deps.app.on('before-quit', stop);
+    deps.app.on('will-quit', stop);
     const finish = (outcome: SignInOutcome) => {
       clearTimeout(timer);
-      deps.app.off('before-quit', stop);
+      deps.app.off('will-quit', stop);
       child.stdin.destroy();
       resolve(outcome);
     };

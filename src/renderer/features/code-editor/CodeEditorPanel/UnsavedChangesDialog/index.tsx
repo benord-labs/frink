@@ -16,6 +16,8 @@ import {
   fileKey,
   openFilesAtom,
   pendingCloseKeysAtom,
+  pendingLeaveAtom,
+  settleLeaveAtom,
 } from '@/lib/code-editor/state';
 
 type Props = {
@@ -24,24 +26,30 @@ type Props = {
   onCloseAutoFocus?: (event: Event) => void;
 };
 
-/** Save / Don't save / Cancel for the unsaved tabs a close is waiting on. */
+/**
+ * Save / Don't save / Cancel for the unsaved tabs a tab close, or the whole window leaving
+ * (`pendingLeaveAtom`), is waiting on. A leave goes ahead only once every tab is saved or let go.
+ */
 export function UnsavedChangesDialog({ saveOpenFile, onCloseAutoFocus }: Props): ReactElement {
   const [pendingKeys, setPendingKeys] = useAtom(pendingCloseKeysAtom);
   const files = useAtomValue(openFilesAtom);
   const closeFile = useSetAtom(closeFileAtom);
+  const leaving = useAtomValue(pendingLeaveAtom) !== null;
+  const settleLeave = useSetAtom(settleLeaveAtom);
   const [saving, setSaving] = useState(false);
   const saveButtonRef = useRef<HTMLButtonElement>(null);
   const unmountedRef = useRef(false);
 
-  // Leaving the editor with the prompt open (e.g. the phone Work Queue) answers it as Cancel, and
-  // stops a running Save from closing tabs (a finished write stays on disk).
+  // Unmounting with the prompt open answers it as Cancel, and stops a running Save from closing
+  // tabs (a finished write stays on disk).
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
       setPendingKeys(null);
+      settleLeave('cancel');
     };
-  }, [setPendingKeys]);
+  }, [setPendingKeys, settleLeave]);
 
   const keys = pendingKeys ?? [];
   const onlyFile =
@@ -52,30 +60,51 @@ export function UnsavedChangesDialog({ saveOpenFile, onCloseAutoFocus }: Props):
 
   const saveAndClose = async () => {
     setSaving(true);
+    let allSaved = true;
+    const savedKeys = new Set<string>();
     try {
       for (const key of keys) {
         if (unmountedRef.current) break;
-        const saved = await saveOpenFile(key);
+        // A save that throws counts as not saved, so a leave never goes ahead past it.
+        const saved = await saveOpenFile(key).catch(() => false);
         if (unmountedRef.current) break;
-        if (saved) closeFile(key);
+        if (saved) {
+          closeFile(key);
+          savedKeys.add(key);
+        } else allSaved = false;
       }
     } finally {
       setSaving(false);
-      // A prompt opened while this save ran (after this one was dismissed) stays up.
-      setPendingKeys((current) => (current === pendingKeys ? null : current));
+      // A prompt opened while this save ran stays up, minus the tabs this save already wrote.
+      let replaced = false;
+      let emptied = false;
+      setPendingKeys((current) => {
+        replaced = current !== pendingKeys;
+        if (!replaced || !current) return replaced ? current : null;
+        const rest = current.filter((key) => !savedKeys.has(key));
+        if (rest.length === current.length) return current;
+        emptied = rest.length === 0;
+        return emptied ? null : rest;
+      });
+      // An edit typed during the write, or a failed write, keeps the window.
+      if (leaving && !replaced) settleLeave(allSaved ? 'confirm' : 'cancel');
+      else if (emptied) settleLeave('confirm');
     }
   };
 
   const discardAndClose = () => {
     for (const key of keys) closeFile(key);
     setPendingKeys(null);
+    settleLeave('confirm');
   };
 
   return (
     <AlertDialog
       open={pendingKeys !== null}
       onOpenChange={(open) => {
-        if (!open && !saving) setPendingKeys(null);
+        if (open || saving) return;
+        setPendingKeys(null);
+        settleLeave('cancel');
       }}
     >
       <AlertDialogContent

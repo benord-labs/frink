@@ -2,7 +2,7 @@
  * Tests for `drainInFlightRollbackStashes` — the graceful-shutdown helper that
  * waits for any in-flight `createRollbackStash` promises before app exit.
  *
- * Without this, an Electron `before-quit` that fires while a stash is still
+ * Without this, an Electron `will-quit` that fires while a stash is still
  * running can drop the promise mid-`git add -A`, leaving an orphan
  * `.git/index.lock` that breaks the next launch's git ops until manually
  * cleaned up.
