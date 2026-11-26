@@ -52,7 +52,7 @@ export function answeringCli(prompts: SDKUserMessage[] = []) {
   };
 }
 
-const deferred = () => {
+export const deferred = () => {
   let release = () => {};
   const promise = new Promise<void>((resolve) => {
     release = resolve;

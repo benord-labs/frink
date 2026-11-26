@@ -109,6 +109,11 @@ export function buildClaudeSessionCallbacks(
 ) {
   const taskStop = createTaskStopHooks(taskGroups);
   const activeTurn: ActiveTurn = () => session.current?.currentTurn ?? null;
+  // A turn the CLI started on its own has no turn attached until its execute adopts it.
+  const adoptedTurn = async () => {
+    if (!activeTurn()) await session.current?.selfStartedAdoption?.attached;
+    return activeTurn();
+  };
   const stopHook = createClaudeStopHook(activeTurn, scope.subChatId, session);
   const allowlistOnlyHook = createSubagentAllowlistHook({
     agents: scope.agents,
@@ -147,7 +152,7 @@ export function buildClaudeSessionCallbacks(
     hooks: {
       PreToolUse: [
         // No matcher: MCP calls must pass Frink's allow/deny rules before Claude's Auto reviewer.
-        { hooks: [createPreToolUseHook(scope, activeTurn) as any] },
+        { hooks: [createPreToolUseHook(scope, adoptedTurn) as any] },
         // Every tool, sub-agent calls only: the per-agent allowlist backstop.
         { hooks: [allowlistOnlyHook as any] },
         { matcher: TASK_STOP_TOOLS, hooks: [taskStop.before] },
@@ -186,13 +191,16 @@ function createTaskStopHooks(taskGroups: TaskGroupControls): TaskStopHooks {
 }
 
 /** Frink's permission gate for gated built-in tools and every MCP call. */
-function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn) {
+function createPreToolUseHook(
+  scope: ClaudeSessionScope,
+  adoptedTurn: () => Promise<ClaudeTurnContext | null>,
+) {
   return async (
     hookInput: PreToolUseHookInput,
     toolUseId: string,
     options: { signal: AbortSignal },
   ) => {
-    const turn = activeTurn();
+    const turn = await adoptedTurn();
     let user = NO_HOOKS;
     const denyToolUse = (reason: string) => {
       turn?.deniedToolIdsWithMessages.set(toolUseId, reason);
@@ -343,6 +351,7 @@ function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef):
   const { chatId, subChatId } = scope;
   return async (toolName, toolInput, options) => {
     const asking = session.current;
+    if (!asking?.currentTurn) await asking?.selfStartedAdoption?.attached;
     if (!asking?.currentTurn) return { behavior: 'deny', message: NO_ACTIVE_TURN };
     const turn = asking.currentTurn;
     if (turn.planSubmissionHalt()) return { behavior: 'deny', message: PLAN_SUBMITTED };

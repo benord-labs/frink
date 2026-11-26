@@ -1,6 +1,6 @@
 export type MessageOrigin = {
   source: 'flow' | 'person' | 'internal' | 'unknown';
-  kind: 'message' | 'steer' | 'regenerate' | 'plan_approval' | 'wake';
+  kind: 'message' | 'steer' | 'regenerate' | 'plan_approval' | 'wake' | 'self-started';
 };
 
 export type MessageProvenance = MessageOrigin & {

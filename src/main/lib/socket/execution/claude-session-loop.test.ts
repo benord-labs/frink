@@ -17,6 +17,7 @@ import {
   setSubagentTaskPublisher,
 } from '../streaming/subagent-task-status';
 import { armIdle, runTurn } from './claude-session-loop';
+import { adoptSelfStartedTurn } from './claude-session/self-started-turn';
 import type { WakePumpCallbacks } from './wake-pump-types';
 
 // Replaced wholesale, not spread over the original: `sentry/init` imports `electron`, which cannot
@@ -928,6 +929,108 @@ describe('a session idling between turns', () => {
     const wakes = newLog();
     armIdle(session, wakeCallbacks(wakes));
     await vi.waitFor(() => expect(wakes.ends).toBe(1));
+  });
+});
+
+describe('a turn the CLI starts on its own while kept idle', () => {
+  let infoLog: MockInstance;
+  beforeEach(() => {
+    __resetSessionsForTest();
+    infoLog = vi.spyOn(log, 'info');
+  });
+  afterEach(() => infoLog.mockRestore());
+
+  // A message from another session: the CLI reports where it came from only on the result.
+  const peerResult = () =>
+    msg('result', { subtype: 'success', session_id: 's', origin: { kind: 'peer', from: 'x' } });
+  let n = 0;
+  /** A kept-idle session whose spawn wired the hand-over, as every chat CLI's does. */
+  const handingOver = () => {
+    const ch = channelQuery();
+    const dispatched: string[] = [];
+    const session = createSession(`self-${(n += 1)}`, () => ch.query, {
+      onSelfStartedTurn: (s) => dispatched.push(s.subChatId),
+    });
+    retainSession(session);
+    return { ch, session, dispatched };
+  };
+  const startTurn = async (h: ReturnType<typeof handingOver>) => {
+    h.ch.emit(msg('system', { subtype: 'init' }));
+    await vi.waitFor(() => expect(h.dispatched).toEqual([h.session.subChatId]));
+  };
+
+  it('goes to the execute that adopts it, from its first frame to its own result', async () => {
+    const h = handingOver();
+    await startTurn(h);
+    expect(h.session.retained).toBeNull();
+    expect(h.session.busy).toBe(true);
+
+    const seen: string[] = [];
+    const adopted = adoptSelfStartedTurn(h.session, (m) => void seen.push(m.type));
+    h.ch.emit(msg('assistant'));
+    h.ch.emit(peerResult());
+    await adopted;
+
+    expect(seen).toEqual(['system', 'assistant', 'result']);
+    expect(h.session.busy).toBe(false);
+    expect(getSession(h.session.subChatId)).toBe(h.session);
+  });
+
+  it('gives way to a send while no execute has adopted it', async () => {
+    const h = handingOver();
+    await startTurn(h);
+
+    await releaseLeftoverSession(h.session.subChatId);
+
+    expect(getSession(h.session.subChatId)).toBeUndefined();
+    expect(h.session.busy).toBe(false);
+    expect(infoLog.mock.calls.map(([line]) => String(line))).toContain(
+      `[Claude Session] retire sub=${h.session.subChatId} reason=self-turn-preempted`,
+    );
+    const late = adoptSelfStartedTurn(h.session, () => {});
+    await expect(late).rejects.toSatisfy(isPumpAdoptRefusedError);
+  });
+
+  it("realigns a failed handler to the turn's own result, leaving the next turn unread", async () => {
+    const h = handingOver();
+    await startTurn(h);
+    const adopted = adoptSelfStartedTurn(h.session, (m) => {
+      if (m.type === 'assistant') throw new Error('sink failed');
+    });
+    h.ch.emit(msg('assistant'));
+    h.ch.emit(peerResult());
+    h.ch.emit(msg('assistant'));
+    h.ch.emit(resultMsg());
+
+    await expect(adopted).rejects.toThrow('sink failed');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // init, the failing assistant frame, then the drain stops at the peer turn's own result.
+    expect(h.ch.reads()).toBe(3);
+  });
+
+  // Only `init` opens a turn: a model frame, a result or a local-command echo with no turn behind it
+  // would otherwise leave the chat busy waiting for a result that never comes.
+  it.each([
+    ['task_notification', msg('system', { subtype: 'task_notification' })],
+    ['a root assistant frame', msg('assistant')],
+    ['a bare result', resultMsg()],
+    ['a local-command echo', msg('user', { message: { content: '<local-command-stderr>x' } })],
+  ])('still retires on %s, which opens no turn of its own', async (_, frame) => {
+    const h = handingOver();
+    h.ch.emit(frame);
+
+    await vi.waitFor(() => expect(getSession(h.session.subChatId)).toBeUndefined());
+    expect(h.dispatched).toEqual([]);
+  });
+
+  it('waits through the state turning to running for the init that opens the turn', async () => {
+    const h = handingOver();
+    h.ch.emit(msg('system', { subtype: 'session_state_changed', state: 'running' }));
+    await vi.waitFor(() => expect(h.ch.reads()).toBe(2));
+    expect(h.session.retained).not.toBeNull();
+
+    await startTurn(h);
+    expect(h.session.busy).toBe(true);
   });
 });
 

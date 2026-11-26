@@ -17,6 +17,7 @@ import type { ClaudeSession } from '../../claude-session-registry';
 import { createClaudeTurnContext } from '../../claude-turn-context';
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildClaudeSessionCallbacks } from './session-callbacks';
+import { createSelfStartedAdoption } from './self-started-turn';
 
 type Verdict = Awaited<ReturnType<typeof validateToolPermission>>;
 
@@ -487,5 +488,48 @@ describe("the agent's own TaskStop", () => {
       signal,
     });
     expect(groups.reapStoppedTaskGroups).toHaveBeenCalledWith('b2');
+  });
+});
+
+describe('a turn the CLI started on its own, before its execute attaches', () => {
+  function pendingAdoption() {
+    const adoption = createSelfStartedAdoption(() => {}, 60_000);
+    // SAFETY: the gate reads only the session's attached turn and its pending adoption.
+    const current = {
+      currentTurn: null,
+      selfStartedAdoption: adoption,
+    } as ClaudeSession;
+    const validate = vi.fn<typeof validateToolPermission>(async () => allowRule());
+    const scope = {
+      chatId: 'chat',
+      subChatId: 'sub',
+      project: null,
+      projectPath: '/work',
+      permissionProjectPath: '/work',
+      agents: {},
+      validateToolPermission: validate,
+      abortSources: new Map<string, string>(),
+    };
+    const run = buildClaudeSessionCallbacks(scope, { current }).hooks.PreToolUse[0].hooks[0];
+    return { adoption, current, validate, ask: () => run(bash, 'tool-1', { signal }) };
+  }
+
+  it("judges a tool call with the adopting execute's turn", async () => {
+    const { adoption, current, validate, ask } = pendingAdoption();
+    const answer = ask();
+    current.currentTurn = createClaudeTurnContext();
+    adoption.attach(() => {});
+
+    expect(await answer).toEqual(allowed);
+    expect(validate).toHaveBeenCalledTimes(1);
+  });
+
+  it('denies the call once no execute adopts the turn', async () => {
+    const { adoption, validate, ask } = pendingAdoption();
+    const answer = ask();
+    adoption.fail('self-turn-unadopted');
+
+    expect(await answer).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+    expect(validate).not.toHaveBeenCalled();
   });
 });

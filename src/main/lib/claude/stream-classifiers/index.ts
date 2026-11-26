@@ -3,6 +3,7 @@ export {
   classifyApiErrorText,
   extractTrailingApiError,
 } from './api-error';
+export { peerMessageOf } from './peer-origin';
 export { isResumeFailureText } from './resume-failure';
 export { claudeErrorText, failedResultError } from './sdk-error-text';
 export { type FinalPartLike } from './trailing-text';

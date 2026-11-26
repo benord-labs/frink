@@ -14,7 +14,10 @@ import {
 } from '../../../claude';
 import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn';
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
-import { readUserAutoModeRules } from '../../../claude/auto-mode-rules';
+import {
+  readUserAutoModeRules,
+  readUserCrossSessionInbound,
+} from '../../../claude/auto-mode-rules';
 import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
 import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
@@ -39,6 +42,7 @@ import { resolvePermissionMode } from '../../streaming/plan-auto-approve';
 import { renderFlowBriefingSection } from '../prompt-prefix/flow-briefing-section';
 import { deliverProviderConfig } from '../provider-delivery';
 import { expectLoaded } from './loaded-check';
+import { chatSessionNameEnv, dispatchSelfStartedTurn } from './peer-messaging';
 import { buildClaudeSessionCallbacks, type ClaudeSessionScope } from './session-callbacks';
 import { MESSAGE_PROVENANCE_RULE } from '../../../../../shared/lib/message-markers/message-provenance';
 
@@ -139,6 +143,8 @@ interface ClaudeSessionSpecInputs extends Omit<ClaudeSessionScope, 'agents'> {
   flowPlanAutoApprove: boolean;
   /** Set for a Frink-managed worktree: the main checkout Claude reads project config from. */
   projectConfigRoot?: string;
+  /** The chat's title, which other sessions see this CLI by. */
+  chatName?: string | null;
 }
 
 type ClaudeSessionSpec = Awaited<ReturnType<typeof buildClaudeSessionSpec>>;
@@ -177,6 +183,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
     // `customEnv` — keep it here. Why: docs/decisions/claude-credential-ownership-at-spawn.md
     CLAUDE_SECURESTORAGE_CONFIG_DIR: '',
     MCP_SERVER_CONNECTION_BATCH_SIZE: MCP_STDIO_BATCH_SIZE,
+    ...chatSessionNameEnv(inputs.chatName),
     // Auto-intent gate signal — for a non-plan auto turn and a plan-auto turn (before its flip).
     ...(nativeAutoReview || planAutoReview ? { CLAUDE_CODE_ENABLE_AUTO_MODE: '1' } : {}),
   };
@@ -244,6 +251,8 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
     ...(await hooksForLaunch('claude-code', inputs.project ? inputs.permissionProjectPath : null)),
     // The user's own Auto mode reviewer rules, on every spawn: Auto can arm mid-session.
     ...readUserAutoModeRules(),
+    // Whether the user's other sessions may message this chat, as they set it for the terminal.
+    ...readUserCrossSessionInbound(),
     // Auto-memory belongs to the project, as outside Frink, not to this chat's config dir.
     ...resolveClaudeAutoMemorySettings(projectPath),
     // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
@@ -452,6 +461,7 @@ export function spawnClaudeSession(
       sdkSessionId: options.resume,
       inputsReadAt: Date.parse(inputsReadAt),
       ref: spawned,
+      onSelfStartedTurn: (session) => void dispatchSelfStartedTurn(session, spec.scope),
     },
   );
   // A resumed session keeps the prompt recorded on its first request, so only a fresh one is known

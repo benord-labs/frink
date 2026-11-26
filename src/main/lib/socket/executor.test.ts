@@ -15,6 +15,7 @@ import {
   registerClaudeTurnBindingTests,
   registerClaudeWarmSessionGuardTests,
   registerClaudeWarmSessionTests,
+  registerSelfStartedTurnTests,
   registerCodexSessionCacheTests,
   registerComposerContextTests,
   registerConformanceTests,
@@ -1036,6 +1037,7 @@ describe('socket file permission edge cases', () => {
   registerClaudeSessionCallbackTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   registerClaudeWarmSessionTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   registerClaudeWarmSessionGuardTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  registerSelfStartedTurnTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   registerClaudePrewarmTests({ basePayload, claudeQueryMock, handleRemoteExecute });
 
   it('pauseActiveExecutionForSubChat releases a wake hold (Stop works while nothing is executing)', async () => {

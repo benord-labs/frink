@@ -150,4 +150,5 @@ export type MessageMetadata = {
   /** When the turn's prompt cache goes cold at the latest (epoch ms); unset when no TTL was seen. */
   promptCacheExpiresAt?: number;
   modelUsage?: Record<string, ModelUsageEntry>;
+  peerMessage?: { name?: string; body?: string };
 };

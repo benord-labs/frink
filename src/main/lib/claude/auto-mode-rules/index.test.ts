@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _resetAutoModeRuleReportsForTests, readUserAutoModeRules } from '.';
+import {
+  _resetAutoModeRuleReportsForTests,
+  readUserAutoModeRules,
+  readUserCrossSessionInbound,
+} from '.';
 
 import * as sentry from '../../sentry/init';
 
@@ -112,5 +116,25 @@ describe('readUserAutoModeRules', () => {
     });
 
     expect(readUserAutoModeRules()).toEqual({ autoMode: { allow: ['$defaults', 'Mine'] } });
+  });
+});
+
+describe('readUserCrossSessionInbound', () => {
+  it("carries the user's choice to every chat, as /config writes it for the terminal", () => {
+    writeRawSettings(JSON.stringify({ crossSessionInbound: 'accept' }));
+    expect(readUserCrossSessionInbound()).toEqual({ crossSessionInbound: 'accept' });
+
+    writeRawSettings(JSON.stringify({ model: 'opus' }));
+    expect(readUserCrossSessionInbound()).toEqual({});
+  });
+
+  it('leaves out a value Claude would not accept, reported once', async () => {
+    writeRawSettings(JSON.stringify({ crossSessionInbound: 'yes' }));
+
+    expect(readUserCrossSessionInbound()).toEqual({});
+    expect(readUserCrossSessionInbound()).toEqual({});
+    await vi.waitFor(() => expect(captureMainException).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(captureMainException).toHaveBeenCalledOnce();
   });
 });

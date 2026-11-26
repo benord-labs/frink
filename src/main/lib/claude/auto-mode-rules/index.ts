@@ -28,18 +28,20 @@ const AUTO_MODE_KEYS = [
   'classifyAllShell',
 ] as const;
 
-/** The settings file's own shape is not Frink's to judge; only the `autoMode` block is read. */
-const SettingsFile = z.object({ autoMode: z.unknown() });
+/** The settings file's own shape is not Frink's to judge; only the keys Frink delivers are read. */
+const SettingsFile = z
+  .object({ autoMode: z.unknown(), crossSessionInbound: z.unknown() })
+  .partial();
 const AutoModeBlock = z.record(z.string(), z.unknown());
 
 /** Dropped-key reports already made this process, so a bad file is reported once, not per spawn. */
 const reportedDrops = new Set<string>();
 
-function reportDropped(keys: string[]): void {
+function reportDropped(keys: string[], block = ' autoMode'): void {
   const signature = keys.join(',');
   if (reportedDrops.has(signature)) return;
   reportedDrops.add(signature);
-  const message = `[claude] ~/.claude/settings.json autoMode: ignored ${signature} (unreadable or not the type Claude expects)`;
+  const message = `[claude] ~/.claude/settings.json${block}: ignored ${signature} (unreadable or not the type Claude expects)`;
   log.warn(message);
   // Lazy import keeps @sentry/electron out of this module's static graph, as session-config-dir does.
   void import('../../sentry/init')
@@ -73,19 +75,9 @@ function deliverable(rules: AutoModeRules): AutoModeRules | null {
 /** The `autoMode` block of the user's own ~/.claude/settings.json, which a chat's isolated config
  * dir hides. Never read from a project's settings: Claude itself refuses those for `autoMode`. */
 export function readUserAutoModeRules(): Pick<Settings, 'autoMode'> {
-  const file = path.join(frinkUserHome(), '.claude', 'settings.json');
-  if (!fs.existsSync(file)) return {};
-  let json: unknown;
-  try {
-    json = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    // Claude runs on its built-in rules, as it does in the terminal with an unreadable file.
-    reportDropped(['settings.json']);
-    return {};
-  }
-  const settings = SettingsFile.safeParse(json);
-  if (!settings.success || settings.data.autoMode === undefined) return {};
-  const block = AutoModeBlock.safeParse(settings.data.autoMode);
+  const settings = readUserSettingsFile();
+  if (settings?.autoMode === undefined) return {};
+  const block = AutoModeBlock.safeParse(settings.autoMode);
   if (!block.success) {
     reportDropped(['autoMode']);
     return {};
@@ -95,6 +87,33 @@ export function readUserAutoModeRules(): Pick<Settings, 'autoMode'> {
   if (dropped.length > 0) reportDropped(dropped);
   const autoMode = deliverable(rules);
   return autoMode ? { autoMode } : {};
+}
+
+/** The user's own ~/.claude/settings.json, which a chat's isolated config dir hides. Unreadable, it
+ * is reported once and Claude runs on its defaults, as it does in the terminal. */
+function readUserSettingsFile(): z.infer<typeof SettingsFile> | null {
+  const file = path.join(frinkUserHome(), '.claude', 'settings.json');
+  if (!fs.existsSync(file)) return null;
+  try {
+    const settings = SettingsFile.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+    return settings.success ? settings.data : null;
+  } catch {
+    reportDropped(['settings.json'], '');
+    return null;
+  }
+}
+
+const CrossSessionInbound = z.enum(['accept', 'hold', 'refuse']);
+
+/** Whether the user's other sessions may message this chat, as they set it for the terminal
+ * (`/config` writes it to ~/.claude/settings.json). Unset, Claude decides per message. */
+export function readUserCrossSessionInbound(): Pick<Settings, 'crossSessionInbound'> {
+  const value = readUserSettingsFile()?.crossSessionInbound;
+  if (value === undefined) return {};
+  const parsed = CrossSessionInbound.safeParse(value);
+  if (parsed.success) return { crossSessionInbound: parsed.data };
+  reportDropped(['crossSessionInbound'], '');
+  return {};
 }
 
 /** Test-only: forget which bad keys were already reported. */

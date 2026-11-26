@@ -57,6 +57,21 @@ describe('computeClaudeSessionKey', () => {
     );
   });
 
+  it("ignores the chat's session name, so a renamed chat still claims its warm CLI", () => {
+    const named = (name?: string) =>
+      computeClaudeSessionKey(
+        options({ env: { CLAUDE_CONFIG_DIR: '/cfg/sub-1', CLAUDE_CODE_SESSION_NAME: name } }),
+        servers(),
+      );
+    const renamed = computeClaudeSessionKey(
+      options({ env: { CLAUDE_CONFIG_DIR: '/cfg/sub-2', CLAUDE_CODE_SESSION_NAME: 'Payments' } }),
+      servers(),
+    );
+
+    expect(diffKeyParts(named(undefined), named('Payments API'))).toEqual([]);
+    expect(diffKeyParts(named('Payments API'), renamed)).toEqual(['env']);
+  });
+
   it('is insensitive to agent registration order', () => {
     const reordered = options({
       agents: { planner: { description: 'q' }, reviewer: { prompt: 'p', description: 'r' } },

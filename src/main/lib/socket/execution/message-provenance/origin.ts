@@ -20,6 +20,7 @@ export function classifyMessageOrigin(
   payload: MessageSendPayload,
   messageText: string,
 ): MessageOrigin {
+  if (payload.selfStarted) return { source: 'internal', kind: 'self-started' };
   if (payload.trigger === 'regenerate-message') return { source: 'internal', kind: 'regenerate' };
   if (payload.approvedPlanContext) return { source: 'internal', kind: 'plan_approval' };
   if (isHiddenWakeMessage(messageText)) return { source: 'internal', kind: 'wake' };

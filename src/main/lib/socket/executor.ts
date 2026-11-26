@@ -82,6 +82,7 @@ import {
   retireRetainedSession,
   settlePrewarm,
 } from './claude-session-registry';
+import { adoptSelfStartedTurn } from './execution/claude-session/self-started-turn';
 import {
   adoptHeldExecution,
   applyChunkToParts,
@@ -369,6 +370,9 @@ export async function handleRemoteExecute(
   // Handle general chats (no project context)
   const isGeneralChat = !projectId;
   const msgId = assistantMessageId || crypto.randomUUID();
+  // A turn the chat's CLI started on its own: this run adopts it, pushes nothing and owes no task.
+  const selfStarted = payload.delivery?.messageOrigin?.kind === 'self-started';
+  const selfStartedAdoption = selfStarted ? getClaudeSession(subChatId)?.selfStartedAdoption : null;
 
   // Fresh SDK-closure and terminal-error state lives in ClaudeTurnContext (claude-turn-context.ts).
   const turn = createClaudeTurnContext();
@@ -493,7 +497,7 @@ export async function handleRemoteExecute(
     const { resolveFlowContinuationExecutionTask } = await import('../task-executor');
     const resolvedContinuation = resolveFlowContinuationExecutionTask({
       chatId: chatId ?? undefined,
-      chatRowTaskId: chatAccountResult?.chat?.taskId ?? null,
+      chatRowTaskId: selfStarted ? null : (chatAccountResult?.chat?.taskId ?? null),
       expectedFlowTaskId,
     });
     taskIdForExecution = resolvedContinuation.taskIdForExecution;
@@ -521,6 +525,8 @@ export async function handleRemoteExecute(
     log.info(`[Socket Executor] Starting execution for project ${projectId || '(general chat)'}`);
 
     const existing = getActiveExecution(subChatId);
+    // A turn the CLI started on its own never supersedes a run, and is gone once preempted.
+    if (selfStarted && (existing || !selfStartedAdoption?.pending)) return;
     if (existing) {
       executionAbortSources.set(subChatId, 'duplicate-request');
       log.warn(
@@ -539,6 +545,7 @@ export async function handleRemoteExecute(
       assistantMessageId: msgId,
     });
     executionAdmissionAcknowledged = true;
+    selfStartedAdoption?.claim();
     payload.onExecutionStarted?.();
     // Owed from registration on: only a registered run can be stopped before its prompt is taken.
     const undelivered = carryUndeliveredMessages(
@@ -591,7 +598,8 @@ export async function handleRemoteExecute(
     // for interactive turns. Used by the integration gate + every (record/persist)LinkedTaskSignal.
     // Disarmed (null) when the only task link is terminal-final — the DB fault path above keeps
     // today's armed behavior (fail-open).
-    const signalTaskId = taskSignalDisarmed ? null : (effectiveSignalTaskId ?? taskIdForExecution);
+    const signalTaskId =
+      taskSignalDisarmed || selfStarted ? null : (effectiveSignalTaskId ?? taskIdForExecution);
     linkedTaskSignalTaskId = signalTaskId;
     const provenance = provenanceForTurn(armed, payload.delivery ?? {}, signalTaskId);
     // Auto-approve plan node: once the plan card is emitted the agent implements in-turn, so flip the
@@ -1083,6 +1091,7 @@ export async function handleRemoteExecute(
 
     const claudeSpec = await buildClaudeSessionSpec({
       chatId,
+      chatName: chatAccountResult?.chat?.name,
       subChatId,
       project,
       projectId,
@@ -1424,9 +1433,11 @@ export async function handleRemoteExecute(
       });
       const warmPush = claimed ? takeover : undefined;
       const onPushed = delivery.onPushed(adoptedPump !== undefined, claimed, undelivered.pushed);
-      const turnDone = adoptedPump
-        ? adoptedPump.startTurn(initialMessage, onSdkMessage, takeover, onPushed)
-        : runClaudeTurn(session, initialMessage, onSdkMessage, warmPush, onPushed);
+      const turnDone = selfStarted
+        ? adoptSelfStartedTurn(session, onSdkMessage)
+        : adoptedPump
+          ? adoptedPump.startTurn(initialMessage, onSdkMessage, takeover, onPushed)
+          : runClaudeTurn(session, initialMessage, onSdkMessage, warmPush, onPushed);
       const unbindTurnAbort = bindTurnAbort(session, abortController.signal);
       await turnDone.finally(unbindTurnAbort);
 
@@ -1551,6 +1562,17 @@ export async function handleRemoteExecute(
       await settlePrewarm(subChatId);
       flowResources.assertLive(abortController.signal, 'Claude');
       const initialMessage = buildClaudeUserMessage(fullPrompt, imageParts, mode);
+      const selfStartedSession = selfStarted ? getClaudeSession(subChatId) : undefined;
+      if (selfStartedSession) {
+        ownedClaudeSession = selfStartedSession;
+        claudeQueryStarted = true;
+        attachTurn(selfStartedSession, turn, () =>
+          chatServer.bindChannelExecution(subChatId, executionContextId),
+        );
+        await processClaudeStream(selfStartedSession, initialMessage);
+        return;
+      }
+      if (selfStarted) throw new Error('self-started turn has no session');
       const hold = takeWakeHold(subChatId, flowResources.admitted);
       if (hold) {
         flowResources.adoptWakeHoldRuntimeSlot(hold);
@@ -1715,6 +1737,7 @@ export async function handleRemoteExecute(
       try {
         await runClaudeQueryAttempt(sdkOptions);
       } catch (error) {
+        if (selfStarted) throw error;
         const errorMessage = claudeErrorText(error);
         // When resume fails, the SDK still emits a skeleton stream (start / start-step /
         // message-metadata / finish-step / finish) representing the empty failed result, then
@@ -1803,7 +1826,8 @@ export async function handleRemoteExecute(
     }
     await runWithOptionalResumeRetry();
     // sc-3666: a turn that settled without its prompt reaching the CLI must not report complete.
-    delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
+    if (!selfStarted)
+      delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
 
     // 5. Extract metadata from finish chunk if present (use last: failed resume can leave an earlier `finish` before retry succeeds)
     const metadata = lastFinishMetadata(collectedChunks);
@@ -1927,6 +1951,7 @@ export async function handleRemoteExecute(
       });
     }
   } finally {
+    selfStartedAdoption?.fail('self-turn-undeliverable');
     endCodexTurn(codexTurn);
     logAdoptedTurnEnd(turn, subChatId, executionFailed ? 'failed' : 'ended without a disposition');
     if (!executionAdmissionAcknowledged) {

@@ -114,6 +114,19 @@ describe('buildClaudeEnv', () => {
     },
   );
 
+  it("never hands a parent Claude session's messaging identity to a chat CLI", () => {
+    vi.stubEnv('CLAUDE_CODE_MESSAGING_SOCKET', '/tmp/cc-socks/1.sock');
+    vi.stubEnv('CLAUDE_CODE_MESSAGING_TOKEN', 'token');
+    vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'parent-session');
+    vi.stubEnv('CLAUDE_CODE_SESSION_NAME', 'parent');
+    const env = buildClaudeEnv();
+    vi.unstubAllEnvs();
+
+    expect(Object.keys(env).filter((key) => key.startsWith('CLAUDE_CODE_MESSAGING'))).toEqual([]);
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+    expect(env.CLAUDE_CODE_SESSION_NAME).toBeUndefined();
+  });
+
   it('keys a spawn built before the SDK writes its variables into process.env like one built after', () => {
     vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', undefined);
     vi.stubEnv('NoDefaultCurrentDirectoryInExePath', undefined);
