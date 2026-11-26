@@ -114,7 +114,6 @@ import {
   spawnClaudeSession,
 } from './execution/claude-session';
 import { runTurn as runClaudeTurn } from './execution/claude-session-loop';
-import * as flow from './execution/flow-resource-cleanup';
 import { deliverProviderConfig } from './execution/provider-delivery';
 import { startAcpTurn } from './execution/acp-turn';
 import { startCopilotTurn } from './execution/copilot-turn';
@@ -135,7 +134,6 @@ import {
 import type { MessageDelivery } from './execution/message-provenance/origin';
 import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
 import { renderFlowBriefingSection } from './execution/prompt-prefix/flow-briefing-section';
-import { listWakeHoldSubChatIdsForChat } from './execution/wake-hold-registry-view';
 import { logAdoptedTurnEnd, turnEndDisposition } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
@@ -158,9 +156,6 @@ import {
   getActiveExecution,
   getExecutionOwner,
   getExecutionStreamEpoch,
-  hasActiveExecutions,
-  listExecutionsForWebContents,
-  listSubChatIdsForChat,
   setActiveExecution,
 } from './streaming/execution-registry';
 
@@ -198,7 +193,16 @@ import { beginCodexTurn, endCodexTurn, getCodexSession, setCodexSession } from '
 
 export { clearCodexSession } from './codex-session';
 
-export const executionAbortSources = new Map<string, string>();
+import { executionAbortSources } from './execution/abort';
+
+export {
+  abortActiveExecutionsForSubChats,
+  abortActiveExecutionsForWebContents,
+  collectLiveSubChatIdsForChat,
+  executionAbortSources,
+  handleRemoteStop,
+  pauseActiveExecutionForSubChat,
+} from './execution/abort';
 
 /**
  * Plan-mode pipeline, in order and across files: `buildFrinkPlanChunks` emits the agent's plan
@@ -1975,102 +1979,6 @@ export async function handleRemoteExecute(
     if (!executionFailed && signalFailure) throw signalFailure.cause;
     // biome-ignore lint/correctness/noUnsafeFinally: fallback failure rejects after mandatory teardown.
     if (fallbackSignalFailure.current) throw fallbackSignalFailure.current.cause;
-  }
-}
-
-// User PAUSE: abort WITHOUT reconcileFlowTaskOnTeardown (it would CAS the fresh park to cancelled).
-// Callers park FIRST (flows.pauseRun); the abort reads as a user stop, so the park survives.
-// A between-turn wake hold counts as an active execution for pause purposes.
-export function pauseActiveExecutionForSubChat(subChatId: string): boolean {
-  const hadHold = hasWakeHold(subChatId);
-  releaseWakeHold(subChatId, 'user-pause');
-  const record = getActiveExecution(subChatId);
-  if (!record) return hadHold;
-  clearPendingApprovals('Paused by user.', subChatId);
-  // Stamp before aborting, like every other stop path — unstamped, this pause is classified off
-  // the SDK's error text alone, and a bare AbortError parks it as an api-error.
-  executionAbortSources.set(subChatId, 'user-pause');
-  record.controller.abort();
-  deleteActiveExecution(subChatId);
-  return true;
-}
-
-/**
- * Handle stop signal from remote machine
- */
-export function handleRemoteStop(payload: { chatId: string; subChatId: string }): void {
-  const record = getActiveExecution(payload.subChatId);
-  const persistence = record
-    ? flow.startFlowTaskTeardown(payload.subChatId, false, record.controller)
-    : undefined;
-  releaseWakeHold(payload.subChatId, 'remote-stop', persistence);
-  if (record) {
-    executionAbortSources.set(payload.subChatId, 'remote-stop');
-    log.info(`[Socket Executor] Stopping execution for ${payload.subChatId}`);
-    clearPendingApprovals('Session cancelled.', payload.subChatId);
-    record.controller.abort();
-    deleteActiveExecution(payload.subChatId);
-  }
-}
-
-/** A chat's sub-chats with a live turn or wake hold, read from memory so abort survives a DB failure. */
-export function collectLiveSubChatIdsForChat(
-  chatId: string,
-  listWakeHolds: (chatId: string) => string[] = listWakeHoldSubChatIdsForChat,
-): string[] {
-  return [...new Set([...listSubChatIdsForChat(chatId), ...listWakeHolds(chatId)])];
-}
-
-/**
- * Phase 1 ship-blocker fix (commit 6056c8): chats.delete used to leave the SDK streaming
- * and tool-calling against a worktree that fire-and-forget removeWorktree was about to
- * yank from under it. Callers (delete + archive paths) now invoke this BEFORE flipping
- * the local row, so the abort signal lands while the executor is still running.
- *
- * No-op when no execution is active for the given sub-chat.
- */
-export function abortActiveExecutionsForSubChats(
-  subChatIds: readonly string[],
-  reason: string,
-): void {
-  for (const subChatId of subChatIds) {
-    releaseWakeHold(subChatId, reason);
-    retireRetainedSession(subChatId, reason);
-  }
-  if (!hasActiveExecutions() || subChatIds.length === 0) return;
-  let aborted = 0;
-  for (const subChatId of subChatIds) {
-    const record = getActiveExecution(subChatId);
-    if (!record) continue;
-    executionAbortSources.set(subChatId, reason);
-    clearPendingApprovals(`Session aborted: ${reason}.`, subChatId);
-    record.controller.abort();
-    deleteActiveExecution(subChatId);
-    aborted += 1;
-  }
-  if (aborted > 0) {
-    log.info(`[Socket Executor] Aborted ${aborted} execution(s) for sub-chats: ${reason}`);
-  }
-}
-
-/**
- * Abort agent runs tied to a specific BrowserWindow (same `webContents.id`).
- * Entries without `localRendererWebContentsId` (e.g. executor runs for another
- * machine's request) are left running.
- */
-export function abortActiveExecutionsForWebContents(webContentsId: number, reason: string): void {
-  const toAbort = listExecutionsForWebContents(webContentsId);
-  if (toAbort.length === 0) return;
-  log.info(
-    `[Socket Executor] Aborting ${toAbort.length} active execution(s) for webContents ${webContentsId}: ${reason}`,
-  );
-  for (const [subChatId, record] of toAbort) {
-    const persistence = flow.startFlowTaskTeardown(subChatId, true, record.controller);
-    releaseWakeHold(subChatId, `renderer-lifecycle:${reason}`, persistence);
-    executionAbortSources.set(subChatId, reason);
-    clearPendingApprovals(`Session aborted: ${reason}.`, subChatId);
-    record.controller.abort();
-    deleteActiveExecution(subChatId);
   }
 }
 
