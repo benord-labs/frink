@@ -229,6 +229,12 @@ If you have taught Claude Code's Auto Mode which actions to allow or block, Frin
 - Changes reach newly started chats and every Flow run. A chat that is already running keeps the rules it started with.
 - Codex follows its own reviewer rules: the `[auto_review] policy` in your `~/.codex/config.toml`.
 
+### Messages from your other sessions
+
+A Claude chat can receive a message from one of your other Claude sessions: a terminal session or another chat. The message starts a new reply in that chat (see [Your chats and terminal sessions can message each other](portable-across-tools.md#your-chats-and-terminal-sessions-can-message-each-other)). It never counts as your approval: the reply runs under the chat's own permissions, so anything that would ask you still asks you, and Auto reviews exactly what it would review for your own message.
+
+Which messages get through follows Claude Code's **Messages from your other sessions** setting (`crossSessionInbound` in `~/.claude/settings.json`): `accept`, `hold` or `refuse`. When it is unset, Claude Code delivers a message when both sessions run in the same permission class. A chat with Auto on or off counts as asking for permission, like a normal terminal session, so messages between them arrive. A session that skips permission prompts can't reach a Frink chat unless you set `accept`.
+
 ### Auto in Plan mode
 
 Auto reviews tool requests in Plan mode too — both the **planning phase** (the reading and running the agent does to build its plan) and, when the plan is accepted, the implementing phase. So a Plan-mode chat or Flow with Auto on runs without stopping to ask you for eligible tools throughout. Auto is still **not** the same as approving the plan: the plan itself still stops for you unless the Flow step is set to **auto-approve** (that separate checkbox is what skips the plan review). Turning Auto on never auto-approves a plan.

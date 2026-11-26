@@ -8,6 +8,26 @@ function collect(gen: Generator<UIMessageChunk>): UIMessageChunk[] {
 }
 
 describe('createTransformer', () => {
+  it("records the sending session and its message on a turn another session's message started", () => {
+    const origin = {
+      kind: 'peer',
+      from: 'uds:/tmp/cc-socks/1.sock',
+      name: 'api-worker',
+      body: 'ping',
+    };
+    const finish = collect(
+      createTransformer()({ type: 'result', subtype: 'success', origin }),
+    ).find((c) => c.type === 'finish');
+    const own = collect(createTransformer()({ type: 'result', subtype: 'success' })).find(
+      (c) => c.type === 'finish',
+    );
+
+    expect(finish).toMatchObject({
+      messageMetadata: { peerMessage: { name: 'api-worker', body: 'ping' } },
+    });
+    expect(own).not.toHaveProperty('messageMetadata.peerMessage');
+  });
+
   it('ends a turn whose result is a usage limit with a RATE_LIMIT_SDK error chunk', () => {
     const transform = createTransformer();
     const limit = "You've hit your limit · resets 3pm";

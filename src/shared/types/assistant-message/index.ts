@@ -42,6 +42,8 @@ export type AssistantMessageMetadata = {
   promptCacheExpiresAt?: number;
   /** Set when Frink — not the user — tore this turn down. The persisted record of the teardown. */
   interruptedBy?: InvoluntaryAbortReason;
+  /** Set when another Claude session's message started this turn: its sender's name and text. */
+  peerMessage?: { name?: string; body?: string };
 };
 
 /**

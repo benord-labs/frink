@@ -6,10 +6,13 @@ import {
   isAnyResult,
   isIdleActivity,
   isMainTurnStart,
+  isRunningState,
+  startsIdleTurn,
+  turnBoundaryFor,
   isSetterEcho,
-  isTurnBoundary,
 } from '../streaming';
 import { drainToResult, nextTurnMessage } from './claude-session/drain-to-result';
+import { createSelfStartedAdoption, selfStartedSink } from './claude-session/self-started-turn';
 import { logTurnTiming, noteTurnTiming, type TurnTiming } from './claude-session/turn-timing';
 import type { WakePump, WakePumpCallbacks, WakePumpExit } from './wake-pump-types';
 import { settleIfWorkFinished, type WaitOverDrain } from './wake-wait-over';
@@ -348,12 +351,13 @@ async function consumeTurnFrame(session: ClaudeSession, msg: SDKMessage): Promis
   if (turn?.path === 'warm' && turn.pushedAt === undefined) {
     const err = new Error(`runTurn: ${session.subChatId} was busy when claimed — adopt refused`);
     if (isIdleActivity(msg)) {
-      session.retire('idle-activity');
+      session.retire('idle-activity-during-claim');
       endTurn(session, err);
     }
     return;
   }
   if (loop.turn) noteTurnTiming(loop.turn, msg);
+  const isBoundary = turnBoundaryFor(turn);
   try {
     await loop.turn?.onMessage(msg);
   } catch (err) {
@@ -362,14 +366,14 @@ async function consumeTurnFrame(session: ClaudeSession, msg: SDKMessage): Promis
     // there — draining would await a value that only arrives after the next turn's push, which
     // would deadlock the session. A harness result is NOT the boundary, so it must still drain:
     // our turn's frames are all still ahead of it in the generator.
-    if (!isTurnBoundary(msg)) await drainToResult(session, isTurnBoundary);
+    if (!isBoundary(msg)) await drainToResult(session, isBoundary);
     if (loop.arming) endArming(session, { reason: 'turn-error', error: err }, err);
     else endTurn(session, err);
     return;
   }
   // Only OUR turn's result ends the wait — a harness turn's result can arrive first, and returning on
   // it would file that turn as the reply. A failed one rejects, as the one-shot SDK's query throws.
-  if (!isTurnBoundary(msg)) return;
+  if (!isBoundary(msg)) return;
   const error = failedResultError(msg);
   if (!loop.arming) endTurn(session, error);
   else if (error) endArming(session, { reason: 'turn-error', error }, error);
@@ -441,8 +445,31 @@ async function dispatchFrame(session: ClaudeSession, frame: SDKMessage | null): 
   if (loop.turn && !admitTurnFrame(frame, loop.turn.ownToolIds)) return;
   if (loop.turn) await consumeTurnFrame(session, frame);
   else if (loop.arming) await consumeWakeFrame(session, loop.arming, frame);
-  // Idle, anything but a turn of the CLI's own is noise; that turn has no one to answer.
-  else if (session.retained && isIdleActivity(frame)) session.retire('idle-activity');
+  else if (session.retained) await readIdleFrame(session, session.retained, frame);
+}
+
+/** Idle, a turn of the CLI's own goes to an execute when one can take it; with no one to answer it,
+ * any activity retires the session. Every other frame is noise. */
+async function readIdleFrame(
+  session: ClaudeSession,
+  retained: NonNullable<ClaudeSession['retained']>,
+  frame: SDKMessage,
+): Promise<void> {
+  const handOver = session.onSelfStartedTurn;
+  if (!handOver || !startsIdleTurn(frame)) {
+    // Where a hand-over exists, the state turning to running only announces the `init` to come.
+    if (isIdleActivity(frame) && !(handOver && isRunningState(frame)))
+      session.retire('idle-activity');
+    return;
+  }
+  clearTimeout(retained.timer);
+  session.retained = null;
+  takeBusy(session);
+  const adoption = createSelfStartedAdoption((reason) => session.retire(reason));
+  session.selfStartedAdoption = adoption;
+  session.loop.turn = selfStartedSink(adoption);
+  handOver(session);
+  await consumeTurnFrame(session, frame);
 }
 
 async function readSessionStream(session: ClaudeSession): Promise<void> {

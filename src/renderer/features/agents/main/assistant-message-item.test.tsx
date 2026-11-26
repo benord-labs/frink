@@ -8,6 +8,7 @@ import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import { COMPACTING_PENDING } from '../../../lib/agent-chat/planning/planning-status-message';
 import { compactingSubChatsAtom } from '../atoms';
 import { HtmlArtifactPaneProvider } from '../HtmlArtifactPane';
+import type { AssistantMessageMetadata } from '../../../../shared/types/assistant-message';
 import type { Message, MessagePart } from '../stores/message-store';
 import { buildNestedToolsMap } from './active-chat/utils';
 import { AssistantMessageItem } from './assistant-message-item';
@@ -163,6 +164,26 @@ describe('AssistantMessageItem rendering', () => {
     );
 
     expect(screen.getByText(UNKNOWN_TOOL_LABEL)).toBeInTheDocument();
+  });
+
+  it('shows the message another session sent above its reply, as plain text', () => {
+    const body = 'Is the migration done? ![x](https://example.com/x.png) **now**';
+    // The persisted shape, which the renderer store's narrower metadata type does not list.
+    const metadata: AssistantMessageMetadata = { peerMessage: { name: 'api-worker', body } };
+    const { container } = render(
+      <AssistantMessageItem
+        {...baseProps}
+        message={{
+          ...buildAssistantMessage('msg-peer', [textPart('Yes, it finished.')]),
+          metadata,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Message from @api-worker')).toBeInTheDocument();
+    // Another agent's words: shown verbatim, never rendered as markdown.
+    expect(screen.getByText(body)).toBeInTheDocument();
+    expect(container.querySelector('img')).toBeNull();
   });
 
   it('renders a persisted HTML artifact as an inert inline action', () => {

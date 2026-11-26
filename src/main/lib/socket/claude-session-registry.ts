@@ -10,6 +10,7 @@ import type { TaskStopHook } from '../task-stop-hook';
 import type { registerClaudeDelivery } from './execution/message-provenance/claude';
 import type { ClaudeTurnContext } from './claude-turn-context';
 import { diffKeyParts } from './execution/claude-session/session-key';
+import type { SelfStartedAdoption } from './execution/claude-session/self-started-turn';
 import {
   createSessionLoop,
   type SessionLoop,
@@ -69,6 +70,11 @@ export interface ClaudeSession {
   /** The session's one reader: turns and wake armings register their sinks here, and it is the
    * only caller of `query.next()`. */
   readonly loop: SessionLoop;
+  /** Hands a turn the CLI starts on its own while idle to an execute; without it that turn retires
+   * the session. */
+  readonly onSelfStartedTurn?: (session: ClaudeSession) => void;
+  /** Set from such a turn's first frame until an execute takes it over or it fails. */
+  selfStartedAdoption: SelfStartedAdoption | null;
 }
 
 /** Builds the live `Query` from the persistent input stream. Injected by the executor
@@ -84,6 +90,7 @@ type SessionSpec = {
   /** The ref this session's callbacks were built with, bound to it as it is built: they resolve
    * through this session, never a successor registered under the same chat id. */
   ref?: { current: ClaudeSession | null };
+  onSelfStartedTurn?: (session: ClaudeSession) => void;
 };
 
 /** How long a session idling between turns stays claimable. */
@@ -159,6 +166,8 @@ export function createSession(
     evict: () => evictIfCurrent(session),
     retire: (reason) => retireSession(session, reason),
     loop: createSessionLoop(),
+    onSelfStartedTurn: spec.onSelfStartedTurn,
+    selfStartedAdoption: null,
   };
   if (ref) ref.current = session;
   sessions.set(subChatId, session);
@@ -183,6 +192,8 @@ export function endSession(subChatId: string): void {
 export async function releaseLeftoverSession(subChatId: string): Promise<void> {
   let session = sessions.get(subChatId);
   if (session?.busy) {
+    // A turn the CLI started on its own that no execute has taken yet gives way to this send.
+    session.selfStartedAdoption?.fail('self-turn-preempted');
     await session.turnSettled?.catch(() => {});
     session = sessions.get(subChatId);
   }
@@ -227,6 +238,7 @@ export function retireRetainedSession(subChatId: string, reason: string): void {
   chatFences.set(subChatId, { at: Date.now(), reason });
   if (queuedPrewarm?.subChatId === subChatId) queuedPrewarm = null;
   const session = sessions.get(subChatId);
+  session?.selfStartedAdoption?.fail(reason);
   if (session?.retained) retireSession(session, reason);
 }
 

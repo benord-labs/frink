@@ -66,6 +66,14 @@ export function getClaudeShellEnvironment(): Record<string, string> {
   return env;
 }
 
+/** What a Claude CLI sets for its own children; each chat CLI binds its own inbox instead. */
+const MESSAGING_IDENTITY_VARS = [
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_SESSION_NAME',
+] as const;
+
 /**
  * Build the complete environment for Claude SDK.
  * Merges shell environment, process.env, and custom overrides.
@@ -100,6 +108,8 @@ export function buildClaudeEnv(options?: {
   // itself; inheriting them would key a spawn built before that differently from every one after.
   delete env.CLAUDE_AGENT_SDK_VERSION;
   delete env.NoDefaultCurrentDirectoryInExePath;
+  // A Frink started from a Claude session must not hand that session's messaging identity on.
+  for (const key of MESSAGING_IDENTITY_VARS) delete env[key];
   // Restore shell PATH if we had one (it contains nvm, homebrew, etc.)
   if (shellPath) {
     env.PATH = shellPath;

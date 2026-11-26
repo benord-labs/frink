@@ -65,6 +65,8 @@ export type MessageSendPayload = {
   projectId: string;
   trigger?: 'submit-message' | 'regenerate-message';
   userMessage: Message;
+  /** Adopts a turn the chat's CLI already started on its own: no user row, nothing pushed. */
+  selfStarted?: boolean;
   /**
    * Explicit mode TRANSITION INTENT — present only when this send changes the sub-chat's mode
    * (footer toggle, plan approval, first turn of a not-yet-persisted sub-chat). Absent means
@@ -273,7 +275,7 @@ async function persistAndDispatchMessage(
   });
 
   // 'submit-message' appends a fresh user message; 'regenerate-message' replays an existing one.
-  if (payload.trigger !== 'regenerate-message') {
+  if (payload.trigger !== 'regenerate-message' && !payload.selfStarted) {
     try {
       const userMessage = {
         id: payload.userMessage.id,

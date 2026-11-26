@@ -72,6 +72,17 @@ Frink tells you what changed when you switch tools. The agent itself (its name a
 
 And if a tool can't take a piece of your setup at all, Frink doesn't force it — that piece stays where you set it up, and works again the moment you switch back.
 
+## Your chats and terminal sessions can message each other
+
+Claude Code sessions can send each other short messages, so one agent can hand a finding to another without you copy-pasting between them. Frink's Claude chats take part: a chat can message your terminal Claude sessions and your other chats, and they can message it.
+
+- **Find a chat by its title.** Each Claude chat appears to your other sessions under the chat's title, so you can say "tell the payments chat the migration finished" in your terminal. A chat you rename shows its new title the next time its Claude session starts.
+- **A message starts a reply.** When a message reaches a chat that isn't busy, the chat answers it as a new reply, headed **Message from @sender** with what they sent. If the chat is still finishing a reply, the message waits until it's done.
+- **Only chats with a running Claude session can be reached.** A chat keeps its session for about 10 minutes after its last reply. Send it a message from Frink first to wake it.
+- **You decide what gets through.** Set **Messages from your other sessions** in Claude Code's `/config` (the `crossSessionInbound` setting in `~/.claude/settings.json`); Frink's chats follow the same choice. A message can never approve anything for you: see [Permissions](permissions.md#messages-from-your-other-sessions).
+
+This works for Claude chats today; Codex and other tools can't send or receive these messages yet.
+
 ## What stays on your machine
 
 - **Credentials** — Direct API-token integrations (and your tool logins) are encrypted on your device and never leave it — not to the cloud, not to another machine. OAuth integrations (Slack, Gmail, GitHub, …) are authorized through a secure broker that holds their tokens server-side; those tokens are never written to your repo or synced to your other machines.

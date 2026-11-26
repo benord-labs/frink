@@ -2,7 +2,7 @@ import type { Settings } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { hooksForLaunch } from '../../provider/hooks/store';
 import type { resolveClaudeAutoMemorySettings } from '../auto-memory';
-import type { readUserAutoModeRules } from '../auto-mode-rules';
+import type { readUserAutoModeRules, readUserCrossSessionInbound } from '../auto-mode-rules';
 import {
   type AssertNone,
   CLAUDE_SETTINGS_CONTRACT,
@@ -39,13 +39,15 @@ const DELIVERED = [
   'autoMemoryDirectory',
   'autoMemoryEnabled',
   'autoMode',
+  'crossSessionInbound',
   'disableAllHooks',
   'hooks',
 ] as const;
 type CarriedOver =
   | keyof Awaited<ReturnType<typeof hooksForLaunch>>
   | keyof ReturnType<typeof resolveClaudeAutoMemorySettings>
-  | keyof ReturnType<typeof readUserAutoModeRules>;
+  | keyof ReturnType<typeof readUserAutoModeRules>
+  | keyof ReturnType<typeof readUserCrossSessionInbound>;
 
 describe('CLAUDE_SETTINGS_CONTRACT', () => {
   it('routes every key to a known route', () => {

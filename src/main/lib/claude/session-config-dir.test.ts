@@ -81,8 +81,10 @@ describe('stageClaudeConfigDir', () => {
 
   it('retries a cacheKey whose symlink staging failed rather than memoising the failure', () => {
     const key = uniqueKey();
-    const symlink = vi.spyOn(fs, 'symlinkSync').mockImplementationOnce(() => {
-      throw new Error('EACCES');
+    const realSymlink = fs.symlinkSync;
+    const symlink = vi.spyOn(fs, 'symlinkSync').mockImplementation((target, link, type) => {
+      if (String(link).endsWith('skills')) throw new Error('EACCES');
+      realSymlink(target, link, type);
     });
 
     stageClaudeConfigDir(configDir, key);
@@ -103,6 +105,49 @@ describe('stageClaudeConfigDir', () => {
     stageClaudeConfigDir(configDir, key);
 
     expect(fs.readFileSync(path.join(configDir, 'CLAUDE.md'), 'utf-8')).toBe('# written later');
+  });
+
+  // Claude Code lists only the sessions in its own config dir's `sessions/`.
+  it("shares the user's session list, so other sessions can find and message the chat", () => {
+    stageClaudeConfigDir(configDir, uniqueKey());
+
+    const shared = path.join(fakeHome, '.claude', 'sessions');
+    expect(fs.lstatSync(path.join(configDir, 'sessions')).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(path.join(configDir, 'sessions'))).toBe(fs.realpathSync(shared));
+    expect(fs.statSync(shared).mode & 0o777).toBe(0o700);
+  });
+
+  it('replaces the private session list a chat had before sharing', () => {
+    fs.mkdirSync(path.join(configDir, 'sessions'));
+    fs.writeFileSync(path.join(configDir, 'sessions', '123.json'), '{}');
+
+    stageClaudeConfigDir(configDir, uniqueKey());
+    stageClaudeConfigDir(configDir, uniqueKey());
+
+    expect(fs.lstatSync(path.join(configDir, 'sessions')).isSymbolicLink()).toBe(true);
+    expect(fs.readdirSync(path.join(fakeHome, '.claude', 'sessions'))).toEqual([]);
+    expect(fs.readdirSync(configDir).filter((name) => name.startsWith('sessions'))).toEqual([
+      'sessions',
+    ]);
+  });
+
+  it('relinks a session list pointing anywhere but the shared one, and recovers from a failed link', () => {
+    const elsewhere = path.join(tmpRoot, 'elsewhere');
+    fs.mkdirSync(elsewhere);
+    fs.symlinkSync(elsewhere, path.join(configDir, 'sessions'));
+    const symlink = vi.spyOn(fs, 'symlinkSync').mockImplementationOnce(() => {
+      throw new Error('EACCES');
+    });
+    stageClaudeConfigDir(configDir, uniqueKey());
+    symlink.mockRestore();
+
+    stageClaudeConfigDir(configDir, uniqueKey());
+
+    const shared = path.join(fakeHome, '.claude', 'sessions');
+    expect(fs.readlinkSync(path.join(configDir, 'sessions'))).toBe(shared);
+    expect(fs.readdirSync(configDir).filter((name) => name.startsWith('sessions'))).toEqual([
+      'sessions',
+    ]);
   });
 
   describe('vendor plugin staging', () => {

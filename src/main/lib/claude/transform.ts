@@ -1,10 +1,10 @@
 /* eslint-disable max-lines, max-lines-per-function */
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKMessageOrigin } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { SUBAGENT_TEXT_TOOL_NAME } from '../../../shared/subagent-parts';
 import { createCompactionMapper, createContextUsageTracker } from './compaction';
 import { createGoalMapper } from './goal';
-import { usageLimitResultChunks } from './stream-classifiers';
+import { peerMessageOf, usageLimitResultChunks } from './stream-classifiers';
 import { createThinkingEmitter } from './thinking-emitter';
 import type { MCPServer, MCPServerStatus, MessageMetadata, UIMessageChunk } from './types';
 
@@ -111,6 +111,7 @@ type ResultMessage = BaseMessage & {
   session_id?: string;
   total_cost_usd?: number;
   subtype?: string;
+  origin?: SDKMessageOrigin;
 };
 
 // Type guards
@@ -616,9 +617,7 @@ export function createTransformer(defersGoalCheck?: () => boolean) {
       yield* endTextBlock();
       yield* endToolInput();
 
-      const inputTokens = msg.usage?.input_tokens;
-      const outputTokens = msg.usage?.output_tokens;
-
+      const { input_tokens: inputTokens, output_tokens: outputTokens } = msg.usage ?? {};
       const modelUsage = msg.modelUsage
         ? Object.fromEntries(
             Object.entries(msg.modelUsage).map(([model, usage]) => [
@@ -646,6 +645,7 @@ export function createTransformer(defersGoalCheck?: () => boolean) {
         finalTextId: lastTextId || undefined,
         modelUsage,
         ...contextUsage.snapshot(),
+        ...peerMessageOf(msg.origin),
       };
       yield { type: 'message-metadata', messageMetadata: metadata };
       yield { type: 'finish-step' };

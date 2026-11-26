@@ -216,7 +216,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
 
       await send('second', { sessionId: 'sess-held' });
 
-      expect(sessionLines('retire')).toEqual(['reason=idle-activity']);
+      expect(sessionLines('retire')).toEqual(['reason=idle-activity-during-claim']);
       expect(warm.close).toHaveBeenCalledOnce();
       expect(replies()).toEqual(['reply 1']);
     });

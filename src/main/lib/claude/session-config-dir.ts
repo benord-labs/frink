@@ -59,6 +59,7 @@ export function stageClaudeConfigDir(isolatedConfigDir: string, cacheKey: string
   // Every call, like memory: install/uninstall must land at the next CLI
   // start for this chat, so vendor-plugin projection is never memoised.
   stageVendorPluginsBestEffort(isolatedConfigDir);
+  linkSharedSessionList(isolatedConfigDir, homeClaudeDir);
 
   if (configDirStaged.has(cacheKey)) {
     // LRU touch — delete then set moves cacheKey to newest.
@@ -98,6 +99,25 @@ export function stageClaudeConfigDir(isolatedConfigDir: string, cacheKey: string
   } catch (error) {
     // Non-fatal — skills/agents just won't be discovered
     captureStagingFailure(error, 'staging');
+  }
+}
+
+/** Claude Code finds the sessions it can message only in its config dir's `sessions/`, so every
+ * chat shares the user's list; a private one from before (its own records only) is replaced. */
+function linkSharedSessionList(isolatedConfigDir: string, homeClaudeDir: string): void {
+  const shared = path.join(homeClaudeDir, 'sessions');
+  const target = path.join(isolatedConfigDir, 'sessions');
+  try {
+    fs.mkdirSync(shared, { recursive: true, mode: 0o700 });
+    const linked = fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink();
+    if (linked && fs.readlinkSync(target) === shared) return;
+    // A private list holds only this chat's own records, and nothing but its CLI reads it.
+    fs.rmSync(target, { recursive: true, force: true });
+    // A junction on Windows needs no privilege; the type is ignored elsewhere.
+    fs.symlinkSync(shared, target, 'junction');
+  } catch (error) {
+    // The chat still runs; other sessions just cannot find or message it.
+    captureStagingFailure(error, 'sessions');
   }
 }
 

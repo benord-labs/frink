@@ -31,6 +31,11 @@ function withoutChannel(mcpServers: Record<string, unknown> | undefined): unknow
   return { ...mcpServers, [FRINK_MCP_KEY]: { ...dynamicChat, url } };
 }
 
+// A chat's session name follows its title: a rename lands at its next spawn, never forcing one.
+function withoutSessionName(env: Record<string, string> | undefined) {
+  return env && { ...env, CLAUDE_CODE_SESSION_NAME: undefined };
+}
+
 /** Effort is set live too, except `max`: the live setting (`effortLevel`) has no max tier. */
 export function effortKeyPart(effort: unknown): string {
   return digest(effort === 'max' ? 'max' : null);
@@ -52,9 +57,11 @@ export function computeClaudeSessionKey(
   };
   for (const [name, value] of Object.entries(options)) {
     if (NON_KEY_OPTIONS.has(name) || name === 'effort') continue;
-    keyParts[name] = digest(
-      name === 'extraArgs' ? { ...(value as object), 'mcp-config': undefined } : value,
-    );
+    if (name === 'env') keyParts[name] = digest(withoutSessionName(value));
+    else
+      keyParts[name] = digest(
+        name === 'extraArgs' ? { ...(value as object), 'mcp-config': undefined } : value,
+      );
   }
   return keyParts;
 }

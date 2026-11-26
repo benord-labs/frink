@@ -40,6 +40,16 @@ export function isSetterEcho(m: SDKMessage): boolean {
   return typeof content === 'string' && content.startsWith('<local-command-stdout>');
 }
 
+/** Every turn the CLI runs opens with `init`, so that is where a turn of its own starts. The state
+ * turning to running can come first, and is no reason to end a session that can hand the turn over. */
+export function startsIdleTurn(m: SDKMessage): boolean {
+  return m.type === 'system' && m.subtype === 'init';
+}
+
+export function isRunningState(m: SDKMessage): boolean {
+  return m.type === 'system' && m.subtype === 'session_state_changed' && m.state === 'running';
+}
+
 const TURN_FRAME_TYPES = new Set(['assistant', 'user', 'stream_event', 'result']);
 
 /** A frame from an idle session that means the CLI started a turn of its own (a task notification,
@@ -80,6 +90,11 @@ function isHarnessTurnResult(m: SDKMessage): boolean {
  */
 export function isTurnBoundary(m: SDKMessage): boolean {
   return m.type === 'result' && !isHarnessTurnResult(m);
+}
+
+/** Where a registered turn ends: a turn the CLI started on its own is a harness turn, so ANY result. */
+export function turnBoundaryFor(turn: { path: string } | null): (m: SDKMessage) => boolean {
+  return turn?.path === 'self-started' ? isAnyResult : isTurnBoundary;
 }
 
 /** A WAKE BURST's boundary — the opposite of {@link isTurnBoundary}, since a burst IS a harness

@@ -4,7 +4,7 @@ import type { ClaudeSession } from '../../claude-session-registry';
 
 /** The stamps behind the per-turn `turn-timing` log line; a turn's frames count only once pushed. */
 export type TurnTiming = {
-  path: 'fresh' | 'warm' | 'adopted';
+  path: 'fresh' | 'warm' | 'adopted' | 'self-started';
   pushedAt?: number;
   initAt?: number;
   firstTokenAt?: number;

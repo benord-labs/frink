@@ -24,6 +24,7 @@ import * as FlowPatch from '../../../lib/flows/flow-change-tool';
 import { chatMarkdownModeAtom, showMessageJsonAtom } from '../atoms';
 import { HtmlArtifactCard } from '../HtmlArtifactCard';
 import { FileLinkScope } from '../mentions/FileLinkBadge';
+import { PeerMessageQuote } from '../PeerMessageQuote';
 import type { Message, MessagePart } from '../stores/message-store';
 import { AgentFlowRunTool } from '../ui/AgentFlowRunTool';
 import { AgentFlowTool } from '../ui/AgentFlowTool';
@@ -197,7 +198,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   sandboxSetupStatus = 'ready',
 }: AssistantMessageItemProps) {
   const messageParts = message?.parts || [];
-  const interruptedBy = (message?.metadata as AgentMessageMetadata | undefined)?.interruptedBy;
+  const { interruptedBy, peerMessage } = (message?.metadata ?? {}) as AgentMessageMetadata;
 
   // One atom subscription per message (not per text part) — resolve the markdown
   // render mode for assistant bubbles (default rendered) and thread it down.
@@ -543,6 +544,7 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
   return (
     <FileLinkScope isStreaming={isStreaming && isLastMessage}>
       <div data-assistant-message-id={message.id} className="group/message w-full mb-4">
+        {peerMessage && <PeerMessageQuote message={peerMessage} />}
         <div className="flex flex-col gap-1.5">
           {shouldCollapse && visibleStepsCount > 0 && (
             <CollapsibleSteps stepsCount={visibleStepsCount}>

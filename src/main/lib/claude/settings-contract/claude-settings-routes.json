@@ -170,7 +170,7 @@
     "remoteControlAtStartup": "inert-headless",
     "isolatePeerMachines": "inert-headless",
     "daemonColdStart": "inert-headless",
-    "crossSessionInbound": "not-yet-delivered",
+    "crossSessionInbound": "delivered",
     "autoUploadSessions": "not-yet-delivered",
     "inputNeededNotifEnabled": "inert-headless",
     "agentPushNotifEnabled": "inert-headless",

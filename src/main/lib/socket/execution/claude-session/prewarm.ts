@@ -131,6 +131,7 @@ async function buildPrewarmSpec({ chatId, subChatId, mode: intent, settings }: P
   const { nativeAutoReview, planAutoReview } = resolveAutoReviewModes(autoReview, 'claude', mode);
   return buildClaudeSessionSpec({
     chatId,
+    chatName: chat.name,
     subChatId,
     project,
     projectId: chat.projectId ?? '',
