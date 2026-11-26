@@ -9,8 +9,7 @@ import {
   isSetterEcho,
   isTurnBoundary,
 } from '../streaming';
-import { drainToResult } from './claude-session/drain-to-result';
-import { noteSessionFrame } from './claude-session/loaded-check';
+import { drainToResult, nextTurnMessage } from './claude-session/drain-to-result';
 import { logTurnTiming, noteTurnTiming, type TurnTiming } from './claude-session/turn-timing';
 import type { WakePump, WakePumpCallbacks, WakePumpExit } from './wake-pump-types';
 import { settleIfWorkFinished, type WaitOverDrain } from './wake-wait-over';
@@ -77,33 +76,6 @@ export type SessionLoop = {
   /** The reader returned — the stream is dead or abandoned, so a pushed message would never be read. */
   exited: boolean;
 };
-
-/**
- * Null when the caller ended the turn on purpose (plan halt, question park), not a dead query.
- * An unexpected throw or result-less done is a dead query: evict so the next turn recreates.
- */
-async function nextTurnMessage(session: ClaudeSession): Promise<SDKMessage | null> {
-  let step: IteratorResult<SDKMessage, void>;
-  try {
-    step = await session.query.next();
-  } catch (err) {
-    if (session.interruptExpected) return null;
-    session.evict();
-    throw err;
-  }
-  if (step.done) {
-    if (session.interruptExpected) return null;
-    session.evict();
-    throw new Error(
-      `runTurn: query for ${session.subChatId} ended before the turn produced a result`,
-    );
-  }
-  // Roster writes stop at the wait-over latch: the roster is keyed by subChatId, and once the
-  // wait is over a FRESH session for the same chat may own it — a drain frame repopulating it
-  // would resurrect a spinner on a chat that renders finished.
-  if (!session.loop.closeExpected) noteSessionFrame(session, step.value);
-  return step.value;
-}
 
 export function createSessionLoop(): SessionLoop {
   return {

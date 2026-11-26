@@ -22,3 +22,29 @@ export async function drainToResult(
     // query died mid-drain — no further messages to align.
   }
 }
+
+/**
+ * Null when the caller ended the turn on purpose (plan halt, question park), not a dead query.
+ * An unexpected throw or result-less done is a dead query: evict so the next turn recreates.
+ */
+export async function nextTurnMessage(session: ClaudeSession): Promise<SDKMessage | null> {
+  let step: IteratorResult<SDKMessage, void>;
+  try {
+    step = await session.query.next();
+  } catch (err) {
+    if (session.interruptExpected) return null;
+    session.evict();
+    throw err;
+  }
+  if (step.done) {
+    if (session.interruptExpected) return null;
+    session.evict();
+    throw new Error(
+      `runTurn: query for ${session.subChatId} ended before the turn produced a result`,
+    );
+  }
+  // Roster writes stop at the wait-over latch: a fresh session for the same chat may own the
+  // roster by then, and a drain frame would resurrect its spinner on a finished chat.
+  if (!session.loop.closeExpected) noteSessionFrame(session, step.value);
+  return step.value;
+}
